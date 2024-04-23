@@ -11,7 +11,7 @@ pub struct Update {
 
     /// Set a new I/O weight
     #[clap(long)]
-    pub blkio_weight: Option<u64>,
+    pub blkio_weight: Option<u16>,
 
     /// Set CPU CFS period to be used for hardcapping (in microseconds)
     #[clap(long)]
@@ -19,7 +19,7 @@ pub struct Update {
 
     /// Set CPU usage limit within a given period (in microseconds)
     #[clap(long)]
-    pub cpu_quota: Option<u64>,
+    pub cpu_quota: Option<i64>,
 
     /// Set CPU realtime period to be used for hardcapping (in microseconds)
     #[clap(long)]
@@ -27,7 +27,7 @@ pub struct Update {
 
     /// Set CPU realtime hardcap limit (in microseconds)
     #[clap(long)]
-    pub cpu_rt_runtime: Option<u64>,
+    pub cpu_rt_runtime: Option<i64>,
 
     /// Set CPU shares (relative weight vs. other containers)
     #[clap(long)]
@@ -41,13 +41,17 @@ pub struct Update {
     #[clap(long)]
     pub cpuset_mems: Option<String>,
 
+    #[clap(long)]
+    /// Set CPU burst limit within a given period (in microseconds)
+    pub cpu_burst: Option<u64>,
+
     /// Set memory limit to num bytes.
     #[clap(long)]
-    pub memory: Option<u64>,
+    pub memory: Option<i64>,
 
     /// Set memory reservation (or soft limit) to num bytes.
     #[clap(long)]
-    pub memory_reservation: Option<u64>,
+    pub memory_reservation: Option<i64>,
 
     /// Set total memory + swap usage to num bytes. Use -1 to unset the limit (i.e. use unlimited swap).
     #[clap(long)]
