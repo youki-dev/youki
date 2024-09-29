@@ -6,7 +6,7 @@ use nix::sys::stat::SFlag;
 use oci_spec::runtime::{LinuxDevice, LinuxDeviceBuilder, LinuxDeviceType, Mount};
 
 use super::mount::MountError;
-use crate::syscall::linux::{self, MountRecursive};
+use crate::syscall::linux::{self, MountOption, MountRecursive};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MountOptionConfig {
@@ -131,51 +131,53 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
                 continue;
             }
 
-            if let Some((is_clear, flag)) = match option.as_str() {
-                "defaults" => Some((false, MsFlags::empty())),
-                "ro" => Some((false, MsFlags::MS_RDONLY)),
-                "rw" => Some((true, MsFlags::MS_RDONLY)),
-                "suid" => Some((true, MsFlags::MS_NOSUID)),
-                "nosuid" => Some((false, MsFlags::MS_NOSUID)),
-                "dev" => Some((true, MsFlags::MS_NODEV)),
-                "nodev" => Some((false, MsFlags::MS_NODEV)),
-                "exec" => Some((true, MsFlags::MS_NOEXEC)),
-                "noexec" => Some((false, MsFlags::MS_NOEXEC)),
-                "sync" => Some((false, MsFlags::MS_SYNCHRONOUS)),
-                "async" => Some((true, MsFlags::MS_SYNCHRONOUS)),
-                "dirsync" => Some((false, MsFlags::MS_DIRSYNC)),
-                "remount" => Some((false, MsFlags::MS_REMOUNT)),
-                "mand" => Some((false, MsFlags::MS_MANDLOCK)),
-                "nomand" => Some((true, MsFlags::MS_MANDLOCK)),
-                "atime" => Some((true, MsFlags::MS_NOATIME)),
-                "noatime" => Some((false, MsFlags::MS_NOATIME)),
-                "diratime" => Some((true, MsFlags::MS_NODIRATIME)),
-                "nodiratime" => Some((false, MsFlags::MS_NODIRATIME)),
-                "bind" => Some((false, MsFlags::MS_BIND)),
-                "rbind" => Some((false, MsFlags::MS_BIND | MsFlags::MS_REC)),
-                "unbindable" => Some((false, MsFlags::MS_UNBINDABLE)),
-                "runbindable" => Some((false, MsFlags::MS_UNBINDABLE | MsFlags::MS_REC)),
-                "private" => Some((true, MsFlags::MS_PRIVATE)),
-                "rprivate" => Some((true, MsFlags::MS_PRIVATE | MsFlags::MS_REC)),
-                "shared" => Some((true, MsFlags::MS_SHARED)),
-                "rshared" => Some((true, MsFlags::MS_SHARED | MsFlags::MS_REC)),
-                "slave" => Some((true, MsFlags::MS_SLAVE)),
-                "rslave" => Some((true, MsFlags::MS_SLAVE | MsFlags::MS_REC)),
-                "relatime" => Some((true, MsFlags::MS_RELATIME)),
-                "norelatime" => Some((true, MsFlags::MS_RELATIME)),
-                "strictatime" => Some((true, MsFlags::MS_STRICTATIME)),
-                "nostrictatime" => Some((true, MsFlags::MS_STRICTATIME)),
-                unknown => {
+            if let Some((is_clear, flag)) = match MountOption::from_str(option.as_ref()) {
+                Ok(v) => match v {
+                    MountOption::Defaults(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Ro(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Rw(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Suid(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Nosuid(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Dev(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Nodev(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Exec(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Noexec(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Sync(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Async(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Dirsync(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Remount(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Mand(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Nomand(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Atime(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Noatime(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Diratime(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Nodiratime(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Bind(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Rbind(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Unbindable(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Runbindable(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Private(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Rprivate(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Shared(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Rshared(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Slave(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Rslave(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Relatime(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Norelatime(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Strictatime(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Nostrictatime(is_clear, flag) => Some((is_clear, flag)),
+                },
+                Err(unknown) => {
                     if unknown == "idmap" || unknown == "ridmap" {
-                        return Err(MountError::UnsupportedMountOption(unknown.to_string()));
+                        return Err(MountError::UnsupportedMountOption(unknown));
                     }
                     None
                 }
             } {
                 if is_clear {
-                    flags &= !flag;
+                    flags.remove(flag);
                 } else {
-                    flags |= flag;
+                    flags.insert(flag);
                 }
                 continue;
             }
