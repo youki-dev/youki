@@ -820,3 +820,34 @@ pub fn validate_fd_control(_spec: &Spec) {
         eprintln!("mismatched fds inside container! {:?}", fd_details);
     }
 }
+
+pub fn validate_masked_paths(spec: &Spec) {
+    let linux = spec.linux().as_ref().unwrap();
+    let masked_paths = match linux.masked_paths() {
+        Some(p) => p,
+        None => {
+            eprintln!("in readonly paths, expected some readonly paths to be set, found none");
+            return;
+        }
+    };
+
+    if masked_paths.is_empty() {
+        return;
+    }
+
+    // TODO when https://github.com/rust-lang/rust/issues/86442 stabilizes,
+    // change manual matching of i32 to e.kind() and match statement
+    for path in masked_paths {
+        if let std::io::Result::Err(e) = test_read_access(path) {
+            let errno = Errno::from_raw(e.raw_os_error().unwrap());
+            if errno == Errno::ENOENT {
+                /* This is expected */
+            } else {
+                eprintln!("in masked paths, error in testing read access for path {path} : {e:?}");
+                return;
+            }
+        } else {
+            /* Expected */
+        }
+    }
+}
