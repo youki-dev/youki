@@ -55,11 +55,8 @@ fn check_masked_paths() -> TestResult {
         use std::{fs, io};
         let test_dir = bundle_path.join(&masked_dir_sub);
 
-        match fs::create_dir_all(&test_dir) {
-            io::Result::Ok(_) => { /*This is expected*/ }
-            io::Result::Err(e) => {
-                bail!(e)
-            }
+		if let Err(e) = fs::create_dir_all(&test_dir) {
+			bail!(e)
         }
 
         match fs::File::create(test_dir.join("tmp")) {
