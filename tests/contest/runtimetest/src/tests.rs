@@ -585,12 +585,13 @@ pub fn validate_masked_paths(spec: &Spec) {
     let masked_paths = match linux.masked_paths() {
         Some(p) => p,
         None => {
-            eprintln!("in readonly paths, expected some readonly paths to be set, found none");
+            eprintln!("in masked paths, expected some masked paths to be set, found none");
             return;
         }
     };
 
     if masked_paths.is_empty() {
+        eprintln!("in masked paths, expected some masked paths to be set, found none");
         return;
     }
 
@@ -606,7 +607,8 @@ pub fn validate_masked_paths(spec: &Spec) {
                 return;
             }
         } else {
-            /* Expected */
+            eprintln!("in masked paths, error in testing read access for path {path}");
+            return;
         }
     }
 }
