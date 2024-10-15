@@ -54,9 +54,8 @@ fn check_masked_paths() -> TestResult {
     test_inside_container(spec, &|bundle_path| {
         use std::{fs, io};
         let test_dir = bundle_path.join(&masked_dir_sub);
-
-		if let Err(e) = fs::create_dir_all(&test_dir) {
-			bail!(e)
+        if let Err(e) = fs::create_dir_all(&test_dir) {
+            bail!(e)
         }
 
         match fs::File::create(test_dir.join("tmp")) {
