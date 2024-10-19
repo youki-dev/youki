@@ -52,41 +52,40 @@ fn check_masked_paths() -> TestResult {
     let spec = get_spec(masked_paths);
 
     test_inside_container(spec, &|bundle_path| {
-        use std::{fs, io};
+        use std::fs;
         let test_dir = bundle_path.join(&masked_dir_sub);
         if let Err(e) = fs::create_dir_all(&test_dir) {
             bail!(e)
         }
 
-        match fs::File::create(test_dir.join("tmp")) {
-            io::Result::Ok(_) => { /*This is expected*/ }
-            io::Result::Err(e) => {
-                bail!(e)
-            }
+        if let Err(e) = fs::File::create(test_dir.join("tmp")) {
+            bail!(e)
         }
 
+        // runtimetest cannot check the readability of empty files, so
+        // write something.
         let test_sub_sub_file = bundle_path.join(&masked_file_sub_sub);
-        match fs::File::create(test_sub_sub_file) {
-            io::Result::Ok(_) => { /*This is expected*/ }
-            io::Result::Err(e) => {
-                bail!(e)
-            }
+        if let Err(e) = fs::File::create(&test_sub_sub_file) {
+            bail!(e)
+        }
+        if let Err(e) = fs::write(&test_sub_sub_file, b"secrets") {
+            bail!(e)
         }
 
         let test_sub_file = bundle_path.join(&masked_file_sub);
-        match fs::File::create(test_sub_file) {
-            io::Result::Ok(_) => { /*This is expected*/ }
-            io::Result::Err(e) => {
-                bail!(e)
-            }
+        if let Err(e) = fs::File::create(&test_sub_file) {
+            bail!(e)
+        }
+        if let Err(e) = fs::write(&test_sub_file, b"secrets") {
+            bail!(e)
         }
 
         let test_file = bundle_path.join(masked_file);
-        match fs::File::create(test_file) {
-            io::Result::Ok(_) => { /*This is expected*/ }
-            io::Result::Err(e) => {
-                bail!(e)
-            }
+        if let Err(e) = fs::File::create(&test_file) {
+            bail!(e)
+        }
+        if let Err(e) = fs::write(&test_file, b"secrets") {
+            bail!(e)
         }
 
         Ok(())
