@@ -839,17 +839,25 @@ pub fn validate_masked_paths(spec: &Spec) {
     // TODO when https://github.com/rust-lang/rust/issues/86442 stabilizes,
     // change manual matching of i32 to e.kind() and match statement
     for path in masked_paths {
-        if let std::io::Result::Err(e) = test_read_access(path) {
-            let errno = Errno::from_raw(e.raw_os_error().unwrap());
-            if errno == Errno::ENOENT {
-                /* This is expected */
-            } else {
-                eprintln!("in masked paths, error in testing read access for path {path} : {e:?}");
+        match test_read_access(path) {
+            Ok(true) => {
+                eprintln!(
+                    "in masked paths, expected path {path} to be masked, but was found readable"
+                );
                 return;
             }
-        } else {
-            eprintln!("in masked paths, error in testing read access for path {path}");
-            return;
+            Ok(false) => { /* This is expected */ }
+            Err(e) => {
+                let errno = Errno::from_raw(e.raw_os_error().unwrap());
+                if errno == Errno::ENOENT {
+                    /* This is expected */
+                } else {
+                    eprintln!(
+                        "in masked paths, error in testing read access for path {path} : {errno:?}"
+                    );
+                    return;
+                }
+            }
         }
     }
 }
