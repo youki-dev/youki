@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::Write;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::prelude::RawFd;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -51,6 +52,12 @@ pub(super) struct ContainerBuilderImpl {
     pub executor: Box<dyn Executor>,
     /// If do not use pivot root to jail process inside rootfs
     pub no_pivot: bool,
+    // RawFd set to stdin of the container init process.
+    pub stdin: Option<OwnedFd>,
+    // RawFd set to stdout of the container init process.
+    pub stdout: Option<OwnedFd>,
+    // RawFd set to stderr of the container init process.
+    pub stderr: Option<OwnedFd>,
 }
 
 impl ContainerBuilderImpl {
@@ -157,6 +164,9 @@ impl ContainerBuilderImpl {
             detached: self.detached,
             executor: self.executor.clone(),
             no_pivot: self.no_pivot,
+            stdin: self.stdin.as_ref().map(|x| x.as_raw_fd()),
+            stdout: self.stdout.as_ref().map(|x| x.as_raw_fd()),
+            stderr: self.stderr.as_ref().map(|x| x.as_raw_fd()),
         };
 
         let (init_pid, need_to_clean_up_intel_rdt_dir) =

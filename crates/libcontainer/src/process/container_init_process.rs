@@ -7,7 +7,7 @@ use nc;
 use nix::mount::{MntFlags, MsFlags};
 use nix::sched::CloneFlags;
 use nix::sys::stat::Mode;
-use nix::unistd::{self, setsid, Gid, Uid};
+use nix::unistd::{self, close, dup2, setsid, Gid, Uid};
 use oci_spec::runtime::{
     IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxSchedulerFlag, LinuxSchedulerPolicy,
     Scheduler, Spec, User,
@@ -374,6 +374,19 @@ pub fn container_init_process(
             tracing::error!(?err, "failed to set up tty");
             InitProcessError::Tty(err)
         })?;
+    } else {
+        if let Some(stdin) = args.stdin {
+            dup2(stdin, 0).map_err(InitProcessError::NixOther)?;
+            close(stdin).map_err(InitProcessError::NixOther)?;
+        }
+        if let Some(stdout) = args.stdout {
+            dup2(stdout, 1).map_err(InitProcessError::NixOther)?;
+            close(stdout).map_err(InitProcessError::NixOther)?;
+        }
+        if let Some(stderr) = args.stderr {
+            dup2(stderr, 2).map_err(InitProcessError::NixOther)?;
+            close(stderr).map_err(InitProcessError::NixOther)?;
+        }
     }
 
     apply_rest_namespaces(&namespaces, spec, syscall.as_ref())?;

@@ -44,4 +44,10 @@ pub struct ContainerArgs {
     pub executor: Box<dyn Executor>,
     /// If do not use pivot root to jail process inside rootfs
     pub no_pivot: bool,
+    // RawFd set to stdin of the container init process.
+    pub stdin: Option<RawFd>,
+    // RawFd set to stdout of the container init process.
+    pub stdout: Option<RawFd>,
+    // RawFd set to stderr of the container init process.
+    pub stderr: Option<RawFd>,
 }
