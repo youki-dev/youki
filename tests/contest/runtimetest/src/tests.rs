@@ -836,8 +836,6 @@ pub fn validate_masked_paths(spec: &Spec) {
         return;
     }
 
-    // TODO when https://github.com/rust-lang/rust/issues/86442 stabilizes,
-    // change manual matching of i32 to e.kind() and match statement
     for path in masked_paths {
         match test_read_access(path) {
             Ok(true) => {

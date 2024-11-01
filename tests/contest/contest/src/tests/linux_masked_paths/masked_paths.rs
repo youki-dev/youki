@@ -54,39 +54,23 @@ fn check_masked_paths() -> TestResult {
     test_inside_container(spec, &|bundle_path| {
         use std::fs;
         let test_dir = bundle_path.join(&masked_dir_sub);
-        if let Err(e) = fs::create_dir_all(&test_dir) {
-            bail!(e)
-        }
+        fs::create_dir_all(&test_dir)?;
 
-        if let Err(e) = fs::File::create(test_dir.join("tmp")) {
-            bail!(e)
-        }
+        fs::File::create(test_dir.join("tmp"))?;
 
         // runtimetest cannot check the readability of empty files, so
         // write something.
         let test_sub_sub_file = bundle_path.join(&masked_file_sub_sub);
-        if let Err(e) = fs::File::create(&test_sub_sub_file) {
-            bail!(e)
-        }
-        if let Err(e) = fs::write(&test_sub_sub_file, b"secrets") {
-            bail!(e)
-        }
+        fs::File::create(&test_sub_sub_file)?;
+        fs::write(&test_sub_sub_file, b"secrets")?;
 
         let test_sub_file = bundle_path.join(&masked_file_sub);
-        if let Err(e) = fs::File::create(&test_sub_file) {
-            bail!(e)
-        }
-        if let Err(e) = fs::write(&test_sub_file, b"secrets") {
-            bail!(e)
-        }
+        fs::File::create(&test_sub_file)?;
+        fs::write(&test_sub_file, b"secrets")?;
 
         let test_file = bundle_path.join(masked_file);
-        if let Err(e) = fs::File::create(&test_file) {
-            bail!(e)
-        }
-        if let Err(e) = fs::write(&test_file, b"secrets") {
-            bail!(e)
-        }
+        fs::File::create(&test_file)?;
+        fs::write(&test_file, b"secrets")?;
 
         Ok(())
     })
@@ -99,6 +83,8 @@ fn check_masked_rel_paths() -> TestResult {
     let masked_paths = vec![masked_rel_path.to_string()];
     let spec = get_spec(masked_paths);
 
+    // We expect the container creation to succeed, but don't mask the path because relative paths are not supported
+    // ref: https://github.com/opencontainers/runtime-tools/blob/master/validation/linux_masked_paths/linux_masked_paths.go#L67-L90
     test_inside_container(spec, &|bundle_path| {
         use std::{fs, io};
         let test_file = bundle_path.join(masked_rel_path);
@@ -133,7 +119,7 @@ fn check_masked_symlinks() -> TestResult {
     let res = test_inside_container(spec, &|bundle_path| {
         use std::{fs, io};
         let test_file = bundle_path.join(masked_symlink);
-        // ln -s .. /masked-symlink ; readlink -f /masked-symlink; ls -L /masked-symlink
+        // ln -s ../masked-symlink ; readlink -f /masked-symlink; ls -L /masked-symlink
         match std::os::unix::fs::symlink("../masked_symlink", &test_file) {
             io::Result::Ok(_) => { /* This is expected */ }
             io::Result::Err(e) => {
@@ -148,6 +134,7 @@ fn check_masked_symlinks() -> TestResult {
             }
         };
 
+        // It ensures that the symlink points not to exist.
         match fs::metadata(r_path) {
             io::Result::Ok(md) => {
                 bail!(
@@ -167,6 +154,7 @@ fn check_masked_symlinks() -> TestResult {
         }
     });
 
+    // If the container creation succeeds, we expect an error since the masked paths does not support symlinks.
     if let TestResult::Passed = res {
         TestResult::Failed(anyhow!(
             "expected error in container creation with invalid symlink, found no error"
@@ -176,7 +164,7 @@ fn check_masked_symlinks() -> TestResult {
     }
 }
 
-fn test_node(mode: u32) -> TestResult {
+fn test_mode(mode: u32) -> TestResult {
     let root = PathBuf::from("/");
     let masked_device = "masked_device";
     let masked_paths = vec![root.join(masked_device).to_string_lossy().to_string()];
@@ -225,11 +213,10 @@ fn check_masked_device_nodes() -> TestResult {
         SFlag::S_IFIFO.bits() | 0o666,
     ];
     for mode in modes {
-        let res = test_node(mode);
+        let res = test_mode(mode);
         if let TestResult::Failed(_) = res {
             return res;
         }
-        std::thread::sleep(std::time::Duration::from_millis(1000));
     }
     TestResult::Passed
 }
