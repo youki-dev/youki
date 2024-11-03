@@ -1,9 +1,9 @@
-use std::fs;
 use std::fs::{metadata, symlink_metadata, OpenOptions};
 use std::io::Read;
 use std::os::unix::prelude::MetadataExt;
 use std::path::PathBuf;
 use std::process::Command;
+use std::{fs, io};
 
 use nix::sys::stat::{stat, SFlag};
 
@@ -14,8 +14,8 @@ fn test_file_read_access(path: &str) -> Result<bool, std::io::Error> {
     let mut buffer = [0u8; 1];
     match file.read(&mut buffer) {
         // Our contest tests only use non-empty files for read-access
-		// tests. So if we get an EOF on the first read or zero bytes, the runtime did
-		// successfully block readability.
+        // tests. So if we get an EOF on the first read or zero bytes, the runtime did
+        // successfully block readability.
         Ok(0) => Ok(false),
         Ok(_) => Ok(true),
         Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Ok(false),
