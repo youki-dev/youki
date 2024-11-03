@@ -18,6 +18,7 @@ use oci_spec::runtime::{
 use test_framework::{Test, TestGroup, TestResult};
 
 use crate::utils::test_inside_container;
+use crate::utils::test_utils::CreateOptions;
 
 fn get_spec(added_mounts: Vec<Mount>, process_args: Vec<String>) -> Spec {
     let mut mounts = get_default_mounts();
@@ -112,7 +113,7 @@ fn check_recursive_readonly() -> TestResult {
         vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
     );
 
-    let result = test_inside_container(spec, &|_| {
+    let result = test_inside_container(spec, &CreateOptions::default(), &|_| {
         setup_mount(&rro_dir_path, &rro_subdir_path);
         Ok(())
     });
@@ -152,7 +153,7 @@ fn check_recursive_nosuid() -> TestResult {
         ],
     );
 
-    let result = test_inside_container(spec, &|bundle_path| {
+    let result = test_inside_container(spec, &CreateOptions::default(), &|bundle_path| {
         setup_mount(&rnosuid_dir_path, &rnosuid_subdir_path);
 
         let executable_file_path = bundle_path.join("bin").join(executable_file_name);
@@ -225,7 +226,7 @@ fn check_recursive_rsuid() -> TestResult {
         vec![mount_spec],
         vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
     );
-    test_inside_container(spec, &|_| {
+    test_inside_container(spec, &CreateOptions::default(), &|_| {
         let original_file_path = rsuid_dir_path.join("file");
         let file = File::create(original_file_path)?;
         let mut permission = file.metadata()?.permissions();
@@ -256,7 +257,7 @@ fn check_recursive_noexec() -> TestResult {
         vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
     );
 
-    let result = test_inside_container(spec, &|bundle_path| {
+    let result = test_inside_container(spec, &CreateOptions::default(), &|bundle_path| {
         setup_mount(&rnoexec_dir_path, &rnoexec_subdir_path);
 
         let executable_file_name = "echo";
@@ -297,7 +298,7 @@ fn check_recursive_rexec() -> TestResult {
         vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
     );
 
-    let result = test_inside_container(spec, &|bundle_path| {
+    let result = test_inside_container(spec, &CreateOptions::default(), &|bundle_path| {
         setup_mount(&rnoexec_dir_path, &rnoexec_subdir_path);
 
         let executable_file_name = "echo";
@@ -338,7 +339,7 @@ fn check_recursive_rdiratime() -> TestResult {
         vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
     );
 
-    let result = test_inside_container(spec, &|_| Ok(()));
+    let result = test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()));
 
     fs::remove_dir(rdiratime_base_dir).unwrap();
     result
@@ -362,7 +363,7 @@ fn check_recursive_rnodiratime() -> TestResult {
         vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
     );
 
-    let result = test_inside_container(spec, &|_| Ok(()));
+    let result = test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()));
     fs::remove_dir(rnodiratime_base_dir).unwrap();
     result
 }
@@ -383,7 +384,7 @@ fn check_recursive_rdev() -> TestResult {
         vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
     );
 
-    test_inside_container(spec, &|_| Ok(()))
+    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 fn check_recursive_rnodev() -> TestResult {
@@ -402,7 +403,7 @@ fn check_recursive_rnodev() -> TestResult {
         vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
     );
 
-    test_inside_container(spec, &|_| Ok(()))
+    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 fn check_recursive_readwrite() -> TestResult {
@@ -423,7 +424,7 @@ fn check_recursive_readwrite() -> TestResult {
         vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
     );
 
-    let result = test_inside_container(spec, &|_| {
+    let result = test_inside_container(spec, &CreateOptions::default(), &|_| {
         setup_mount(&rrw_dir_path, &rrw_subdir_path);
         Ok(())
     });
@@ -451,7 +452,7 @@ fn check_recursive_rrelatime() -> TestResult {
         vec![mount_spec],
         vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
     );
-    let result = test_inside_container(spec, &|_| Ok(()));
+    let result = test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()));
 
     fs::remove_dir_all(rrelatime_dir_path).unwrap();
     result
@@ -475,7 +476,7 @@ fn check_recursive_rnorelatime() -> TestResult {
         vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
     );
 
-    let result = test_inside_container(spec, &|_| Ok(()));
+    let result = test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()));
 
     fs::remove_dir_all(rnorelatime_dir_path).unwrap();
     result
@@ -499,7 +500,7 @@ fn check_recursive_rnoatime() -> TestResult {
         vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
     );
 
-    let result = test_inside_container(spec, &|_| Ok(()));
+    let result = test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()));
 
     fs::remove_dir_all(rnoatime_dir_path).unwrap();
     result
@@ -522,7 +523,7 @@ fn check_recursive_rstrictatime() -> TestResult {
         vec![mount_spec],
         vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
     );
-    let result = test_inside_container(spec, &|_| Ok(()));
+    let result = test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()));
 
     fs::remove_dir_all(rstrictatime_dir_path).unwrap();
     result
@@ -548,7 +549,7 @@ fn check_recursive_rnosymfollow() -> TestResult {
         vec![mount_spec],
         vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
     );
-    let result = test_inside_container(spec, &|_| {
+    let result = test_inside_container(spec, &CreateOptions::default(), &|_| {
         let original_file_path = format!("{}/{}", rnosymfollow_dir_path.to_str().unwrap(), "file");
         let file = File::create(&original_file_path)?;
         let link_file_path = format!("{}/{}", rnosymfollow_dir_path.to_str().unwrap(), "link");
@@ -587,7 +588,7 @@ fn check_recursive_rsymfollow() -> TestResult {
         vec![mount_spec],
         vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
     );
-    let result = test_inside_container(spec, &|_| {
+    let result = test_inside_container(spec, &CreateOptions::default(), &|_| {
         let original_file_path = format!("{}/{}", rsymfollow_dir_path.to_str().unwrap(), "file");
         let file = File::create(&original_file_path)?;
         let link_file_path = format!("{}/{}", rsymfollow_dir_path.to_str().unwrap(), "link");

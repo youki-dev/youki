@@ -3,6 +3,7 @@ use oci_spec::runtime::{ProcessBuilder, Spec, SpecBuilder};
 use test_framework::{test_result, Test, TestGroup, TestResult};
 
 use crate::utils::test_inside_container;
+use crate::utils::test_utils::CreateOptions;
 
 ////////// ANCHOR: get_example_spec
 fn create_spec() -> Result<Spec> {
@@ -25,7 +26,7 @@ fn create_spec() -> Result<Spec> {
 ////////// ANCHOR: example_test
 fn example_test() -> TestResult {
     let spec = test_result!(create_spec());
-    test_inside_container(spec, &|_| Ok(()))
+    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
 }
 ////////// ANCHOR_END: example_test
 
