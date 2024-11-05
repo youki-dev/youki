@@ -18,6 +18,7 @@ use crate::{apparmor, tty, user_ns, utils};
 pub struct InitContainerBuilder {
     base: ContainerBuilder,
     bundle: PathBuf,
+    use_cgroups: bool,
     use_systemd: bool,
     detached: bool,
     no_pivot: bool,
@@ -30,10 +31,17 @@ impl InitContainerBuilder {
         Self {
             base: builder,
             bundle,
+            use_cgroups: true,
             use_systemd: true,
             detached: true,
             no_pivot: false,
         }
+    }
+
+    /// Sets if cgroups should be used at all (overrides systemd if false)
+    pub fn with_cgroups(mut self, should_use: bool) -> Self {
+        self.use_cgroups = should_use;
+        self
     }
 
     /// Sets if systemd should be used for managing cgroups
@@ -58,9 +66,7 @@ impl InitContainerBuilder {
         let container_dir = self.create_container_dir()?;
 
         let mut container = self.create_container_state(&container_dir)?;
-        container
-            .set_systemd(self.use_systemd)
-            .set_annotations(spec.annotations().clone());
+        container.set_annotations(spec.annotations().clone());
 
         let notify_path = container_dir.join(NOTIFY_FILE);
         // convert path of root file system of the container to absolute path
@@ -81,24 +87,36 @@ impl InitContainerBuilder {
 
         let user_ns_config = UserNamespaceConfig::new(&spec)?;
 
-        let config = YoukiConfig::from_spec(&spec, container.id())?;
+        let mut cgroup_config = None;
+        if self.use_cgroups {
+            let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
+            let cgroups_path =
+                utils::get_cgroup_path(linux.cgroups_path(), &self.base.container_id);
+            cgroup_config = Some(libcgroups::common::CgroupConfig {
+                cgroup_path: cgroups_path,
+                systemd_cgroup: self.use_systemd || user_ns_config.is_some(),
+                container_name: self.base.container_id.to_owned(),
+            });
+        }
+
+        let config = YoukiConfig::from_spec(&spec, cgroup_config.clone())?;
         config.save(&container_dir).map_err(|err| {
             tracing::error!(?container_dir, "failed to save config: {}", err);
             err
         })?;
 
         let mut builder_impl = ContainerBuilderImpl {
-            container_type: ContainerType::InitContainer,
+            container_type: ContainerType::InitContainer {
+                container: container.clone(),
+            },
             syscall: self.base.syscall,
-            container_id: self.base.container_id,
             pid_file: self.base.pid_file,
             console_socket: csocketfd,
-            use_systemd: self.use_systemd,
+            cgroup_config,
             spec: Rc::new(spec),
             rootfs,
             user_ns_config,
             notify_path,
-            container: Some(container.clone()),
             preserve_fds: self.base.preserve_fds,
             detached: self.detached,
             executor: self.base.executor,
