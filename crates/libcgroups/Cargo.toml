@@ -21,7 +21,7 @@ cgroupsv2_devices = ["rbpf", "libbpf-sys", "errno", "libc", "nix/dir"]
 
 [dependencies]
 nix = { version = "0.28.0", features = ["signal", "user", "fs"] }
-procfs = "0.16.0"
+procfs = "0.17.0"
 oci-spec = { version = "~0.7.0", features = ["runtime"] }
 fixedbitset = "0.5.7"
 serde = { version = "1.0", features = ["derive"] }
