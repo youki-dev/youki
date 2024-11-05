@@ -38,6 +38,101 @@ const MOUNT_ATTR_STRICTATIME: u64 = 0x00000020;
 const MOUNT_ATTR_NODIRATIME: u64 = 0x00000080;
 const MOUNT_ATTR_NOSYMFOLLOW: u64 = 0x00200000;
 
+/// Constants used by mount(2).
+pub enum MountOption {
+    Defaults(bool, MsFlags),
+    Ro(bool, MsFlags),
+    Rw(bool, MsFlags),
+    Suid(bool, MsFlags),
+    Nosuid(bool, MsFlags),
+    Dev(bool, MsFlags),
+    Nodev(bool, MsFlags),
+    Exec(bool, MsFlags),
+    Noexec(bool, MsFlags),
+    Sync(bool, MsFlags),
+    Async(bool, MsFlags),
+    Dirsync(bool, MsFlags),
+    Remount(bool, MsFlags),
+    Mand(bool, MsFlags),
+    Nomand(bool, MsFlags),
+    Atime(bool, MsFlags),
+    Noatime(bool, MsFlags),
+    Diratime(bool, MsFlags),
+    Nodiratime(bool, MsFlags),
+    Bind(bool, MsFlags),
+    Rbind(bool, MsFlags),
+    Unbindable(bool, MsFlags),
+    Runbindable(bool, MsFlags),
+    Private(bool, MsFlags),
+    Rprivate(bool, MsFlags),
+    Shared(bool, MsFlags),
+    Rshared(bool, MsFlags),
+    Slave(bool, MsFlags),
+    Rslave(bool, MsFlags),
+    Relatime(bool, MsFlags),
+    Norelatime(bool, MsFlags),
+    Strictatime(bool, MsFlags),
+    Nostrictatime(bool, MsFlags),
+}
+
+impl FromStr for MountOption {
+    type Err = String;
+
+    fn from_str(option: &str) -> std::result::Result<Self, Self::Err> {
+        match option {
+            "defaults" => Ok(MountOption::Defaults(false, MsFlags::empty())),
+            "ro" => Ok(MountOption::Ro(false, MsFlags::MS_RDONLY)),
+            "rw" => Ok(MountOption::Rw(true, MsFlags::MS_RDONLY)),
+            "suid" => Ok(MountOption::Suid(true, MsFlags::MS_NOSUID)),
+            "nosuid" => Ok(MountOption::Nosuid(false, MsFlags::MS_NOSUID)),
+            "dev" => Ok(MountOption::Dev(true, MsFlags::MS_NODEV)),
+            "nodev" => Ok(MountOption::Nodev(false, MsFlags::MS_NODEV)),
+            "exec" => Ok(MountOption::Exec(true, MsFlags::MS_NOEXEC)),
+            "noexec" => Ok(MountOption::Noexec(false, MsFlags::MS_NOEXEC)),
+            "sync" => Ok(MountOption::Sync(false, MsFlags::MS_SYNCHRONOUS)),
+            "async" => Ok(MountOption::Async(true, MsFlags::MS_SYNCHRONOUS)),
+            "dirsync" => Ok(MountOption::Dirsync(false, MsFlags::MS_DIRSYNC)),
+            "remount" => Ok(MountOption::Remount(false, MsFlags::MS_REMOUNT)),
+            "mand" => Ok(MountOption::Mand(false, MsFlags::MS_MANDLOCK)),
+            "nomand" => Ok(MountOption::Nomand(true, MsFlags::MS_MANDLOCK)),
+            "atime" => Ok(MountOption::Atime(true, MsFlags::MS_NOATIME)),
+            "noatime" => Ok(MountOption::Noatime(false, MsFlags::MS_NOATIME)),
+            "diratime" => Ok(MountOption::Diratime(true, MsFlags::MS_NODIRATIME)),
+            "nodiratime" => Ok(MountOption::Nodiratime(false, MsFlags::MS_NODIRATIME)),
+            "bind" => Ok(MountOption::Bind(false, MsFlags::MS_BIND)),
+            "rbind" => Ok(MountOption::Rbind(
+                false,
+                MsFlags::MS_BIND | MsFlags::MS_REC,
+            )),
+            "unbindable" => Ok(MountOption::Unbindable(false, MsFlags::MS_UNBINDABLE)),
+            "runbindable" => Ok(MountOption::Runbindable(
+                false,
+                MsFlags::MS_UNBINDABLE | MsFlags::MS_REC,
+            )),
+            "private" => Ok(MountOption::Private(true, MsFlags::MS_PRIVATE)),
+            "rprivate" => Ok(MountOption::Rprivate(
+                true,
+                MsFlags::MS_PRIVATE | MsFlags::MS_REC,
+            )),
+            "shared" => Ok(MountOption::Shared(true, MsFlags::MS_SHARED)),
+            "rshared" => Ok(MountOption::Rshared(
+                true,
+                MsFlags::MS_SHARED | MsFlags::MS_REC,
+            )),
+            "slave" => Ok(MountOption::Slave(true, MsFlags::MS_SLAVE)),
+            "rslave" => Ok(MountOption::Rslave(
+                true,
+                MsFlags::MS_SLAVE | MsFlags::MS_REC,
+            )),
+            "relatime" => Ok(MountOption::Relatime(false, MsFlags::MS_RELATIME)),
+            "norelatime" => Ok(MountOption::Norelatime(true, MsFlags::MS_RELATIME)),
+            "strictatime" => Ok(MountOption::Strictatime(false, MsFlags::MS_STRICTATIME)),
+            "nostrictatime" => Ok(MountOption::Nostrictatime(true, MsFlags::MS_STRICTATIME)),
+            _ => Err(option.to_string()),
+        }
+    }
+}
+
 /// Constants used by mount_setattr(2).
 pub enum MountRecursive {
     /// Mount read-only.
