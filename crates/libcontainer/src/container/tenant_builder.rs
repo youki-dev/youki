@@ -143,6 +143,9 @@ impl TenantContainerBuilder {
             detached: self.detached,
             executor: self.base.executor,
             no_pivot: false,
+            stdin: self.base.stdin,
+            stdout: self.base.stdout,
+            stderr: self.base.stderr,
         };
 
         let pid = builder_impl.create()?;
