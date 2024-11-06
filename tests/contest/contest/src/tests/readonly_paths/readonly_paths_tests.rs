@@ -6,6 +6,7 @@ use oci_spec::runtime::{LinuxBuilder, ProcessBuilder, Spec, SpecBuilder};
 use test_framework::{Test, TestGroup, TestResult};
 
 use crate::utils::test_inside_container;
+use crate::utils::test_utils::CreateOptions;
 
 fn get_spec(readonly_paths: Vec<String>) -> Spec {
     SpecBuilder::default()
@@ -60,7 +61,7 @@ fn check_readonly_paths() -> TestResult {
     ];
 
     let spec = get_spec(ro_paths);
-    test_inside_container(spec, &|bundle_path| {
+    test_inside_container(spec, &CreateOptions::default(), &|bundle_path| {
         use std::{fs, io};
         let test_dir = bundle_path.join(&ro_dir_sub);
 
@@ -111,7 +112,7 @@ fn check_readonly_rel_path() -> TestResult {
     let ro_paths = vec![ro_rel_path.to_string()];
     let spec = get_spec(ro_paths);
 
-    test_inside_container(spec, &|bundle_path| {
+    test_inside_container(spec, &CreateOptions::default(), &|bundle_path| {
         use std::{fs, io};
         let test_file = bundle_path.join(ro_rel_path);
 
@@ -142,7 +143,7 @@ fn check_readonly_symlinks() -> TestResult {
 
     let spec = get_spec(ro_paths);
 
-    let res = test_inside_container(spec, &|bundle_path| {
+    let res = test_inside_container(spec, &CreateOptions::default(), &|bundle_path| {
         use std::{fs, io};
         let test_file = bundle_path.join(ro_symlink);
 
@@ -193,7 +194,7 @@ fn test_node(mode: u32) -> TestResult {
 
     let spec = get_spec(ro_paths);
 
-    test_inside_container(spec, &|bundle_path| {
+    test_inside_container(spec, &CreateOptions::default(), &|bundle_path| {
         use std::os::unix::fs::OpenOptionsExt;
         use std::{fs, io};
         let test_file = bundle_path.join(ro_device);

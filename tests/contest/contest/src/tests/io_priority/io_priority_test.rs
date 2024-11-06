@@ -4,6 +4,7 @@ use oci_spec::runtime::{
 };
 use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
 
+use crate::utils::test_utils::CreateOptions;
 use crate::utils::{is_runtime_runc, test_inside_container};
 
 fn create_spec(
@@ -38,7 +39,7 @@ fn io_priority_class_rt_test() -> TestResult {
         "io_priority_class_rt",
         1,
     ));
-    test_inside_container(spec, &|_| Ok(()))
+    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 fn io_priority_class_be_test() -> TestResult {
@@ -47,7 +48,7 @@ fn io_priority_class_be_test() -> TestResult {
         "io_priority_class_be",
         2,
     ));
-    test_inside_container(spec, &|_| Ok(()))
+    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 fn io_priority_class_idle_test() -> TestResult {
@@ -56,7 +57,7 @@ fn io_priority_class_idle_test() -> TestResult {
         "io_priority_class_idle",
         3,
     ));
-    test_inside_container(spec, &|_| Ok(()))
+    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 pub fn get_io_priority_test() -> TestGroup {
