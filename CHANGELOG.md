@@ -1,5 +1,29 @@
 # Changelog
 
+## [v0.4.2](https://github.com/youki-dev/youki/compare/v0.4.1...v0.4.2) - 2024-11-06
+### 🐛 Bug Fixes
+- Fixed ENAMETOOLONG error in setup_console_socket by @morganllewellynjones in https://github.com/youki-dev/youki/pull/2915
+- fix(libcontainer) no_pivot args is not used by @xujihui1985 in https://github.com/youki-dev/youki/pull/2923
+### 📖 Documentation improvements
+- Add the affiliations of youki maintainers by @utam0k in https://github.com/youki-dev/youki/pull/2947
+- docs: update github pages links by @tskxz in https://github.com/youki-dev/youki/pull/2969
+### 🧪 Test improvements and Misc Fixes
+- ci: update action versions to fix deprecation warnings by @YJDoc2 in https://github.com/youki-dev/youki/pull/2918
+- deps: update wasmedge to 0.14.0 by @YJDoc2 in https://github.com/youki-dev/youki/pull/2928
+- Bump oci-spec to 0.7.0 by @kiokuless in https://github.com/youki-dev/youki/pull/2934
+- remove incorrect dependency in readme by @YJDoc2 in https://github.com/youki-dev/youki/pull/2940
+- Add seccomp into feature flags of youki to be compiled in by @musaprg in https://github.com/youki-dev/youki/pull/2924
+- Add unittest to expertiment seccomp programs by @sat0ken in https://github.com/youki-dev/youki/pull/2956
+- print "unknown" instead of defaults if we cannot get kernel config by @YJDoc2 in https://github.com/youki-dev/youki/pull/2964
+### Other Changes
+- selinux: create Vagrantfile for SELinux by @Gekko0114 in https://github.com/youki-dev/youki/pull/2900
+- Cargo.toml: remove unused dependnecies by @Mossaka in https://github.com/youki-dev/youki/pull/2921
+- deps: update wasmtime by @YJDoc2 in https://github.com/youki-dev/youki/pull/2929
+- selinux: fix xattr and remove anyhow by @Gekko0114 in https://github.com/youki-dev/youki/pull/2936
+- .github/workflows/basic: check unused deps on 'check' job by @Mossaka in https://github.com/youki-dev/youki/pull/2941
+- seccomp: Update experiment seccomp program by @sat0ken in https://github.com/youki-dev/youki/pull/2946
+- create mount_rootfs method by @Gekko0114 in https://github.com/youki-dev/youki/pull/2953
+
 ## [v0.4.1](https://github.com/containers/youki/compare/v0.4.0...v0.4.1) - 2024-09-02
 ### 🧪 Test improvements and Misc Fixes
 - prepare for version 0.4.1 by @YJDoc2 in https://github.com/containers/youki/pull/2897
