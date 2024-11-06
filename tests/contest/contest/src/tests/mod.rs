@@ -12,6 +12,7 @@ pub mod mounts_recursive;
 pub mod no_pivot;
 pub mod pidfile;
 pub mod readonly_paths;
+pub mod root_readonly_true;
 pub mod scheduler;
 pub mod seccomp;
 pub mod seccomp_notify;

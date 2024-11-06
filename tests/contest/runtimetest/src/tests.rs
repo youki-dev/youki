@@ -546,6 +546,19 @@ pub fn test_io_priority_class(spec: &Spec, io_priority_class: IOPriorityClass) {
     }
 }
 
+pub fn test_validate_root_readonly() {
+    if let std::io::Result::Err(e) = test_read_access("/") {
+        let errno = Errno::from_raw(e.raw_os_error().unwrap());
+        if errno == Errno::ENOENT {
+            /* This is expected */
+        } else {
+            eprintln!("in readonly paths, error in testing read access for / : {e:?}");
+        }
+    } else {
+        /* Expected */
+    }
+}
+
 // the validate_rootfs function is used to validate the rootfs of the container is
 // as expected. This function is used in the no_pivot test to validate the rootfs
 pub fn validate_rootfs() {
