@@ -11,6 +11,7 @@ pub mod linux_ns_itype;
 pub mod mounts_recursive;
 pub mod no_pivot;
 pub mod pidfile;
+pub mod process;
 pub mod readonly_paths;
 pub mod scheduler;
 pub mod seccomp;
