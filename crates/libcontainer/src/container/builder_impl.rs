@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::Write;
-use std::os::unix::prelude::RawFd;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -36,7 +36,7 @@ pub(super) struct ContainerBuilderImpl {
     /// container process to the higher level runtime
     pub pid_file: Option<PathBuf>,
     /// Socket to communicate the file descriptor of the ptty
-    pub console_socket: Option<RawFd>,
+    pub console_socket: Option<OwnedFd>,
     /// Options for new user namespace
     pub user_ns_config: Option<UserNamespaceConfig>,
     /// Path to the Unix Domain Socket to communicate container start
@@ -148,7 +148,7 @@ impl ContainerBuilderImpl {
             syscall: self.syscall,
             spec: Rc::clone(&self.spec),
             rootfs: self.rootfs.to_owned(),
-            console_socket: self.console_socket,
+            console_socket: self.console_socket.as_ref().map(|c| c.as_raw_fd()),
             notify_listener,
             preserve_fds: self.preserve_fds,
             container: self.container.to_owned(),

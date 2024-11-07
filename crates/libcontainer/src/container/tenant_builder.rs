@@ -3,8 +3,7 @@ use std::convert::TryFrom;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::BufReader;
-use std::os::fd::AsRawFd;
-use std::os::unix::prelude::RawFd;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::str::FromStr;
@@ -500,7 +499,7 @@ impl TenantContainerBuilder {
         Ok(socket_path)
     }
 
-    fn setup_tty_socket(&self, container_dir: &Path) -> Result<Option<RawFd>, LibcontainerError> {
+    fn setup_tty_socket(&self, container_dir: &Path) -> Result<Option<OwnedFd>, LibcontainerError> {
         let tty_name = Self::generate_name(container_dir, TENANT_TTY);
         let csocketfd = if let Some(console_socket) = &self.base.console_socket {
             Some(tty::setup_console_socket(
