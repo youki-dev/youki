@@ -6,10 +6,13 @@ use std::path::Path;
 use anyhow::{bail, Result};
 use nix::errno::Errno;
 use nix::libc;
+use nix::sys::resource::{getrlimit, Resource};
 use nix::sys::utsname;
 use nix::unistd::getcwd;
 use oci_spec::runtime::IOPriorityClass::{self, IoprioClassBe, IoprioClassIdle, IoprioClassRt};
-use oci_spec::runtime::{LinuxDevice, LinuxDeviceType, LinuxSchedulerPolicy, Spec};
+use oci_spec::runtime::{
+    LinuxDevice, LinuxDeviceType, LinuxSchedulerPolicy, PosixRlimit, PosixRlimitType, Spec,
+};
 
 use crate::utils::{self, test_read_access, test_write_access};
 
@@ -543,6 +546,53 @@ pub fn test_io_priority_class(spec: &Spec, io_priority_class: IOPriorityClass) {
     };
     if priority != expected_priority {
         eprintln!("error ioprio_get expected priority {expected_priority:?}, got {priority}")
+    }
+}
+
+pub fn validate_process_rlimits(spec: &Spec) {
+    let process = spec.process().as_ref().unwrap();
+    let spec_rlimits: &Vec<PosixRlimit> = process.rlimits().as_ref().unwrap();
+
+    for spec_rlimit in spec_rlimits.iter() {
+        let (soft_limit, hard_limit) = getrlimit(change_resource_type(spec_rlimit.typ())).unwrap();
+        if spec_rlimit.hard() != hard_limit {
+            eprintln!(
+                "error type of {:?} hard rlimit expected {:?} , got {:?}",
+                spec_rlimit.typ(),
+                spec_rlimit.hard(),
+                hard_limit
+            )
+        }
+
+        if spec_rlimit.soft() != soft_limit {
+            eprintln!(
+                "error type of {:?} soft rlimit expected {:?} , got {:?}",
+                spec_rlimit.typ(),
+                spec_rlimit.soft(),
+                soft_limit
+            )
+        }
+    }
+}
+
+fn change_resource_type(resource_type: PosixRlimitType) -> Resource {
+    match resource_type {
+        PosixRlimitType::RlimitCpu => Resource::RLIMIT_CPU,
+        PosixRlimitType::RlimitFsize => Resource::RLIMIT_FSIZE,
+        PosixRlimitType::RlimitData => Resource::RLIMIT_DATA,
+        PosixRlimitType::RlimitStack => Resource::RLIMIT_STACK,
+        PosixRlimitType::RlimitCore => Resource::RLIMIT_CORE,
+        PosixRlimitType::RlimitRss => Resource::RLIMIT_RSS,
+        PosixRlimitType::RlimitNproc => Resource::RLIMIT_NPROC,
+        PosixRlimitType::RlimitNofile => Resource::RLIMIT_NOFILE,
+        PosixRlimitType::RlimitMemlock => Resource::RLIMIT_MEMLOCK,
+        PosixRlimitType::RlimitAs => Resource::RLIMIT_AS,
+        PosixRlimitType::RlimitLocks => Resource::RLIMIT_LOCKS,
+        PosixRlimitType::RlimitSigpending => Resource::RLIMIT_SIGPENDING,
+        PosixRlimitType::RlimitMsgqueue => Resource::RLIMIT_MSGQUEUE,
+        PosixRlimitType::RlimitNice => Resource::RLIMIT_NICE,
+        PosixRlimitType::RlimitRtprio => Resource::RLIMIT_RTPRIO,
+        PosixRlimitType::RlimitRttime => Resource::RLIMIT_RTTIME,
     }
 }
 
