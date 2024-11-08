@@ -26,7 +26,7 @@ chrono = { version = "0.4", default-features = false, features = [
     "serde",
 ] }
 fastrand = "^2.1.1"
-libc = "0.2.161"
+libc = "0.2.162"
 nix = { version = "0.28.0", features = [
     "socket",
     "sched",

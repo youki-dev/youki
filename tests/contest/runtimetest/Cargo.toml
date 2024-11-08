@@ -7,5 +7,5 @@ edition = "2021"
 oci-spec = { version = "0.7.0", features = ["runtime"] }
 nix = "0.28.0"
 anyhow = "1.0"
-libc = "0.2.161" # TODO (YJDoc2) upgrade to latest
+libc = "0.2.162" # TODO (YJDoc2) upgrade to latest
 nc = "0.9.5"
