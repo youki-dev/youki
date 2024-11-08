@@ -6,8 +6,9 @@ use std::path::Path;
 use anyhow::{bail, Result};
 use nix::errno::Errno;
 use nix::libc;
+use nix::sys::stat::{umask, Mode};
 use nix::sys::utsname;
-use nix::unistd::getcwd;
+use nix::unistd::{getcwd, getgid, getgroups, getuid, Gid, Uid};
 use oci_spec::runtime::IOPriorityClass::{self, IoprioClassBe, IoprioClassIdle, IoprioClassRt};
 use oci_spec::runtime::{LinuxDevice, LinuxDeviceType, LinuxSchedulerPolicy, Spec};
 
@@ -544,6 +545,61 @@ pub fn test_io_priority_class(spec: &Spec, io_priority_class: IOPriorityClass) {
     if priority != expected_priority {
         eprintln!("error ioprio_get expected priority {expected_priority:?}, got {priority}")
     }
+}
+
+pub fn validate_process_user(spec: &Spec) {
+    let process = spec.process().as_ref().unwrap();
+
+    let uid = getuid();
+    let gid = getgid();
+    let current_umask = umask(nix::sys::stat::Mode::empty());
+    umask(current_umask);
+
+    if Uid::from(process.user().uid()) != uid {
+        eprintln!(
+            "error due to uid want {}, got {}",
+            process.user().uid(),
+            uid
+        )
+    }
+
+    if Gid::from(process.user().gid()) != gid {
+        eprintln!(
+            "error due to gid want {}, got {}",
+            process.user().gid(),
+            gid
+        )
+    }
+
+    if let Err(e) = validate_additional_gids(process.user().additional_gids().as_ref().unwrap()) {
+        eprintln!("error additional gids {e}");
+    }
+
+    if Mode::from_bits(process.user().umask().unwrap()).unwrap() != current_umask {
+        eprintln!(
+            "error due to gid want {}, got {:?}",
+            process.user().umask().unwrap(),
+            current_umask
+        )
+    }
+}
+
+// validate_additional_gids function is used to validate additional groups of user
+fn validate_additional_gids(gids: &Vec<u32>) -> std::result::Result<(), std::io::Error> {
+    let groups = getgroups().unwrap();
+
+    for group in groups {
+        for gid in gids {
+            if group != Gid::from(*gid) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("error additional gid want {}, got {}", gid, group),
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 // the validate_rootfs function is used to validate the rootfs of the container is
