@@ -1,13 +1,14 @@
 use std::path::Path;
 
-use crate::utils::test_outside_container;
-use crate::utils::test_utils::check_container_created;
 use anyhow::Context;
 use oci_spec::runtime::{
     LinuxBuilder, LinuxDeviceCgroup, LinuxDeviceCgroupBuilder, LinuxDeviceType,
     LinuxResourcesBuilder, Spec, SpecBuilder,
 };
 use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
+
+use crate::utils::test_outside_container;
+use crate::utils::test_utils::check_container_created;
 
 fn can_run() -> bool {
     Path::new("/sys/fs/cgroup/devices").exists()
