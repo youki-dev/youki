@@ -79,33 +79,19 @@ fn check_masked_paths() -> TestResult {
 fn check_masked_rel_paths() -> TestResult {
     // Deliberately set a relative path to be masked,
     // and expect an error
-    let masked_rel_path = "masked_rel_path";
+    let masked_rel_path = "../masked_rel_path";
     let masked_paths = vec![masked_rel_path.to_string()];
     let spec = get_spec(masked_paths);
 
-    // We expect the container creation to succeed, but don't mask the path because relative paths are not supported
-    // ref: https://github.com/opencontainers/runtime-tools/blob/master/validation/linux_masked_paths/linux_masked_paths.go#L67-L90
-    test_inside_container(spec, &|bundle_path| {
-        use std::{fs, io};
-        let test_file = bundle_path.join(masked_rel_path);
-        match fs::metadata(&test_file) {
-            io::Result::Ok(md) => {
-                bail!(
-                    "reading path {:?} should have given error, found {:?} instead",
-                    test_file,
-                    md
-                )
-            }
-            io::Result::Err(e) => {
-                let err = e.kind();
-                if let io::ErrorKind::NotFound = err {
-                    Ok(())
-                } else {
-                    bail!("expected not found error, got {:?}", err);
-                }
-            }
-        }
-    })
+    let res = test_inside_container(spec, &|_bundle_path| Ok(()));
+    // If the container creation succeeds, we expect an error since the masked paths does not support relative paths.
+    if let TestResult::Passed = res {
+        TestResult::Failed(anyhow!(
+            "expected error in container creation with invalid symlink, found no error"
+        ))
+    } else {
+        TestResult::Passed
+    }
 }
 
 fn check_masked_symlinks() -> TestResult {

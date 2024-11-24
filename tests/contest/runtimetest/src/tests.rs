@@ -836,11 +836,15 @@ pub fn validate_masked_paths(spec: &Spec) {
         return;
     }
 
-    for path in masked_paths {
-        match test_read_access(path) {
+    for path_str in masked_paths {
+        let path = Path::new(path_str);
+        if !path.is_absolute() {
+            eprintln!("in masked paths, the path must be absolute.")
+        }
+        match test_read_access(path_str) {
             Ok(true) => {
                 eprintln!(
-                    "in masked paths, expected path {path} to be masked, but was found readable"
+                    "in masked paths, expected path {path_str} to be masked, but was found readable"
                 );
                 return;
             }
@@ -851,7 +855,7 @@ pub fn validate_masked_paths(spec: &Spec) {
                     /* This is expected */
                 } else {
                     eprintln!(
-                        "in masked paths, error in testing read access for path {path} : {errno:?}"
+                        "in masked paths, error in testing read access for path {path_str} : {errno:?}"
                     );
                     return;
                 }
