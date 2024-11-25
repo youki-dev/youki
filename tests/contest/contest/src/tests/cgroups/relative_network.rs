@@ -59,10 +59,15 @@ fn test_relative_network_cgroups() -> TestResult {
     let if_name = "lo";
     let spec = test_result!(create_spec(cgroup_name, id, prio, if_name));
 
-    test_outside_container(spec, &|data| {
+    let test_result = test_outside_container(spec, &|data| {
         test_result!(check_container_created(&data));
         TestResult::Passed
-    })
+    });
+    if let TestResult::Failed(_) = test_result {
+        return test_result;
+    }
+
+    TestResult::Passed
 }
 
 fn can_run() -> bool {
