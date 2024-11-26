@@ -4,6 +4,7 @@ use rand::Rng;
 use test_framework::{test_result, Test, TestGroup, TestResult};
 
 use crate::utils::test_inside_container;
+use crate::utils::test_utils::CreateOptions;
 
 // Generates a Vec<u32> with a random number of elements (between 5 and 15),
 // where each element is a random u32 value between 0 and 65535.
@@ -43,7 +44,7 @@ fn create_spec() -> Result<Spec> {
 }
 fn process_user_test() -> TestResult {
     let spec = test_result!(create_spec());
-    test_inside_container(spec, &|_| Ok(()))
+    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 pub fn get_process_user_test() -> TestGroup {

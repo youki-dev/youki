@@ -103,6 +103,9 @@ impl InitContainerBuilder {
             detached: self.detached,
             executor: self.base.executor,
             no_pivot: self.no_pivot,
+            stdin: self.base.stdin,
+            stdout: self.base.stdout,
+            stderr: self.base.stderr,
         };
 
         builder_impl.create()?;

@@ -5,6 +5,7 @@ use oci_spec::runtime::{
 use test_framework::{test_result, Test, TestGroup, TestResult};
 
 use crate::utils::test_inside_container;
+use crate::utils::test_utils::CreateOptions;
 
 const GIGABYTES: u64 = 1024 * 1024 * 1024;
 
@@ -54,7 +55,7 @@ fn create_spec() -> Result<Spec> {
 
 fn process_rlimits_test() -> TestResult {
     let spec = test_result!(create_spec());
-    test_inside_container(spec, &|_| Ok(()))
+    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 pub fn get_process_rlimits_test() -> TestGroup {

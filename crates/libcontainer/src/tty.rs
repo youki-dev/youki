@@ -2,12 +2,12 @@
 
 use std::env;
 use std::io::IoSlice;
+use std::os::fd::OwnedFd;
 use std::os::unix::fs::symlink;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::prelude::RawFd;
 use std::path::{Path, PathBuf};
 
-use nix::errno::Errno;
 use nix::sys::socket::{self, UnixAddr};
 use nix::unistd::{close, dup2};
 
@@ -75,12 +75,21 @@ pub fn setup_console_socket(
     container_dir: &Path,
     console_socket_path: &Path,
     socket_name: &str,
-) -> Result<RawFd> {
+) -> Result<OwnedFd> {
+    struct CurrentDirGuard {
+        path: PathBuf,
+    }
+    impl Drop for CurrentDirGuard {
+        fn drop(&mut self) {
+            let _ = env::set_current_dir(&self.path);
+        }
+    }
     // Move into the container directory to avoid sun family conflicts with long socket path names.
     // ref: https://github.com/containers/youki/issues/2910
 
     let prev_dir = env::current_dir().unwrap();
     let _ = env::set_current_dir(container_dir);
+    let _guard = CurrentDirGuard { path: prev_dir };
 
     let linked = PathBuf::from(socket_name);
 
@@ -89,36 +98,29 @@ pub fn setup_console_socket(
         linked: linked.to_path_buf().into(),
         console_socket_path: console_socket_path.to_path_buf().into(),
     })?;
-    // Using ManuallyDrop to keep the socket open.
-    let csocketfd = std::mem::ManuallyDrop::new(
-        socket::socket(
-            socket::AddressFamily::Unix,
-            socket::SockType::Stream,
-            socket::SockFlag::empty(),
-            None,
-        )
-        .map_err(|err| TTYError::CreateConsoleSocketFd { source: err })?,
-    );
-    let csocketfd = match socket::connect(
+    let csocketfd = socket::socket(
+        socket::AddressFamily::Unix,
+        socket::SockType::Stream,
+        socket::SockFlag::empty(),
+        None,
+    )
+    .map_err(|err| TTYError::CreateConsoleSocketFd { source: err })?;
+    socket::connect(
         csocketfd.as_raw_fd(),
         &socket::UnixAddr::new(linked.as_path()).map_err(|err| TTYError::InvalidSocketName {
             source: err,
             socket_name: socket_name.to_string(),
         })?,
-    ) {
-        Err(Errno::ENOENT) => -1,
-        Err(errno) => Err(TTYError::CreateConsoleSocket {
-            source: errno,
-            socket_name: socket_name.to_string(),
-        })?,
-        Ok(()) => csocketfd.as_raw_fd(),
-    };
+    )
+    .map_err(|e| TTYError::CreateConsoleSocket {
+        source: e,
+        socket_name: socket_name.to_string(),
+    })?;
 
-    let _ = env::set_current_dir(prev_dir);
     Ok(csocketfd)
 }
 
-pub fn setup_console(console_fd: &RawFd) -> Result<()> {
+pub fn setup_console(console_fd: RawFd) -> Result<()> {
     // You can also access pty master, but it is better to use the API.
     // ref. https://github.com/containerd/containerd/blob/261c107ffc4ff681bc73988f64e3f60c32233b37/vendor/github.com/containerd/go-runc/console.go#L139-L154
     let openpty_result = nix::pty::openpty(None, None)
@@ -133,21 +135,15 @@ pub fn setup_console(console_fd: &RawFd) -> Result<()> {
 
     let fds = [master.as_raw_fd()];
     let cmsg = socket::ControlMessage::ScmRights(&fds);
-    socket::sendmsg::<UnixAddr>(
-        console_fd.as_raw_fd(),
-        &iov,
-        &[cmsg],
-        socket::MsgFlags::empty(),
-        None,
-    )
-    .map_err(|err| TTYError::SendPtyMaster { source: err })?;
+    socket::sendmsg::<UnixAddr>(console_fd, &iov, &[cmsg], socket::MsgFlags::empty(), None)
+        .map_err(|err| TTYError::SendPtyMaster { source: err })?;
 
     if unsafe { libc::ioctl(slave.as_raw_fd(), libc::TIOCSCTTY) } < 0 {
         tracing::warn!("could not TIOCSCTTY");
     };
     let slave = slave.as_raw_fd();
     connect_stdio(&slave, &slave, &slave)?;
-    close(console_fd.as_raw_fd()).map_err(|err| TTYError::CloseConsoleSocket { source: err })?;
+    close(console_fd).map_err(|err| TTYError::CloseConsoleSocket { source: err })?;
 
     Ok(())
 }
@@ -174,6 +170,7 @@ fn connect_stdio(stdin: &RawFd, stdout: &RawFd, stderr: &RawFd) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use std::fs::File;
+    use std::os::fd::IntoRawFd;
     use std::os::unix::net::UnixListener;
 
     use anyhow::{Ok, Result};
@@ -200,8 +197,8 @@ mod tests {
     fn test_setup_console_socket_empty() -> Result<()> {
         let testdir = tempfile::tempdir()?;
         let socket_path = Path::join(testdir.path(), "test-socket");
-        let fd = setup_console_socket(testdir.path(), &socket_path, CONSOLE_SOCKET)?;
-        assert_eq!(fd.as_raw_fd(), -1);
+        let fd = setup_console_socket(testdir.path(), &socket_path, CONSOLE_SOCKET);
+        assert!(fd.is_err());
         Ok(())
     }
 
@@ -232,8 +229,8 @@ mod tests {
 
         let lis = UnixListener::bind(&socket_path);
         assert!(lis.is_ok());
-        let fd = setup_console_socket(testdir.path(), &socket_path, CONSOLE_SOCKET);
-        let status = setup_console(&fd.unwrap());
+        let fd = setup_console_socket(testdir.path(), &socket_path, CONSOLE_SOCKET)?;
+        let status = setup_console(fd.into_raw_fd());
 
         // restore the original std* before doing final assert
         dup2(old_stdin, StdIO::Stdin.into())?;

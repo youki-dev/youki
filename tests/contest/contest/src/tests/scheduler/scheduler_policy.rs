@@ -4,6 +4,7 @@ use oci_spec::runtime::{
 };
 use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
 
+use crate::utils::test_utils::CreateOptions;
 use crate::utils::{is_runtime_runc, test_inside_container};
 
 fn create_spec(policy: LinuxSchedulerPolicy, execute_test: &str) -> Result<Spec> {
@@ -33,7 +34,7 @@ fn scheduler_policy_other_test() -> TestResult {
         LinuxSchedulerPolicy::SchedOther,
         "scheduler_policy_other"
     ));
-    test_inside_container(spec, &|_| Ok(()))
+    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 fn scheduler_policy_batch_test() -> TestResult {
@@ -41,7 +42,7 @@ fn scheduler_policy_batch_test() -> TestResult {
         LinuxSchedulerPolicy::SchedBatch,
         "scheduler_policy_batch"
     ));
-    test_inside_container(spec, &|_| Ok(()))
+    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 pub fn get_scheduler_test() -> TestGroup {

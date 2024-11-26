@@ -1,6 +1,7 @@
 use oci_spec::runtime::{ProcessBuilder, Spec, SpecBuilder};
 use test_framework::{ConditionalTest, TestGroup, TestResult};
 
+use crate::utils::test_utils::CreateOptions;
 use crate::utils::{is_runtime_runc, test_inside_container};
 
 fn get_spec(domainname: &str) -> Spec {
@@ -21,7 +22,7 @@ fn get_spec(domainname: &str) -> Spec {
 
 fn set_domainname_test() -> TestResult {
     let spec = get_spec("domainname");
-    test_inside_container(spec, &|_| Ok(()))
+    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 pub fn get_domainname_tests() -> TestGroup {

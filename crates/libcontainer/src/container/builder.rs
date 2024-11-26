@@ -1,3 +1,4 @@
+use std::os::fd::OwnedFd;
 use std::path::PathBuf;
 
 use super::init_builder::InitContainerBuilder;
@@ -24,6 +25,12 @@ pub struct ContainerBuilder {
     /// The function that actually runs on the container init process. Default
     /// is to execute the specified command in the oci spec.
     pub(super) executor: Box<dyn Executor>,
+    // RawFd set to stdin of the container init process.
+    pub stdin: Option<OwnedFd>,
+    // RawFd set to stdout of the container init process.
+    pub stdout: Option<OwnedFd>,
+    // RawFd set to stderr of the container init process.
+    pub stderr: Option<OwnedFd>,
 }
 
 /// Builder that can be used to configure the common properties of
@@ -70,6 +77,9 @@ impl ContainerBuilder {
             console_socket: None,
             preserve_fds: 0,
             executor: workload::default::get_executor(),
+            stdin: None,
+            stdout: None,
+            stderr: None,
         }
     }
 
@@ -257,13 +267,84 @@ impl ContainerBuilder {
         self.executor = Box::new(executor);
         self
     }
+
+    /// Sets the stdin of the container, for those who use libcontainer as a library,
+    /// the container stdin may have to be set to an opened file descriptor
+    /// rather than the stdin of the current process.
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use libcontainer::container::builder::ContainerBuilder;
+    /// # use libcontainer::syscall::syscall::SyscallType;
+    /// # use libcontainer::workload::default::DefaultExecutor;
+    /// # use nix::unistd::pipe;
+    ///
+    /// let (r, _w) = pipe().unwrap();
+    /// ContainerBuilder::new(
+    ///     "74f1a4cb3801".to_owned(),
+    ///     SyscallType::default(),
+    /// )
+    /// .with_stdin(r);
+    /// ```
+    pub fn with_stdin(mut self, stdin: impl Into<OwnedFd>) -> Self {
+        self.stdin = Some(stdin.into());
+        self
+    }
+
+    /// Sets the stdout of the container, for those who use libcontainer as a library,
+    /// the container stdout may have to be set to an opened file descriptor
+    /// rather than the stdout of the current process.
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use libcontainer::container::builder::ContainerBuilder;
+    /// # use libcontainer::syscall::syscall::SyscallType;
+    /// # use libcontainer::workload::default::DefaultExecutor;
+    /// # use nix::unistd::pipe;
+    ///
+    /// let (_r, w) = pipe().unwrap();
+    /// ContainerBuilder::new(
+    ///     "74f1a4cb3801".to_owned(),
+    ///     SyscallType::default(),
+    /// )
+    /// .with_stdout(w);
+    /// ```
+    pub fn with_stdout(mut self, stdout: impl Into<OwnedFd>) -> Self {
+        self.stdout = Some(stdout.into());
+        self
+    }
+
+    /// Sets the stderr of the container, for those who use libcontainer as a library,
+    /// the container stderr may have to be set to an opened file descriptor
+    /// rather than the stderr of the current process.
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use libcontainer::container::builder::ContainerBuilder;
+    /// # use libcontainer::syscall::syscall::SyscallType;
+    /// # use libcontainer::workload::default::DefaultExecutor;
+    /// # use nix::unistd::pipe;
+    ///
+    /// let (_r, w) = pipe().unwrap();
+    /// ContainerBuilder::new(
+    ///     "74f1a4cb3801".to_owned(),
+    ///     SyscallType::default(),
+    /// )
+    /// .with_stderr(w);
+    /// ```
+    pub fn with_stderr(mut self, stderr: impl Into<OwnedFd>) -> Self {
+        self.stderr = Some(stderr.into());
+        self
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::os::fd::AsRawFd;
     use std::path::PathBuf;
 
     use anyhow::{Context, Result};
+    use nix::unistd::pipe;
 
     use crate::container::builder::ContainerBuilder;
     use crate::syscall::syscall::SyscallType;
@@ -332,6 +413,37 @@ mod tests {
 
         let result = ContainerBuilder::new("74f1a4cb3801".to_owned(), syscall).validate_id();
         assert!(result.is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn test_stdios() -> Result<()> {
+        let (r, _w) = pipe()?;
+        let stdin_raw = r.as_raw_fd();
+        let builder =
+            ContainerBuilder::new("74f1a4cb3801".to_owned(), SyscallType::default()).with_stdin(r);
+        assert_eq!(
+            builder.stdin.as_ref().map(|o| o.as_raw_fd()),
+            Some(stdin_raw)
+        );
+
+        let (_r, w) = pipe()?;
+        let stdout_raw = w.as_raw_fd();
+        let builder =
+            ContainerBuilder::new("74f1a4cb3801".to_owned(), SyscallType::default()).with_stdout(w);
+        assert_eq!(
+            builder.stdout.as_ref().map(|o| o.as_raw_fd()),
+            Some(stdout_raw)
+        );
+
+        let (_r, w) = pipe()?;
+        let stderr_raw = w.as_raw_fd();
+        let builder =
+            ContainerBuilder::new("74f1a4cb3801".to_owned(), SyscallType::default()).with_stderr(w);
+        assert_eq!(
+            builder.stderr.as_ref().map(|o| o.as_raw_fd()),
+            Some(stderr_raw)
+        );
         Ok(())
     }
 }

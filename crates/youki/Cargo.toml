@@ -35,7 +35,7 @@ libcontainer = { path = "../libcontainer", default-features = false, version = "
 liboci-cli = { path = "../liboci-cli", version = "0.4.1" } # MARK: Version
 nix = "0.28.0"
 pentacle = "1.1.0"
-procfs = "0.16.0"
+procfs = "0.17.0"
 serde_json = "1.0"
 tabwriter = "1"
 clap_complete = "4.1.3"

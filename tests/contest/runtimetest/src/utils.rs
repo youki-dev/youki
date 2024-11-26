@@ -14,7 +14,7 @@ fn test_file_read_access(path: &str) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-fn test_dir_read_access(path: &str) -> Result<(), std::io::Error> {
+pub fn test_dir_read_access(path: &str) -> Result<(), std::io::Error> {
     let _ = std::fs::read_dir(path)?;
     Ok(())
 }
@@ -51,7 +51,7 @@ fn test_file_write_access(path: &str) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-fn test_dir_write_access(path: &str) -> Result<(), std::io::Error> {
+pub fn test_dir_write_access(path: &str) -> Result<(), std::io::Error> {
     let _ = std::fs::OpenOptions::new()
         .create(true)
         .truncate(true)

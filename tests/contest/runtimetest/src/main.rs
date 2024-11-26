@@ -44,6 +44,8 @@ fn main() {
         "io_priority_class_be" => tests::test_io_priority_class(&spec, IoprioClassBe),
         "io_priority_class_idle" => tests::test_io_priority_class(&spec, IoprioClassIdle),
         "devices" => tests::validate_devices(&spec),
+        "root_readonly" => tests::test_validate_root_readonly(&spec),
+        "process" => tests::validate_process(&spec),
         "process_user" => tests::validate_process_user(&spec),
         "process_rlimits" => tests::validate_process_rlimits(&spec),
         "no_pivot" => tests::validate_rootfs(),

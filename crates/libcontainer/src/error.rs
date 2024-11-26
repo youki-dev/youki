@@ -62,6 +62,8 @@ pub enum LibcontainerError {
     CgroupGet(#[from] libcgroups::common::GetCgroupSetupError),
     #[error[transparent]]
     Checkpoint(#[from] crate::container::CheckpointError),
+    #[error[transparent]]
+    CreateContainerError(#[from] CreateContainerError),
 
     // Catch all errors that are not covered by the above
     #[error("syscall error")]
@@ -96,4 +98,55 @@ pub enum ErrInvalidSpec {
     IoPriority,
     #[error("invalid scheduler config for process")]
     Scheduler,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub struct CreateContainerError(Box<LibcontainerError>, Option<Box<LibcontainerError>>);
+
+impl CreateContainerError {
+    pub(crate) fn new(
+        run_error: LibcontainerError,
+        cleanup_error: Option<LibcontainerError>,
+    ) -> Self {
+        Self(Box::new(run_error), cleanup_error.map(Box::new))
+    }
+}
+
+impl std::fmt::Display for CreateContainerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "failed to create container: {}", self.0)?;
+        if let Some(cleanup_err) = &self.1 {
+            write!(f, ". error during cleanup: {}", cleanup_err)?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use libcgroups::common::CreateCgroupSetupError;
+
+    use super::{CreateContainerError, ErrInvalidID};
+
+    #[test]
+    fn test_create_container() {
+        let create_container_err =
+            CreateContainerError::new(CreateCgroupSetupError::NonDefault.into(), None);
+        let msg = format!("{}", create_container_err);
+        assert_eq!(
+            "failed to create container: non default cgroup root not supported",
+            msg
+        );
+
+        let create_container_err = CreateContainerError::new(
+            CreateCgroupSetupError::NonDefault.into(),
+            Some(ErrInvalidID::Empty.into()),
+        );
+        let msg = format!("{}", create_container_err);
+        assert_eq!(
+            "failed to create container: non default cgroup root not supported. \
+         error during cleanup: container id can't be empty",
+            msg
+        );
+    }
 }
