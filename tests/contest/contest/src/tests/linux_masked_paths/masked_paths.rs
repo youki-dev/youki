@@ -6,6 +6,7 @@ use oci_spec::runtime::{LinuxBuilder, ProcessBuilder, Spec, SpecBuilder};
 use test_framework::{Test, TestGroup, TestResult};
 
 use crate::utils::test_inside_container;
+use crate::utils::test_utils::CreateOptions;
 
 fn get_spec(masked_paths: Vec<String>) -> Spec {
     SpecBuilder::default()
@@ -51,7 +52,7 @@ fn check_masked_paths() -> TestResult {
 
     let spec = get_spec(masked_paths);
 
-    test_inside_container(spec, &|bundle_path| {
+    test_inside_container(spec, &CreateOptions::default(), &|bundle_path| {
         use std::fs;
         let test_dir = bundle_path.join(&masked_dir_sub);
         fs::create_dir_all(&test_dir)?;
@@ -83,7 +84,7 @@ fn check_masked_rel_paths() -> TestResult {
     let masked_paths = vec![masked_rel_path.to_string()];
     let spec = get_spec(masked_paths);
 
-    let res = test_inside_container(spec, &|_bundle_path| Ok(()));
+    let res = test_inside_container(spec, &CreateOptions::default(), &|_bundle_path| Ok(()));
     // If the container creation succeeds, we expect an error since the masked paths does not support relative paths.
     if let TestResult::Passed = res {
         TestResult::Failed(anyhow!(
@@ -102,7 +103,7 @@ fn check_masked_symlinks() -> TestResult {
     let masked_paths = vec![root.join(masked_symlink).to_string_lossy().to_string()];
     let spec = get_spec(masked_paths);
 
-    let res = test_inside_container(spec, &|bundle_path| {
+    let res = test_inside_container(spec, &CreateOptions::default(), &|bundle_path| {
         use std::{fs, io};
         let test_file = bundle_path.join(masked_symlink);
         // ln -s ../masked-symlink ; readlink -f /masked-symlink; ls -L /masked-symlink
@@ -156,7 +157,7 @@ fn test_mode(mode: u32) -> TestResult {
     let masked_paths = vec![root.join(masked_device).to_string_lossy().to_string()];
     let spec = get_spec(masked_paths);
 
-    test_inside_container(spec, &|bundle_path| {
+    test_inside_container(spec, &CreateOptions::default(), &|bundle_path| {
         use std::os::unix::fs::OpenOptionsExt;
         use std::{fs, io};
         let test_file = bundle_path.join(masked_device);
