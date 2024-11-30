@@ -1,0 +1,2 @@
+mod rootfs_propagation_test;
+pub use rootfs_propagation_test::get_rootfs_propagation_test;
