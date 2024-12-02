@@ -1,6 +1,7 @@
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use oci_spec::runtime::{
     LinuxBuilder, LinuxInterfacePriorityBuilder, LinuxNetworkBuilder, LinuxResourcesBuilder, Spec,
     SpecBuilder,
@@ -9,7 +10,7 @@ use pnet_datalink::interfaces;
 use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
 
 use crate::utils::test_outside_container;
-use crate::utils::test_utils::check_container_created;
+use crate::utils::test_utils::{check_container_created, CGROUP_ROOT};
 
 fn create_spec(cgroup_name: &str, class_id: u32, prio: u32, if_name: &str) -> Result<Spec> {
     // Create the Linux Spec
@@ -59,8 +60,9 @@ fn test_relative_network_cgroups() -> TestResult {
     let if_name = "lo";
     let spec = test_result!(create_spec(cgroup_name, id, prio, if_name));
 
-    let test_result = test_outside_container(spec, &|data| {
+    let test_result = test_outside_container(spec.clone(), &|data| {
         test_result!(check_container_created(&data));
+        test_result!(validate_network(cgroup_name, &spec));
         TestResult::Passed
     });
     if let TestResult::Failed(_) = test_result {
@@ -68,6 +70,52 @@ fn test_relative_network_cgroups() -> TestResult {
     }
 
     TestResult::Passed
+}
+
+/// validates the Network structure parsed from /sys/fs/cgroup/net_cls,net_prio with the spec
+fn validate_network(cgroup_name: &str, spec: &Spec) -> Result<()> {
+    let cgroup_path = PathBuf::from(CGROUP_ROOT)
+        .join("net_cls,net_prio/runtime-test")
+        .join(cgroup_name);
+
+    let resources = spec.linux().as_ref().unwrap().resources().as_ref().unwrap();
+    let spec_network = resources.network().as_ref().unwrap();
+
+    // Validate net_cls.classid
+    let classid_path = cgroup_path.join("net_cls.classid");
+    let classid_content = fs::read_to_string(&classid_path)
+        .with_context(|| format!("failed to read {:?}", classid_path))?;
+    let expected_classid = spec_network.class_id().unwrap();
+    let actual_classid: u32 = classid_content
+        .trim()
+        .parse()
+        .with_context(|| format!("could not parse {:?}", classid_content.trim()))?;
+    if expected_classid != actual_classid {
+        bail!(
+            "expected {:?} to contain a classid of {}, but the classid was {}",
+            classid_path,
+            expected_classid,
+            actual_classid
+        );
+    }
+
+    // Validate net_prio.ifpriomap
+    let ifpriomap_path = cgroup_path.join("net_prio.ifpriomap");
+    let ifpriomap_content = fs::read_to_string(&ifpriomap_path)
+        .with_context(|| format!("failed to read {:?}", ifpriomap_path))?;
+    let expected_priorities = spec_network.priorities().as_ref().unwrap();
+    for priority in expected_priorities {
+        let expected_entry = format!("{} {}", priority.name(), priority.priority());
+        if !ifpriomap_content.contains(&expected_entry) {
+            bail!(
+                "expected {:?} to contain an entry '{}', but it was not found",
+                ifpriomap_path,
+                expected_entry
+            );
+        }
+    }
+
+    Ok(())
 }
 
 fn can_run() -> bool {
