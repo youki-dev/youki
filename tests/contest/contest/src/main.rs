@@ -25,6 +25,7 @@ use crate::tests::mounts_recursive::get_mounts_recursive_test;
 use crate::tests::no_pivot::get_no_pivot_test;
 use crate::tests::pidfile::get_pidfile_test;
 use crate::tests::process::get_process_test;
+use crate::tests::process_capabilities_fail::get_process_capabilities_fail_test;
 use crate::tests::process_oom_score_adj::get_process_oom_score_adj_test;
 use crate::tests::process_rlimits::get_process_rlimits_test;
 use crate::tests::process_rlimits_fail::get_process_rlimits_fail_test;
@@ -136,6 +137,7 @@ fn main() -> Result<()> {
     let fd_control = get_fd_control_test();
     let masked_paths = get_linux_masked_paths_tests();
     let rootfs_propagation = get_rootfs_propagation_test();
+    let process_capabilities_fail = get_process_capabilities_fail_test();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -171,6 +173,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(process_oom_score_adj));
     tm.add_test_group(Box::new(fd_control));
     tm.add_test_group(Box::new(rootfs_propagation));
+    tm.add_test_group(Box::new(process_capabilities_fail));
 
     tm.add_test_group(Box::new(io_priority_test));
     tm.add_cleanup(Box::new(cgroups::cleanup_v1));
