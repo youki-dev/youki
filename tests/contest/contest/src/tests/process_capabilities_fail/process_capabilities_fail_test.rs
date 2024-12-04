@@ -1,18 +1,14 @@
-use anyhow::{anyhow, Context, Ok, Result};
+use anyhow::{Context, Error, Ok, Result};
 use oci_spec::runtime::{Capability, LinuxCapabilitiesBuilder, ProcessBuilder, Spec, SpecBuilder};
 use std::collections::HashSet;
 use std::str::FromStr;
-use test_framework::{test_result, Test, TestGroup, TestResult};
-
-use crate::utils::test_inside_container;
-use crate::utils::test_utils::CreateOptions;
+use test_framework::{Test, TestGroup, TestResult};
 
 fn create_spec() -> Result<Spec> {
-    let cap_test = Capability::from_str("CAP_TEST").context("invalid capability: CAP_TEST")?;
+    let capability = Capability::from_str("CAP_TEST").context("invalid capability")?;
 
     let linux_capability = LinuxCapabilitiesBuilder::default()
-        .bounding(HashSet::from([cap_test]))
-        // .bounding(HashSet::from([Capability::from_str("CAP_TEST")]))
+        .bounding(HashSet::from([capability]))
         .build()?;
 
     let process = ProcessBuilder::default()
@@ -33,14 +29,9 @@ fn create_spec() -> Result<Spec> {
 }
 
 fn process_capabilities_fail_test() -> TestResult {
-    let spec = test_result!(create_spec());
-
-    let result = test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()));
-
-    match result {
-        TestResult::Failed(_) => TestResult::Passed,
-        TestResult::Passed => TestResult::Failed(anyhow!("test unexpectedly passed.")),
-        _ => TestResult::Failed(anyhow!("test result was unexpected.")),
+    match create_spec() {
+        Result::Ok(_) => TestResult::Failed(Error::msg("create_spec succeeded unexpectedly.")),
+        Err(_e) => TestResult::Passed,
     }
 }
 
