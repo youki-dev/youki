@@ -31,7 +31,13 @@ fn create_spec() -> Result<Spec> {
 fn process_capabilities_fail_test() -> TestResult {
     match create_spec() {
         Result::Ok(_) => TestResult::Failed(Error::msg("create_spec succeeded unexpectedly.")),
-        Err(_e) => TestResult::Passed,
+        Err(e) => {
+            if e.to_string() == "invalid capability" {
+                TestResult::Passed
+            } else {
+                TestResult::Failed(Error::msg(format!("unexpected error: {}", e)))
+            }
+        }
     }
 }
 
