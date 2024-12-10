@@ -14,7 +14,7 @@ use nix::unistd::{pipe2, read, Pid};
 use oci_spec::runtime::{
     Capabilities as SpecCapabilities, Capability as SpecCapability, LinuxBuilder,
     LinuxCapabilities, LinuxCapabilitiesBuilder, LinuxNamespace, LinuxNamespaceBuilder,
-    LinuxNamespaceType, LinuxSchedulerPolicy, Process, ProcessBuilder, Spec,
+    LinuxNamespaceType, LinuxSchedulerPolicy, Process, ProcessBuilder, Spec, UserBuilder,
 };
 use procfs::process::Namespace;
 
@@ -32,6 +32,26 @@ const NAMESPACE_TYPES: &[&str] = &["ipc", "uts", "net", "pid", "mnt", "cgroup"];
 const TENANT_NOTIFY: &str = "tenant-notify-";
 const TENANT_TTY: &str = "tenant-tty-";
 
+fn get_path_from_spec(spec: &Spec) -> Option<String> {
+    let process = match spec.process() {
+        Some(p) => p,
+        None => return None,
+    };
+    let env = match process.env() {
+        Some(e) => e,
+        None => return None,
+    };
+    // as per runtime spec, env vars should follow https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap08.html#tag_08_01
+    // and that specifies having multiple env with same name is undefined behaviour
+    // so we take the last occurrence of PATH as that is somewhat intuitional of last
+    // specified value overriding
+    env.iter()
+        .find(|e| e.starts_with("PATH"))
+        .iter()
+        .last()
+        .map(|s| s.to_string())
+}
+
 /// Builder that can be used to configure the properties of a process
 /// that will join an existing container sandbox
 pub struct TenantContainerBuilder {
@@ -44,6 +64,9 @@ pub struct TenantContainerBuilder {
     process: Option<PathBuf>,
     detached: bool,
     as_sibling: bool,
+    additional_gids: Vec<u32>,
+    user: Option<u32>,
+    group: Option<u32>,
 }
 
 /// This is a helper function to get capabilities for tenant container, based on
@@ -136,6 +159,9 @@ impl TenantContainerBuilder {
             process: None,
             detached: false,
             as_sibling: false,
+            additional_gids: vec![],
+            user: None,
+            group: None,
         }
     }
 
@@ -181,6 +207,21 @@ impl TenantContainerBuilder {
 
     pub fn with_detach(mut self, detached: bool) -> Self {
         self.detached = detached;
+        self
+    }
+
+    pub fn with_additional_gids(mut self, gids: Vec<u32>) -> Self {
+        self.additional_gids = gids;
+        self
+    }
+
+    pub fn with_user(mut self, user: Option<u32>) -> Self {
+        self.user = user;
+        self
+    }
+
+    pub fn with_group(mut self, group: Option<u32>) -> Self {
+        self.group = group;
         self
     }
 
@@ -398,9 +439,10 @@ impl TenantContainerBuilder {
         let process = if let Some(process) = &self.process {
             self.get_process(process)?
         } else {
+            let original_path_env = get_path_from_spec(spec);
             let mut process_builder = ProcessBuilder::default()
                 .args(self.get_args()?)
-                .env(self.get_environment());
+                .env(self.get_environment(original_path_env));
             if let Some(cwd) = self.get_working_dir()? {
                 process_builder = process_builder.cwd(cwd);
             }
@@ -411,6 +453,22 @@ impl TenantContainerBuilder {
 
             let capabilities = get_capabilities(&self.capabilities, spec)?;
             process_builder = process_builder.capabilities(capabilities);
+
+            let mut user_builder = UserBuilder::default();
+
+            if !self.additional_gids.is_empty() {
+                user_builder = user_builder.additional_gids(self.additional_gids.clone());
+            }
+
+            if let Some(uid) = self.user {
+                user_builder = user_builder.uid(uid);
+            }
+
+            if let Some(gid) = self.group {
+                user_builder = user_builder.gid(gid);
+            }
+
+            process_builder = process_builder.user(user_builder.build()?);
 
             process_builder.build()?
         };
@@ -471,8 +529,28 @@ impl TenantContainerBuilder {
         Ok(self.args.clone())
     }
 
-    fn get_environment(&self) -> Vec<String> {
-        self.env.iter().map(|(k, v)| format!("{k}={v}")).collect()
+    fn get_environment(&self, path: Option<String>) -> Vec<String> {
+        let mut env_exists = false;
+        let mut env: Vec<String> = self
+            .env
+            .iter()
+            .map(|(k, v)| {
+                if k == "PATH" {
+                    env_exists = true;
+                }
+                format!("{k}={v}")
+            })
+            .collect();
+        // It is not possible in normal flow that path is None. The original container
+        // creation would have failed if path was absent. However we use Option
+        // just as a caution, and if neither exec cmd not original spec has PATH,
+        // the container creation will fail later which is ok
+        if let Some(p) = path {
+            if !env_exists {
+                env.push(p);
+            }
+        }
+        env
     }
 
     fn get_no_new_privileges(&self) -> Option<bool> {
