@@ -3,10 +3,8 @@ use crate::tools::PathXattr;
 use crate::tools::*;
 use nix::sys::socket::getsockopt;
 use std::convert::TryFrom;
-use std::io::{BufRead, BufReader};
 use std::os::fd::AsFd;
 use std::path::Path;
-use std::sync::atomic::Ordering;
 
 const XATTR_NAME_SELINUX: &str = "security.selinux";
 const KEY_LABEL_PATH: &str = "/proc/self/attr/keycreate";
@@ -60,7 +58,7 @@ impl TryFrom<String> for SELinuxLabel {
 }
 
 // This impl is for methods related to labels in SELinux struct.
-impl SELinux {
+impl<'a> SELinux<'a> {
     // set_file_label sets the SELinux label for this path, following symlinks, or returns an error.
     pub fn set_file_label<P: AsRef<Path> + PathXattr>(
         fpath: P,
@@ -235,7 +233,7 @@ impl SELinux {
 
     // kvm_container_labels returns the default processLabel and mountLabel to be used
     // for kvm containers by the calling process.
-    pub fn kvm_container_labels(&mut self) -> (Option<SELinuxLabel>, Option<SELinuxLabel>) {
+    pub fn kvm_container_labels(&'a mut self) -> (Option<&SELinuxLabel>, Option<&SELinuxLabel>) {
         let process_label =
             Self::label(self, "kvm_process").or_else(|| Self::label(self, "process"));
         (process_label, Self::label(self, "file"))
@@ -244,7 +242,7 @@ impl SELinux {
 
     // init_container_labels returns the default processLabel and file labels to be
     // used for containers running an init system like systemd by the calling process.
-    pub fn init_container_labels(&mut self) -> (Option<SELinuxLabel>, Option<SELinuxLabel>) {
+    pub fn init_container_labels(&'a mut self) -> (Option<&SELinuxLabel>, Option<&SELinuxLabel>) {
         let process_label =
             Self::label(self, "init_process").or_else(|| Self::label(self, "process"));
         (process_label, Self::label(self, "file"))
@@ -253,61 +251,31 @@ impl SELinux {
 
     // container_labels returns an allocated processLabel and fileLabel to be used for
     // container labeling by the calling process.
-    pub fn container_labels(&mut self) -> (Option<SELinuxLabel>, Option<SELinuxLabel>) {
-        if !Self::get_enabled(self) {
+    pub fn container_labels(&'a mut self) -> (Option<&SELinuxLabel>, Option<&SELinuxLabel>) {
+        if !self.get_enabled() {
             return (None, None);
         }
-        let process_label = Self::label(self, "process");
-        let file_label = Self::label(self, "file");
+        // let process_label = Self::label(self, "process");
+        // let file_label = Self::label(self, "file");
+        let process_label = self.labels.get("process");
+        let file_label = self.labels.get("file");
 
         if process_label.is_none() || file_label.is_none() {
             return (process_label, file_label);
         }
 
-        let mut read_only_file_label = Self::label(self, "ro_file");
-        if read_only_file_label.is_none() {
-            read_only_file_label = file_label.clone();
-        }
-        self.read_only_file_label = read_only_file_label;
+        self.read_only_file_label = match self.labels.get("ro_file") {
+            None => file_label,
+            Some(ro_file_label) => Some(ro_file_label),
+        };
 
         (process_label, file_label)
         // TODO: use addMcs
     }
 
     // This function returns the value of given key on selinux context
-    fn label(&mut self, key: &str) -> Option<SELinuxLabel> {
-        if !self.load_labels_init_done.load(Ordering::SeqCst) {
-            Self::load_labels(self);
-            self.load_labels_init_done.store(true, Ordering::SeqCst);
-        }
-        self.labels.get(key).cloned()
-    }
-
-    // This function loads context file and reads labels and stores it.
-    fn load_labels(&mut self) {
-        // The context file should have pairs of key and value like below.
-        // ----------
-        // process = "system_u:system_r:container_t:s0"
-        // file = "system_u:object_r:container_file_t:s0"
-        // ----------
-        if let Ok(file) = Self::open_context_file(self) {
-            let reader = BufReader::new(file);
-            for line in reader.lines().map_while(Result::ok) {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with(';') || line.starts_with('#') {
-                    continue;
-                }
-                let fields: Vec<&str> = line.splitn(2, '=').collect();
-                if fields.len() != 2 {
-                    continue;
-                }
-                let key = fields[0].trim().to_string();
-                let value = fields[1].trim_matches('"').trim().to_string();
-                if let Ok(value_label) = SELinuxLabel::try_from(value) {
-                    self.labels.insert(key, value_label);
-                }
-            }
-        }
+    fn label(&'a self, key: &str) -> Option<&'a SELinuxLabel> {
+        self.labels.get(key)
     }
 
     // format_mount_label returns a string to be used by the mount command.

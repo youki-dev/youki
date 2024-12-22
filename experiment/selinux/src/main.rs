@@ -4,7 +4,7 @@ use std::fs::File;
 use std::path::Path;
 
 fn main() -> Result<(), SELinuxError> {
-    let mut selinux_instance: SELinux = SELinux::new();
+    let mut selinux_instance: SELinux = SELinux::new(Path::new(DEFAULT_SELINUX_DIR))?;
 
     if selinux_instance.get_enabled() {
         println!("selinux is enabled");

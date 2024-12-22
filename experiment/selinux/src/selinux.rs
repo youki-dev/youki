@@ -54,11 +54,11 @@ impl fmt::Display for SELinuxMode {
 }
 
 pub(crate) const ERR_EMPTY_PATH: &str = "empty path";
+pub const DEFAULT_SELINUX_DIR: &str = "/etc/selinux/";
 const SELINUX_FS_MOUNT: &str = "/sys/fs/selinux";
 const CONTEXT_FILE: &str = "/usr/share/containers/selinux/contexts";
 const SELINUX_TYPE_TAG: &str = "SELINUXTYPE";
 const SELINUX_TAG: &str = "SELINUX";
-const SELINUX_DIR: &str = "/etc/selinux/";
 const SELINUX_CONFIG: &str = "config";
 
 #[derive(Debug, thiserror::Error)]
@@ -91,9 +91,13 @@ pub enum SELinuxError {
     GetConfigKey(String),
     #[error("Invalid format for SELinux label: {0}")]
     InvalidSELinuxLabel(String),
+    #[error("Failed to load SELinux labels: {0}")]
+    LoadLabels(String),
 }
 
-pub struct SELinux {
+type SelinuxLabels = HashMap<String, SELinuxLabel>;
+
+pub struct SELinux<'a> {
     // for attr_path()
     have_thread_self: AtomicBool,
     attr_path_init_done: AtomicBool,
@@ -102,93 +106,116 @@ pub struct SELinux {
     selinuxfs_init_done: AtomicBool,
     selinuxfs: Option<PathBuf>,
 
-    // for policy_root()
-    policy_root_init_done: AtomicBool,
-    policy_root: Option<PathBuf>,
+    policy_root: PathBuf,
 
     // for load_labels()
-    pub(crate) load_labels_init_done: AtomicBool,
-    pub(crate) labels: HashMap<String, SELinuxLabel>,
+    pub(crate) labels: SelinuxLabels,
 
     // for read config and get config key
-    read_config_init_done: AtomicBool,
     configs: HashMap<String, String>,
 
-    pub(crate) read_only_file_label: Option<SELinuxLabel>,
+    pub(crate) read_only_file_label: Option<&'a SELinuxLabel>,
 }
 
-impl Default for SELinux {
-    fn default() -> Self {
-        SELinux::new()
-    }
-}
-
-impl SELinux {
-    pub fn new() -> Self {
-        SELinux {
+impl<'a> SELinux<'a> {
+    pub fn new(selinux_dir: &Path) -> Result<Self, SELinuxError> {
+        let mut selinux = SELinux {
             have_thread_self: AtomicBool::new(false),
             attr_path_init_done: AtomicBool::new(false),
 
             selinuxfs_init_done: AtomicBool::new(false),
             selinuxfs: None,
 
-            policy_root_init_done: AtomicBool::new(false),
-            policy_root: None,
+            policy_root: PathBuf::new(),
 
-            load_labels_init_done: AtomicBool::new(false),
             labels: HashMap::new(),
 
-            read_config_init_done: AtomicBool::new(false),
-            configs: HashMap::new(),
+            configs: Self::load_configs(selinux_dir.into())?,
 
             read_only_file_label: None,
-        }
+        };
+
+        selinux.policy_root = selinux.look_up_policy_root()?;
+        selinux.labels = selinux.load_labels()?;
+
+        Ok(selinux)
     }
 
     // This function returns policy_root.
     // Directories under policy root has configuration files etc.
-    fn policy_root(&mut self) -> Option<&PathBuf> {
-        // Avoiding code conflicts and ensuring thread-safe execution once only.
-        if !self.policy_root_init_done.load(Ordering::SeqCst) {
-            let policy_root_path = Self::get_config_key(self, SELINUX_TYPE_TAG).unwrap_or_default();
-            self.policy_root = Some(PathBuf::from(policy_root_path));
-            self.policy_root_init_done.store(true, Ordering::SeqCst);
-        }
-        self.policy_root.as_ref()
+    fn look_up_policy_root(&self) -> Result<PathBuf, SELinuxError> {
+        let policy_root_path = self.get_config_key(SELINUX_TYPE_TAG)?;
+        Ok(PathBuf::from(policy_root_path))
+    }
+
+    // This function loads context file and reads labels and stores it.
+    fn load_labels(&self) -> Result<HashMap<String, SELinuxLabel>, SELinuxError> {
+        // The context file should have pairs of key and value like below.
+        // ----------
+        // process = "system_u:system_r:container_t:s0"
+        // file = "system_u:object_r:container_file_t:s0"
+        // ----------
+        let file =
+            Self::open_context_file(self).map_err(|e| SELinuxError::LoadLabels(e.to_string()))?;
+        let reader = BufReader::new(file);
+        Ok(reader
+            .lines()
+            .map_while(Result::ok)
+            .fold(HashMap::new(), |mut acc, line| {
+                let line = line.trim();
+                if line.is_empty() {
+                    return acc;
+                }
+                let fields: Vec<&str> = line.splitn(2, '=').collect();
+                if fields.len() != 2 {
+                    return acc;
+                }
+                let key = fields[0].trim().to_string();
+                let value = fields[1].trim().to_string();
+                if let Ok(value_label) = SELinuxLabel::try_from(value) {
+                    acc.insert(key, value_label);
+                }
+                acc
+            }))
+    }
+
+    fn load_configs(selinux_dir: &Path) -> Result<HashMap<String, String>, SELinuxError> {
+        let config_path = selinux_dir.join(SELINUX_CONFIG);
+        let file = File::open(config_path).map_err(|e| SELinuxError::LoadLabels(e.to_string()))?;
+        let reader = BufReader::new(file);
+        Ok(reader
+            .lines()
+            .map_while(Result::ok)
+            .fold(HashMap::new(), |mut acc, line| {
+                let line = line.trim();
+                if line.is_empty() {
+                    return acc;
+                }
+                if line.starts_with(';') || line.starts_with('#') {
+                    return acc;
+                }
+                let fields: Vec<&str> = line.splitn(2, '=').collect();
+                if fields.len() < 2 {
+                    return acc;
+                }
+                let key = fields[0].trim().to_string();
+                let value = fields[1].trim().to_string();
+                acc.insert(key, value);
+                acc
+            }))
     }
 
     // This function reads SELinux config file and returns the value with a specified key.
-    fn get_config_key(&mut self, target_key: &str) -> Result<String, SELinuxError> {
-        if !self.read_config_init_done.load(Ordering::SeqCst) {
-            let config_path = Path::new(SELINUX_DIR).join(SELINUX_CONFIG);
-            if let Ok(file) = File::open(config_path) {
-                let reader = BufReader::new(file);
-                for line in reader.lines().map_while(Result::ok) {
-                    if line.is_empty() {
-                        continue;
-                    }
-                    if (line.starts_with(';')) || (line.starts_with('#')) {
-                        continue;
-                    }
-                    let fields: Vec<&str> = line.splitn(2, '=').collect();
-                    if fields.len() < 2 {
-                        continue;
-                    }
-                    let key = fields[0].trim().to_string();
-                    let value = fields[1].trim().to_string();
-                    self.configs.insert(key, value);
-                }
-            }
-            self.read_config_init_done.store(true, Ordering::SeqCst);
-        }
-        self.configs
+    fn get_config_key(&self, target_key: &str) -> Result<String, SELinuxError> {
+        return self
+            .configs
             .get(target_key)
             .cloned()
             .filter(|s| !s.is_empty())
             .ok_or(SELinuxError::GetConfigKey(format!(
                 "can't find the target label in the config file: {}",
                 target_key
-            )))
+            )));
     }
 
     // get_enabled returns whether SELinux is enabled or not.
@@ -312,14 +339,11 @@ impl SELinux {
 
     // This function attempts to open a selinux context file, and if it fails, it tries to open another file
     // under policy root's directory.
-    pub(crate) fn open_context_file(&mut self) -> Result<File, SELinuxError> {
+    pub(crate) fn open_context_file(&self) -> Result<File, SELinuxError> {
         match File::open(CONTEXT_FILE) {
             Ok(file) => Ok(file),
             Err(_) => {
-                let policy_path = Self::policy_root(self).ok_or_else(|| {
-                    SELinuxError::OpenContextFile("can't get policy root".to_string())
-                })?;
-                let context_on_policy_root = policy_path.join("contexts").join("lxc_contexts");
+                let context_on_policy_root = self.policy_root.join("contexts").join("lxc_contexts");
                 match File::open(context_on_policy_root) {
                     Ok(file) => Ok(file),
                     Err(e) => Err(SELinuxError::OpenContextFile(e.to_string())),
@@ -375,7 +399,7 @@ impl SELinux {
     // enforce_mode function tells you the system current mode.
     pub fn default_enforce_mode(&mut self) -> SELinuxMode {
         SELinuxMode::from(
-            Self::get_config_key(self, SELINUX_TAG)
+            self.get_config_key(SELINUX_TAG)
                 .unwrap_or_default()
                 .as_str(),
         )
@@ -513,8 +537,9 @@ mod tests {
     }
 
     #[test]
-    fn test_attr_path() {
-        let selinux = SELinux::new();
+    fn test_attr_path() -> Result<(), SELinuxError> {
+        // TODO: Fix
+        let selinux = SELinux::new(Path::new(DEFAULT_SELINUX_DIR))?;
         // Test with "/proc/thread-self/attr" path (Linux >= 3.17)
         let attr = "bar";
         let expected_name = &format!("/proc/thread-self/attr/{}", attr);
@@ -530,6 +555,8 @@ mod tests {
         let expected_path = Path::new(expected_name);
         let actual_path = selinux.attr_path(attr);
         assert_eq!(expected_path, actual_path);
+
+        Ok(())
     }
 
     #[test]
