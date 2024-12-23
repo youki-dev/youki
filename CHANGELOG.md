@@ -1,5 +1,45 @@
 # Changelog
 
+## [v0.5.0](https://github.com/youki-dev/youki/compare/v0.4.1...v0.5.0) - 2024-12-18
+### 💪 Improvements
+- libcontainer: support set stdios for container by @abel-von in https://github.com/youki-dev/youki/pull/2961
+- Add option to spawn processes as siblings by @jprendes in https://github.com/youki-dev/youki/pull/3012
+### 💥 Breaking Changes
+- libcontainer: use OwnedFd as console_socket  in ContainerBuilder by @abel-von in https://github.com/youki-dev/youki/pull/2966
+### 🐛 Bug Fixes
+- Fixed ENAMETOOLONG error in setup_console_socket by @morganllewellynjones in https://github.com/youki-dev/youki/pull/2915
+- fix(libcontainer) no_pivot args is not used by @xujihui1985 in https://github.com/youki-dev/youki/pull/2923
+- Fix/return multi errors on create failed by @xujihui1985 in https://github.com/youki-dev/youki/pull/2998
+- fix duplicate gids in container creation by @YJDoc2 in https://github.com/youki-dev/youki/pull/3019
+### 📖 Documentation improvements
+- Add the affiliations of youki maintainers by @utam0k in https://github.com/youki-dev/youki/pull/2947
+- docs: update github pages links by @tskxz in https://github.com/youki-dev/youki/pull/2969
+- switch from license-file to license by @jprendes in https://github.com/youki-dev/youki/pull/3023
+### 🧪 Test improvements and Misc Fixes
+- ci: update action versions to fix deprecation warnings by @YJDoc2 in https://github.com/youki-dev/youki/pull/2918
+- deps: update wasmedge to 0.14.0 by @YJDoc2 in https://github.com/youki-dev/youki/pull/2928
+- Bump oci-spec to 0.7.0 by @kiokuless in https://github.com/youki-dev/youki/pull/2934
+- remove incorrect dependency in readme by @YJDoc2 in https://github.com/youki-dev/youki/pull/2940
+- Add seccomp into feature flags of youki to be compiled in by @musaprg in https://github.com/youki-dev/youki/pull/2924
+- Add unittest to expertiment seccomp programs by @sat0ken in https://github.com/youki-dev/youki/pull/2956
+- print "unknown" instead of defaults if we cannot get kernel config by @YJDoc2 in https://github.com/youki-dev/youki/pull/2964
+- Add test process rlimits by @sat0ken in https://github.com/youki-dev/youki/pull/2977
+- Add test process user by @sat0ken in https://github.com/youki-dev/youki/pull/2978
+- add test process_oom_score_adj by @saku3 in https://github.com/youki-dev/youki/pull/2987
+- Add  process test  by @sat0ken in https://github.com/youki-dev/youki/pull/2968
+- refactor(test): refine function create_container by @xujihui1985 in https://github.com/youki-dev/youki/pull/2973
+- Add test root readonly by @sat0ken in https://github.com/youki-dev/youki/pull/2976
+- Adding Discord link to docs  by @crmejia in https://github.com/youki-dev/youki/pull/3005
+### Other Changes
+- selinux: create Vagrantfile for SELinux by @Gekko0114 in https://github.com/youki-dev/youki/pull/2900
+- Cargo.toml: remove unused dependnecies by @Mossaka in https://github.com/youki-dev/youki/pull/2921
+- deps: update wasmtime by @YJDoc2 in https://github.com/youki-dev/youki/pull/2929
+- selinux: fix xattr and remove anyhow by @Gekko0114 in https://github.com/youki-dev/youki/pull/2936
+- .github/workflows/basic: check unused deps on 'check' job by @Mossaka in https://github.com/youki-dev/youki/pull/2941
+- seccomp: Update experiment seccomp program by @sat0ken in https://github.com/youki-dev/youki/pull/2946
+- create mount_rootfs method by @Gekko0114 in https://github.com/youki-dev/youki/pull/2953
+- Update deps: roll multiple dependabot PRs into one by @YJDoc2 in https://github.com/youki-dev/youki/pull/2993
+
 ## [v0.4.1](https://github.com/containers/youki/compare/v0.4.0...v0.4.1) - 2024-09-02
 ### 🧪 Test improvements and Misc Fixes
 - prepare for version 0.4.1 by @YJDoc2 in https://github.com/containers/youki/pull/2897
