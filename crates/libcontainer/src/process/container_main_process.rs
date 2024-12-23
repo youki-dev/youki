@@ -75,15 +75,6 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
         })
     };
 
-    // Before starting the intermediate process, mark all non-stdio open files as O_CLOEXEC
-    // to ensure we don't leak any file descriptors to the intermediate process.
-    // Please refer to https://github.com/opencontainers/runc/security/advisories/GHSA-xr7r-f8xq-vfvv for more details.
-    let syscall = container_args.syscall.create_syscall();
-    syscall.close_range(0).map_err(|err| {
-        tracing::error!(?err, "failed to cleanup extra fds");
-        ProcessError::SyscallOther(err)
-    })?;
-
     let container_clone_fn = if container_args.as_sibling {
         fork::container_clone_sibling
     } else {

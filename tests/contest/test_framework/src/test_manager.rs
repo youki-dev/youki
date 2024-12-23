@@ -64,6 +64,9 @@ impl TestManager {
         thread::scope(|s| {
             let mut collector = Vec::with_capacity(self.test_groups.len());
             for (name, tg) in &self.test_groups {
+                if !tg.parallel() {
+                    continue;
+                }
                 let r = s.spawn(move |_| tg.run_all());
                 collector.push((name, r));
             }
@@ -72,6 +75,13 @@ impl TestManager {
             }
         })
         .unwrap();
+        for (name, tg) in &self.test_groups {
+            if tg.parallel() {
+                continue;
+            }
+            self.print_test_result(name, &tg.run_all())
+        }
+
         for cleaner in &self.cleanup {
             if let Err(e) = cleaner() {
                 print!("Failed to cleanup: {e}");
@@ -85,6 +95,9 @@ impl TestManager {
             let mut collector = Vec::with_capacity(tests.len());
             for (test_group_name, tests) in &tests {
                 if let Some(tg) = self.test_groups.get(test_group_name) {
+                    if !tg.parallel() {
+                        continue;
+                    }
                     let r = match tests {
                         None => s.spawn(move |_| tg.run_all()),
                         Some(tests) => s.spawn(move |_| tg.run_selected(tests)),
@@ -99,6 +112,22 @@ impl TestManager {
             }
         })
         .unwrap();
+        for (test_group_name, tests) in &tests {
+            if let Some(tg) = self.test_groups.get(test_group_name) {
+                if tg.parallel() {
+                    continue;
+                }
+                self.print_test_result(
+                    test_group_name,
+                    &match tests {
+                        None => tg.run_all(),
+                        Some(tests) => tg.run_selected(tests),
+                    },
+                );
+            } else {
+                // We've already printed errors for not finding tests
+            }
+        }
 
         for cleaner in &self.cleanup {
             if let Err(e) = cleaner() {

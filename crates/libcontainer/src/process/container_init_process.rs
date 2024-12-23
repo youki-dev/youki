@@ -580,6 +580,9 @@ pub fn container_init_process(
     // will be closed after execve into the container payload. We can't close the
     // fds immediately since we at least still need it for the pipe used to wait on
     // starting the container.
+    //
+    // Note: this should happen very late, in order to avoid accidentally leaking FDs
+    // Please refer to https://github.com/opencontainers/runc/security/advisories/GHSA-xr7r-f8xq-vfvv for more details.
     syscall.close_range(preserve_fds).map_err(|err| {
         tracing::error!(?err, "failed to cleanup extra fds");
         InitProcessError::SyscallOther(err)

@@ -1,4 +1,5 @@
 use std::env;
+use std::ffi::OsStr;
 use std::fs::{self, read_dir};
 use std::os::linux::fs::MetadataExt;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
@@ -773,5 +774,49 @@ pub fn validate_process_oom_score_adj(spec: &Spec) {
 
     if actual_value.trim() != expected_value.to_string() {
         eprintln!("Unexpected oom_score_adj, expected: {expected_value} found: {actual_value}");
+    }
+}
+
+pub fn validate_fd_control(_spec: &Spec) {
+    // --preserve-fds does not get passed via the spec so we have to communicate information
+    // via the root filesystem
+    let expected_num_fds: usize = fs::read_to_string("/num-fds").unwrap().parse().unwrap();
+
+    let mut entries = vec![];
+    let stdio: &[&OsStr] = &["0".as_ref(), "1".as_ref(), "2".as_ref()];
+    for entry in fs::read_dir("/proc/self/fd").unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if stdio.contains(&name.as_os_str()) {
+            // Ignore stdio
+            continue;
+        }
+        entries.push((entry.path(), fs::read_link(entry.path())))
+    }
+
+    // NOTE: we do this in a separate loop so we can filter out the dirfd used behind
+    // the scenes in 'fs::read_dir'. It is important to *not* store the full DirEntry
+    // type, as that keeps the dirfd open.
+    let mut fd_details = vec![];
+    let mut found_dirfd = false;
+    for (path, linkpath) in &entries {
+        println!("found fd in container {} {:?}", path.display(), linkpath);
+        // The difference between metadata.unwrap() and fs::metadata is that the latter
+        // will now try to follow the symlink
+        match fs::metadata(path) {
+            Ok(m) => fd_details.push((path, linkpath, m)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && !found_dirfd => {
+                // Expected for the dirfd
+                println!("(ignoring dirfd)");
+                found_dirfd = true
+            }
+            Err(e) => {
+                eprintln!("unexpected error reading metadata: {}", e)
+            }
+        }
+    }
+
+    if fd_details.len() != expected_num_fds {
+        eprintln!("mismatched fds inside container! {:?}", fd_details);
     }
 }

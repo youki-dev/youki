@@ -1,6 +1,7 @@
 //! Contains utility functions for testing
 //! Similar to https://github.com/opencontainers/runtime-tools/blob/master/validation/util/test.go
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread::sleep;
@@ -43,11 +44,17 @@ pub struct ContainerData {
 }
 
 #[derive(Debug, Default)]
-pub struct CreateOptions {
+pub struct CreateOptions<'a> {
+    extra_args: &'a [&'a OsStr],
     no_pivot: bool,
 }
 
-impl CreateOptions {
+impl<'a> CreateOptions<'a> {
+    pub fn with_extra_args(mut self, extra_args: &'a [&'a OsStr]) -> Self {
+        self.extra_args = extra_args;
+        self
+    }
+
     pub fn with_no_pivot_root(mut self) -> Self {
         self.no_pivot = true;
         self
@@ -64,7 +71,8 @@ fn create_container_command<P: AsRef<Path>>(id: &str, dir: P, options: &CreateOp
         .arg("create")
         .arg(id)
         .arg("--bundle")
-        .arg(dir.as_ref().join("bundle"));
+        .arg(dir.as_ref().join("bundle"))
+        .args(options.extra_args);
     if options.no_pivot {
         command.arg("--no-pivot");
     }
