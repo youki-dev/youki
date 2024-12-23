@@ -22,6 +22,7 @@ use crate::tests::mounts_recursive::get_mounts_recursive_test;
 use crate::tests::no_pivot::get_no_pivot_test;
 use crate::tests::pidfile::get_pidfile_test;
 use crate::tests::process::get_process_test;
+use crate::tests::process_capabilities_fail::get_process_capabilities_fail_test;
 use crate::tests::process_oom_score_adj::get_process_oom_score_adj_test;
 use crate::tests::process_rlimits::get_process_rlimits_test;
 use crate::tests::process_user::get_process_user_test;
@@ -125,6 +126,7 @@ fn main() -> Result<()> {
     let process_rlimtis = get_process_rlimits_test();
     let no_pivot = get_no_pivot_test();
     let process_oom_score_adj = get_process_oom_score_adj_test();
+    let process_capabilities_fail = get_process_capabilities_fail_test();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -154,6 +156,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(process_rlimtis));
     tm.add_test_group(Box::new(no_pivot));
     tm.add_test_group(Box::new(process_oom_score_adj));
+    tm.add_test_group(Box::new(process_capabilities_fail));
 
     tm.add_test_group(Box::new(io_priority_test));
     tm.add_cleanup(Box::new(cgroups::cleanup_v1));
