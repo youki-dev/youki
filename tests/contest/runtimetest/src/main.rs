@@ -50,6 +50,7 @@ fn main() {
         "process_rlimits" => tests::validate_process_rlimits(&spec),
         "no_pivot" => tests::validate_rootfs(),
         "process_oom_score_adj" => tests::validate_process_oom_score_adj(&spec),
+        "rootfs_propagation" => tests::validate_rootfs_propagation(&spec),
         _ => eprintln!("error due to unexpected execute test name: {execute_test}"),
     }
 }
