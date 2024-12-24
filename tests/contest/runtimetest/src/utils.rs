@@ -1,22 +1,46 @@
-use std::fs;
-use std::fs::{metadata, symlink_metadata};
+use std::fs::{metadata, symlink_metadata, OpenOptions};
+use std::io::Read;
 use std::os::unix::prelude::MetadataExt;
 use std::path::PathBuf;
 use std::process::Command;
+use std::{fs, io};
 
 use nix::sys::stat::{stat, SFlag};
 
-fn test_file_read_access(path: &str) -> Result<(), std::io::Error> {
-    let _ = std::fs::OpenOptions::new()
-        .create(false)
-        .read(true)
-        .open(path)?;
-    Ok(())
+fn test_file_read_access(path: &str) -> Result<bool, std::io::Error> {
+    let mut file = OpenOptions::new().create(false).read(true).open(path)?;
+
+    // Create a buffer with a capacity of 1 byte
+    let mut buffer = [0u8; 1];
+    match file.read(&mut buffer) {
+        // Our contest tests only use non-empty files for read-access
+        // tests. So if we get an EOF on the first read or zero bytes, the runtime did
+        // successfully block readability.
+        Ok(0) => Ok(false),
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Ok(false),
+        Err(e) => Err(e),
+    }
 }
 
-pub fn test_dir_read_access(path: &str) -> Result<(), std::io::Error> {
-    let _ = std::fs::read_dir(path)?;
-    Ok(())
+pub fn test_dir_read_access(path: &str) -> Result<bool, std::io::Error> {
+    let entries = std::fs::read_dir(path);
+
+    match entries {
+        Ok(mut entries_iter) => {
+            // Get the first entry
+            match entries_iter.next() {
+                Some(entry) => {
+                    match entry {
+                        Ok(_) => Ok(true),   // If the entry is Ok, then it's readable
+                        Err(_) => Ok(false), // If the entry is Err, then it's not readable
+                    }
+                }
+                None => Ok(false), // If there's an error, then it's not readable, or otherwise, it may indicate different conditions.
+            }
+        }
+        Err(e) => Err(e),
+    }
 }
 
 fn is_file_like(mode: u32) -> bool {
@@ -30,7 +54,7 @@ fn is_dir(mode: u32) -> bool {
     mode & SFlag::S_IFDIR.bits() != 0
 }
 
-pub fn test_read_access(path: &str) -> Result<(), std::io::Error> {
+pub fn test_read_access(path: &str) -> Result<bool, std::io::Error> {
     let fstat = stat(path)?;
     let mode = fstat.st_mode;
     if is_file_like(mode) {

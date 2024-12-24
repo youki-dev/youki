@@ -775,3 +775,46 @@ pub fn validate_process_oom_score_adj(spec: &Spec) {
         eprintln!("Unexpected oom_score_adj, expected: {expected_value} found: {actual_value}");
     }
 }
+
+pub fn validate_masked_paths(spec: &Spec) {
+    let linux = spec.linux().as_ref().unwrap();
+    let masked_paths = match linux.masked_paths() {
+        Some(p) => p,
+        None => {
+            eprintln!("in masked paths, expected some masked paths to be set, found none");
+            return;
+        }
+    };
+
+    if masked_paths.is_empty() {
+        eprintln!("in masked paths, expected some masked paths to be set, found none");
+        return;
+    }
+
+    for path_str in masked_paths {
+        let path = Path::new(path_str);
+        if !path.is_absolute() {
+            eprintln!("in masked paths, the path must be absolute.")
+        }
+        match test_read_access(path_str) {
+            Ok(true) => {
+                eprintln!(
+                    "in masked paths, expected path {path_str} to be masked, but was found readable"
+                );
+                return;
+            }
+            Ok(false) => { /* This is expected */ }
+            Err(e) => {
+                let errno = Errno::from_raw(e.raw_os_error().unwrap());
+                if errno == Errno::ENOENT {
+                    /* This is expected */
+                } else {
+                    eprintln!(
+                        "in masked paths, error in testing read access for path {path_str} : {errno:?}"
+                    );
+                    return;
+                }
+            }
+        }
+    }
+}
