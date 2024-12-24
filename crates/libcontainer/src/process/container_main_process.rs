@@ -1,7 +1,7 @@
 use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::Pid;
 
-use crate::process::args::ContainerArgs;
+use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::fork::{self, CloneCb};
 use crate::process::intel_rdt::setup_intel_rdt;
 use crate::process::{channel, container_intermediate_process};
@@ -132,18 +132,19 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     if let Some(linux) = container_args.spec.linux() {
         #[cfg(feature = "libseccomp")]
         if let Some(seccomp) = linux.seccomp() {
+            let container_state = match &container_args.container_type {
+                ContainerType::InitContainer { container } => &container.state,
+                ContainerType::TenantContainer { .. } => {
+                    return Err(ProcessError::ContainerStateRequired)
+                }
+            };
             let state = crate::container::ContainerProcessState {
                 oci_version: container_args.spec.version().to_string(),
                 // runc hardcode the `seccompFd` name for fds.
                 fds: vec![String::from("seccompFd")],
                 pid: init_pid.as_raw(),
                 metadata: seccomp.listener_metadata().to_owned().unwrap_or_default(),
-                state: container_args
-                    .container
-                    .as_ref()
-                    .ok_or(ProcessError::ContainerStateRequired)?
-                    .state
-                    .clone(),
+                state: container_state.clone(),
             };
             crate::process::seccomp_listener::sync_seccomp(
                 seccomp,
@@ -154,10 +155,10 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
         }
 
         if let Some(intel_rdt) = linux.intel_rdt() {
-            let container_id = container_args
-                .container
-                .as_ref()
-                .map(|container| container.id());
+            let container_id = match &container_args.container_type {
+                ContainerType::InitContainer { container } => Some(container.id()),
+                ContainerType::TenantContainer { .. } => None,
+            };
             need_to_clean_up_intel_rdt_subdirectory =
                 setup_intel_rdt(container_id, &init_pid, intel_rdt)?;
         }

@@ -11,7 +11,7 @@ use nix::unistd::Pid;
 
 use crate::workload::executor::default_executor;
 
-pub fn run(args: Run, root_path: PathBuf, systemd_cgroup: bool) -> Result<i32> {
+pub fn run(args: Run, root_path: PathBuf, systemd_cgroup: bool, use_cgroups: bool) -> Result<i32> {
     let mut container = ContainerBuilder::new(args.container_id.clone(), SyscallType::default())
         .with_executor(default_executor())
         .with_pid_file(args.pid_file.as_ref())?
@@ -21,6 +21,7 @@ pub fn run(args: Run, root_path: PathBuf, systemd_cgroup: bool) -> Result<i32> {
         .validate_id()?
         .as_init(&args.bundle)
         .with_systemd(systemd_cgroup)
+        .with_cgroups(use_cgroups)
         .with_detach(args.detach)
         .with_no_pivot(args.no_pivot)
         .build()?;
