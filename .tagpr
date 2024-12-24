@@ -2,6 +2,6 @@
     vPrefix = true
     releaseBranch = main
     versionFile = .tagpr
-    command = just version-up 0.4.1
+    command = just version-up 0.5.0
     release = false
     changelog = true
