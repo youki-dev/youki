@@ -1,15 +1,16 @@
-use std::collections::HashSet;
-use std::str::FromStr;
+use std::{collections::HashSet, fs, fs::OpenOptions, io::Write};
 
-use anyhow::{Context, Error, Ok, Result};
+use anyhow::{anyhow, Context, Ok, Result};
 use oci_spec::runtime::{Capability, LinuxCapabilitiesBuilder, ProcessBuilder, Spec, SpecBuilder};
-use test_framework::{Test, TestGroup, TestResult};
+use test_framework::{test_result, Test, TestGroup, TestResult};
+
+use serde_json::Value;
+
+use crate::utils::{test_inside_container, test_utils::CreateOptions};
 
 fn create_spec() -> Result<Spec> {
-    let capability = Capability::from_str("CAP_TEST").context("invalid capability")?;
-
     let linux_capability = LinuxCapabilitiesBuilder::default()
-        .bounding(HashSet::from([capability]))
+        .bounding(HashSet::from([Capability::Syslog]))
         .build()?;
 
     let process = ProcessBuilder::default()
@@ -30,14 +31,38 @@ fn create_spec() -> Result<Spec> {
 }
 
 fn process_capabilities_fail_test() -> TestResult {
-    match create_spec() {
-        Result::Ok(_) => TestResult::Failed(Error::msg("create_spec succeeded unexpectedly.")),
-        Err(e) => {
-            if e.to_string() == "invalid capability" {
-                TestResult::Passed
-            } else {
-                TestResult::Failed(Error::msg(format!("unexpected error: {}", e)))
+    let spec = test_result!(create_spec());
+    let result = test_inside_container(spec, &CreateOptions::default(), &|bundle| {
+        let spec_path = bundle.join("../config.json");
+        let spec_str = fs::read_to_string(spec_path.clone()).unwrap();
+
+        let mut spec_json: Value = serde_json::from_str(&spec_str)?;
+
+        if let Some(bounding) = spec_json.pointer_mut("/process/capabilities/bounding") {
+            if let Some(bounding_array) = bounding.as_array_mut() {
+                for capanility in bounding_array.iter_mut() {
+                    if capanility == "CAP_SYSLOG" {
+                        *capanility = Value::String("TEST_CAP".to_string());
+                    }
+                }
             }
+        }
+
+        let updated_spec_str = serde_json::to_string_pretty(&spec_json)?;
+
+        let mut file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(spec_path)?;
+        file.write_all(updated_spec_str.as_bytes())?;
+
+        Ok(())
+    });
+    match result {
+        TestResult::Failed(_e) => TestResult::Passed,
+        TestResult::Skipped => TestResult::Failed(anyhow!("test was skipped unexpectedly.")),
+        TestResult::Passed => {
+            TestResult::Failed(anyhow!("container creation succeeded unexpectedly."))
         }
     }
 }
