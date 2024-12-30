@@ -245,7 +245,7 @@ mod tests {
         )?;
         assert_eq!(
             MountOptionConfig {
-                flags: MsFlags::MS_NOSUID,
+                flags: MsFlags::MS_NOSUID | MsFlags::MS_STRICTATIME,
                 data: "mode=755,size=65536k".to_string(),
                 rec_attr: None,
             },
@@ -366,7 +366,8 @@ mod tests {
                 flags: MsFlags::MS_NOSUID
                     | MsFlags::MS_NOEXEC
                     | MsFlags::MS_NODEV
-                    | MsFlags::MS_RDONLY,
+                    | MsFlags::MS_RDONLY
+                    | MsFlags::MS_RELATIME,
                 data: "".to_string(),
                 rec_attr: None
             },
