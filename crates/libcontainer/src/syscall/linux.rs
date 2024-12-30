@@ -75,6 +75,50 @@ pub enum MountOption {
     Nostrictatime(bool, MsFlags),
 }
 
+impl MountOption {
+    // Return all possible mount options
+    pub fn known_options() -> Vec<String> {
+        [
+            "defaults",
+            "ro",
+            "rw",
+            "suid",
+            "nosuid",
+            "dev",
+            "nodev",
+            "exec",
+            "noexec",
+            "sync",
+            "async",
+            "dirsync",
+            "remount",
+            "mand",
+            "nomand",
+            "atime",
+            "noatime",
+            "diratime",
+            "nodiratime",
+            "bind",
+            "rbind",
+            "unbindable",
+            "runbindable",
+            "private",
+            "rprivate",
+            "shared",
+            "rshared",
+            "slave",
+            "rslave",
+            "relatime",
+            "norelatime",
+            "strictatime",
+            "nostrictatime",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+    }
+}
+
 impl FromStr for MountOption {
     type Err = String;
 
@@ -694,12 +738,13 @@ mod tests {
 
     use std::fs;
     use std::os::unix::prelude::AsRawFd;
+    use std::str::FromStr;
 
     use anyhow::{bail, Context, Result};
     use nix::{fcntl, sys, unistd};
     use serial_test::serial;
 
-    use super::LinuxSyscall;
+    use super::{LinuxSyscall, MountOption};
     use crate::syscall::Syscall;
 
     #[test]
@@ -759,6 +804,17 @@ mod tests {
         }
 
         unistd::close(fd)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_known_mount_options_implemented() -> Result<()> {
+        for option in MountOption::known_options() {
+            match MountOption::from_str(&option) {
+                Ok(_) => {}
+                Err(e) => bail!("failed to parse mount option: {}", e),
+            }
+        }
         Ok(())
     }
 }
