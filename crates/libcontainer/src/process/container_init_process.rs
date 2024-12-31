@@ -12,6 +12,7 @@ use oci_spec::runtime::{
     IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxSchedulerFlag, LinuxSchedulerPolicy,
     Scheduler, Spec, User,
 };
+use selinux::selinux;
 
 use super::args::{ContainerArgs, ContainerType};
 use crate::error::MissingSpecError;
@@ -164,7 +165,7 @@ fn masked_path(path: &Path, mount_label: &Option<String>, syscall: &dyn Syscall)
             }
             SyscallError::Nix(nix::errno::Errno::ENOTDIR) => {
                 let label = match mount_label {
-                    Some(l) => format!("context=\"{l}\""),
+                    Some(l) => selinux::SELinux::format_mount_label("", l),
                     None => "".to_string(),
                 };
                 syscall
