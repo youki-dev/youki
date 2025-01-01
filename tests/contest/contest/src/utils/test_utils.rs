@@ -209,6 +209,7 @@ pub fn test_inside_container(
             .join("runtimetest"),
     )
     .unwrap();
+    #[allow(clippy::zombie_processes)]
     let create_process = create_container(&id_str, &bundle, options).unwrap();
     // here we do not wait for the process by calling wait() as in the test_outside_container
     // function because we need the output of the runtimetest. If we call wait, it will return

@@ -46,8 +46,8 @@ pub struct YoukiConfig {
     pub cgroup_path: PathBuf,
 }
 
-impl<'a> YoukiConfig {
-    pub fn from_spec(spec: &'a Spec, container_id: &str) -> Result<Self> {
+impl YoukiConfig {
+    pub fn from_spec(spec: &Spec, container_id: &str) -> Result<Self> {
         Ok(YoukiConfig {
             hooks: spec.hooks().clone(),
             cgroup_path: utils::get_cgroup_path(

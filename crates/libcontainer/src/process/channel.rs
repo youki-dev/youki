@@ -28,6 +28,7 @@ pub enum ChannelError {
     OtherError(String),
 }
 
+#[allow(clippy::empty_line_after_doc_comments)]
 /// Channel Design
 ///
 /// Each of the main, intermediate, and init process will have a uni-directional
