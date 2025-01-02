@@ -83,7 +83,7 @@ Install from the GitHub release as root:
 
 <!--youki release begin-->
 ```console
-# curl -sSfL https://github.com/containers/youki/releases/download/v0.4.1/youki-0.4.1-$(uname -m)-musl.tar.gz | tar -xzvC /usr/bin/ youki
+# curl -sSfL https://github.com/containers/youki/releases/download/v0.5.0/youki-0.5.0-$(uname -m)-musl.tar.gz | tar -xzvC /usr/bin/ youki
 ```
 <!--youki release end-->
 
