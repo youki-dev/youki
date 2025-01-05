@@ -1994,7 +1994,7 @@ checksum = "b5aba8db14291edd000dfcc4d620c7ebfb122c613afb886ca8803fa4e128a20a"
 
 [[package]]
 name = "libcgroups"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2019,7 +2019,7 @@ dependencies = [
 
 [[package]]
 name = "libcontainer"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "caps",
@@ -2066,7 +2066,7 @@ checksum = "4ec2a862134d2a7d32d7983ddcdd1c4923530833c9f2ea1a44fc5fa473989058"
 
 [[package]]
 name = "liboci-cli"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "clap",
 ]
@@ -4877,9 +4877,9 @@ dependencies = [
 
 [[package]]
 name = "wasmedge-sys"
-version = "0.19.2"
+version = "0.19.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ebcb49955b8b2e08fe8c3416fe4df61ecf30654db4b8f6f2418a0450cb5ada3"
+checksum = "88da93fb54be1deaa84bc68393f09ba8491e20113465c35a9446e14107f55a6e"
 dependencies = [
  "async-wasi",
  "bindgen",
@@ -5950,7 +5950,7 @@ dependencies = [
 
 [[package]]
 name = "youki"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "caps",
