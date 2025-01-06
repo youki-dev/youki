@@ -1,6 +1,6 @@
 [package]
 name = "libcgroups"
-version = "0.5.0" # MARK: Version
+version = "0.5.1" # MARK: Version
 description = "Library for cgroup"
 license = "Apache-2.0"
 repository = "https://github.com/containers/youki"
