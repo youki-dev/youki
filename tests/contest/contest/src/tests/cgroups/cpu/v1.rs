@@ -208,7 +208,7 @@ fn test_cpu_cgroups() -> TestResult {
     ];
 
     for case in cases.into_iter() {
-        let spec = test_result!(create_spec(cgroup_name, case));
+        let spec = test_result!(create_spec(cgroup_name, case, false));
         let test_result = test_outside_container(spec, &|data| {
             test_result!(check_container_created(&data));
 
@@ -231,7 +231,7 @@ fn check_cgroup_subsystem(
 ) -> Result<()> {
     let mount_point = util::get_subsystem_mount_point(subsystem)?;
     let cgroup_path = mount_point
-        .join("runtime-test")
+        .join("testdir/runtime-test")
         .join(cgroup_name)
         .join(filename);
 
@@ -252,7 +252,7 @@ fn test_relative_cpus() -> TestResult {
         get_realtime_period(),
         get_realtime_runtime(),
     ));
-    let spec = test_result!(create_spec("test_relative_cpus", case.clone()));
+    let spec = test_result!(create_spec("test_relative_cpus", case.clone(), true));
 
     test_outside_container(spec, &|data| {
         test_result!(check_container_created(&data));
@@ -320,7 +320,7 @@ fn test_cpu_idle_set() -> TestResult {
         realtime_runtime,
     ));
 
-    let spec = test_result!(create_spec(cgroup_name, cpu));
+    let spec = test_result!(create_spec(cgroup_name, cpu, false));
     test_outside_container(spec, &|data| {
         test_result!(check_container_created(&data));
         TestResult::Passed
@@ -344,7 +344,7 @@ fn test_cpu_idle_default() -> TestResult {
         realtime_period,
         realtime_runtime,
     ));
-    let spec = test_result!(create_spec(cgroup_name, cpu));
+    let spec = test_result!(create_spec(cgroup_name, cpu, false));
     test_outside_container(spec, &|data| {
         test_result!(check_container_created(&data));
         TestResult::Passed
