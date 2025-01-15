@@ -175,9 +175,9 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
                 }
             } {
                 if is_clear {
-                    flags.remove(flag);
+                    flags &= !flag;
                 } else {
-                    flags.insert(flag);
+                    flags |= flag;
                 }
                 continue;
             }
