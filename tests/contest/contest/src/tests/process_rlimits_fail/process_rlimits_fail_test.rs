@@ -16,6 +16,10 @@ use crate::utils::test_utils::CreateOptions;
 /// - Sets its value to u64::MAX, which exceeds the system's maximum allowed value
 ///   defined in /proc/sys/fs/nr_open
 /// - This causes the kernel to reject the value with EPERM
+///
+/// See `man 2 setrlimit` for more details:
+/// > EPERM The caller tried to increase the hard RLIMIT_NOFILE limit above
+/// > the maximum defined by /proc/sys/fs/nr_open
 fn create_spec() -> Result<Spec> {
     let invalid_rlimit = PosixRlimitBuilder::default()
         .typ(PosixRlimitType::RlimitNofile)
