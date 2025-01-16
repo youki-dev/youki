@@ -43,6 +43,7 @@ pub struct TenantContainerBuilder {
     capabilities: Vec<String>,
     process: Option<PathBuf>,
     detached: bool,
+    as_sibling: bool,
 }
 
 impl TenantContainerBuilder {
@@ -59,6 +60,7 @@ impl TenantContainerBuilder {
             capabilities: Vec::new(),
             process: None,
             detached: false,
+            as_sibling: false,
         }
     }
 
@@ -92,6 +94,13 @@ impl TenantContainerBuilder {
 
     pub fn with_process<P: Into<PathBuf>>(mut self, path: Option<P>) -> Self {
         self.process = path.map(|p| p.into());
+        self
+    }
+
+    /// Sets if the init process should be run as a child or a sibling of
+    /// the calling process
+    pub fn as_sibling(mut self, as_sibling: bool) -> Self {
+        self.as_sibling = as_sibling;
         self
     }
 
@@ -145,6 +154,7 @@ impl TenantContainerBuilder {
             stdin: self.base.stdin,
             stdout: self.base.stdout,
             stderr: self.base.stderr,
+            as_sibling: self.as_sibling,
         };
 
         let pid = builder_impl.create()?;

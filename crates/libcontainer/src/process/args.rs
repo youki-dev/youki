@@ -50,4 +50,6 @@ pub struct ContainerArgs {
     pub stdout: Option<RawFd>,
     // RawFd set to stderr of the container init process.
     pub stderr: Option<RawFd>,
+    // Indicate if the init process should be a sibling of the main process.
+    pub as_sibling: bool,
 }

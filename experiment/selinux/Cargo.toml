@@ -2,7 +2,7 @@
 name = "selinux"
 version = "0.1.0"
 description = "Library for selinux"
-license-file = "../../LICENSE"
+license = "Apache-2.0"
 repository = "https://github.com/containers/youki"
 homepage = "https://youki-dev.github.io/youki/"
 readme = "README.md"

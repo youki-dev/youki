@@ -132,10 +132,7 @@ pub fn parse_env(envs: &[String]) -> HashMap<String, String> {
 
 /// Get a nix::unistd::User via UID. Potential errors will be ignored.
 pub fn get_unix_user(uid: Uid) -> Option<User> {
-    match User::from_uid(uid) {
-        Ok(x) => x,
-        Err(_) => None,
-    }
+    User::from_uid(uid).unwrap_or_default()
 }
 
 /// Get home path of a User via UID.

@@ -1,4 +1,4 @@
-use anyhow::{Context, Ok, Result};
+use anyhow::{anyhow, Context, Ok, Result};
 use oci_spec::runtime::{ProcessBuilder, Spec, SpecBuilder, UserBuilder};
 use rand::Rng;
 use test_framework::{test_result, Test, TestGroup, TestResult};
@@ -21,12 +21,12 @@ fn generate_unique_random_vec() -> Vec<u32> {
     ret
 }
 
-fn create_spec() -> Result<Spec> {
+fn create_spec(gids: Vec<u32>) -> Result<Spec> {
     let umask = 0o002;
     let user = UserBuilder::default()
         .uid(10u32)
         .gid(10u32)
-        .additional_gids(generate_unique_random_vec())
+        .additional_gids(gids)
         .umask(umask as u32)
         .build()?;
 
@@ -42,16 +42,38 @@ fn create_spec() -> Result<Spec> {
         .context("failed to build spec")?;
     Ok(spec)
 }
-fn process_user_test() -> TestResult {
-    let spec = test_result!(create_spec());
+
+fn process_user_test_unique_gids() -> TestResult {
+    let gids = generate_unique_random_vec();
+    let spec = test_result!(create_spec(gids));
     test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
+}
+
+fn process_user_test_duplicate_gids() -> TestResult {
+    let mut gids = generate_unique_random_vec();
+    let duplicate = gids[0];
+    gids.push(duplicate);
+    let spec = test_result!(create_spec(gids));
+    match test_inside_container(spec, &CreateOptions::default(), &|_| Ok(())) {
+        TestResult::Passed => TestResult::Failed(anyhow!(
+            "expected test with duplicate gids to fail, but it passed instead"
+        )),
+        _ => TestResult::Passed,
+    }
 }
 
 pub fn get_process_user_test() -> TestGroup {
     let mut process_user_test_group = TestGroup::new("process_user");
 
-    let test = Test::new("process_user_test", Box::new(process_user_test));
-    process_user_test_group.add(vec![Box::new(test)]);
+    let test1 = Test::new(
+        "process_user_unique_gids_test",
+        Box::new(process_user_test_unique_gids),
+    );
+    let test2 = Test::new(
+        "process_user_duplicate_gids_test",
+        Box::new(process_user_test_duplicate_gids),
+    );
+    process_user_test_group.add(vec![Box::new(test1), Box::new(test2)]);
 
     process_user_test_group
 }

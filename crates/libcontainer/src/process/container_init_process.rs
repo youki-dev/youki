@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::{env, fs, mem};
@@ -580,6 +580,9 @@ pub fn container_init_process(
     // will be closed after execve into the container payload. We can't close the
     // fds immediately since we at least still need it for the pipe used to wait on
     // starting the container.
+    //
+    // Note: this should happen very late, in order to avoid accidentally leaking FDs
+    // Please refer to https://github.com/opencontainers/runc/security/advisories/GHSA-xr7r-f8xq-vfvv for more details.
     syscall.close_range(preserve_fds).map_err(|err| {
         tracing::error!(?err, "failed to cleanup extra fds");
         InitProcessError::SyscallOther(err)
@@ -761,6 +764,9 @@ fn set_supplementary_gids(
 
         let gids: Vec<Gid> = additional_gids
             .iter()
+            // this is to remove duplicate ids, so we behave similar to runc
+            .collect::<HashSet<_>>()
+            .into_iter()
             .map(|gid| Gid::from_raw(*gid))
             .collect();
 
@@ -1031,7 +1037,7 @@ mod tests {
                     .additional_gids(vec![33, 34])
                     .build()?,
                 None::<UserNamespaceConfig>,
-                vec![vec![Gid::from_raw(33), Gid::from_raw(34)]],
+                vec![Gid::from_raw(33), Gid::from_raw(34)],
             ),
             // unreachable case
             (
@@ -1052,7 +1058,7 @@ mod tests {
                     user_namespace: None,
                     ..Default::default()
                 }),
-                vec![vec![Gid::from_raw(37), Gid::from_raw(38)]],
+                vec![Gid::from_raw(37), Gid::from_raw(38)],
             ),
         ];
         for (user, ns_config, want) in tests.into_iter() {
@@ -1069,7 +1075,13 @@ mod tests {
                         .downcast_ref::<TestHelperSyscall>()
                         .unwrap()
                         .get_groups_args();
-                    assert_eq!(want, got);
+                    // set set_supplementary_gids uses hashset internally
+                    // so we cannot be sure of the order, hence compare the
+                    // length and includes
+                    assert_eq!(want.len(), got.len());
+                    for gid in &want {
+                        assert!(got.contains(gid));
+                    }
                 }
                 _ => unreachable!("setgroups value unknown"),
             }

@@ -2,7 +2,7 @@
 name = "seccomp"
 version = "0.0.0"
 description = "Library for seccomp"
-license-file = "../../LICENSE"
+license = "Apache-2.0"
 repository = "https://github.com/containers/youki"
 homepage = "https://youki-dev.github.io/youki/"
 readme = "README.md"

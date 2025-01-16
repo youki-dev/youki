@@ -369,13 +369,13 @@ impl TestHelperSyscall {
             .collect::<Vec<String>>()
     }
 
-    pub fn get_groups_args(&self) -> Vec<Vec<Gid>> {
+    pub fn get_groups_args(&self) -> Vec<Gid> {
         self.mocks
             .fetch(ArgName::Groups)
             .values
             .iter()
-            .map(|x| x.downcast_ref::<Vec<Gid>>().unwrap().clone())
-            .collect::<Vec<Vec<Gid>>>()
+            .flat_map(|x| x.downcast_ref::<Vec<Gid>>().unwrap().clone())
+            .collect::<Vec<Gid>>()
     }
 
     pub fn get_io_priority_args(&self) -> Vec<IoPriorityArgs> {

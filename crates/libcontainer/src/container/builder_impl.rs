@@ -57,6 +57,8 @@ pub(super) struct ContainerBuilderImpl {
     pub stdout: Option<OwnedFd>,
     // RawFd set to stderr of the container init process.
     pub stderr: Option<OwnedFd>,
+    // Indicate if the init process should be a sibling of the main process.
+    pub as_sibling: bool,
 }
 
 impl ContainerBuilderImpl {
@@ -172,6 +174,7 @@ impl ContainerBuilderImpl {
             stdin: self.stdin.as_ref().map(|x| x.as_raw_fd()),
             stdout: self.stdout.as_ref().map(|x| x.as_raw_fd()),
             stderr: self.stderr.as_ref().map(|x| x.as_raw_fd()),
+            as_sibling: self.as_sibling,
         };
 
         let (init_pid, need_to_clean_up_intel_rdt_dir) =

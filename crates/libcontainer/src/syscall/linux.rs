@@ -17,7 +17,7 @@ use nix::fcntl::{open, OFlag};
 use nix::mount::{mount, umount2, MntFlags, MsFlags};
 use nix::sched::{unshare, CloneFlags};
 use nix::sys::stat::{mknod, Mode, SFlag};
-use nix::unistd::{chown, chroot, fchdir, pivot_root, sethostname, Gid, Uid};
+use nix::unistd::{chown, chroot, close, fchdir, pivot_root, sethostname, Gid, Uid};
 use oci_spec::runtime::PosixRlimit;
 
 use super::{Result, Syscall, SyscallError};
@@ -232,11 +232,15 @@ impl Syscall for LinuxSyscall {
     /// Function to set given path as root path inside process
     fn pivot_rootfs(&self, path: &Path) -> Result<()> {
         // open the path as directory and read only
-        let newroot =
-            open(path, OFlag::O_DIRECTORY | OFlag::O_RDONLY, Mode::empty()).map_err(|errno| {
-                tracing::error!(?errno, ?path, "failed to open the new root for pivot root");
-                errno
-            })?;
+        let newroot = open(
+            path,
+            OFlag::O_DIRECTORY | OFlag::O_RDONLY | OFlag::O_CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|errno| {
+            tracing::error!(?errno, ?path, "failed to open the new root for pivot root");
+            errno
+        })?;
 
         // make the given path as the root directory for the container
         // see https://man7.org/linux/man-pages/man2/pivot_root.2.html, specially the notes
@@ -276,6 +280,11 @@ impl Syscall for LinuxSyscall {
         // Change directory to the new root
         fchdir(newroot).map_err(|errno| {
             tracing::error!(?errno, ?newroot, "failed to change directory to new root");
+            errno
+        })?;
+
+        close(newroot).map_err(|errno| {
+            tracing::error!(?errno, ?newroot, "failed to close new root directory");
             errno
         })?;
 
