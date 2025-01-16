@@ -20,6 +20,7 @@ use crate::utils::test_utils::CreateOptions;
 /// See `man 2 setrlimit` for more details:
 /// > EPERM The caller tried to increase the hard RLIMIT_NOFILE limit above
 /// > the maximum defined by /proc/sys/fs/nr_open
+/// > See also: https://docs.kernel.org/admin-guide/sysctl/fs.html#nr-open
 fn create_spec() -> Result<Spec> {
     let invalid_rlimit = PosixRlimitBuilder::default()
         .typ(PosixRlimitType::RlimitNofile)
