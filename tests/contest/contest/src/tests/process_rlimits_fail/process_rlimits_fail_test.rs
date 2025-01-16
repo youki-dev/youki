@@ -19,8 +19,8 @@ use crate::utils::test_utils::CreateOptions;
 fn create_spec() -> Result<Spec> {
     let invalid_rlimit = PosixRlimitBuilder::default()
         .typ(PosixRlimitType::RlimitNofile)
-        .hard(u64::MAX)  // Exceeds /proc/sys/fs/nr_open limit
-        .soft(u64::MAX)  // Exceeds /proc/sys/fs/nr_open limit
+        .hard(u64::MAX) // Exceeds /proc/sys/fs/nr_open limit
+        .soft(u64::MAX) // Exceeds /proc/sys/fs/nr_open limit
         .build()?;
 
     let spec = SpecBuilder::default()
