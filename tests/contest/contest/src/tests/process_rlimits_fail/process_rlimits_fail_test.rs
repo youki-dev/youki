@@ -5,11 +5,22 @@ use test_framework::{test_result, Test, TestGroup, TestResult};
 use crate::utils::test_inside_container;
 use crate::utils::test_utils::CreateOptions;
 
+/// Creates a spec with an invalid rlimit value.
+///
+/// According to the OCI Runtime Spec, "The runtime MUST generate an error for any values
+/// which cannot be mapped to a relevant kernel interface."
+///
+/// While the original Go test in runtime-tools validates this by using an invalid rlimit type
+/// (RLIMIT_TEST), this implementation takes a different approach due to Rust's type safety:
+/// - Uses a valid rlimit type (RLIMIT_NOFILE)
+/// - Sets its value to u64::MAX, which exceeds the system's maximum allowed value
+///   defined in /proc/sys/fs/nr_open
+/// - This causes the kernel to reject the value with EPERM
 fn create_spec() -> Result<Spec> {
     let invalid_rlimit = PosixRlimitBuilder::default()
         .typ(PosixRlimitType::RlimitNofile)
-        .hard(u64::MAX)
-        .soft(u64::MAX)
+        .hard(u64::MAX)  // Exceeds /proc/sys/fs/nr_open limit
+        .soft(u64::MAX)  // Exceeds /proc/sys/fs/nr_open limit
         .build()?;
 
     let spec = SpecBuilder::default()
