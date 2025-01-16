@@ -15,14 +15,13 @@ fn can_run() -> bool {
 }
 
 fn linux_device_build(
-    allow: bool,
     dev_type: LinuxDeviceType,
     major: i64,
     minor: i64,
     access: String,
 ) -> LinuxDeviceCgroup {
     LinuxDeviceCgroupBuilder::default()
-        .access(allow.to_string())
+        .allow(true)
         .typ(dev_type)
         .major(major)
         .minor(minor)
@@ -54,9 +53,9 @@ fn create_spec(cgroup_name: &str, devices: Vec<LinuxDeviceCgroup>) -> anyhow::Re
 fn test_devices_cgroups() -> TestResult {
     let cgroup_name = "test_devices_cgroups";
     let linux_devices = vec![
-        linux_device_build(true, LinuxDeviceType::C, 10, 229, "rwm".to_string()),
-        linux_device_build(true, LinuxDeviceType::B, 8, 20, "rw".to_string()),
-        linux_device_build(true, LinuxDeviceType::B, 10, 200, "r".to_string()),
+        linux_device_build(LinuxDeviceType::C, 10, 229, "rwm".to_string()),
+        linux_device_build(LinuxDeviceType::B, 8, 20, "rw".to_string()),
+        linux_device_build(LinuxDeviceType::B, 10, 200, "r".to_string()),
     ];
     let spec = test_result!(create_spec(cgroup_name, linux_devices));
 
