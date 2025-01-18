@@ -3,11 +3,11 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use contest::utils::test_utils::CGROUP_ROOT;
 use oci_spec::runtime::{
     LinuxBuilder, LinuxDeviceCgroup, LinuxDeviceCgroupBuilder, LinuxDeviceType,
     LinuxResourcesBuilder, Spec, SpecBuilder,
 };
-use contest::utils::test_utils::CGROUP_ROOT;
 use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
 
 use crate::utils::test_outside_container;
@@ -56,7 +56,7 @@ fn create_spec(cgroup_name: &str, devices: Vec<LinuxDeviceCgroup>) -> Result<Spe
 fn get_allow_linux_devices(path: &Path) -> Result<Vec<LinuxDeviceCgroup>> {
     let file = File::open(path).unwrap()?;
     let reader = BufReader::new(file);
-    let mut devices :Vec<LinuxDeviceCgroup> = vec![];
+    let mut devices: Vec<LinuxDeviceCgroup> = vec![];
 
     for line in reader.lines() {
         let line = line?;
@@ -86,9 +86,7 @@ fn get_allow_linux_devices(path: &Path) -> Result<Vec<LinuxDeviceCgroup>> {
             };
             // read access string
             let access = parts[2].to_string();
-            devices.push(linux_device_build(
-                device_type, major, minor, access,
-            ))
+            devices.push(linux_device_build(device_type, major, minor, access))
         }
     }
 
@@ -110,11 +108,12 @@ fn validate_linux_devices(cgroup_name: &str, spec: &Spec) -> Result<()> {
         if spec_linux_device.allow() {
             let mut found = false;
             for linux_device in linux_devices.clone() {
-                if linux_device.typ() == spec_linux_device.typ() &&
-                    linux_device.major() == spec_linux_device.major() &&
-                    linux_device.minor() == spec_linux_device.minor() &&
-                    linux_device.access() == spec_linux_device.access() {
-                        found = true;
+                if linux_device.typ() == spec_linux_device.typ()
+                    && linux_device.major() == spec_linux_device.major()
+                    && linux_device.minor() == spec_linux_device.minor()
+                    && linux_device.access() == spec_linux_device.access()
+                {
+                    found = true;
                 }
             }
             if !found {
