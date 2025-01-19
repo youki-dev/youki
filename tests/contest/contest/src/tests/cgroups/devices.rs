@@ -2,8 +2,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
-use contest::utils::test_utils::CGROUP_ROOT;
+use anyhow::{bail, Context, Error, Result};
 use oci_spec::runtime::{
     LinuxBuilder, LinuxDeviceCgroup, LinuxDeviceCgroupBuilder, LinuxDeviceType,
     LinuxResourcesBuilder, Spec, SpecBuilder,
@@ -11,7 +10,7 @@ use oci_spec::runtime::{
 use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
 
 use crate::utils::test_outside_container;
-use crate::utils::test_utils::check_container_created;
+use crate::utils::test_utils::{check_container_created, CGROUP_ROOT};
 
 fn can_run() -> bool {
     Path::new("/sys/fs/cgroup/devices").exists()
@@ -53,8 +52,8 @@ fn create_spec(cgroup_name: &str, devices: Vec<LinuxDeviceCgroup>) -> Result<Spe
     Ok(spec)
 }
 
-fn get_allow_linux_devices(path: &Path) -> Result<Vec<LinuxDeviceCgroup>> {
-    let file = File::open(path).unwrap()?;
+fn get_allow_linux_devices(path: &Path) -> Result<Vec<LinuxDeviceCgroup>, Error> {
+    let file = File::open(path)?;
     let reader = BufReader::new(file);
     let mut devices: Vec<LinuxDeviceCgroup> = vec![];
 
@@ -86,11 +85,16 @@ fn get_allow_linux_devices(path: &Path) -> Result<Vec<LinuxDeviceCgroup>> {
             };
             // read access string
             let access = parts[2].to_string();
-            devices.push(linux_device_build(device_type, major, minor, access))
+            devices.push(linux_device_build(
+                device_type,
+                major.unwrap(),
+                minor.unwrap(),
+                access,
+            ))
         }
     }
 
-    Ok(devices);
+    Ok(devices)
 }
 
 fn validate_linux_devices(cgroup_name: &str, spec: &Spec) -> Result<()> {
@@ -119,10 +123,10 @@ fn validate_linux_devices(cgroup_name: &str, spec: &Spec) -> Result<()> {
             if !found {
                 bail!(
                     "allow linux device {}:{}:{}:{} not found, exists in spec",
-                    spec_linux_device.typ(),
-                    spec_linux_device.major(),
-                    spec_linux_device.minor(),
-                    spec_linux_device.access()
+                    spec_linux_device.typ().unwrap().as_str(),
+                    spec_linux_device.major().unwrap(),
+                    spec_linux_device.minor().unwrap(),
+                    spec_linux_device.access().as_ref().unwrap()
                 );
             }
         }
@@ -142,7 +146,7 @@ fn test_devices_cgroups() -> TestResult {
 
     test_outside_container(spec.clone(), &|data| {
         test_result!(check_container_created(&data));
-        test_result!(validate_linux_devices(&cgroup_name, &spec));
+        test_result!(validate_linux_devices(cgroup_name, &spec));
         TestResult::Passed
     })
 }
