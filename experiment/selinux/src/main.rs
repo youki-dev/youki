@@ -1,31 +1,24 @@
-use selinux::selinux::*;
-use selinux::selinux_label::*;
 use std::fs::File;
 use std::path::Path;
 
+use selinux::{label::*, selinux::*, setting::SELinuxSetting, SELinuxError, SELinuxMode};
+
 fn main() -> Result<(), SELinuxError> {
-    let mut selinux_instance: SELinux = SELinux::new();
+    let setting = SELinuxSetting::try_default()?;
+    println!("current enforce mode is: {}", setting.enforce_mode()?);
 
-    if selinux_instance.get_enabled() {
-        println!("selinux is enabled");
+    let selinux: SELinux = SELinux::try_default(&setting)?;
+    if selinux.get_enabled() {
+        println!("SELinux is enabled");
     } else {
-        println!("selinux is not enabled");
-
-        match selinux_instance.set_enforce_mode(SELinuxMode::PERMISSIVE) {
+        println!("SELinux is not enabled");
+        match setting.set_enforce_mode(SELinuxMode::PERMISSIVE) {
             Ok(_) => println!("set selinux mode as permissive"),
-            Err(e) => println!("{}", e),
-        }
+            Err(e) => return Err(SELinuxError::from(e)),
+        };
     }
-    println!(
-        "default enforce mode is: {}",
-        selinux_instance.default_enforce_mode()
-    );
-    println!(
-        "current enforce mode is: {}",
-        selinux_instance.enforce_mode()
-    );
 
-    match selinux_instance.current_label() {
+    match selinux.current_label() {
         Ok(l) => println!("SELinux label of current process is: {}", l),
         Err(e) => println!("{}", e),
     }
