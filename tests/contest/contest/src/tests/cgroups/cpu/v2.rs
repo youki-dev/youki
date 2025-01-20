@@ -34,7 +34,7 @@ fn test_cpu_idle_set() -> TestResult {
         .build()
         .context("build cpu spec"));
 
-    let spec = test_result!(create_spec("test_cpu_idle_set", cpu));
+    let spec = test_result!(create_spec("test_cpu_idle_set", cpu, false));
     test_outside_container(spec, &|data| {
         test_result!(check_container_created(&data));
         test_result!(check_cpu_idle("test_cpu_idle_set", idle));
@@ -47,7 +47,7 @@ fn test_cpu_idle_default() -> TestResult {
     let default_idle = 0;
     let cpu = test_result!(LinuxCpuBuilder::default().build().context("build cpu spec"));
 
-    let spec = test_result!(create_spec("test_cpu_idle_default", cpu));
+    let spec = test_result!(create_spec("test_cpu_idle_default", cpu, false));
     test_outside_container(spec, &|data| {
         test_result!(check_container_created(&data));
         test_result!(check_cpu_idle("test_cpu_idle_default", default_idle));
@@ -64,7 +64,7 @@ fn test_cpu_weight_valid_set() -> TestResult {
         .build()
         .context("build cpu spec"));
 
-    let spec = test_result!(create_spec("test_cpu_weight_valid_set", cpu));
+    let spec = test_result!(create_spec("test_cpu_weight_valid_set", cpu, false));
     test_outside_container(spec, &|data| {
         test_result!(check_container_created(&data));
         test_result!(check_cpu_weight(
@@ -84,7 +84,7 @@ fn test_cpu_weight_zero_ignored() -> TestResult {
         .build()
         .context("build cpu spec"));
 
-    let spec = test_result!(create_spec("test_cpu_weight_zero_ignored", cpu));
+    let spec = test_result!(create_spec("test_cpu_weight_zero_ignored", cpu, false));
     test_outside_container(spec, &|data| {
         test_result!(check_container_created(&data));
         test_result!(check_cpu_weight(
@@ -104,7 +104,11 @@ fn test_cpu_weight_too_high_maximum_set() -> TestResult {
         .build()
         .context("build cpu spec"));
 
-    let spec = test_result!(create_spec("test_cpu_weight_too_high_maximum_set", cpu));
+    let spec = test_result!(create_spec(
+        "test_cpu_weight_too_high_maximum_set",
+        cpu,
+        false
+    ));
     test_outside_container(spec, &|data| {
         test_result!(check_container_created(&data));
         test_result!(check_cpu_weight(
@@ -123,7 +127,7 @@ fn test_cpu_quota_valid_set() -> TestResult {
         .build()
         .context("build cpu spec"));
 
-    let spec = test_result!(create_spec("test_cpu_quota_valid_set", cpu));
+    let spec = test_result!(create_spec("test_cpu_quota_valid_set", cpu, false));
     test_outside_container(spec, &|data| {
         test_result!(check_container_created(&data));
         test_result!(check_cpu_max(
@@ -143,7 +147,7 @@ fn test_cpu_quota_zero_default_set() -> TestResult {
         .build()
         .context("build cpu spec"));
 
-    let spec = test_result!(create_spec("test_cpu_quota_zero_default_set", cpu));
+    let spec = test_result!(create_spec("test_cpu_quota_zero_default_set", cpu, false));
     test_outside_container(spec, &|data| {
         test_result!(check_container_created(&data));
         test_result!(check_cpu_max(
@@ -165,7 +169,8 @@ fn test_cpu_quota_negative_default_set() -> TestResult {
 
     let spec = test_result!(create_spec(
         "test_cpu_quota_negative_value_default_set",
-        cpu
+        cpu,
+        false
     ));
     test_outside_container(spec, &|data| {
         test_result!(check_container_created(&data));
@@ -188,7 +193,7 @@ fn test_cpu_period_valid_set() -> TestResult {
         .build()
         .context("build cpu spec"));
 
-    let spec = test_result!(create_spec("test_cpu_period_valid_set", cpu));
+    let spec = test_result!(create_spec("test_cpu_period_valid_set", cpu, false));
     test_result!(prepare_cpu_max(
         &spec,
         &quota.to_string(),
@@ -213,7 +218,11 @@ fn test_cpu_quota_period_unspecified_unchanged() -> TestResult {
     let expected_period = 250_000;
     let cpu = test_result!(LinuxCpuBuilder::default().build().context("build cpu spec"));
 
-    let spec = test_result!(create_spec("test_cpu_period_unspecified_unchanged", cpu));
+    let spec = test_result!(create_spec(
+        "test_cpu_period_unspecified_unchanged",
+        cpu,
+        false
+    ));
     test_result!(prepare_cpu_max(
         &spec,
         &quota.to_string(),
@@ -240,7 +249,11 @@ fn test_cpu_period_and_quota_valid_set() -> TestResult {
         .build()
         .context("build cpu spec"));
 
-    let spec = test_result!(create_spec("test_cpu_period_and_quota_valid_set", cpu));
+    let spec = test_result!(create_spec(
+        "test_cpu_period_and_quota_valid_set",
+        cpu,
+        false
+    ));
 
     test_outside_container(spec, &|data| {
         test_result!(check_container_created(&data));

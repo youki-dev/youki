@@ -41,11 +41,16 @@ fn create_cpu_spec(
     builder.build().context("failed to build cpu spec")
 }
 
-fn create_spec(cgroup_name: &str, case: LinuxCpu) -> Result<Spec> {
+fn create_spec(cgroup_name: &str, case: LinuxCpu, is_relative: bool) -> Result<Spec> {
+    let cgroups_path = if is_relative {
+        Path::new("testdir/runtime-test").join(cgroup_name)
+    } else {
+        Path::new("/runtime-test").join(cgroup_name)
+    };
     let spec = SpecBuilder::default()
         .linux(
             LinuxBuilder::default()
-                .cgroups_path(Path::new("/runtime-test").join(cgroup_name))
+                .cgroups_path(cgroups_path)
                 .resources(
                     LinuxResourcesBuilder::default()
                         .cpu(case)
