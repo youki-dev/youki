@@ -118,7 +118,10 @@ fn test_network_cgroups() -> TestResult {
     for spec in cases.into_iter() {
         let test_result = test_outside_container(spec.clone(), &|data| {
             test_result!(check_container_created(&data));
-            test_result!(validate_network(cgroup_name, &spec));
+            test_result!(validate_network(
+                format!("/runtime-test/{}", cgroup_name).as_str(),
+                &spec
+            ));
 
             TestResult::Passed
         });
@@ -131,7 +134,7 @@ fn test_network_cgroups() -> TestResult {
 }
 
 /// validates the Network structure parsed from /sys/fs/cgroup/net_cls,net_prio with the spec
-fn validate_network(cgroup_name: &str, spec: &Spec) -> Result<()> {
+pub fn validate_network(cgroup_name: &str, spec: &Spec) -> Result<()> {
     let (net_cls_path, net_prio_path) = if Path::new("/sys/fs/cgroup/net_cls/net_cls.classid")
         .exists()
         && Path::new("/sys/fs/cgroup/net_prio/net_prio.ifpriomap").exists()
@@ -210,17 +213,16 @@ fn validate_network(cgroup_name: &str, spec: &Spec) -> Result<()> {
 
 fn net_cls_path(base_path: PathBuf, cgroup_name: &str) -> PathBuf {
     base_path
-        .join("runtime-test")
-        .join(cgroup_name)
+        .join(cgroup_name.trim_start_matches('/'))
         .join("net_cls.classid")
 }
 
 fn net_prio_path(base_path: PathBuf, cgroup_name: &str) -> PathBuf {
     base_path
-        .join("runtime-test")
-        .join(cgroup_name)
+        .join(cgroup_name.trim_start_matches('/'))
         .join("net_prio.ifpriomap")
 }
+
 fn can_run() -> bool {
     // Ensure the expected network interfaces exist on the system running the test
     let iface_exists = get_network_interfaces().is_some();
