@@ -8,7 +8,7 @@ use libcgroups::v1::{util, ControllerType};
 use num_cpus;
 use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
 
-use super::{create_cpu_spec, create_empty_spec, create_spec};
+use super::{create_cpu_spec, create_empty_spec, create_spec, create_spec_with_cgroup_path};
 use crate::utils::test_outside_container;
 use crate::utils::test_utils::check_container_created;
 
@@ -208,7 +208,7 @@ fn test_cpu_cgroups() -> TestResult {
     ];
 
     for case in cases.into_iter() {
-        let spec = test_result!(create_spec(cgroup_name, case, false));
+        let spec = test_result!(create_spec(cgroup_name, case));
         let test_result = test_outside_container(spec, &|data| {
             test_result!(check_container_created(&data));
 
@@ -252,7 +252,10 @@ fn test_relative_cpus() -> TestResult {
         get_realtime_period(),
         get_realtime_runtime(),
     ));
-    let spec = test_result!(create_spec("test_relative_cpus", case.clone(), true));
+    let spec = test_result!(create_spec_with_cgroup_path(
+        "testdir/runtime-test/test_relative_cpus",
+        case.clone()
+    ));
 
     test_outside_container(spec, &|data| {
         test_result!(check_container_created(&data));
@@ -320,7 +323,7 @@ fn test_cpu_idle_set() -> TestResult {
         realtime_runtime,
     ));
 
-    let spec = test_result!(create_spec(cgroup_name, cpu, false));
+    let spec = test_result!(create_spec(cgroup_name, cpu));
     test_outside_container(spec, &|data| {
         test_result!(check_container_created(&data));
         TestResult::Passed
@@ -344,7 +347,7 @@ fn test_cpu_idle_default() -> TestResult {
         realtime_period,
         realtime_runtime,
     ));
-    let spec = test_result!(create_spec(cgroup_name, cpu, false));
+    let spec = test_result!(create_spec(cgroup_name, cpu));
     test_outside_container(spec, &|data| {
         test_result!(check_container_created(&data));
         TestResult::Passed

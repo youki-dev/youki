@@ -41,16 +41,11 @@ fn create_cpu_spec(
     builder.build().context("failed to build cpu spec")
 }
 
-fn create_spec(cgroup_name: &str, case: LinuxCpu, is_relative: bool) -> Result<Spec> {
-    let cgroups_path = if is_relative {
-        Path::new("testdir/runtime-test").join(cgroup_name)
-    } else {
-        Path::new("/runtime-test").join(cgroup_name)
-    };
+fn create_spec_with_cgroup_path(cgroup_path: &str, case: LinuxCpu) -> Result<Spec> {
     let spec = SpecBuilder::default()
         .linux(
             LinuxBuilder::default()
-                .cgroups_path(cgroups_path)
+                .cgroups_path(Path::new(cgroup_path))
                 .resources(
                     LinuxResourcesBuilder::default()
                         .cpu(case)
@@ -64,6 +59,10 @@ fn create_spec(cgroup_name: &str, case: LinuxCpu, is_relative: bool) -> Result<S
         .context("failed to build spec")?;
 
     Ok(spec)
+}
+
+fn create_spec(cgroup_name: &str, case: LinuxCpu) -> Result<Spec> {
+    create_spec_with_cgroup_path(&format!("/runtime-test/{}", cgroup_name), case)
 }
 
 fn create_empty_spec(cgroup_name: &str) -> Result<Spec> {
