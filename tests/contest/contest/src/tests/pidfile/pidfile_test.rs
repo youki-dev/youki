@@ -1,13 +1,12 @@
 use std::fs::File;
-use std::process::{Command, Stdio};
 
 use anyhow::anyhow;
 use test_framework::{Test, TestGroup, TestResult};
 use uuid::Uuid;
 
 use crate::utils::{
-    delete_container, generate_uuid, get_runtime_path, get_state, kill_container, prepare_bundle,
-    State,
+    create_container, delete_container, generate_uuid, get_state, kill_container, prepare_bundle,
+    CreateOptions, State,
 };
 
 #[inline]
@@ -17,8 +16,6 @@ fn cleanup(id: &Uuid, bundle: &tempfile::TempDir) {
     delete_container(&str_id, bundle).unwrap().wait().unwrap();
 }
 
-// here we have to manually create and manage the container
-// as the test_inside container does not provide a way to set the pid file argument
 fn test_pidfile() -> TestResult {
     // create id for the container and pidfile
     let container_id = generate_uuid();
@@ -30,22 +27,14 @@ fn test_pidfile() -> TestResult {
     let _ = File::create(&pidfile_path).unwrap();
 
     // start the container
-    Command::new(get_runtime_path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .arg("--root")
-        .arg(bundle.as_ref().join("runtime"))
-        .arg("create")
-        .arg(container_id.to_string())
-        .arg("--bundle")
-        .arg(bundle.as_ref().join("bundle"))
-        .arg("--pid-file")
-        .arg(pidfile_path)
-        .spawn()
-        .unwrap()
-        .wait()
-        .unwrap();
+    create_container(
+        &container_id.to_string(),
+        &bundle,
+        &CreateOptions::default().with_extra_args(&["--pid-file".as_ref(), pidfile_path.as_ref()]),
+    )
+    .unwrap()
+    .wait()
+    .unwrap();
 
     let (out, err) = get_state(&container_id.to_string(), &bundle).unwrap();
 

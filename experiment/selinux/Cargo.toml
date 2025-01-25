@@ -2,9 +2,9 @@
 name = "selinux"
 version = "0.1.0"
 description = "Library for selinux"
-license-file = "../../LICENSE"
+license = "Apache-2.0"
 repository = "https://github.com/containers/youki"
-homepage = "https://containers.github.io/youki"
+homepage = "https://youki-dev.github.io/youki/"
 readme = "README.md"
 authors = ["youki team"]
 edition = "2021"
@@ -12,7 +12,6 @@ autoexamples = true
 keywords = ["youki", "container", "selinux"]
 
 [dependencies]
-anyhow = "1.0.86"
 nix = { version = "0.29.0", features = ["process", "fs", "socket"] }
 rustix = { version = "0.38.34", features = ["fs"] }
 tempfile = "3.10.1"

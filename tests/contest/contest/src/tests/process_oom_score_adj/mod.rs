@@ -1,0 +1,2 @@
+mod process_oom_score_adj_test;
+pub use process_oom_score_adj_test::get_process_oom_score_adj_test;

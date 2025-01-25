@@ -31,17 +31,14 @@ impl RootFS {
         }
     }
 
-    pub fn prepare_rootfs(
+    pub fn mount_to_rootfs(
         &self,
+        linux: &Linux,
         spec: &Spec,
         rootfs: &Path,
-        bind_devices: bool,
         cgroup_ns: bool,
     ) -> Result<()> {
-        tracing::debug!(?rootfs, "prepare rootfs");
         let mut flags = MsFlags::MS_REC;
-        let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
-
         match linux.rootfs_propagation().as_deref() {
             Some("shared") => flags |= MsFlags::MS_SHARED,
             Some("private") => flags |= MsFlags::MS_PRIVATE,
@@ -92,6 +89,20 @@ impl RootFS {
                 mounter.setup_mount(mount, &global_options)?;
             }
         }
+        Ok(())
+    }
+
+    pub fn prepare_rootfs(
+        &self,
+        spec: &Spec,
+        rootfs: &Path,
+        bind_devices: bool,
+        cgroup_ns: bool,
+    ) -> Result<()> {
+        tracing::debug!(?rootfs, "prepare rootfs");
+        let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
+
+        self.mount_to_rootfs(linux, spec, rootfs, cgroup_ns)?;
 
         let symlinker = Symlink::new();
         symlinker.setup_kcore_symlink(rootfs)?;

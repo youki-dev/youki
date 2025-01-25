@@ -1,6 +1,7 @@
 //! Contains utility functions for testing
 //! Similar to https://github.com/opencontainers/runtime-tools/blob/master/validation/util/test.go
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread::sleep;
@@ -42,11 +43,27 @@ pub struct ContainerData {
     pub create_result: std::io::Result<ExitStatus>,
 }
 
-/// Starts the runtime with given directory as root directory
-pub fn create_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
-    let res = Command::new(get_runtime_path())
-        // set stdio so that we can get o/p of runtimetest
-        // in test_inside_container function
+#[derive(Debug, Default)]
+pub struct CreateOptions<'a> {
+    extra_args: &'a [&'a OsStr],
+    no_pivot: bool,
+}
+
+impl<'a> CreateOptions<'a> {
+    pub fn with_extra_args(mut self, extra_args: &'a [&'a OsStr]) -> Self {
+        self.extra_args = extra_args;
+        self
+    }
+
+    pub fn with_no_pivot_root(mut self) -> Self {
+        self.no_pivot = true;
+        self
+    }
+}
+
+fn create_container_command<P: AsRef<Path>>(id: &str, dir: P, options: &CreateOptions) -> Command {
+    let mut command = Command::new(get_runtime_path());
+    command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .arg("--root")
@@ -55,6 +72,20 @@ pub fn create_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
         .arg(id)
         .arg("--bundle")
         .arg(dir.as_ref().join("bundle"))
+        .args(options.extra_args);
+    if options.no_pivot {
+        command.arg("--no-pivot");
+    }
+    command
+}
+
+/// Starts the runtime with given directory as root directory
+pub fn create_container<P: AsRef<Path>>(
+    id: &str,
+    dir: P,
+    options: &CreateOptions,
+) -> Result<Child> {
+    let res = create_container_command(id, dir, options)
         .spawn()
         .context("could not create container")?;
     Ok(res)
@@ -121,7 +152,8 @@ pub fn test_outside_container(
     let id_str = id.to_string();
     let bundle = prepare_bundle().unwrap();
     set_config(&bundle, &spec).unwrap();
-    let create_result = create_container(&id_str, &bundle).unwrap().wait();
+    let options = CreateOptions::default();
+    let create_result = create_container(&id_str, &bundle, &options).unwrap().wait();
     let (out, err) = get_state(&id_str, &bundle).unwrap();
     let state: Option<State> = match serde_json::from_str(&out) {
         Ok(v) => Some(v),
@@ -142,6 +174,7 @@ pub fn test_outside_container(
 // mostly needs a name that better expresses what this actually does
 pub fn test_inside_container(
     spec: Spec,
+    options: &CreateOptions,
     setup_for_test: &dyn Fn(&Path) -> Result<()>,
 ) -> TestResult {
     let id = generate_uuid();
@@ -176,7 +209,7 @@ pub fn test_inside_container(
             .join("runtimetest"),
     )
     .unwrap();
-    let create_process = create_container(&id_str, &bundle).unwrap();
+    let create_process = create_container(&id_str, &bundle, options).unwrap();
     // here we do not wait for the process by calling wait() as in the test_outside_container
     // function because we need the output of the runtimetest. If we call wait, it will return
     // and we won't have an easy way of getting the stdio of the runtimetest.

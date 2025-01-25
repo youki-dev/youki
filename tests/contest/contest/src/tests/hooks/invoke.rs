@@ -5,7 +5,7 @@ use anyhow::anyhow;
 use oci_spec::runtime::{Hook, HookBuilder, HooksBuilder, ProcessBuilder, Spec, SpecBuilder};
 use test_framework::{Test, TestGroup, TestResult};
 
-use crate::utils::test_utils::start_container;
+use crate::utils::test_utils::{start_container, CreateOptions};
 use crate::utils::{create_container, delete_container, generate_uuid, prepare_bundle, set_config};
 
 const HOOK_OUTPUT_FILE: &str = "output";
@@ -71,7 +71,10 @@ fn get_test(test_name: &'static str) -> Test {
             let id_str = id.to_string();
             let bundle = prepare_bundle().unwrap();
             set_config(&bundle, &spec).unwrap();
-            create_container(&id_str, &bundle).unwrap().wait().unwrap();
+            create_container(&id_str, &bundle, &CreateOptions::default())
+                .unwrap()
+                .wait()
+                .unwrap();
             start_container(&id_str, &bundle).unwrap().wait().unwrap();
             delete_container(&id_str, &bundle).unwrap().wait().unwrap();
             let log = {

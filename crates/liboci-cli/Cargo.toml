@@ -1,10 +1,10 @@
 [package]
 name = "liboci-cli"
-version = "0.4.1" # MARK: Version
+version = "0.5.1" # MARK: Version
 description = "Parse command line arguments for OCI container runtimes"
-license-file = "../../LICENSE"
+license = "Apache-2.0"
 repository = "https://github.com/containers/youki"
-homepage = "https://containers.github.io/youki"
+homepage = "https://youki-dev.github.io/youki/"
 readme = "README.md"
 authors = ["youki team"]
 edition = "2021"

@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use caps::{CapSet, CapsHashSet};
 use libc;
-use nix::mount::MsFlags;
+use nix::mount::{MntFlags, MsFlags};
 use nix::sched::CloneFlags;
 use nix::sys::stat::{Mode, SFlag};
 use nix::unistd::{Gid, Uid};
@@ -54,6 +54,7 @@ pub trait Syscall {
         size: libc::size_t,
     ) -> Result<()>;
     fn set_io_priority(&self, class: i64, priority: i64) -> Result<()>;
+    fn umount2(&self, target: &Path, flags: MntFlags) -> Result<()>;
 }
 
 #[derive(Clone, Copy)]

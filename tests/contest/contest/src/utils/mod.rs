@@ -7,5 +7,5 @@ pub use support::{
 };
 pub use test_utils::{
     create_container, delete_container, get_state, kill_container, test_inside_container,
-    test_outside_container, State,
+    test_outside_container, CreateOptions, State,
 };

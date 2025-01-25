@@ -59,6 +59,8 @@ jobs:
           echo "TARGET=${{ matrix.arch }}-unknown-linux-${{ matrix.libc }}" >> ${GITHUB_ENV}
       - name: Check formatting and lints
         run: just lint
+      - name: Check unused deps
+        uses: bnjbvr/cargo-machete@v0.7.0
 
   tests:
     needs: [changes]

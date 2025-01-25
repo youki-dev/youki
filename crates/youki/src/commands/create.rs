@@ -24,6 +24,7 @@ pub fn create(args: Create, root_path: PathBuf, systemd_cgroup: bool) -> Result<
         .as_init(&args.bundle)
         .with_systemd(systemd_cgroup)
         .with_detach(true)
+        .with_no_pivot(args.no_pivot)
         .build()?;
 
     Ok(())

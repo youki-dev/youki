@@ -82,6 +82,10 @@ impl TestableGroup for ContainerCreate {
         "create"
     }
 
+    fn parallel(&self) -> bool {
+        true
+    }
+
     fn run_all(&self) -> Vec<(&'static str, TestResult)> {
         vec![
             ("empty_id", self.create_empty_id()),

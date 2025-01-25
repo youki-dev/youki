@@ -7,14 +7,16 @@ use std::{
     },
 };
 
+use std::str::FromStr;
 use nix::{
     errno::Errno,
     ioctl_readwrite, ioctl_write_ptr, libc,
     libc::{SECCOMP_FILTER_FLAG_NEW_LISTENER, SECCOMP_SET_MODE_FILTER},
     unistd,
 };
-
-use crate::instruction::{Instruction, SECCOMP_IOC_MAGIC};
+use syscalls::{SyscallArgs};
+use crate::instruction::{*};
+use crate::instruction::{Arch, Instruction, SECCOMP_IOC_MAGIC};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SeccompError {
@@ -197,4 +199,124 @@ unsafe fn seccomp(op: c_uint, flags: c_ulong, args: *mut c_void) -> c_long {
 struct Filters {
     pub len: c_ushort,
     pub filter: *const Instruction,
+}
+
+fn get_syscall_number(arc: &Arch, name: &str) -> Option<u64> {
+    match arc {
+        Arch::X86 => {
+            match syscalls::x86_64::Sysno::from_str(name) {
+                Ok(syscall) => Some(syscall as u64),
+                Err(_) => None,
+            }
+        },
+        Arch::AArch64 => {
+            match syscalls::aarch64::Sysno::from_str(name) {
+                Ok(syscall) => Some(syscall as u64),
+                Err(_) => None,
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct InstructionData {
+    pub arc: Arch,
+    pub def_action: u32,
+    pub rule_arr: Vec<Rule>
+}
+
+impl From<InstructionData> for Vec<Instruction> {
+    fn from(inst_data: InstructionData) -> Self {
+        let mut bpf_prog = gen_validate(&inst_data.arc);
+
+        for rule in &inst_data.rule_arr {
+            bpf_prog.append(&mut Rule::to_instruction(&inst_data.arc, inst_data.def_action, rule));
+        }
+
+        bpf_prog.append(&mut vec![Instruction::stmt(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)]);
+        bpf_prog
+    }
+}
+
+#[derive(Debug)]
+pub struct Rule {
+    pub syscall: String,
+    pub arg_cnt: u8,
+    pub args: SyscallArgs,
+    pub is_notify: bool
+}
+
+impl Rule {
+    pub fn new(syscall: String, arg_cnt: u8, args: SyscallArgs, is_notify: bool) -> Self {
+        Self {
+            syscall,
+            arg_cnt,
+            args,
+            is_notify,
+        }
+    }
+
+    pub fn to_instruction(arch: &Arch, action: u32, rule: &Rule) -> Vec<Instruction> {
+        let mut bpf_prog = gen_validate(arch);
+        bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, 0)]);
+        bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 1,
+                                                    get_syscall_number(arch, &rule.syscall).unwrap() as c_uint)]);
+        if rule.arg_cnt != 0 {
+            bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, seccomp_data_args_offset().into())]);
+            bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, rule.args.arg0 as c_uint)]);
+        }
+
+        if rule.is_notify {
+            bpf_prog.append(&mut vec![Instruction::stmt(BPF_RET | BPF_K, SECCOMP_RET_USER_NOTIF)]);
+        } else {
+            bpf_prog.append(&mut vec![Instruction::stmt(BPF_RET | BPF_K, action)]);
+        }
+        bpf_prog
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use syscalls::syscall_args;
+    use super::*;
+
+    #[test]
+    fn test_get_syscall_number_x86() {
+        let sys_num = get_syscall_number(&Arch::X86, "read");
+        assert_eq!(sys_num.unwrap(), 0);
+    }
+
+    #[test]
+    fn test_get_syscall_number_aarch64() {
+        let sys_num = get_syscall_number(&Arch::AArch64, "read");
+        assert_eq!(sys_num.unwrap(), 63);
+    }
+
+    #[test]
+    fn test_to_instruction_x86() {
+        let rule = Rule::new("getcwd".parse().unwrap(), 0, syscall_args!(), false);
+        let inst = Rule::to_instruction(&Arch::X86, SECCOMP_RET_KILL_PROCESS, &rule);
+        let bpf_prog = gen_validate(&Arch::X86);
+        assert_eq!(inst[0], bpf_prog[0]);
+        assert_eq!(inst[1], bpf_prog[1]);
+        assert_eq!(inst[2], bpf_prog[2]);
+        assert_eq!(inst[3], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, 0));
+        assert_eq!(inst[4], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 1,
+                                              get_syscall_number(&Arch::X86, "getcwd").unwrap() as c_uint));
+        assert_eq!(inst[5], Instruction::stmt(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS));
+    }
+
+    #[test]
+    fn test_to_instruction_aarch64() {
+        let rule = Rule::new("getcwd".parse().unwrap(), 0, syscall_args!(), false);
+        let inst = Rule::to_instruction(&Arch::AArch64, SECCOMP_RET_KILL_PROCESS, &rule);
+        let bpf_prog = gen_validate(&Arch::AArch64);
+        assert_eq!(inst[0], bpf_prog[0]);
+        assert_eq!(inst[1], bpf_prog[1]);
+        assert_eq!(inst[2], bpf_prog[2]);
+        assert_eq!(inst[3], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, 0));
+        assert_eq!(inst[4], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 1,
+                                              get_syscall_number(&Arch::AArch64, "getcwd").unwrap() as c_uint));
+        assert_eq!(inst[5], Instruction::stmt(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS));
+    }
 }

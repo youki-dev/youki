@@ -34,7 +34,11 @@ where
     // set_xattr sets extended attributes on a file specified by its path.
     fn set_xattr(&self, attr: &str, data: &[u8]) -> Result<(), XattrError> {
         let path = self.as_ref();
-        match rfs::setxattr(path, attr, data, rfs::XattrFlags::REPLACE) {
+        let op = match path.get_xattr(attr) {
+            Ok(_) => rfs::XattrFlags::REPLACE,
+            Err(_) => rfs::XattrFlags::CREATE,
+        };
+        match rfs::setxattr(path, attr, data, op) {
             Ok(_) => Ok(()),
             Err(e) => {
                 let errno = e.raw_os_error();
@@ -50,7 +54,11 @@ where
     // lset_xattr sets extended attributes on a symbolic link.
     fn lset_xattr(&self, attr: &str, data: &[u8]) -> Result<(), XattrError> {
         let path = self.as_ref();
-        match rfs::lsetxattr(path, attr, data, rfs::XattrFlags::REPLACE) {
+        let op = match path.lget_xattr(attr) {
+            Ok(_) => rfs::XattrFlags::REPLACE,
+            Err(_) => rfs::XattrFlags::CREATE,
+        };
+        match rfs::lsetxattr(path, attr, data, op) {
             Ok(_) => Ok(()),
             Err(e) => {
                 let errno = e.raw_os_error();
@@ -128,6 +136,15 @@ mod tests {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let file_path = temp_file.path();
 
+        // Verify that the first "set_xattr" operation succeeds, which means it doesn't have xattr yet.
+        file_path
+            .set_xattr(attr_name, attr_value.as_bytes())
+            .expect("Failed to set xattr");
+        let actual = file_path.get_xattr(attr_name).expect("Failed to get xattr");
+        assert_eq!(actual, attr_value);
+
+        // Verify that the second "set_xattr" operation succeeds, which means it already has xattr.
+        let attr_value = "system_u:object_r:another_label_t";
         file_path
             .set_xattr(attr_name, attr_value.as_bytes())
             .expect("Failed to set xattr");

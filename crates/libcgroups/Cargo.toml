@@ -1,10 +1,10 @@
 [package]
 name = "libcgroups"
-version = "0.4.1" # MARK: Version
+version = "0.5.1" # MARK: Version
 description = "Library for cgroup"
-license-file = "../../LICENSE"
+license = "Apache-2.0"
 repository = "https://github.com/containers/youki"
-homepage = "https://containers.github.io/youki"
+homepage = "https://youki-dev.github.io/youki/"
 readme = "README.md"
 authors = ["youki team"]
 edition = "2021"
@@ -21,22 +21,22 @@ cgroupsv2_devices = ["rbpf", "libbpf-sys", "errno", "libc", "nix/dir"]
 
 [dependencies]
 nix = { version = "0.28.0", features = ["signal", "user", "fs"] }
-procfs = "0.16.0"
-oci-spec = { version = "~0.7.0", features = ["runtime"] }
+procfs = "0.17.0"
+oci-spec = { version = "~0.7.1", features = ["runtime"] }
 fixedbitset = "0.5.7"
 serde = { version = "1.0", features = ["derive"] }
 rbpf = { version = "0.3.0", optional = true }
-libbpf-sys = { version = "1.4.5", optional = true }
-errno = { version = "0.3.9", optional = true }
-libc = { version = "0.2.159", optional = true }
-thiserror = "1.0.64"
-tracing = { version = "0.1.40", features = ["attributes"] }
+libbpf-sys = { version = "1.5.0", optional = true }
+errno = { version = "0.3.10", optional = true }
+libc = { version = "0.2.169", optional = true }
+thiserror = "2.0.11"
+tracing = { version = "0.1.41", features = ["attributes"] }
 
 [dev-dependencies]
 anyhow = "1.0"
-oci-spec = { version = "~0.7.0", features = ["proptests", "runtime"] }
+oci-spec = { version = "~0.7.1", features = ["proptests", "runtime"] }
 quickcheck = "1"
-mockall = { version = "0.13.0", features = [] }
+mockall = { version = "0.13.1", features = [] }
 clap = "4.1.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

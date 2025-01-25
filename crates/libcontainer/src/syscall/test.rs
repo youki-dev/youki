@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use caps::{CapSet, CapsHashSet};
-use nix::mount::MsFlags;
+use nix::mount::{MntFlags, MsFlags};
 use nix::sched::CloneFlags;
 use nix::sys::stat::{Mode, SFlag};
 use nix::unistd::{Gid, Uid};
@@ -44,6 +44,12 @@ pub struct IoPriorityArgs {
     pub priority: i64,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct UMount2Args {
+    pub target: PathBuf,
+    pub flags: MntFlags,
+}
+
 #[derive(Default)]
 struct Mock {
     values: Vec<Box<dyn Any>>,
@@ -64,6 +70,7 @@ pub enum ArgName {
     Groups,
     Capability,
     IoPriority,
+    UMount2,
 }
 
 impl ArgName {
@@ -259,6 +266,16 @@ impl Syscall for TestHelperSyscall {
             Box::new(IoPriorityArgs { class, priority }),
         )
     }
+
+    fn umount2(&self, target: &Path, flags: MntFlags) -> Result<()> {
+        self.mocks.act(
+            ArgName::UMount2,
+            Box::new(UMount2Args {
+                target: target.to_owned(),
+                flags,
+            }),
+        )
+    }
 }
 
 impl TestHelperSyscall {
@@ -352,13 +369,13 @@ impl TestHelperSyscall {
             .collect::<Vec<String>>()
     }
 
-    pub fn get_groups_args(&self) -> Vec<Vec<Gid>> {
+    pub fn get_groups_args(&self) -> Vec<Gid> {
         self.mocks
             .fetch(ArgName::Groups)
             .values
             .iter()
-            .map(|x| x.downcast_ref::<Vec<Gid>>().unwrap().clone())
-            .collect::<Vec<Vec<Gid>>>()
+            .flat_map(|x| x.downcast_ref::<Vec<Gid>>().unwrap().clone())
+            .collect::<Vec<Gid>>()
     }
 
     pub fn get_io_priority_args(&self) -> Vec<IoPriorityArgs> {
@@ -368,5 +385,14 @@ impl TestHelperSyscall {
             .iter()
             .map(|x| x.downcast_ref::<IoPriorityArgs>().unwrap().clone())
             .collect::<Vec<IoPriorityArgs>>()
+    }
+
+    pub fn get_umount_args(&self) -> Vec<UMount2Args> {
+        self.mocks
+            .fetch(ArgName::UMount2)
+            .values
+            .iter()
+            .map(|x| x.downcast_ref::<UMount2Args>().unwrap().clone())
+            .collect::<Vec<UMount2Args>>()
     }
 }

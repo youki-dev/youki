@@ -4,7 +4,7 @@ This is a simple wasm module for testing purposes. It prints out the arguments g
 cargo build --target wasm32-wasi
 ```
 
-If you want youki to execute the module you must copy it to the root file system of the container and reference it in the args of the config.json. You must also ensure that the annotations contain `"run.oci.handler": "wasm"` and that youki has been compiled with one of the supported wasm runtimes. For further information please check the [documentation](https://containers.github.io/youki/user/webassembly.html).
+If you want youki to execute the module you must copy it to the root file system of the container and reference it in the args of the config.json. You must also ensure that the annotations contain `"run.oci.handler": "wasm"` and that youki has been compiled with one of the supported wasm runtimes. For further information please check the [documentation](https://youki-dev.github.io/youki/user/webassembly.html).
 
 ```
 "ociVersion": "1.0.2-dev",

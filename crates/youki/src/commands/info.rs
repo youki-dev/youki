@@ -59,6 +59,8 @@ pub fn print_os() {
         println!("{:<18}{}", "Operating System", os);
     } else if let Some(os) = try_read_os_from("/usr/lib/os-release") {
         println!("{:<18}{}", "Operating System", os);
+    } else {
+        println!("{:<18}UNKNOWN", "Operating System");
     }
 }
 
@@ -204,6 +206,9 @@ pub fn print_namespaces() {
                 println!("{:<18}disabled", "Namespaces");
                 return;
             }
+        } else {
+            println!("{:<18}UNKNOWN", "Namespaces");
+            // we don't return as  we can atleast try and see if anything is enabled
         }
 
         // mount namespace is always enabled if namespaces are enabled
@@ -266,7 +271,7 @@ fn print_feature_status(config: &str, feature: &str, display: FeatureDisplay) {
 
         println!("  {:<16}{}", display.name, status);
     } else {
-        println!("  {:<16}{}", display.name, display.disabled);
+        println!("  {:<16}UNKNOWN", display.name);
     }
 }
 

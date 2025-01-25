@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn test_seccomp_data_arg_size_offset() {
         if cfg!(target_arch = "x86_64") {
-            assert_eq!(seccomp_data_arg_size_offset(), 8);
+            assert_eq!(seccomp_data_arg_size(), 8);
         }
     }
 

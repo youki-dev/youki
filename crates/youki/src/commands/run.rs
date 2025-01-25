@@ -22,6 +22,7 @@ pub fn run(args: Run, root_path: PathBuf, systemd_cgroup: bool) -> Result<i32> {
         .as_init(&args.bundle)
         .with_systemd(systemd_cgroup)
         .with_detach(args.detach)
+        .with_no_pivot(args.no_pivot)
         .build()?;
 
     container

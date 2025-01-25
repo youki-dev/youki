@@ -20,6 +20,8 @@ pub struct InitContainerBuilder {
     bundle: PathBuf,
     use_systemd: bool,
     detached: bool,
+    no_pivot: bool,
+    as_sibling: bool,
 }
 
 impl InitContainerBuilder {
@@ -31,6 +33,8 @@ impl InitContainerBuilder {
             bundle,
             use_systemd: true,
             detached: true,
+            no_pivot: false,
+            as_sibling: false,
         }
     }
 
@@ -40,8 +44,20 @@ impl InitContainerBuilder {
         self
     }
 
+    /// Sets if the init process should be run as a child or a sibling of
+    /// the calling process
+    pub fn as_sibling(mut self, as_sibling: bool) -> Self {
+        self.as_sibling = as_sibling;
+        self
+    }
+
     pub fn with_detach(mut self, detached: bool) -> Self {
         self.detached = detached;
+        self
+    }
+
+    pub fn with_no_pivot(mut self, no_pivot: bool) -> Self {
+        self.no_pivot = no_pivot;
         self
     }
 
@@ -95,6 +111,11 @@ impl InitContainerBuilder {
             preserve_fds: self.base.preserve_fds,
             detached: self.detached,
             executor: self.base.executor,
+            no_pivot: self.no_pivot,
+            stdin: self.base.stdin,
+            stdout: self.base.stdout,
+            stderr: self.base.stderr,
+            as_sibling: self.as_sibling,
         };
 
         builder_impl.create()?;

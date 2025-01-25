@@ -3,8 +3,7 @@ use std::convert::TryFrom;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::BufReader;
-use std::os::fd::AsRawFd;
-use std::os::unix::prelude::RawFd;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::str::FromStr;
@@ -44,6 +43,7 @@ pub struct TenantContainerBuilder {
     capabilities: Vec<String>,
     process: Option<PathBuf>,
     detached: bool,
+    as_sibling: bool,
 }
 
 impl TenantContainerBuilder {
@@ -60,6 +60,7 @@ impl TenantContainerBuilder {
             capabilities: Vec::new(),
             process: None,
             detached: false,
+            as_sibling: false,
         }
     }
 
@@ -93,6 +94,13 @@ impl TenantContainerBuilder {
 
     pub fn with_process<P: Into<PathBuf>>(mut self, path: Option<P>) -> Self {
         self.process = path.map(|p| p.into());
+        self
+    }
+
+    /// Sets if the init process should be run as a child or a sibling of
+    /// the calling process
+    pub fn as_sibling(mut self, as_sibling: bool) -> Self {
+        self.as_sibling = as_sibling;
         self
     }
 
@@ -142,6 +150,11 @@ impl TenantContainerBuilder {
             preserve_fds: self.base.preserve_fds,
             detached: self.detached,
             executor: self.base.executor,
+            no_pivot: false,
+            stdin: self.base.stdin,
+            stdout: self.base.stdout,
+            stderr: self.base.stderr,
+            as_sibling: self.as_sibling,
         };
 
         let pid = builder_impl.create()?;
@@ -499,7 +512,7 @@ impl TenantContainerBuilder {
         Ok(socket_path)
     }
 
-    fn setup_tty_socket(&self, container_dir: &Path) -> Result<Option<RawFd>, LibcontainerError> {
+    fn setup_tty_socket(&self, container_dir: &Path) -> Result<Option<OwnedFd>, LibcontainerError> {
         let tty_name = Self::generate_name(container_dir, TENANT_TTY);
         let csocketfd = if let Some(console_socket) = &self.base.console_socket {
             Some(tty::setup_console_socket(

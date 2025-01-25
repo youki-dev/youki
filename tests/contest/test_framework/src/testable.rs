@@ -39,6 +39,7 @@ pub trait Testable {
 /// Test groups are used to group tests in sensible manner as well as provide namespacing to tests
 pub trait TestableGroup {
     fn get_name(&self) -> &'static str;
+    fn parallel(&self) -> bool;
     fn run_all(&self) -> Vec<(&'static str, TestResult)>;
     fn run_selected(&self, selected: &[&str]) -> Vec<(&'static str, TestResult)>;
 }

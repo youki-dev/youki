@@ -5,6 +5,7 @@ use oci_spec::runtime::{
 use test_framework::{Test, TestGroup, TestResult};
 
 use crate::utils::test_inside_container;
+use crate::utils::test_utils::CreateOptions;
 
 fn create_spec(seccomp: LinuxSeccomp) -> Spec {
     SpecBuilder::default()
@@ -36,7 +37,7 @@ fn seccomp_test() -> TestResult {
             .build()
             .unwrap(),
     );
-    test_inside_container(spec, &|_| Ok(()))
+    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 pub fn get_seccomp_test() -> TestGroup {

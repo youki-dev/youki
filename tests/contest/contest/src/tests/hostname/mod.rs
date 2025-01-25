@@ -2,6 +2,7 @@ use oci_spec::runtime::{LinuxBuilder, ProcessBuilder, Spec, SpecBuilder};
 use test_framework::{Test, TestGroup, TestResult};
 
 use crate::utils::test_inside_container;
+use crate::utils::test_utils::CreateOptions;
 
 fn create_spec(hostname: &str) -> Spec {
     SpecBuilder::default()
@@ -25,7 +26,7 @@ fn create_spec(hostname: &str) -> Spec {
 
 fn hostname_test() -> TestResult {
     let spec = create_spec("hostname-specific");
-    test_inside_container(spec, &|_| {
+    test_inside_container(spec, &CreateOptions::default(), &|_| {
         // As long as the container is created, we expect the hostname to be determined
         // by the spec, so nothing to prepare prior.
         Ok(())
@@ -34,7 +35,7 @@ fn hostname_test() -> TestResult {
 
 fn empty_hostname() -> TestResult {
     let spec = create_spec("");
-    test_inside_container(spec, &|_| {
+    test_inside_container(spec, &CreateOptions::default(), &|_| {
         // As long as the container is created, we expect the hostname to be determined
         // by the spec, so nothing to prepare prior.
         Ok(())

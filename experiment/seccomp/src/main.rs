@@ -1,5 +1,5 @@
 use seccomp::{
-    instruction::{self, *},
+    instruction::{*},
     seccomp::{NotifyFd, Seccomp},
 };
 
@@ -9,19 +9,18 @@ use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::slice;
 
 use anyhow::Result;
-use nix::{
-    libc,
-    sys::{
-        signal::Signal,
-        socket::{
-            self, ControlMessage, ControlMessageOwned, MsgFlags, SockFlag, SockType, UnixAddr,
-        },
-        stat::Mode,
-        wait::{self, WaitStatus},
+use nix::{libc, sys::{
+    signal::Signal,
+    socket::{
+        self, ControlMessage, ControlMessageOwned, MsgFlags, SockFlag, SockType, UnixAddr,
     },
-    unistd::{close, mkdir},
-};
+    stat::Mode,
+    wait::{self, WaitStatus},
+}, unistd::{close, mkdir}};
+
 use syscall_numbers::x86_64;
+use syscalls::syscall_args;
+use seccomp::seccomp::{InstructionData, Rule};
 
 fn send_fd<F: AsRawFd>(sock: OwnedFd, fd: &F) -> nix::Result<()> {
     let fd = fd.as_raw_fd();
@@ -90,30 +89,16 @@ async fn main() -> Result<()> {
     )?;
 
     let _ = prctl::set_no_new_privileges(true);
-
-    let mut bpf_prog = instruction::gen_validate(&Arch::X86);
-    bpf_prog.append(&mut vec![
-        // A: Check if syscall is getcwd
-        Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, 0),
-        Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, libc::SYS_getcwd as u32), // If false, go to B
-        Instruction::stmt(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS),
-        // B: Check if syscall is write and it is writing to stderr(fd=2)
-        Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, 0),
-        Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 3, libc::SYS_write as u32), // If false, go to C
-        // Load the file descriptor
-        Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, seccomp_data_args_offset().into()),
-        // Check if args is stderr
-        Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, libc::STDERR_FILENO as u32), // If false, go to C
-        Instruction::stmt(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS),
-        // C: Check if syscall is mkdir and if so, return seccomp notify
-        Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, 0),
-        Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, libc::SYS_mkdir as u32), // If false, go to D
-        Instruction::stmt(BPF_RET | BPF_K, SECCOMP_RET_USER_NOTIF),
-        // D: Pass
-        Instruction::stmt(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
-    ]);
-
-    let seccomp = Seccomp { filters: bpf_prog };
+    let inst_data = InstructionData{
+        arc: Arch::X86,
+        def_action: SECCOMP_RET_KILL_PROCESS,
+        rule_arr: vec![
+            Rule::new("getcwd".parse()?, 0,  syscall_args!(),false),
+            Rule::new("write".parse()?,1, syscall_args!(libc::STDERR_FILENO as usize), false),
+            Rule::new("mkdir".parse()?,0, syscall_args!(), true)
+        ]
+    };
+    let seccomp = Seccomp {filters: Vec::from(inst_data)};
 
     tokio::spawn(async move {
         tokio::signal::ctrl_c()

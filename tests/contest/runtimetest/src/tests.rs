@@ -1,3 +1,5 @@
+use std::env;
+use std::ffi::OsStr;
 use std::fs::{self, read_dir};
 use std::os::linux::fs::MetadataExt;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
@@ -6,12 +8,18 @@ use std::path::Path;
 use anyhow::{bail, Result};
 use nix::errno::Errno;
 use nix::libc;
+use nix::sys::resource::{getrlimit, Resource};
+use nix::sys::stat::{umask, Mode};
 use nix::sys::utsname;
-use nix::unistd::getcwd;
+use nix::unistd::{getcwd, getgid, getgroups, getuid, Gid, Uid};
 use oci_spec::runtime::IOPriorityClass::{self, IoprioClassBe, IoprioClassIdle, IoprioClassRt};
-use oci_spec::runtime::{LinuxDevice, LinuxDeviceType, LinuxSchedulerPolicy, Spec};
+use oci_spec::runtime::{
+    LinuxDevice, LinuxDeviceType, LinuxSchedulerPolicy, PosixRlimit, PosixRlimitType, Spec,
+};
 
-use crate::utils::{self, test_read_access, test_write_access};
+use crate::utils::{
+    self, test_dir_read_access, test_dir_write_access, test_read_access, test_write_access,
+};
 
 ////////// ANCHOR: example_hello_world
 pub fn hello_world(_spec: &Spec) {
@@ -543,5 +551,272 @@ pub fn test_io_priority_class(spec: &Spec, io_priority_class: IOPriorityClass) {
     };
     if priority != expected_priority {
         eprintln!("error ioprio_get expected priority {expected_priority:?}, got {priority}")
+    }
+}
+
+pub fn test_validate_root_readonly(spec: &Spec) {
+    let root = spec.root().as_ref().unwrap();
+    if root.readonly().unwrap() {
+        if let Err(e) = test_dir_write_access("/") {
+            let errno = Errno::from_raw(e.raw_os_error().unwrap());
+            if errno == Errno::EROFS {
+                /* This is expected */
+            } else {
+                eprintln!(
+                    "readonly root filesystem, error in testing write access for path /, error: {}",
+                    errno
+                );
+            }
+        }
+        if let Err(e) = test_dir_read_access("/") {
+            eprintln!(
+                "readonly root filesystem, but error in testing read access for path /, error: {}",
+                e
+            );
+        }
+    } else {
+        if let Err(e) = test_dir_write_access("/") {
+            eprintln!(
+                "readonly root filesystem is false, but error in testing write access for path /, error: {}",
+                e
+            );
+        }
+        if let Err(e) = test_dir_read_access("/") {
+            eprintln!(
+                "readonly root filesystem is false, but error in testing read access for path /, error: {}",
+                e
+            );
+        }
+    }
+}
+
+pub fn validate_process(spec: &Spec) {
+    let process = spec.process().as_ref().unwrap();
+    let expected_cwd = process.cwd();
+    let cwd = &getcwd().unwrap();
+
+    if expected_cwd != cwd {
+        eprintln!(
+            "error due to spec cwd want {:?}, got {:?}",
+            expected_cwd, cwd
+        )
+    }
+
+    for env_str in process.env().as_ref().unwrap().iter() {
+        match env_str.split_once("=") {
+            Some((env_key, expected_val)) => {
+                let actual_val = env::var(env_key).unwrap();
+                if actual_val != expected_val {
+                    eprintln!(
+                        "error due to spec environment value of {:?} want {:?}, got {:?}",
+                        env_key, expected_val, actual_val
+                    )
+                }
+            }
+            None => {
+                eprintln!(
+                    "spec env value is not correct : expected key=value format, got {env_str}"
+                )
+            }
+        }
+    }
+}
+
+pub fn validate_process_user(spec: &Spec) {
+    let process = spec.process().as_ref().unwrap();
+    let expected_uid = Uid::from(process.user().uid());
+    let expected_gid = Gid::from(process.user().gid());
+    let expected_umask = Mode::from_bits(process.user().umask().unwrap()).unwrap();
+
+    let uid = getuid();
+    let gid = getgid();
+    // The umask function not only gets the current mask, but also has the ability to set a new mask,
+    // so we need to set it back after getting the latest value.
+    let current_umask = umask(nix::sys::stat::Mode::empty());
+    umask(current_umask);
+
+    if expected_uid != uid {
+        eprintln!("error due to uid want {}, got {}", expected_uid, uid)
+    }
+
+    if expected_gid != gid {
+        eprintln!("error due to gid want {}, got {}", expected_gid, gid)
+    }
+
+    if let Err(e) = validate_additional_gids(process.user().additional_gids().as_ref().unwrap()) {
+        eprintln!("error additional gids {e}");
+    }
+
+    if expected_umask != current_umask {
+        eprintln!(
+            "error due to umask want {:?}, got {:?}",
+            expected_umask, current_umask
+        )
+    }
+}
+
+// validate_additional_gids function is used to validate additional groups of user
+fn validate_additional_gids(expected_gids: &Vec<u32>) -> Result<()> {
+    let current_gids = getgroups().unwrap();
+
+    if expected_gids.len() != current_gids.len() {
+        bail!(
+            "error : additional group mismatch, want {:?}, got {:?}",
+            expected_gids,
+            current_gids
+        );
+    }
+
+    for gid in expected_gids {
+        if !current_gids.contains(&Gid::from_raw(*gid)) {
+            bail!(
+                "error : additional gid {} is not in current groups, expected {:?}, got {:?}",
+                gid,
+                expected_gids,
+                current_gids
+            );
+        }
+    }
+
+    Ok(())
+}
+
+pub fn validate_process_rlimits(spec: &Spec) {
+    let process = spec.process().as_ref().unwrap();
+    let spec_rlimits: &Vec<PosixRlimit> = process.rlimits().as_ref().unwrap();
+
+    for spec_rlimit in spec_rlimits.iter() {
+        let (soft_limit, hard_limit) = getrlimit(change_resource_type(spec_rlimit.typ())).unwrap();
+        if spec_rlimit.hard() != hard_limit {
+            eprintln!(
+                "error type of {:?} hard rlimit expected {:?} , got {:?}",
+                spec_rlimit.typ(),
+                spec_rlimit.hard(),
+                hard_limit
+            )
+        }
+
+        if spec_rlimit.soft() != soft_limit {
+            eprintln!(
+                "error type of {:?} soft rlimit expected {:?} , got {:?}",
+                spec_rlimit.typ(),
+                spec_rlimit.soft(),
+                soft_limit
+            )
+        }
+    }
+}
+
+fn change_resource_type(resource_type: PosixRlimitType) -> Resource {
+    match resource_type {
+        PosixRlimitType::RlimitCpu => Resource::RLIMIT_CPU,
+        PosixRlimitType::RlimitFsize => Resource::RLIMIT_FSIZE,
+        PosixRlimitType::RlimitData => Resource::RLIMIT_DATA,
+        PosixRlimitType::RlimitStack => Resource::RLIMIT_STACK,
+        PosixRlimitType::RlimitCore => Resource::RLIMIT_CORE,
+        PosixRlimitType::RlimitRss => Resource::RLIMIT_RSS,
+        PosixRlimitType::RlimitNproc => Resource::RLIMIT_NPROC,
+        PosixRlimitType::RlimitNofile => Resource::RLIMIT_NOFILE,
+        PosixRlimitType::RlimitMemlock => Resource::RLIMIT_MEMLOCK,
+        PosixRlimitType::RlimitAs => Resource::RLIMIT_AS,
+        PosixRlimitType::RlimitLocks => Resource::RLIMIT_LOCKS,
+        PosixRlimitType::RlimitSigpending => Resource::RLIMIT_SIGPENDING,
+        PosixRlimitType::RlimitMsgqueue => Resource::RLIMIT_MSGQUEUE,
+        PosixRlimitType::RlimitNice => Resource::RLIMIT_NICE,
+        PosixRlimitType::RlimitRtprio => Resource::RLIMIT_RTPRIO,
+        PosixRlimitType::RlimitRttime => Resource::RLIMIT_RTTIME,
+    }
+}
+
+// the validate_rootfs function is used to validate the rootfs of the container is
+// as expected. This function is used in the no_pivot test to validate the rootfs
+pub fn validate_rootfs() {
+    // list the first level directories in the rootfs
+    let mut entries = fs::read_dir("/")
+        .unwrap()
+        .filter_map(|entry| {
+            entry.ok().and_then(|e| {
+                let path = e.path();
+                if path.is_dir() {
+                    path.file_name()
+                        .and_then(|name| name.to_str().map(|s| s.to_owned()))
+                } else {
+                    None
+                }
+            })
+        })
+        .collect::<Vec<String>>();
+    // sort the entries to make the test deterministic
+    entries.sort();
+
+    // this is the list of directories that we expect to find in the rootfs
+    let mut expected = vec![
+        "bin", "dev", "etc", "home", "proc", "root", "sys", "tmp", "usr", "var",
+    ];
+    // sort the expected entries to make the test deterministic
+    expected.sort();
+
+    // compare the expected entries with the actual entries
+    if entries != expected {
+        eprintln!("error due to rootfs want {expected:?}, got {entries:?}");
+    }
+}
+
+pub fn validate_process_oom_score_adj(spec: &Spec) {
+    let process = spec.process().as_ref().unwrap();
+    let expected_value = process.oom_score_adj().unwrap();
+
+    let pid = std::process::id();
+    let oom_score_adj_path = format!("/proc/{}/oom_score_adj", pid);
+
+    let actual_value = fs::read_to_string(oom_score_adj_path)
+        .unwrap_or_else(|_| panic!("Failed to read file content"));
+
+    if actual_value.trim() != expected_value.to_string() {
+        eprintln!("Unexpected oom_score_adj, expected: {expected_value} found: {actual_value}");
+    }
+}
+
+pub fn validate_fd_control(_spec: &Spec) {
+    // --preserve-fds does not get passed via the spec so we have to communicate information
+    // via the root filesystem
+    let expected_num_fds: usize = fs::read_to_string("/num-fds").unwrap().parse().unwrap();
+
+    let mut entries = vec![];
+    let stdio: &[&OsStr] = &["0".as_ref(), "1".as_ref(), "2".as_ref()];
+    for entry in fs::read_dir("/proc/self/fd").unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if stdio.contains(&name.as_os_str()) {
+            // Ignore stdio
+            continue;
+        }
+        entries.push((entry.path(), fs::read_link(entry.path())))
+    }
+
+    // NOTE: we do this in a separate loop so we can filter out the dirfd used behind
+    // the scenes in 'fs::read_dir'. It is important to *not* store the full DirEntry
+    // type, as that keeps the dirfd open.
+    let mut fd_details = vec![];
+    let mut found_dirfd = false;
+    for (path, linkpath) in &entries {
+        println!("found fd in container {} {:?}", path.display(), linkpath);
+        // The difference between metadata.unwrap() and fs::metadata is that the latter
+        // will now try to follow the symlink
+        match fs::metadata(path) {
+            Ok(m) => fd_details.push((path, linkpath, m)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && !found_dirfd => {
+                // Expected for the dirfd
+                println!("(ignoring dirfd)");
+                found_dirfd = true
+            }
+            Err(e) => {
+                eprintln!("unexpected error reading metadata: {}", e)
+            }
+        }
+    }
+
+    if fd_details.len() != expected_num_fds {
+        eprintln!("mismatched fds inside container! {:?}", fd_details);
     }
 }

@@ -29,7 +29,7 @@ youki is named after the Japanese word 'youki', which means 'a container'. In Ja
 > $ sudo podman run --cgroup-manager=cgroupfs --runtime /workspaces/youki/youki hello-world
 > ```
 
-[User Documentation](https://containers.github.io/youki/user/basic_setup.html#quick-install)
+[User Documentation](https://youki-dev.github.io/youki/user/basic_setup.html#quick-install)
 
 # 🎯 Motivation
 
@@ -96,7 +96,7 @@ We have [our roadmap](https://github.com/orgs/containers/projects/15).
 
 # 🎨 Design and implementation of youki
 
-The User and Developer Documentation for youki is hosted at [https://containers.github.io/youki/](https://containers.github.io/youki/)
+The User and Developer Documentation for youki is hosted at [https://youki-dev.github.io/youki/](https://youki-dev.github.io/youki/)
 
 ![Architecture](docs/.drawio.svg)
 
@@ -124,7 +124,6 @@ $ sudo apt-get install    \
       libelf-dev          \
       libseccomp-dev      \
       libclang-dev        \
-      glibc-static        \
       libssl-dev
 ```
 
@@ -278,7 +277,7 @@ just youki-dev # or youki-release
 
 # 👥 Community and Contributing
 
-Please refer to [our community page](https://containers.github.io/youki/community/introduction.html).
+Please refer to [our community page](https://youki-dev.github.io/youki/community/introduction.html).
 
 Thanks to all the people who already contributed!
 

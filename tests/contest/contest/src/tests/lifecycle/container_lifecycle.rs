@@ -93,6 +93,10 @@ impl TestableGroup for ContainerLifecycle {
         "lifecycle"
     }
 
+    fn parallel(&self) -> bool {
+        true
+    }
+
     fn run_all(&self) -> Vec<(&'static str, TestResult)> {
         vec![
             ("create", self.create()),
