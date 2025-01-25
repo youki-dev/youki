@@ -4,6 +4,7 @@ use libcontainer::oci_spec::runtime::{
     version, ApparmorBuilder, CgroupBuilder, FeaturesBuilder, IDMapBuilder, IntelRdtBuilder,
     LinuxFeatureBuilder, LinuxNamespaceType, MountExtensionsBuilder, SelinuxBuilder,
 };
+use libcontainer::syscall::linux::MountOption;
 use liboci_cli::Features;
 
 // Function to query and return capabilities
@@ -34,60 +35,6 @@ fn known_hooks() -> Vec<String> {
         "startContainer",
         "poststart",
         "poststop",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect()
-}
-
-// Return a list of known mount options supported by youki
-fn known_mount_options() -> Vec<String> {
-    [
-        "async",
-        "atime",
-        "bind",
-        "defaults",
-        "dev",
-        "diratime",
-        "dirsync",
-        "exec",
-        "mand",
-        "noatime",
-        "nodev",
-        "nodiratime",
-        "noexec",
-        "nomand",
-        "norelatime",
-        "nosuid",
-        "nostrictatime",
-        "private",
-        "rbind",
-        "rdev",
-        "relatime",
-        "remount",
-        "rnoatime",
-        "rnodev",
-        "rnodiratime",
-        "rnoexec",
-        "rnorelatime",
-        "rnosuid",
-        "rnostrictatime",
-        "ro",
-        "rprivate",
-        "rrw",
-        "rshared",
-        "rsuid",
-        "rsymfollow",
-        "rslave",
-        "rstrictatime",
-        "runbindable",
-        "rw",
-        "shared",
-        "slave",
-        "strictatime",
-        "suid",
-        "sync",
-        "unbindable",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -147,7 +94,7 @@ pub fn features(_: Features) -> Result<()> {
         .oci_version_max(version())
         .oci_version_min(String::from("1.0.0"))
         .hooks(known_hooks())
-        .mount_options(known_mount_options())
+        .mount_options(MountOption::known_options())
         .linux(linux)
         .build()
         .unwrap();
