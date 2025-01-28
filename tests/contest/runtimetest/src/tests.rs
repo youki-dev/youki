@@ -831,11 +831,6 @@ pub fn validate_masked_paths(spec: &Spec) {
         }
     };
 
-    if masked_paths.is_empty() {
-        eprintln!("in masked paths, expected some masked paths to be set, found none");
-        return;
-    }
-
     for path_str in masked_paths {
         let path = Path::new(path_str);
         if !path.is_absolute() {

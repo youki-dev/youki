@@ -8,11 +8,16 @@ use test_framework::{Test, TestGroup, TestResult};
 use crate::utils::test_inside_container;
 use crate::utils::test_utils::CreateOptions;
 
-fn get_spec(masked_paths: Vec<String>) -> Spec {
+fn get_spec(masked_paths: Vec<PathBuf>) -> Spec {
+    let paths: Vec<String> = masked_paths
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+
     SpecBuilder::default()
         .linux(
             LinuxBuilder::default()
-                .masked_paths(masked_paths)
+                .masked_paths(paths)
                 .build()
                 .expect("could not build"),
         )
@@ -27,27 +32,25 @@ fn get_spec(masked_paths: Vec<String>) -> Spec {
 }
 
 fn check_masked_paths() -> TestResult {
-    let masked_dir = "masked-dir";
-    let masked_subdir = "masked-subdir";
-    let masked_file = "masked-file";
+    const MASKED_DIR: &str = "masked-dir";
+    const MASKED_SUBDIR: &str = "masked-subdir";
+    const MASKED_FILE: &str = "masked-file";
 
-    let masked_dir_top = PathBuf::from(masked_dir);
-    let masked_file_top = PathBuf::from(masked_file);
+    let masked_dir_top = PathBuf::from(MASKED_DIR);
+    let masked_file_top = PathBuf::from(MASKED_FILE);
 
-    let masked_dir_sub = masked_dir_top.join(masked_subdir);
-    let masked_file_sub = masked_dir_top.join(masked_file);
-    let masked_file_sub_sub = masked_dir_sub.join(masked_file);
+    let masked_dir_sub = masked_dir_top.join(MASKED_SUBDIR);
+    let masked_file_sub = masked_dir_top.join(MASKED_FILE);
+    let masked_file_sub_sub = masked_dir_sub.join(MASKED_FILE);
 
     let root = PathBuf::from("/");
 
     let masked_paths = vec![
-        root.join(&masked_dir_top).to_string_lossy().to_string(),
-        root.join(&masked_file_top).to_string_lossy().to_string(),
-        root.join(&masked_dir_sub).to_string_lossy().to_string(),
-        root.join(&masked_file_sub).to_string_lossy().to_string(),
-        root.join(&masked_file_sub_sub)
-            .to_string_lossy()
-            .to_string(),
+        root.join(&masked_dir_top),
+        root.join(&masked_file_top),
+        root.join(&masked_dir_sub),
+        root.join(&masked_file_sub),
+        root.join(&masked_file_sub_sub),
     ];
 
     let spec = get_spec(masked_paths);
@@ -69,7 +72,7 @@ fn check_masked_paths() -> TestResult {
         fs::File::create(&test_sub_file)?;
         fs::write(&test_sub_file, b"secrets")?;
 
-        let test_file = bundle_path.join(masked_file);
+        let test_file = bundle_path.join(MASKED_FILE);
         fs::File::create(&test_file)?;
         fs::write(&test_file, b"secrets")?;
 
@@ -80,8 +83,8 @@ fn check_masked_paths() -> TestResult {
 fn check_masked_rel_paths() -> TestResult {
     // Deliberately set a relative path to be masked,
     // and expect an error
-    let masked_rel_path = "../masked_rel_path";
-    let masked_paths = vec![masked_rel_path.to_string()];
+    let masked_rel_path = PathBuf::from("../masked_rel_path");
+    let masked_paths = vec![masked_rel_path];
     let spec = get_spec(masked_paths);
 
     let res = test_inside_container(spec, &CreateOptions::default(), &|_bundle_path| Ok(()));
@@ -98,14 +101,15 @@ fn check_masked_rel_paths() -> TestResult {
 fn check_masked_symlinks() -> TestResult {
     // Deliberately create a masked symlink that points an invalid file,
     // and expect an error.
+    const MASKED_SYMLINK: &str = "masked_symlink";
+
     let root = PathBuf::from("/");
-    let masked_symlink = "masked_symlink";
-    let masked_paths = vec![root.join(masked_symlink).to_string_lossy().to_string()];
+    let masked_paths = vec![root.join(MASKED_SYMLINK)];
     let spec = get_spec(masked_paths);
 
     let res = test_inside_container(spec, &CreateOptions::default(), &|bundle_path| {
         use std::{fs, io};
-        let test_file = bundle_path.join(masked_symlink);
+        let test_file = bundle_path.join(MASKED_SYMLINK);
         // ln -s ../masked-symlink ; readlink -f /masked-symlink; ls -L /masked-symlink
         match std::os::unix::fs::symlink("../masked_symlink", &test_file) {
             io::Result::Ok(_) => { /* This is expected */ }
@@ -152,19 +156,17 @@ fn check_masked_symlinks() -> TestResult {
 }
 
 fn test_mode(mode: u32) -> TestResult {
+    const MASKED_DEVICE: &str = "masked_device";
+
     let root = PathBuf::from("/");
-    let masked_device = "masked_device";
-    let masked_paths = vec![root.join(masked_device).to_string_lossy().to_string()];
+    let masked_paths = vec![root.join(MASKED_DEVICE)];
     let spec = get_spec(masked_paths);
 
     test_inside_container(spec, &CreateOptions::default(), &|bundle_path| {
         use std::os::unix::fs::OpenOptionsExt;
         use std::{fs, io};
-        let test_file = bundle_path.join(masked_device);
+        let test_file = bundle_path.join(MASKED_DEVICE);
 
-        let mut opts = fs::OpenOptions::new();
-        opts.mode(mode);
-        opts.create(true);
         if let io::Result::Err(e) = fs::OpenOptions::new()
             .mode(mode)
             .create(true)
