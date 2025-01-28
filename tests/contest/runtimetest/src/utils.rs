@@ -3,7 +3,7 @@ use std::io::Read;
 use std::os::unix::prelude::MetadataExt;
 use std::path::PathBuf;
 use std::process::Command;
-use std::{fs, io};
+use std::fs;
 
 use nix::sys::stat::{stat, SFlag};
 
@@ -18,7 +18,6 @@ fn test_file_read_access(path: &str) -> Result<bool, std::io::Error> {
         // successfully block readability.
         Ok(0) => Ok(false),
         Ok(_) => Ok(true),
-        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Ok(false),
         Err(e) => Err(e),
     }
 }
