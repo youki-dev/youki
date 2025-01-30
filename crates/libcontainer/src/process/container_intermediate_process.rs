@@ -49,8 +49,6 @@ pub fn container_intermediate_process(
     let spec = &args.spec;
     let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
     let namespaces = Namespaces::try_from(linux.namespaces().as_ref())?;
-    let cgroup_manager = libcgroups::common::create_cgroup_manager(args.cgroup_config.to_owned())
-        .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?;
 
     // this needs to be done before we create the init process, so that the init
     // process will already be captured by the cgroup. It also needs to be done
@@ -62,11 +60,15 @@ pub fn container_intermediate_process(
     // In addition this needs to be done before we enter the cgroup namespace as
     // the cgroup of the process will form the root of the cgroup hierarchy in
     // the cgroup namespace.
-    apply_cgroups(
-        &cgroup_manager,
-        linux.resources().as_ref(),
-        matches!(args.container_type, ContainerType::InitContainer),
-    )?;
+    if let Some(cgroup_config) = &args.cgroup_config {
+        let cgroup_manager = libcgroups::common::create_cgroup_manager(cgroup_config.to_owned())
+            .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?;
+        apply_cgroups(
+            &cgroup_manager,
+            linux.resources().as_ref(),
+            matches!(args.container_type, ContainerType::InitContainer { .. }),
+        )?;
+    }
 
     // if new user is specified in specification, this will be true and new
     // namespace will be created, check
