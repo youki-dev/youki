@@ -196,18 +196,15 @@ fn test_mode(mode: u32) -> TestResult {
 }
 
 fn check_masked_device_nodes() -> TestResult {
-    let modes = [
+    [
         SFlag::S_IFBLK.bits() | 0o666,
         SFlag::S_IFCHR.bits() | 0o666,
         SFlag::S_IFIFO.bits() | 0o666,
-    ];
-    for mode in modes {
-        let res = test_mode(mode);
-        if let TestResult::Failed(_) = res {
-            return res;
-        }
-    }
-    TestResult::Passed
+    ]
+    .iter()
+    .map(|mode| test_mode(*mode))
+    .find(|res| matches!(res, TestResult::Failed(_)))
+    .unwrap_or(TestResult::Passed)
 }
 
 pub fn get_linux_masked_paths_tests() -> TestGroup {
