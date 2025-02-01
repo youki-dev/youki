@@ -1,13 +1,16 @@
+use std::fs;
 use std::fs::{metadata, symlink_metadata, OpenOptions};
 use std::io::Read;
 use std::os::unix::prelude::MetadataExt;
 use std::path::PathBuf;
 use std::process::Command;
-use std::fs;
 
 use nix::sys::stat::{stat, SFlag};
 
-fn test_file_read_access(path: &str) -> Result<bool, std::io::Error> {
+// It means the file or directory is readable
+type Readable = bool;
+
+fn test_file_read_access(path: &str) -> Result<Readable, std::io::Error> {
     let mut file = OpenOptions::new().create(false).read(true).open(path)?;
 
     // Create a buffer with a capacity of 1 byte
@@ -22,7 +25,7 @@ fn test_file_read_access(path: &str) -> Result<bool, std::io::Error> {
     }
 }
 
-pub fn test_dir_read_access(path: &str) -> Result<bool, std::io::Error> {
+pub fn test_dir_read_access(path: &str) -> Result<Readable, std::io::Error> {
     let entries = std::fs::read_dir(path);
 
     match entries {
@@ -53,7 +56,7 @@ fn is_dir(mode: u32) -> bool {
     mode & SFlag::S_IFDIR.bits() != 0
 }
 
-pub fn test_read_access(path: &str) -> Result<bool, std::io::Error> {
+pub fn test_read_access(path: &str) -> Result<Readable, std::io::Error> {
     let fstat = stat(path)?;
     let mode = fstat.st_mode;
     if is_file_like(mode) {
