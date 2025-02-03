@@ -7,16 +7,22 @@ use std::{
     },
 };
 
-use std::str::FromStr;
+use crate::instruction::*;
+use crate::instruction::{Arch, Instruction, SECCOMP_IOC_MAGIC};
+use anyhow::anyhow;
+use anyhow::Result;
 use nix::{
     errno::Errno,
     ioctl_readwrite, ioctl_write_ptr, libc,
     libc::{SECCOMP_FILTER_FLAG_NEW_LISTENER, SECCOMP_SET_MODE_FILTER},
     unistd,
 };
-use syscalls::{SyscallArgs};
-use crate::instruction::{*};
-use crate::instruction::{Arch, Instruction, SECCOMP_IOC_MAGIC};
+use oci_spec::runtime::{
+    Arch as OciSpecArch, LinuxSeccomp, LinuxSeccompAction, LinuxSeccompFilterFlag,
+    LinuxSeccompOperator,
+};
+use std::str::FromStr;
+use syscalls::{syscall_args, SyscallArgs};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SeccompError {
@@ -203,26 +209,82 @@ struct Filters {
 
 fn get_syscall_number(arc: &Arch, name: &str) -> Option<u64> {
     match arc {
-        Arch::X86 => {
-            match syscalls::x86_64::Sysno::from_str(name) {
-                Ok(syscall) => Some(syscall as u64),
-                Err(_) => None,
-            }
+        Arch::X86 => match syscalls::x86_64::Sysno::from_str(name) {
+            Ok(syscall) => Some(syscall as u64),
+            Err(_) => None,
         },
-        Arch::AArch64 => {
-            match syscalls::aarch64::Sysno::from_str(name) {
-                Ok(syscall) => Some(syscall as u64),
-                Err(_) => None,
-            }
-        }
+        Arch::AArch64 => match syscalls::aarch64::Sysno::from_str(name) {
+            Ok(syscall) => Some(syscall as u64),
+            Err(_) => None,
+        },
     }
 }
 
-#[derive(Debug)]
+fn translate_action(action: LinuxSeccompAction) -> u32 {
+    let action = match action {
+        LinuxSeccompAction::ScmpActKill => SECCOMP_RET_KILL_THREAD,
+        LinuxSeccompAction::ScmpActTrap => SECCOMP_RET_TRAP,
+        LinuxSeccompAction::ScmpActErrno => SECCOMP_RET_ERRNO,
+        LinuxSeccompAction::ScmpActTrace => SECCOMP_RET_TRACE,
+        LinuxSeccompAction::ScmpActAllow => SECCOMP_RET_ALLOW,
+        LinuxSeccompAction::ScmpActKillProcess => SECCOMP_RET_KILL_PROCESS,
+        LinuxSeccompAction::ScmpActNotify => SECCOMP_RET_USER_NOTIF,
+        LinuxSeccompAction::ScmpActLog => SECCOMP_RET_LOG,
+        LinuxSeccompAction::ScmpActKillThread => SECCOMP_RET_KILL_THREAD,
+    };
+    action
+}
+
+fn translate_op(op: LinuxSeccompOperator) -> SeccompCompareOp {
+    match op {
+        LinuxSeccompOperator::ScmpCmpNe => SeccompCompareOp::NotEqual,
+        LinuxSeccompOperator::ScmpCmpLt => SeccompCompareOp::LessThan,
+        LinuxSeccompOperator::ScmpCmpLe => SeccompCompareOp::LessOrEqual,
+        LinuxSeccompOperator::ScmpCmpEq => SeccompCompareOp::Equal,
+        LinuxSeccompOperator::ScmpCmpGe => SeccompCompareOp::GreaterOrEqual,
+        LinuxSeccompOperator::ScmpCmpGt => SeccompCompareOp::GreaterThan,
+        LinuxSeccompOperator::ScmpCmpMaskedEq => SeccompCompareOp::MaskedEqual,
+    }
+}
+
+fn check_seccomp(seccomp: &LinuxSeccomp) -> Result<()> {
+    // We don't support notify as default action. After the seccomp filter is
+    // created with notify, the container process will have to communicate the
+    // returned fd to another process. Therefore, we need the write syscall or
+    // otherwise, the write syscall will be block by the seccomp filter causing
+    // the container process to hang. `runc` also disallow notify as default
+    // action.
+    // Note: read and close syscall are also used, because if we can
+    // successfully write fd to another process, the other process can choose to
+    // handle read/close syscall and allow read and close to proceed as
+    // expected.
+    if seccomp.default_action() == LinuxSeccompAction::ScmpActNotify {
+        // Todo: consider need to porting SeccompError
+        return Err(anyhow!("Cant ScmpActNotify to default action"));
+    }
+
+    if let Some(syscalls) = seccomp.syscalls() {
+        for syscall in syscalls {
+            if syscall.action() == LinuxSeccompAction::ScmpActNotify {
+                for name in syscall.names() {
+                    if name == "write" {
+                        return Err(anyhow!("Cant filter to write system call"));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Default)]
 pub struct InstructionData {
     pub arc: Arch,
     pub def_action: u32,
-    pub rule_arr: Vec<Rule>
+    pub def_errno_ret: u32,
+    pub flags: Vec<u32>,
+    pub rule_arr: Vec<Rule>,
 }
 
 impl From<InstructionData> for Vec<Instruction> {
@@ -238,20 +300,102 @@ impl From<InstructionData> for Vec<Instruction> {
     }
 }
 
-#[derive(Debug)]
+impl InstructionData {
+
+    pub fn from_linux_seccomp(seccomp: &LinuxSeccomp) -> Result<Self> {
+        let mut data: InstructionData = Default::default();
+        let mut rules: Vec<Rule> = Vec::new();
+
+        check_seccomp(seccomp)?;
+        data.def_action = translate_action(seccomp.default_action());
+        if let Some(ret) = seccomp.default_errno_ret() {
+            data.def_errno_ret = ret
+        } else {
+            data.def_errno_ret = libc::EPERM as u32
+        }
+
+        if let Some(flags) = seccomp.flags() {
+            for flag in flags {
+                match flag {
+                    LinuxSeccompFilterFlag::SeccompFilterFlagLog => data.flags.push(SECCOMP_FILTER_FLAG_LOG),
+                    LinuxSeccompFilterFlag::SeccompFilterFlagTsync => data.flags.push(SECCOMP_FILTER_FLAG_TSYNC),
+                    LinuxSeccompFilterFlag::SeccompFilterFlagSpecAllow => data.flags.push(SECCOMP_FILTER_FLAG_SPEC_ALLOW),
+                }
+            }
+        }
+
+        if let Some(archs) = seccomp.architectures() {
+            for &arch in archs {
+                // Todo: consider support other Arch
+                match arch {
+                    OciSpecArch::ScmpArchX86_64 => data.arc = Arch::X86,
+                    OciSpecArch::ScmpArchAarch64 => data.arc = Arch::AArch64,
+                    _ => {}
+                }
+            }
+        }
+
+        /*
+        Todo: how to impl this?
+        ctx.set_ctl_nnp(false)
+        .map_err(|err| SeccompError::SetCtlNnp { source: err })?;
+         */
+        if let Some(syscalls) = seccomp.syscalls() {
+            for syscall in syscalls {
+                let mut rule: Rule = Default::default();
+                rule.action = translate_action(syscall.action());
+                if rule.action == SECCOMP_RET_USER_NOTIF {
+                    rule.is_notify = true
+                } else {
+                    rule.is_notify = false
+                }
+
+                for name in syscall.names() {
+                    rule.syscall = name.to_string();
+                    match syscall.args() {
+                        Some(args) => {
+                            for arg in args {
+                                rule.arg_cnt = Option::from(arg.index() as u8);
+                                rule.args = Option::from(syscall_args!(arg.value() as usize));
+                                if arg.value_two().is_some() {
+                                    rule.args = Option::from(
+                                        syscall_args!(arg.value() as usize, arg.value_two().unwrap() as usize)
+                                    );
+                                }
+                                rule.op = Option::from(translate_op(arg.op()))
+                            }
+                        }
+                        None => {
+                            continue
+                        }
+                    }
+                }
+                rules.push(rule);
+            }
+        }
+        data.rule_arr = rules;
+        Ok(data)
+    }
+}
+
+#[derive(Debug, Default)]
 pub struct Rule {
     pub syscall: String,
-    pub arg_cnt: u8,
-    pub args: SyscallArgs,
-    pub is_notify: bool
+    pub action: u32,
+    pub arg_cnt: Option<u8>,
+    pub args: Option<SyscallArgs>,
+    pub op: Option<SeccompCompareOp>,
+    pub is_notify: bool,
 }
 
 impl Rule {
-    pub fn new(syscall: String, arg_cnt: u8, args: SyscallArgs, is_notify: bool) -> Self {
+    pub fn new(syscall: String, action: u32, arg_cnt: Option<u8>, args: Option<SyscallArgs>, op: Option<SeccompCompareOp>, is_notify: bool) -> Self {
         Self {
             syscall,
+            action,
             arg_cnt,
             args,
+            op,
             is_notify,
         }
     }
@@ -261,9 +405,9 @@ impl Rule {
         bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, 0)]);
         bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 1,
                                                     get_syscall_number(arch, &rule.syscall).unwrap() as c_uint)]);
-        if rule.arg_cnt != 0 {
+        if rule.arg_cnt.is_some() {
             bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, seccomp_data_args_offset().into())]);
-            bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, rule.args.arg0 as c_uint)]);
+            bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, rule.args.unwrap().arg0 as c_uint)]);
         }
 
         if rule.is_notify {
@@ -277,8 +421,8 @@ impl Rule {
 
 #[cfg(test)]
 mod tests {
-    use syscalls::syscall_args;
     use super::*;
+    use syscalls::syscall_args;
 
     #[test]
     fn test_get_syscall_number_x86() {
@@ -294,7 +438,7 @@ mod tests {
 
     #[test]
     fn test_to_instruction_x86() {
-        let rule = Rule::new("getcwd".parse().unwrap(), 0, syscall_args!(), false);
+        let rule = Rule::new("getcwd".parse().unwrap(), SECCOMP_RET_ALLOW, None, None, None,false);
         let inst = Rule::to_instruction(&Arch::X86, SECCOMP_RET_KILL_PROCESS, &rule);
         let bpf_prog = gen_validate(&Arch::X86);
         assert_eq!(inst[0], bpf_prog[0]);
@@ -308,7 +452,7 @@ mod tests {
 
     #[test]
     fn test_to_instruction_aarch64() {
-        let rule = Rule::new("getcwd".parse().unwrap(), 0, syscall_args!(), false);
+        let rule = Rule::new("getcwd".parse().unwrap(), SECCOMP_RET_ALLOW, None, None, None,false);
         let inst = Rule::to_instruction(&Arch::AArch64, SECCOMP_RET_KILL_PROCESS, &rule);
         let bpf_prog = gen_validate(&Arch::AArch64);
         assert_eq!(inst[0], bpf_prog[0]);

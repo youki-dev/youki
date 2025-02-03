@@ -45,10 +45,28 @@ pub const SECCOMP_RET_TRAP: u32 = 0x0003_0000;
 pub const SECCOMP_RET_MASK: u32 = 0x0000_ffff;
 pub const SECCOMP_RET_USER_NOTIF: u32 = 0x7fc00000;
 
+pub const SECCOMP_FILTER_FLAG_TSYNC: u32 = 1;
+pub const SECCOMP_FILTER_FLAG_LOG: u32 = 2;
+pub const SECCOMP_FILTER_FLAG_SPEC_ALLOW: u32 = 4;
+pub const SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV: u32 = 32;
+
 // Architecture identifiers.
 // See /usr/include/linux/audit.h .
 pub const AUDIT_ARCH_X86_64: u32 = 62 | 0x8000_0000 | 0x4000_0000;
 pub const AUDIT_ARCH_AARCH64: u32 = 183 | 0x8000_0000 | 0x4000_0000;
+
+// Comparison operators
+// See libseccomp/include/seccomp.h.in
+#[derive(Debug)]
+pub enum SeccompCompareOp {
+    NotEqual = 1,
+    LessThan,
+    LessOrEqual,
+    Equal,
+    GreaterOrEqual,
+    GreaterThan,
+    MaskedEqual,
+}
 
 // ```c
 // struct seccomp_data {

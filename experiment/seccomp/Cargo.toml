@@ -25,3 +25,4 @@ anyhow = "1.0"
 tokio = { version = "1", features = ["full"] }
 syscall-numbers = "3.1.1"
 syscalls = { version = "0.6.18", features = ["std", "serde", "aarch64", "x86_64"]}
+oci-spec = { version = "0.7.1", features = ["runtime"] }
