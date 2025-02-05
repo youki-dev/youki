@@ -56,6 +56,8 @@ fi
 if [ "$CARGO" == "cross" ]; then
     export CROSS_BUILD_OPTS="--quiet"
     export CARGO_TARGET_DIR="$CARGO_TARGET_DIR/cross-$CARGO_BUILD_TARGET"
+    # https://github.com/rust-random/getrandom/issues/601
+    export CROSS_NO_WARNINGS=0
 
     # mount run to have access to dbus socket.
     # mount /tmp so as shared for test_make_parent_mount_private
