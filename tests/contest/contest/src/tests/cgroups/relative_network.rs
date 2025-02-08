@@ -15,7 +15,7 @@ use crate::utils::test_utils::check_container_created;
 fn create_spec(cgroup_name: &str, class_id: u32, prio: u32, if_name: &str) -> Result<Spec> {
     // Create the Linux Spec
     let linux_spec = LinuxBuilder::default()
-        .cgroups_path(Path::new("testdir/runtime-test/container").join(cgroup_name))
+        .cgroups_path(Path::new(cgroup_name))
         .resources(
             LinuxResourcesBuilder::default()
                 .network(
@@ -46,26 +46,23 @@ fn create_spec(cgroup_name: &str, class_id: u32, prio: u32, if_name: &str) -> Re
 
 // Gets the loopback interface if it exists
 fn get_loopback_interface() -> Option<String> {
-    let interfaces = interfaces();
-    let lo_if_name = interfaces.first().map(|iface| &iface.name)?;
-
-    Some(lo_if_name.to_string())
+    interfaces()
+        .into_iter()
+        .find(|iface| iface.is_loopback())
+        .map(|iface| iface.name)
 }
 
 fn test_relative_network_cgroups() -> TestResult {
-    let cgroup_name = "test_relative_network_cgroups";
+    const CGROUP_NAME: &str = "testdir/runtime-test/container/test_relative_network_cgroups";
 
-    let id = 255;
-    let prio = 10;
-    let if_name = "lo";
-    let spec = test_result!(create_spec(cgroup_name, id, prio, if_name));
+    const ID: u32 = 255;
+    const PRIO: u32 = 10;
+    const IF_NAME: &str = "lo";
+    let spec = test_result!(create_spec(CGROUP_NAME, ID, PRIO, IF_NAME));
 
     test_outside_container(spec.clone(), &|data| {
         test_result!(check_container_created(&data));
-        test_result!(validate_network(
-            format!("testdir/runtime-test/container/{}", cgroup_name).as_str(),
-            &spec
-        ));
+        test_result!(validate_network(CGROUP_NAME, &spec));
         TestResult::Passed
     })
 }
