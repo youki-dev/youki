@@ -135,43 +135,31 @@ fn test_network_cgroups() -> TestResult {
 
 /// validates the Network structure parsed from /sys/fs/cgroup/net_cls,net_prio with the spec
 pub fn validate_network(cgroup_name: &str, spec: &Spec) -> Result<()> {
-    let (net_cls_path, net_prio_path) = if Path::new("/sys/fs/cgroup/net_cls/net_cls.classid")
-        .exists()
-        && Path::new("/sys/fs/cgroup/net_prio/net_prio.ifpriomap").exists()
-    {
-        (
-            net_cls_path(PathBuf::from(CGROUP_ROOT).join("net_cls"), cgroup_name),
-            net_prio_path(PathBuf::from(CGROUP_ROOT).join("net_prio"), cgroup_name),
-        )
-    } else if Path::new("/sys/fs/cgroup/net_cls,net_prio/net_cls.classid").exists()
-        && Path::new("/sys/fs/cgroup/net_cls,net_prio/net_prio.ifpriomap").exists()
-    {
-        (
-            net_cls_path(
-                PathBuf::from(CGROUP_ROOT).join("net_cls,net_prio"),
-                cgroup_name,
-            ),
-            net_prio_path(
-                PathBuf::from(CGROUP_ROOT).join("net_cls,net_prio"),
-                cgroup_name,
-            ),
-        )
-    } else if Path::new("/sys/fs/cgroup/net_prio,net_cls/net_cls.classid").exists()
-        && Path::new("/sys/fs/cgroup/net_prio,net_cls/net_prio.ifpriomap").exists()
-    {
-        (
-            net_cls_path(
-                PathBuf::from(CGROUP_ROOT).join("net_prio,net_cls"),
-                cgroup_name,
-            ),
-            net_prio_path(
-                PathBuf::from(CGROUP_ROOT).join("net_prio,net_cls"),
-                cgroup_name,
-            ),
-        )
+    let net_cls_net_prio_independent = Path::new("/sys/fs/cgroup/net_cls/net_cls.classid").exists()
+        && Path::new("/sys/fs/cgroup/net_prio/net_prio.ifpriomap").exists();
+    let net_cls_net_prio = Path::new("/sys/fs/cgroup/net_cls,net_prio/net_cls.classid").exists()
+        && Path::new("/sys/fs/cgroup/net_cls,net_prio/net_prio.ifpriomap").exists();
+    let net_prio_net_cls = Path::new("/sys/fs/cgroup/net_prio,net_cls/net_cls.classid").exists()
+        && Path::new("/sys/fs/cgroup/net_prio,net_cls/net_prio.ifpriomap").exists();
+
+    let (net_cls_base, net_prio_base) = if net_cls_net_prio_independent {
+        ("net_cls", "net_prio")
+    } else if net_cls_net_prio {
+        ("net_cls,net_prio", "net_cls,net_prio")
+    } else if net_prio_net_cls {
+        ("net_prio,net_cls", "net_prio,net_cls")
     } else {
         return Err(anyhow::anyhow!("Required cgroup paths do not exist"));
     };
+
+    let net_cls_path = PathBuf::from(CGROUP_ROOT)
+        .join(net_cls_base)
+        .join(cgroup_name.trim_start_matches('/'))
+        .join("net_cls.classid");
+    let net_prio_path = PathBuf::from(CGROUP_ROOT)
+        .join(net_prio_base)
+        .join(cgroup_name.trim_start_matches('/'))
+        .join("net_prio.ifpriomap");
 
     let resources = spec.linux().as_ref().unwrap().resources().as_ref().unwrap();
     let spec_network = resources.network().as_ref().unwrap();
@@ -209,18 +197,6 @@ pub fn validate_network(cgroup_name: &str, spec: &Spec) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn net_cls_path(base_path: PathBuf, cgroup_name: &str) -> PathBuf {
-    base_path
-        .join(cgroup_name.trim_start_matches('/'))
-        .join("net_cls.classid")
-}
-
-fn net_prio_path(base_path: PathBuf, cgroup_name: &str) -> PathBuf {
-    base_path
-        .join(cgroup_name.trim_start_matches('/'))
-        .join("net_prio.ifpriomap")
 }
 
 fn can_run() -> bool {
