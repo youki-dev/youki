@@ -40,7 +40,7 @@ pub fn test_intel_rdt() -> TestResult {
     ];
 
     for spec in cases.into_iter() {
-        let test_result = test_outside_container(spec, &|data| {
+        let test_result = test_outside_container(&spec, &|data| {
             test_result!(check_container_created(&data));
 
             TestResult::Passed

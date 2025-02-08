@@ -53,7 +53,7 @@ fn test_wrong_tlb() -> TestResult {
     let page = "3MB";
     let limit = 100 * 3 * 1024 * 1024;
     let spec = make_hugetlb_spec(page, limit);
-    test_outside_container(spec, &|data| {
+    test_outside_container(&spec, &|data| {
         match data.create_result {
             Err(e) => TestResult::Failed(anyhow!(e)),
             Ok(res) => {
@@ -151,7 +151,7 @@ fn test_valid_tlb() -> TestResult {
     let tlb_sizes = get_tlb_sizes();
     for size in tlb_sizes.iter() {
         let spec = make_hugetlb_spec(size, limit);
-        let res = test_outside_container(spec, &|data| {
+        let res = test_outside_container(&spec, &|data| {
             test_result!(check_container_created(&data));
 
             let r = validate_tlb(&data.id, size, limit);
@@ -172,7 +172,7 @@ fn test_valid_rsvd_tlb() -> TestResult {
     let tlb_sizes = get_tlb_sizes();
     for size in tlb_sizes.iter() {
         let spec = make_hugetlb_spec(size, limit);
-        let res = test_outside_container(spec, &|data| {
+        let res = test_outside_container(&spec, &|data| {
             test_result!(check_container_created(&data));
             // Currentle, we write the same value to both limit_in_bytes and rsvd.limit_in_bytes
             let non_rsvd = validate_tlb(&data.id, size, limit);
