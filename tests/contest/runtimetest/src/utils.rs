@@ -2,7 +2,7 @@ use std::fs;
 use std::fs::{metadata, symlink_metadata, OpenOptions};
 use std::io::Read;
 use std::os::unix::prelude::MetadataExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use nix::sys::stat::{stat, SFlag};
@@ -10,7 +10,7 @@ use nix::sys::stat::{stat, SFlag};
 // It means the file or directory is readable
 type Readable = bool;
 
-fn test_file_read_access(path: &str) -> Result<Readable, std::io::Error> {
+fn test_file_read_access<P: AsRef<Path>>(path: P) -> Result<Readable, std::io::Error> {
     let mut file = OpenOptions::new().create(false).read(true).open(path)?;
 
     // Create a buffer with a capacity of 1 byte
@@ -25,7 +25,7 @@ fn test_file_read_access(path: &str) -> Result<Readable, std::io::Error> {
     }
 }
 
-pub fn test_dir_read_access(path: &str) -> Result<Readable, std::io::Error> {
+pub fn test_dir_read_access<P: AsRef<Path>>(path: P) -> Result<Readable, std::io::Error> {
     let entries = std::fs::read_dir(path);
 
     match entries {
@@ -56,8 +56,9 @@ fn is_dir(mode: u32) -> bool {
     mode & SFlag::S_IFDIR.bits() != 0
 }
 
-pub fn test_read_access(path: &str) -> Result<Readable, std::io::Error> {
-    let fstat = stat(path)?;
+pub fn test_read_access<P: AsRef<Path>>(path: P) -> Result<Readable, std::io::Error> {
+    let path_ref = path.as_ref();
+    let fstat = stat(path_ref)?;
     let mode = fstat.st_mode;
     if is_file_like(mode) {
         // we have a file or a char/block device
@@ -68,7 +69,10 @@ pub fn test_read_access(path: &str) -> Result<Readable, std::io::Error> {
 
     Err(std::io::Error::new(
         std::io::ErrorKind::Other,
-        format!("cannot test read access for {path:?}, has mode {mode:x}"),
+        format!(
+            "cannot test read access for {:?}, has mode {mode:x}",
+            path_ref
+        ),
     ))
 }
 
