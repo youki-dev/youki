@@ -34,7 +34,7 @@ fn scheduler_policy_other_test() -> TestResult {
         LinuxSchedulerPolicy::SchedOther,
         "scheduler_policy_other"
     ));
-    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 fn scheduler_policy_batch_test() -> TestResult {
@@ -42,7 +42,7 @@ fn scheduler_policy_batch_test() -> TestResult {
         LinuxSchedulerPolicy::SchedBatch,
         "scheduler_policy_batch"
     ));
-    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 pub fn get_scheduler_test() -> TestGroup {

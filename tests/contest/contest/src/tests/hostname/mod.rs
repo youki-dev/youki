@@ -26,7 +26,7 @@ fn create_spec(hostname: &str) -> Spec {
 
 fn hostname_test() -> TestResult {
     let spec = create_spec("hostname-specific");
-    test_inside_container(spec, &CreateOptions::default(), &|_| {
+    test_inside_container(&spec, &CreateOptions::default(), &|_| {
         // As long as the container is created, we expect the hostname to be determined
         // by the spec, so nothing to prepare prior.
         Ok(())
@@ -35,7 +35,7 @@ fn hostname_test() -> TestResult {
 
 fn empty_hostname() -> TestResult {
     let spec = create_spec("");
-    test_inside_container(spec, &CreateOptions::default(), &|_| {
+    test_inside_container(&spec, &CreateOptions::default(), &|_| {
         // As long as the container is created, we expect the hostname to be determined
         // by the spec, so nothing to prepare prior.
         Ok(())

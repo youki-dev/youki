@@ -18,7 +18,7 @@ fn create_spec() -> Result<Spec> {
 fn no_pivot_test() -> TestResult {
     let spec = test_result!(create_spec());
     test_inside_container(
-        spec,
+        &spec,
         &CreateOptions::default().with_no_pivot_root(),
         &|_| Ok(()),
     )

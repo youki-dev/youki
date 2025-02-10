@@ -26,7 +26,7 @@ fn create_spec() -> Result<Spec> {
 ////////// ANCHOR: example_test
 fn example_test() -> TestResult {
     let spec = test_result!(create_spec());
-    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 ////////// ANCHOR_END: example_test
 

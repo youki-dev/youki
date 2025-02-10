@@ -40,7 +40,7 @@ fn open_devnull_no_cloexec() -> Result<(fs::File, RawFd)> {
 fn only_stdio_test() -> TestResult {
     let spec = test_result!(create_spec());
     test_inside_container(
-        spec,
+        &spec,
         &CreateOptions::default().with_extra_args(&["--preserve-fds".as_ref(), "100".as_ref()]),
         &|bundle_path| {
             fs::write(bundle_path.join("num-fds"), "0".as_bytes())?;
@@ -60,7 +60,7 @@ fn closes_fd_test() -> TestResult {
 
     let spec = test_result!(create_spec());
     test_inside_container(
-        spec,
+        &spec,
         &CreateOptions::default().with_extra_args(&["--preserve-fds".as_ref(), "0".as_ref()]),
         &|bundle_path| {
             fs::write(bundle_path.join("num-fds"), "0".as_bytes())?;
@@ -79,7 +79,7 @@ fn pass_single_fd_test() -> TestResult {
 
     let spec = test_result!(create_spec());
     test_inside_container(
-        spec,
+        &spec,
         &CreateOptions::default().with_extra_args(&[
             "--preserve-fds".as_ref(),
             (devnull_fd - 2).to_string().as_ref(), // relative to stdio
