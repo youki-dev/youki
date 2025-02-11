@@ -17,6 +17,7 @@ use nix::NixPath;
 use oci_spec::runtime::{Mount as SpecMount, MountBuilder as SpecMountBuilder};
 use procfs::process::{MountInfo, MountOptFields, Process};
 use safe_path;
+use selinux::selinux;
 
 #[cfg(feature = "v1")]
 use super::symlink::Symlink;
@@ -489,10 +490,7 @@ impl Mount {
 
         if let Some(l) = label {
             if typ != Some("proc") && typ != Some("sysfs") {
-                match mount_option_config.data.is_empty() {
-                    true => d = format!("context=\"{l}\""),
-                    false => d = format!("{},context=\"{}\"", mount_option_config.data, l),
-                }
+                d = selinux::SELinux::format_mount_label(&mount_option_config.data, l);
             }
         }
 
