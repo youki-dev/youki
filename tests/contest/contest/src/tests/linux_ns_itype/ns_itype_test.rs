@@ -44,7 +44,7 @@ fn get_test(test_name: &'static str) -> Test {
                 }
             };
             let spec = get_spec();
-            test_outside_container(spec, &move |data| {
+            test_outside_container(&spec, &move |data| {
                 let pid = match data.state {
                     Some(s) => s.pid.unwrap(),
                     None => return TestResult::Failed(anyhow!("state command returned error")),

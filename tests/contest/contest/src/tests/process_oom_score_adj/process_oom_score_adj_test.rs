@@ -31,7 +31,7 @@ fn create_spec() -> Result<Spec> {
 
 fn process_oom_score_adj_test() -> TestResult {
     let spec = test_result!(create_spec());
-    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 pub fn get_process_oom_score_adj_test() -> TestGroup {

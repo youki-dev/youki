@@ -205,7 +205,7 @@ fn test_cpu_cgroups() -> TestResult {
 
     for case in cases.into_iter() {
         let spec = test_result!(create_spec(cgroup_name, case));
-        let test_result = test_outside_container(spec, &|data| {
+        let test_result = test_outside_container(&spec, &|data| {
             test_result!(check_container_created(&data));
 
             TestResult::Passed
@@ -223,7 +223,7 @@ fn test_empty_cpu() -> TestResult {
     let cgroup_name = "test_empty_cpu";
     let spec = test_result!(create_empty_spec(cgroup_name));
 
-    test_outside_container(spec, &|data| {
+    test_outside_container(&spec, &|data| {
         test_result!(check_container_created(&data));
         TestResult::Passed
     })
@@ -249,7 +249,7 @@ fn test_cpu_idle_set() -> TestResult {
     ));
 
     let spec = test_result!(create_spec(cgroup_name, cpu));
-    test_outside_container(spec, &|data| {
+    test_outside_container(&spec, &|data| {
         test_result!(check_container_created(&data));
         TestResult::Passed
     })
@@ -273,7 +273,7 @@ fn test_cpu_idle_default() -> TestResult {
         realtime_runtime,
     ));
     let spec = test_result!(create_spec(cgroup_name, cpu));
-    test_outside_container(spec, &|data| {
+    test_outside_container(&spec, &|data| {
         test_result!(check_container_created(&data));
         TestResult::Passed
     })

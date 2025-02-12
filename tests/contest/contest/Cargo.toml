@@ -11,7 +11,7 @@ libcontainer = { path = "../../../crates/libcontainer" }
 nix = "0.28.0"
 num_cpus = "1.16"
 oci-spec = { version = "0.7.1", features = ["runtime"] }
-once_cell = "1.20.2"
+once_cell = "1.20.3"
 pnet_datalink = "0.35.0"
 procfs = "0.17.0"
 rand = "0.8.5"
@@ -19,8 +19,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tar = "0.4"
 test_framework = { path = "../test_framework" }
-uuid = "1.12"
-which = "7.0.1"
+uuid = "1.13"
+which = "7.0.2"
 tempfile = "3"
 scopeguard = "1.2.0"
 tracing = { version = "0.1.41", features = ["attributes"]}
