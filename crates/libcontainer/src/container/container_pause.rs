@@ -32,12 +32,12 @@ impl Container {
             return Err(LibcontainerError::IncorrectStatus);
         }
 
-        let cmanager =
-            libcgroups::common::create_cgroup_manager(libcgroups::common::CgroupConfig {
-                cgroup_path: self.spec()?.cgroup_path,
-                systemd_cgroup: self.systemd(),
-                container_name: self.id().to_string(),
-            })?;
+        let cgroup_config = match self.spec()?.cgroup_config {
+            Some(cc) => cc,
+            None => return Err(LibcontainerError::CgroupsMissing),
+        };
+
+        let cmanager = libcgroups::common::create_cgroup_manager(cgroup_config)?;
         cmanager.freeze(FreezerState::Frozen)?;
 
         tracing::debug!("saving paused status");
