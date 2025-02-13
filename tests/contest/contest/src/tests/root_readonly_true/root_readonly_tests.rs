@@ -22,12 +22,12 @@ fn create_spec(readonly: bool) -> Result<Spec> {
 
 fn root_readonly_true_test() -> TestResult {
     let spec_true = test_result!(create_spec(true));
-    test_inside_container(spec_true, &CreateOptions::default(), &|_| Ok(()))
+    test_inside_container(&spec_true, &CreateOptions::default(), &|_| Ok(()))
 }
 
 fn root_readonly_false_test() -> TestResult {
     let spec_false = test_result!(create_spec(false));
-    test_inside_container(spec_false, &CreateOptions::default(), &|_| Ok(()))
+    test_inside_container(&spec_false, &CreateOptions::default(), &|_| Ok(()))
 }
 
 pub fn get_root_readonly_test() -> TestGroup {

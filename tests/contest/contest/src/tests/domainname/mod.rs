@@ -22,7 +22,7 @@ fn get_spec(domainname: &str) -> Spec {
 
 fn set_domainname_test() -> TestResult {
     let spec = get_spec("domainname");
-    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 pub fn get_domainname_tests() -> TestGroup {

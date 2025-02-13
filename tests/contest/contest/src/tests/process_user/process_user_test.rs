@@ -46,7 +46,7 @@ fn create_spec(gids: Vec<u32>) -> Result<Spec> {
 fn process_user_test_unique_gids() -> TestResult {
     let gids = generate_unique_random_vec();
     let spec = test_result!(create_spec(gids));
-    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 fn process_user_test_duplicate_gids() -> TestResult {
@@ -54,7 +54,7 @@ fn process_user_test_duplicate_gids() -> TestResult {
     let duplicate = gids[0];
     gids.push(duplicate);
     let spec = test_result!(create_spec(gids));
-    match test_inside_container(spec, &CreateOptions::default(), &|_| Ok(())) {
+    match test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(())) {
         TestResult::Passed => TestResult::Failed(anyhow!(
             "expected test with duplicate gids to fail, but it passed instead"
         )),

@@ -47,7 +47,7 @@ fn create_spec() -> Result<Spec> {
 
 fn process_rlimits_fail_test() -> TestResult {
     let spec = test_result!(create_spec());
-    match test_inside_container(spec, &CreateOptions::default(), &|_| Ok(())) {
+    match test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(())) {
         TestResult::Passed => TestResult::Failed(anyhow!(
             "expected test with invalid rlimit value to fail, but it passed instead"
         )),
