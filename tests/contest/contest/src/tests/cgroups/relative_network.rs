@@ -60,7 +60,7 @@ fn test_relative_network_cgroups() -> TestResult {
     const IF_NAME: &str = "lo";
     let spec = test_result!(create_spec(CGROUP_NAME, ID, PRIO, IF_NAME));
 
-    test_outside_container(spec.clone(), &|data| {
+    test_outside_container(&spec, &|data| {
         test_result!(check_container_created(&data));
         test_result!(validate_network(CGROUP_NAME, &spec));
         TestResult::Passed
