@@ -1,7 +1,6 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use oci_spec::runtime::{
     LinuxBuilder, LinuxInterfacePriorityBuilder, LinuxNamespace, LinuxNamespaceType,
     LinuxNetworkBuilder, LinuxResourcesBuilder, Spec, SpecBuilder,
@@ -9,8 +8,9 @@ use oci_spec::runtime::{
 use pnet_datalink::interfaces;
 use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
 
+use super::validate_network;
 use crate::utils::test_outside_container;
-use crate::utils::test_utils::{check_container_created, CGROUP_ROOT};
+use crate::utils::test_utils::check_container_created;
 
 fn create_spec(
     cgroup_name: &str,
@@ -131,72 +131,6 @@ fn test_network_cgroups() -> TestResult {
     }
 
     TestResult::Passed
-}
-
-/// validates the Network structure parsed from /sys/fs/cgroup/net_cls,net_prio with the spec
-pub fn validate_network(cgroup_name: &str, spec: &Spec) -> Result<()> {
-    let net_cls_net_prio_independent = Path::new("/sys/fs/cgroup/net_cls/net_cls.classid").exists()
-        && Path::new("/sys/fs/cgroup/net_prio/net_prio.ifpriomap").exists();
-    let net_cls_net_prio = Path::new("/sys/fs/cgroup/net_cls,net_prio/net_cls.classid").exists()
-        && Path::new("/sys/fs/cgroup/net_cls,net_prio/net_prio.ifpriomap").exists();
-    let net_prio_net_cls = Path::new("/sys/fs/cgroup/net_prio,net_cls/net_cls.classid").exists()
-        && Path::new("/sys/fs/cgroup/net_prio,net_cls/net_prio.ifpriomap").exists();
-
-    let (net_cls_base, net_prio_base) = if net_cls_net_prio_independent {
-        ("net_cls", "net_prio")
-    } else if net_cls_net_prio {
-        ("net_cls,net_prio", "net_cls,net_prio")
-    } else if net_prio_net_cls {
-        ("net_prio,net_cls", "net_prio,net_cls")
-    } else {
-        return Err(anyhow::anyhow!("Required cgroup paths do not exist"));
-    };
-
-    let net_cls_path = PathBuf::from(CGROUP_ROOT)
-        .join(net_cls_base)
-        .join(cgroup_name.trim_start_matches('/'))
-        .join("net_cls.classid");
-    let net_prio_path = PathBuf::from(CGROUP_ROOT)
-        .join(net_prio_base)
-        .join(cgroup_name.trim_start_matches('/'))
-        .join("net_prio.ifpriomap");
-
-    let resources = spec.linux().as_ref().unwrap().resources().as_ref().unwrap();
-    let spec_network = resources.network().as_ref().unwrap();
-
-    // Validate net_cls.classid
-    let classid_content = fs::read_to_string(&net_cls_path)
-        .with_context(|| format!("failed to read {:?}", net_cls_path))?;
-    let expected_classid = spec_network.class_id().unwrap();
-    let actual_classid: u32 = classid_content
-        .trim()
-        .parse()
-        .with_context(|| format!("could not parse {:?}", classid_content.trim()))?;
-    if expected_classid != actual_classid {
-        bail!(
-            "expected {:?} to contain a classid of {}, but the classid was {}",
-            net_cls_path,
-            expected_classid,
-            actual_classid
-        );
-    }
-
-    // Validate net_prio.ifpriomap
-    let ifpriomap_content = fs::read_to_string(&net_prio_path)
-        .with_context(|| format!("failed to read {:?}", net_prio_path))?;
-    let expected_priorities = spec_network.priorities().as_ref().unwrap();
-    for priority in expected_priorities {
-        let expected_entry = format!("{} {}", priority.name(), priority.priority());
-        if !ifpriomap_content.contains(&expected_entry) {
-            bail!(
-                "expected {:?} to contain an entry '{}', but it was not found",
-                net_prio_path,
-                expected_entry
-            );
-        }
-    }
-
-    Ok(())
 }
 
 fn can_run() -> bool {
