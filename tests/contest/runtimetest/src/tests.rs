@@ -820,3 +820,42 @@ pub fn validate_fd_control(_spec: &Spec) {
         eprintln!("mismatched fds inside container! {:?}", fd_details);
     }
 }
+
+pub fn validate_masked_paths(spec: &Spec) {
+    let linux = spec.linux().as_ref().unwrap();
+    let masked_paths = match linux.masked_paths() {
+        Some(p) => p,
+        None => {
+            eprintln!("in masked paths, expected some masked paths to be set, found none");
+            return;
+        }
+    };
+
+    for path in masked_paths.iter().map(Path::new) {
+        if !path.is_absolute() {
+            eprintln!("in masked paths, the path must be absolute.")
+        }
+        match test_read_access(path) {
+            Ok(true) => {
+                eprintln!(
+                    "in masked paths, expected path {:?} to be masked, but was found readable",
+                    path.iter().as_path(),
+                );
+                return;
+            }
+            Ok(false) => { /* This is expected */ }
+            Err(e) => {
+                let errno = Errno::from_raw(e.raw_os_error().unwrap());
+                if errno == Errno::ENOENT {
+                    /* This is expected */
+                } else {
+                    eprintln!(
+                        "in masked paths, error in testing read access for path {:?} : {errno:?}",
+                        path.iter().as_path(),
+                    );
+                    return;
+                }
+            }
+        }
+    }
+}

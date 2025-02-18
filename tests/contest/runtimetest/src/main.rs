@@ -33,6 +33,7 @@ fn main() {
         "hello_world" => tests::hello_world(&spec),
         ////////// ANCHOR_END: example_runtimetest_main
         "readonly_paths" => tests::validate_readonly_paths(&spec),
+        "masked_paths" => tests::validate_masked_paths(&spec),
         "set_host_name" => tests::validate_hostname(&spec),
         "mounts_recursive" => tests::validate_mounts_recursive(&spec),
         "domainname_test" => tests::validate_domainname(&spec),
