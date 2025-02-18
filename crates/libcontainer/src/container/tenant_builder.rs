@@ -127,7 +127,7 @@ impl TenantContainerBuilder {
         // get file descriptors of console socket
         let csocketfd = self.setup_tty_socket(&container_dir)?;
 
-        let use_systemd = self.should_use_systemd(&container);
+        let cgroup_config = container.spec()?.cgroup_config;
         let user_ns_config = UserNamespaceConfig::new(&spec)?;
 
         let (read_end, write_end) =
@@ -138,15 +138,13 @@ impl TenantContainerBuilder {
                 exec_notify_fd: write_end.as_raw_fd(),
             },
             syscall: self.base.syscall,
-            container_id: self.base.container_id,
             pid_file: self.base.pid_file,
             console_socket: csocketfd,
-            use_systemd,
+            cgroup_config,
             spec: Rc::new(spec),
             rootfs,
             user_ns_config,
             notify_path: notify_path.clone(),
-            container: None,
             preserve_fds: self.base.preserve_fds,
             detached: self.detached,
             executor: self.base.executor,
@@ -499,10 +497,6 @@ impl TenantContainerBuilder {
         }
 
         Ok(tenant_namespaces)
-    }
-
-    fn should_use_systemd(&self, container: &Container) -> bool {
-        container.systemd()
     }
 
     fn setup_notify_listener(container_dir: &Path) -> Result<PathBuf, LibcontainerError> {
