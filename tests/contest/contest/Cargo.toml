@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0"
-flate2 = "1.0"
+flate2 = "1.1"
 libcgroups = { path = "../../../crates/libcgroups" }
 libcontainer = { path = "../../../crates/libcontainer" }
 nix = "0.28.0"
