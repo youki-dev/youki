@@ -795,41 +795,38 @@ fn set_supplementary_gids(
 
 /// set_io_priority set io priority
 fn set_io_priority(syscall: &dyn Syscall, io_priority_op: &Option<LinuxIOPriority>) -> Result<()> {
-    match io_priority_op {
-        Some(io_priority) => {
-            let io_prio_class_mapping: HashMap<_, _> = [
-                (IOPriorityClass::IoprioClassRt, 1i64),
-                (IOPriorityClass::IoprioClassBe, 2i64),
-                (IOPriorityClass::IoprioClassIdle, 3i64),
-            ]
-            .iter()
-            .filter_map(|(class, num)| match serde_json::to_string(&class) {
-                Ok(class_str) => Some((class_str, *num)),
-                Err(err) => {
-                    tracing::error!(?err, "failed to parse io priority class");
-                    None
-                }
-            })
-            .collect();
+    if let Some(io_priority) = io_priority_op {
+        let io_prio_class_mapping: HashMap<_, _> = [
+            (IOPriorityClass::IoprioClassRt, 1i64),
+            (IOPriorityClass::IoprioClassBe, 2i64),
+            (IOPriorityClass::IoprioClassIdle, 3i64),
+        ]
+        .iter()
+        .filter_map(|(class, num)| match serde_json::to_string(&class) {
+            Ok(class_str) => Some((class_str, *num)),
+            Err(err) => {
+                tracing::error!(?err, "failed to parse io priority class");
+                None
+            }
+        })
+        .collect();
 
-            let iop_class = serde_json::to_string(&io_priority.class())
-                .map_err(|err| InitProcessError::IoPriorityClass(err.to_string()))?;
+        let iop_class = serde_json::to_string(&io_priority.class())
+            .map_err(|err| InitProcessError::IoPriorityClass(err.to_string()))?;
 
-            match io_prio_class_mapping.get(&iop_class) {
-                Some(value) => {
-                    syscall
-                        .set_io_priority(*value, io_priority.priority())
-                        .map_err(|err| {
-                            tracing::error!(?err, ?io_priority, "failed to set io_priority");
-                            InitProcessError::SyscallOther(err)
-                        })?;
-                }
-                None => {
-                    return Err(InitProcessError::IoPriorityClass(iop_class));
-                }
+        match io_prio_class_mapping.get(&iop_class) {
+            Some(value) => {
+                syscall
+                    .set_io_priority(*value, io_priority.priority())
+                    .map_err(|err| {
+                        tracing::error!(?err, ?io_priority, "failed to set io_priority");
+                        InitProcessError::SyscallOther(err)
+                    })?;
+            }
+            None => {
+                return Err(InitProcessError::IoPriorityClass(iop_class));
             }
         }
-        None => {}
     }
     Ok(())
 }
