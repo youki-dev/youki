@@ -1,4 +1,5 @@
 pub mod cgroups;
+pub mod delete;
 pub mod devices;
 pub mod domainname;
 pub mod example;
