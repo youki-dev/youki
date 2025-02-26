@@ -111,7 +111,7 @@ impl Controller for Memory {
                 )?;
             }
 
-            Self::set_disable_oom_killer(cgroup_root, controller_opt.disable_oom_killer)?;
+            Self::set_oom_control(cgroup_root, controller_opt.disable_oom_killer)?;
 
             if let Some(swappiness) = memory.swappiness() {
                 if swappiness <= 100 {
@@ -204,7 +204,7 @@ impl Memory {
         Ok(memory_data)
     }
 
-    fn set_disable_oom_killer(
+    fn set_oom_control(
         cgroup_root: &Path,
         disable_oom_killer: bool,
     ) -> Result<(), WrappedIoError> {
@@ -440,12 +440,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         set_fixture(tmp.path(), CGROUP_MEMORY_OOM_CONTROL, "0")
             .expect("Set fixure for oom control");
-        Memory::set_disable_oom_killer(tmp.path(), true).expect("Set oom control");
+        Memory::set_oom_control(tmp.path(), true).expect("Set oom control");
         let content = std::fs::read_to_string(tmp.path().join(CGROUP_MEMORY_OOM_CONTROL))
             .expect("Read to string");
         assert_eq!("1", content);
 
-        Memory::set_disable_oom_killer(tmp.path(), false).expect("Set oom control");
+        Memory::set_oom_control(tmp.path(), false).expect("Set oom control");
         let content = std::fs::read_to_string(tmp.path().join(CGROUP_MEMORY_OOM_CONTROL))
             .expect("Read to string");
         assert_eq!("0", content);
