@@ -9,6 +9,7 @@ use contest::logger;
 use test_framework::TestManager;
 use tests::cgroups;
 
+use crate::tests::delete::get_delete_test;
 use crate::tests::devices::get_devices_test;
 use crate::tests::domainname::get_domainname_tests;
 use crate::tests::example::get_example_test;
@@ -121,6 +122,7 @@ fn main() -> Result<()> {
     let sysctl = get_sysctl_test();
     let scheduler = get_scheduler_test();
     let io_priority_test = get_io_priority_test();
+    let delete = get_delete_test();
     let devices = get_devices_test();
     let root_readonly = get_root_readonly_test();
     let process = get_process_test();
@@ -153,6 +155,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(intel_rdt));
     tm.add_test_group(Box::new(sysctl));
     tm.add_test_group(Box::new(scheduler));
+    tm.add_test_group(Box::new(delete));
     tm.add_test_group(Box::new(devices));
     tm.add_test_group(Box::new(root_readonly));
     tm.add_test_group(Box::new(process));
