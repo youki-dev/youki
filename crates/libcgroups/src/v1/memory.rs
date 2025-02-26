@@ -204,10 +204,7 @@ impl Memory {
         Ok(memory_data)
     }
 
-    fn set_oom_control(
-        cgroup_root: &Path,
-        disable_oom_killer: bool,
-    ) -> Result<(), WrappedIoError> {
+    fn set_oom_control(cgroup_root: &Path, disable_oom_killer: bool) -> Result<(), WrappedIoError> {
         if disable_oom_killer {
             common::write_cgroup_file(cgroup_root.join(CGROUP_MEMORY_OOM_CONTROL), 1)
         } else {
