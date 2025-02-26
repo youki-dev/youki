@@ -1,5 +1,20 @@
 # Changelog
 
+## [v0.5.2](https://github.com/youki-dev/youki/compare/v0.5.1...v0.5.2) - 2025-02-26
+### 💪 Improvements
+- Support feature subcommand by @musaprg in https://github.com/youki-dev/youki/pull/2837
+### 🧪 Test improvements and Misc Fixes
+- Add a PR template file by @Gekko0114 in https://github.com/youki-dev/youki/pull/3049
+- add process rlimits fail test by @ntkm61027 in https://github.com/youki-dev/youki/pull/3051
+- Use MountOption enum to parse mount options defined in the spec by @musaprg in https://github.com/youki-dev/youki/pull/2937
+- ci: Publish packages after the release flow by @utam0k in https://github.com/youki-dev/youki/pull/3064
+- Make `sepc` into `&spec` in test_{outside,inside}_containe by @utam0k in https://github.com/youki-dev/youki/pull/3068
+- linux_masked_paths integration test by @nayuta-ai in https://github.com/youki-dev/youki/pull/2950
+- fix: compilation errors in contest by @YJDoc2 in https://github.com/youki-dev/youki/pull/3086
+### Other Changes
+- Upgrade direct dep rand to 0.9.0 by @YJDoc2 in https://github.com/youki-dev/youki/pull/3083
+- rollup multiple dep updates by @YJDoc2 in https://github.com/youki-dev/youki/pull/3084
+
 ## [v0.5.1](https://github.com/youki-dev/youki/compare/v0.5.0...v0.5.1) - 2025-01-06
 ### 🐛 Bug Fixes
 - Fix building the wasmedge feature by @utam0k in https://github.com/youki-dev/youki/pull/3041
