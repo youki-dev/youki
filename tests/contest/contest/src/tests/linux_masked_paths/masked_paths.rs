@@ -55,7 +55,7 @@ fn check_masked_paths() -> TestResult {
 
     let spec = get_spec(masked_paths);
 
-    test_inside_container(spec, &CreateOptions::default(), &|bundle_path| {
+    test_inside_container(&spec, &CreateOptions::default(), &|bundle_path| {
         use std::fs;
         let test_dir = bundle_path.join(&masked_dir_sub);
         fs::create_dir_all(&test_dir)?;
@@ -87,7 +87,7 @@ fn check_masked_rel_paths() -> TestResult {
     let masked_paths = vec![masked_rel_path];
     let spec = get_spec(masked_paths);
 
-    let res = test_inside_container(spec, &CreateOptions::default(), &|_bundle_path| Ok(()));
+    let res = test_inside_container(&spec, &CreateOptions::default(), &|_bundle_path| Ok(()));
     // If the container creation succeeds, we expect an error since the masked paths does not support relative paths.
     if let TestResult::Passed = res {
         TestResult::Failed(anyhow!(
@@ -107,7 +107,7 @@ fn check_masked_symlinks() -> TestResult {
     let masked_paths = vec![root.join(MASKED_SYMLINK)];
     let spec = get_spec(masked_paths);
 
-    let res = test_inside_container(spec, &CreateOptions::default(), &|bundle_path| {
+    let res = test_inside_container(&spec, &CreateOptions::default(), &|bundle_path| {
         use std::{fs, io};
         let test_file = bundle_path.join(MASKED_SYMLINK);
         // ln -s ../masked-symlink ; readlink -f /masked-symlink; ls -L /masked-symlink
@@ -162,7 +162,7 @@ fn test_mode(mode: u32) -> TestResult {
     let masked_paths = vec![root.join(MASKED_DEVICE)];
     let spec = get_spec(masked_paths);
 
-    test_inside_container(spec, &CreateOptions::default(), &|bundle_path| {
+    test_inside_container(&spec, &CreateOptions::default(), &|bundle_path| {
         use std::os::unix::fs::OpenOptionsExt;
         use std::{fs, io};
         let test_file = bundle_path.join(MASKED_DEVICE);
