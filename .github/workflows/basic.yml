@@ -64,7 +64,7 @@ jobs:
         with:
           # Update v0.8.0 when we support 2024 edition
           # https://github.com/bnjbvr/cargo-machete/issues/158
-          tool: cargo-machete@0.7.1
+          tool: cargo-machete@0.7.0
       - name: Check unused deps
         run: cargo machete
 
