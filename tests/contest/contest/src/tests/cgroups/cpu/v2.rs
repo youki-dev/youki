@@ -213,7 +213,7 @@ fn test_cpu_quota_period_unspecified_unchanged() -> TestResult {
     let expected_period = 250_000;
     let cpu = test_result!(LinuxCpuBuilder::default().build().context("build cpu spec"));
 
-    let spec = test_result!(create_spec("test_cpu_period_unspecified_unchanged", cpu));
+    let spec = test_result!(create_spec("test_cpu_period_unspecified_unchanged", cpu,));
     test_result!(prepare_cpu_max(
         &spec,
         &quota.to_string(),
