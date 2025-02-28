@@ -1,10 +1,12 @@
-use std::thread::sleep;
 use std::time::Duration;
 
 use anyhow::anyhow;
 use test_framework::{Test, TestGroup, TestResult};
 
 use crate::tests::lifecycle::ContainerLifecycle;
+
+// Default timeout for state transitions
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(75);
 
 /// Test deleting a non-existent container
 fn delete_non_existed_container() -> TestResult {
@@ -29,8 +31,11 @@ fn delete_created_container_test() -> TestResult {
         _ => return TestResult::Failed(anyhow!("Failed to create container")),
     }
 
-    // Wait for state transition
-    sleep(Duration::from_secs(1));
+    // Wait for the container to be in created state
+    match container.wait_for_state("created", DEFAULT_TIMEOUT) {
+        TestResult::Passed => {}
+        result => return result,
+    }
 
     // Delete the container in "created" state
     match container.delete() {
@@ -59,14 +64,23 @@ fn delete_running_container_test() -> TestResult {
         _ => {
             // Clean up and return error
             let _ = container.kill();
-            sleep(Duration::from_secs(2));
+            let _ = container.wait_for_state("stopped", DEFAULT_TIMEOUT);
             let _ = container.delete();
             return TestResult::Failed(anyhow!("Failed to start container"));
         }
     }
 
     // Wait for running state
-    sleep(Duration::from_secs(2));
+    match container.wait_for_state("running", DEFAULT_TIMEOUT) {
+        TestResult::Passed => {}
+        result => {
+            // Clean up and return error
+            let _ = container.kill();
+            let _ = container.wait_for_state("stopped", DEFAULT_TIMEOUT);
+            let _ = container.delete();
+            return result;
+        }
+    }
 
     // Try to delete the running container (should fail per OCI spec)
     let delete_result = match container.delete() {
@@ -79,7 +93,7 @@ fn delete_running_container_test() -> TestResult {
 
     // Clean up
     let _ = container.kill();
-    sleep(Duration::from_secs(2));
+    let _ = container.wait_for_state("stopped", DEFAULT_TIMEOUT);
     let cleanup_result = container.delete();
 
     // Return test result
@@ -105,7 +119,7 @@ fn delete_stopped_container_test() -> TestResult {
         _ => {
             // Clean up and return error
             let _ = container.kill();
-            sleep(Duration::from_secs(2));
+            let _ = container.wait_for_state("stopped", DEFAULT_TIMEOUT);
             let _ = container.delete();
             return TestResult::Failed(anyhow!("Failed to start container"));
         }
@@ -122,7 +136,10 @@ fn delete_stopped_container_test() -> TestResult {
     }
 
     // Wait for stopped state
-    sleep(Duration::from_secs(2));
+    match container.wait_for_state("stopped", DEFAULT_TIMEOUT) {
+        TestResult::Passed => {}
+        result => return result,
+    }
 
     // Delete the stopped container
     match container.delete() {
