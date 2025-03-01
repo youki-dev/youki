@@ -7,8 +7,8 @@ use crate::utils::test_inside_container;
 use crate::utils::test_utils::CreateOptions;
 
 fn generate_random_number() -> i32 {
-    let mut rng = rand::thread_rng();
-    rng.gen_range(300..=700)
+    let mut rng = rand::rng();
+    rng.random_range(300..=700)
 }
 
 fn create_spec() -> Result<Spec> {

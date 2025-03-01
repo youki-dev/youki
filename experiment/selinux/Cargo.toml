@@ -14,5 +14,5 @@ keywords = ["youki", "container", "selinux"]
 [dependencies]
 nix = { version = "0.29.0", features = ["process", "fs", "socket"] }
 rustix = { version = "0.38.34", features = ["fs"] }
-tempfile = "3.10.1"
+tempfile = "3.17.1"
 thiserror = "1.0.61"

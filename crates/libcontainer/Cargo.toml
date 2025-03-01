@@ -26,7 +26,7 @@ chrono = { version = "0.4", default-features = false, features = [
     "serde",
 ] }
 fastrand = "^2.3.0"
-libc = "0.2.169"
+libc = "0.2.170"
 nix = { version = "0.28.0", features = [
     "socket",
     "sched",
@@ -58,5 +58,5 @@ quickcheck = "1"
 serial_test = "3.1.1"
 tempfile = "3"
 anyhow = "1.0"
-rand = { version = "0.8.5" }
+rand = "0.9.0"
 scopeguard = "1"

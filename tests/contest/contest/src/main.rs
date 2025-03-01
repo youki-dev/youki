@@ -19,6 +19,7 @@ use crate::tests::intel_rdt::get_intel_rdt_test;
 use crate::tests::io_priority::get_io_priority_test;
 use crate::tests::kill::get_kill_test;
 use crate::tests::lifecycle::{ContainerCreate, ContainerLifecycle};
+use crate::tests::linux_masked_paths::get_linux_masked_paths_tests;
 use crate::tests::linux_ns_itype::get_ns_itype_tests;
 use crate::tests::mounts_recursive::get_mounts_recursive_test;
 use crate::tests::no_pivot::get_no_pivot_test;
@@ -131,6 +132,7 @@ fn main() -> Result<()> {
     let process_oom_score_adj = get_process_oom_score_adj_test();
     let fd_control = get_fd_control_test();
     let kill = get_kill_test();
+    let masked_paths = get_linux_masked_paths_tests();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -160,6 +162,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(process_rlimtis));
     tm.add_test_group(Box::new(process_rlimits_fail));
     tm.add_test_group(Box::new(no_pivot));
+    tm.add_test_group(Box::new(masked_paths));
     tm.add_test_group(Box::new(process_oom_score_adj));
     tm.add_test_group(Box::new(fd_control));
     tm.add_test_group(Box::new(kill));

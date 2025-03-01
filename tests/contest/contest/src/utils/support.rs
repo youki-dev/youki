@@ -41,12 +41,12 @@ pub fn get_project_path() -> PathBuf {
 
 /// This will generate the UUID needed when creating the container.
 pub fn generate_uuid() -> Uuid {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     const CHARSET: &[u8] = b"0123456789abcdefABCDEF";
 
     let rand_string: String = (0..32)
         .map(|_| {
-            let idx = rng.gen_range(0..CHARSET.len());
+            let idx = rng.random_range(0..CHARSET.len());
             CHARSET[idx] as char
         })
         .collect();
