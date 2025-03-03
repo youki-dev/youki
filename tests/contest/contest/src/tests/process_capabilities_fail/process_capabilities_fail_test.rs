@@ -32,7 +32,7 @@ fn create_spec() -> Result<Spec> {
 
 fn process_capabilities_fail_test() -> TestResult {
     let spec = test_result!(create_spec());
-    let result = test_inside_container(spec, &CreateOptions::default(), &|bundle| {
+    let result = test_inside_container(&spec, &CreateOptions::default(), &|bundle| {
         let spec_path = bundle.join("../config.json");
         let spec_str = fs::read_to_string(spec_path.clone()).unwrap();
 
