@@ -40,9 +40,9 @@ fn process_capabilities_fail_test() -> TestResult {
 
         if let Some(bounding) = spec_json.pointer_mut("/process/capabilities/bounding") {
             if let Some(bounding_array) = bounding.as_array_mut() {
-                for capanility in bounding_array.iter_mut() {
-                    if capanility == "CAP_SYSLOG" {
-                        *capanility = Value::String("TEST_CAP".to_string());
+                for capability in bounding_array.iter_mut() {
+                    if capability == "CAP_SYSLOG" {
+                        *capability = Value::String("TEST_CAP".to_string());
                     }
                 }
             }
