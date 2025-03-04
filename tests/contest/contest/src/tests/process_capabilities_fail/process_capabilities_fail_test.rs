@@ -1,23 +1,24 @@
-use std::{collections::HashSet, fs, fs::OpenOptions, io::Write};
+use std::collections::HashSet;
+use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 
 use anyhow::{anyhow, Context, Ok, Result};
 use oci_spec::runtime::{Capability, LinuxCapabilitiesBuilder, ProcessBuilder, Spec, SpecBuilder};
+use serde_json::Value;
 use test_framework::{test_result, Test, TestGroup, TestResult};
 
-use serde_json::Value;
-
-use crate::utils::{test_inside_container, test_utils::CreateOptions};
+use crate::utils::test_inside_container;
+use crate::utils::test_utils::CreateOptions;
 
 fn create_spec() -> Result<Spec> {
+    // When an invalid linux capability is specified, the spec cannot be created, so a valid linux capability is used.
     let linux_capability = LinuxCapabilitiesBuilder::default()
-        .bounding(HashSet::from([Capability::Syslog]))
+        .bounding(HashSet::from([Capability::Syslog])) // Adding the syslog capability here
         .build()?;
 
     let process = ProcessBuilder::default()
-        .args(vec![
-            "runtimetest".to_string(),
-            "process_capabilities_fail".to_string(),
-        ])
+        .args(vec!["sleep".to_string(), "1m".to_string()])
         .capabilities(linux_capability)
         .build()
         .expect("error in creating process config");
@@ -38,11 +39,12 @@ fn process_capabilities_fail_test() -> TestResult {
 
         let mut spec_json: Value = serde_json::from_str(&spec_str)?;
 
+        // Before container creation, replace the spec's capability with an invalid one.
         if let Some(bounding) = spec_json.pointer_mut("/process/capabilities/bounding") {
             if let Some(bounding_array) = bounding.as_array_mut() {
                 for capability in bounding_array.iter_mut() {
                     if capability == "CAP_SYSLOG" {
-                        *capability = Value::String("TEST_CAP".to_string());
+                        *capability = Value::String("TEST_CAP".to_string()); // Invalid capability
                     }
                 }
             }
@@ -58,6 +60,8 @@ fn process_capabilities_fail_test() -> TestResult {
 
         Ok(())
     });
+
+    // Check the test result: Fail if the container was created successfully (because it should fail)
     match result {
         TestResult::Failed(_e) => TestResult::Passed,
         TestResult::Skipped => TestResult::Failed(anyhow!("test was skipped unexpectedly.")),
