@@ -7,7 +7,7 @@ on:
 jobs:
   building-pr-branch:
     if: (github.event.issue.pull_request != null) && github.event.comment.body == '!github easy-benchmark'
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
@@ -34,7 +34,7 @@ jobs:
 
   building-main-branch:
     if: (github.event.issue.pull_request != null) && github.event.comment.body == '!github easy-benchmark'
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
@@ -65,7 +65,7 @@ jobs:
     needs:
       - building-pr-branch
       - building-main-branch
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
