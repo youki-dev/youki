@@ -92,7 +92,7 @@ jobs:
     name: Publish Packages
     needs: release
     runs-on: ubuntu-22.04
-    if: ${{ github.repository == 'containers/youki' }}
+    if: ${{ github.repository == 'youki-dev/youki' }}
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
