@@ -23,8 +23,6 @@ pub enum HookError {
     Killed,
     #[error("failed to execute hook command due to a timeout")]
     Timeout,
-    #[error("container state is required to run hook")]
-    MissingContainerState,
     #[error("failed to write container state to stdin")]
     WriteContainerState(#[source] std::io::Error),
 }
@@ -33,10 +31,10 @@ type Result<T> = std::result::Result<T, HookError>;
 
 pub fn run_hooks(
     hooks: Option<&Vec<Hook>>,
-    container: Option<&Container>,
+    container: &Container,
     cwd: Option<&Path>,
 ) -> Result<()> {
-    let state = &(container.ok_or(HookError::MissingContainerState)?.state);
+    let state = &container.state;
 
     if let Some(hooks) = hooks {
         for hook in hooks {
@@ -176,7 +174,7 @@ mod test {
     fn test_run_hook() -> Result<()> {
         {
             let default_container: Container = Default::default();
-            run_hooks(None, Some(&default_container), None).context("Failed simple test")?;
+            run_hooks(None, &default_container, None).context("Failed simple test")?;
         }
 
         {
@@ -185,7 +183,7 @@ mod test {
 
             let hook = HookBuilder::default().path("true").build()?;
             let hooks = Some(vec![hook]);
-            run_hooks(hooks.as_ref(), Some(&default_container), None).context("Failed true")?;
+            run_hooks(hooks.as_ref(), &default_container, None).context("Failed true")?;
         }
 
         {
@@ -205,8 +203,7 @@ mod test {
                 .env(vec![String::from("key=value")])
                 .build()?;
             let hooks = Some(vec![hook]);
-            run_hooks(hooks.as_ref(), Some(&default_container), None)
-                .context("Failed printenv test")?;
+            run_hooks(hooks.as_ref(), &default_container, None).context("Failed printenv test")?;
         }
 
         {
@@ -224,7 +221,7 @@ mod test {
                 ])
                 .build()?;
             let hooks = Some(vec![hook]);
-            run_hooks(hooks.as_ref(), Some(&default_container), Some(tmp.path()))
+            run_hooks(hooks.as_ref(), &default_container, Some(tmp.path()))
                 .context("Failed pwd test")?;
         }
 
@@ -248,7 +245,7 @@ mod test {
             .timeout(1)
             .build()?;
         let hooks = Some(vec![hook]);
-        match run_hooks(hooks.as_ref(), Some(&default_container), None) {
+        match run_hooks(hooks.as_ref(), &default_container, None) {
             Ok(_) => {
                 bail!("The test expects the hook to error out with timeout. Should not execute cleanly");
             }
