@@ -10,7 +10,7 @@ on:
 
 jobs:
   youki-build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       matrix:
@@ -40,7 +40,7 @@ jobs:
           path: youki
 
   containerd-integration-tests:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [youki-build]
     timeout-minutes: 40
     strategy:
@@ -79,7 +79,7 @@ jobs:
         run: sudo make RUNC_FLAVOR=crun TEST_RUNTIME=io.containerd.runc.v2 TESTFLAGS="-timeout 40m" integration
 
   k8s-tests:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [youki-build]
     timeout-minutes: 40
     strategy:
@@ -100,7 +100,7 @@ jobs:
         run: just test-kind
 
   oci-validation-go:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [youki-build]
     timeout-minutes: 15
     strategy:
@@ -130,7 +130,7 @@ jobs:
         run: just test-oci
 
   oci-validation-rust:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [youki-build]
     timeout-minutes: 20
     strategy:
@@ -157,7 +157,7 @@ jobs:
         run: just test-contest
 
   rootless-podman-test:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [youki-build]
     timeout-minutes: 20
     strategy:
