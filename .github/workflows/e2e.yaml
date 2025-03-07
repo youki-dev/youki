@@ -145,6 +145,8 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install just
         uses: taiki-e/install-action@just
+      - name: Add CRIU PPA
+        run: sudo add-apt-repository -y ppa:criu/ppa
       - name: Install requirements
         run: sudo env PATH=$PATH just ci-prepare
       - name: Download youki binary
@@ -172,6 +174,8 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install just
         uses: taiki-e/install-action@just
+      - name: Add CRIU PPA
+        run: sudo add-apt-repository -y ppa:criu/ppa
       - name: Install requirements
         run: sudo env PATH=$PATH just ci-prepare
       - name: Download youki binary

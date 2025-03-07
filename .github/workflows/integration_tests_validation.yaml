@@ -41,6 +41,8 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1.3.7
       - name: Install just
         uses: taiki-e/install-action@just
+      - name: Add CRIU PPA
+        run: sudo add-apt-repository -y ppa:criu/ppa
       - name: Install requirements
         run: sudo env PATH=$PATH just ci-prepare
       - name: Install runc 1.1.11
