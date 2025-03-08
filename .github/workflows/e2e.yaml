@@ -205,33 +205,15 @@ jobs:
       - name: Add the permission to run
         run: chmod +x ./youki
       # Steps for cgroups-v1 only (using Lima with AlmaLinux 8)
-      - name: Setup QEMU
-        if: matrix.cgroup-version == 'v1'
-        run: |
-          set -eux
-          sudo apt-get update -qq
-          sudo apt-get install -qq --no-install-recommends ovmf qemu-system-x86 qemu-utils
-          sudo modprobe kvm
-          sudo chown $(whoami) /dev/kvm
       - name: Setup Lima
         if: matrix.cgroup-version == 'v1'
-        env:
-          GITHUB_TOKEN: ${{ github.token }} 
-        run: |
-          set -eux
-          LIMA_VERSION=$(curl -fsSL https://api.github.com/repos/lima-vm/lima/releases/latest | jq -r .tag_name)
-          FILE="lima-${LIMA_VERSION:1}-Linux-x86_64.tar.gz"
-          curl -fOSL https://github.com/lima-vm/lima/releases/download/${LIMA_VERSION}/${FILE}
-          gh attestation verify --owner=lima-vm "${FILE}"
-          sudo tar Cxzf /usr/local "${FILE}"
-          rm -f "${FILE}"
-          # Export LIMA_VERSION For the GHA cache key
-          echo "LIMA_VERSION=${LIMA_VERSION}" >>$GITHUB_ENV
+        uses: lima-vm/lima-actions/setup@v1
+        id: lima-actions-setup
       - uses: actions/cache@v4
         if: matrix.cgroup-version == 'v1'
         with:
           path: ~/.cache/lima
-          key: lima-${{ env.LIMA_VERSION }}
+          key: lima-${{ steps.lima-actions-setup.outputs.version }}
       - name: Start the guest VM
         if: matrix.cgroup-version == 'v1'
         run: |
