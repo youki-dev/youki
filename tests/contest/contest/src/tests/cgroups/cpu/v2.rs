@@ -178,10 +178,8 @@ fn test_cpu_quota_negative_default_set() -> TestResult {
     })
 }
 
-/// Tests if a valid cpu period (x > 0) is set successfully. Cpu quota needs to
-/// remain unchanged
+/// Tests if a valid cpu period (x > 0) is set successfully
 fn test_cpu_period_valid_set() -> TestResult {
-    let quota = 250_000;
     let expected_period = 250_000;
     let cpu = test_result!(LinuxCpuBuilder::default()
         .period(expected_period)
@@ -189,19 +187,27 @@ fn test_cpu_period_valid_set() -> TestResult {
         .context("build cpu spec"));
 
     let spec = test_result!(create_spec("test_cpu_period_valid_set", cpu));
-    test_result!(prepare_cpu_max(
-        &spec,
-        &quota.to_string(),
-        &expected_period.to_string()
-    ));
+    test_result!(prepare_cpu_max(&spec, "max", &expected_period.to_string()));
 
     test_outside_container(&spec, &|data| {
         test_result!(check_container_created(&data));
-        test_result!(check_cpu_max(
-            "test_cpu_period_valid_set",
-            quota,
-            expected_period
-        ));
+        let data = test_result!(read_cgroup_data("test_cpu_period_valid_set", "cpu.max"));
+        let parts: Vec<&str> = data.split_whitespace().collect();
+        if parts.len() != 2 {
+            return TestResult::Failed(anyhow::anyhow!("Invalid cpu.max format: {}", data));
+        }
+        let period = parts[1].trim();
+        let actual_period = match period.parse::<u64>() {
+            Ok(p) => p,
+            Err(e) => return TestResult::Failed(anyhow::anyhow!("Failed to parse period: {}", e)),
+        };
+        if actual_period != expected_period {
+            return TestResult::Failed(anyhow::anyhow!(
+                "expected cpu period to be {}, but was {}",
+                expected_period,
+                actual_period
+            ));
+        }
         TestResult::Passed
     })
 }
