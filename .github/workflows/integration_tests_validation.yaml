@@ -11,7 +11,7 @@ on:
 
 jobs:
   changes:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     outputs:
       any_modified: ${{ steps.filter.outputs.any_modified }}
@@ -33,7 +33,7 @@ jobs:
   validate:
     needs: [changes]
     if: needs.changes.outputs.any_modified == 'true'
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +41,8 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1.3.7
       - name: Install just
         uses: taiki-e/install-action@just
+      - name: Add CRIU PPA
+        run: sudo add-apt-repository -y ppa:criu/ppa
       - name: Install requirements
         run: sudo env PATH=$PATH just ci-prepare
       - name: Install runc 1.1.11
