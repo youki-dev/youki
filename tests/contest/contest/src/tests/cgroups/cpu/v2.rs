@@ -108,12 +108,16 @@ fn test_cpu_weight_too_high_maximum_set() -> TestResult {
     let spec = test_result!(create_spec("test_cpu_weight_too_high_maximum_set", cpu));
     // We accept both behaviors: either container creation fails due to
     // out-of-range value, or it succeeds with weight set to maximum (10000)
-    test_outside_container(&spec, &|data| match check_container_created(&data) {
-        Ok(_) => match check_cpu_weight("test_cpu_weight_too_high_maximum_set", 10_000) {
-            Ok(_) => TestResult::Passed,
-            Err(e) => TestResult::Failed(anyhow::anyhow!("Weight check failed: {}", e)),
-        },
-        Err(_) => TestResult::Passed, // Failure is expected on kernels that strictly enforce range
+    test_outside_container(&spec, &|data| {
+        check_container_created(&data).map_or_else(
+            |_e| TestResult::Passed, // Failure is expected on kernels that strictly enforce range
+            |_| {
+                check_cpu_weight("test_cpu_weight_too_high_maximum_set", 10_000).map_or_else(
+                    |e| TestResult::Failed(anyhow::anyhow!("Weight check failed: {}", e)),
+                    |_| TestResult::Passed,
+                )
+            },
+        )
     })
 }
 
