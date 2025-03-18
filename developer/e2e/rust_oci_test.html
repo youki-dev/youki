@@ -24,9 +24,9 @@
         <link rel="stylesheet" href="../../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" href="../../highlight.css">
-        <link rel="stylesheet" href="../../tomorrow-night.css">
-        <link rel="stylesheet" href="../../ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="../../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
@@ -191,7 +191,7 @@ fn create_spec() -&gt; Result&lt;Spec&gt; {
 ////////// ANCHOR: example_test
 fn example_test() -&gt; TestResult {
     let spec = test_result!(create_spec());
-    test_inside_container(spec, &amp;CreateOptions::default(), &amp;|_| Ok(()))
+    test_inside_container(&amp;spec, &amp;CreateOptions::default(), &amp;|_| Ok(()))
 }
 ////////// ANCHOR_END: example_test
 
@@ -234,7 +234,7 @@ Therefore, it is common practice here to write an OCI Runtime Spec that executes
 </ol>
 <pre><code class="language-rust no_run noplayground">fn example_test() -&gt; TestResult {
     let spec = test_result!(create_spec());
-    test_inside_container(spec, &amp;CreateOptions::default(), &amp;|_| Ok(()))
+    test_inside_container(&amp;spec, &amp;CreateOptions::default(), &amp;|_| Ok(()))
 }</code></pre>
 <ol start="3">
 <li>Create a <code>TestGroup</code> and register a test case you created</li>
