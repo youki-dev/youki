@@ -46,6 +46,81 @@ pub struct TenantContainerBuilder {
     as_sibling: bool,
 }
 
+/// This is a helper function to get capabilities for tenant container, based on
+/// additional capabilities provided by user and capabilities of existing container
+/// extracted into separate function for easier testing
+fn get_capabilities(
+    additional: &[String],
+    spec: &Spec,
+) -> Result<LinuxCapabilities, LibcontainerError> {
+    let mut caps: Vec<Capability> = Vec::with_capacity(additional.len());
+    for cap in additional {
+        caps.push(Capability::from_str(cap)?);
+    }
+    let caps: SpecCapabilities = caps.iter().map(|c| SpecCapability::from_cap(*c)).collect();
+
+    if let Some(spec_caps) = spec
+        .process()
+        .as_ref()
+        .ok_or(MissingSpecError::Process)?
+        .capabilities()
+    {
+        let mut capabilities_builder = LinuxCapabilitiesBuilder::default();
+
+        let bounding: SpecCapabilities = match spec_caps.bounding() {
+            Some(bounding) => bounding.union(&caps).copied().collect(),
+            None => SpecCapabilities::new().union(&caps).copied().collect(),
+        };
+        capabilities_builder = capabilities_builder.bounding(bounding);
+
+        let effective: SpecCapabilities = match spec_caps.effective() {
+            Some(effective) => effective.union(&caps).copied().collect(),
+            None => SpecCapabilities::new().union(&caps).copied().collect(),
+        };
+        capabilities_builder = capabilities_builder.effective(effective);
+
+        let permitted: SpecCapabilities = match spec_caps.permitted() {
+            Some(permitted) => permitted.union(&caps).copied().collect(),
+            None => SpecCapabilities::new().union(&caps).copied().collect(),
+        };
+        capabilities_builder = capabilities_builder.permitted(permitted);
+
+        // ambient capabilities are only useful when inherent capabilities
+        // are set. Hence we check and set accordingly. Inherent capabilities
+        // are never set from user as that can lead to vulnerability like
+        // https://github.com/advisories/GHSA-f3fp-gc8g-vw66
+        // Hence, we follow runc's code and set things similarly.
+        let caps = if let Some(inheritable) = spec_caps.inheritable() {
+            let ambient: SpecCapabilities = match spec_caps.ambient() {
+                Some(ambient) => ambient.union(&caps).copied().collect(),
+                None => SpecCapabilities::new().union(&caps).copied().collect(),
+            };
+            capabilities_builder = capabilities_builder.ambient(ambient);
+            capabilities_builder = capabilities_builder.inheritable(inheritable.clone());
+            capabilities_builder.build()?
+        } else {
+            let mut caps = capabilities_builder.build()?;
+            // oci-spec-rs sets these to some default caps, so we reset them here
+            caps.set_inheritable(None);
+            caps.set_ambient(None);
+            caps
+        };
+
+        return Ok(caps);
+    }
+
+    // If there are no caps in original container's spec,
+    // we simply set given caps , excluding the inherent and ambient
+    let mut caps = LinuxCapabilitiesBuilder::default()
+        .bounding(caps.clone())
+        .effective(caps.clone())
+        .permitted(caps.clone())
+        .build()?;
+    caps.set_inheritable(None);
+    caps.set_ambient(None);
+    Ok(caps)
+}
+
 impl TenantContainerBuilder {
     /// Generates the base configuration for a process that will join
     /// an existing container sandbox from which configuration methods
@@ -334,9 +409,8 @@ impl TenantContainerBuilder {
                 process_builder = process_builder.no_new_privileges(no_new_priv);
             }
 
-            if let Some(caps) = self.get_capabilities(spec)? {
-                process_builder = process_builder.capabilities(caps);
-            }
+            let capabilities = get_capabilities(&self.capabilities, spec)?;
+            process_builder = process_builder.capabilities(capabilities);
 
             process_builder.build()?
         };
@@ -405,81 +479,6 @@ impl TenantContainerBuilder {
         self.no_new_privs
     }
 
-    fn get_capabilities(
-        &self,
-        spec: &Spec,
-    ) -> Result<Option<LinuxCapabilities>, LibcontainerError> {
-        if !self.capabilities.is_empty() {
-            let mut caps: Vec<Capability> = Vec::with_capacity(self.capabilities.len());
-            for cap in &self.capabilities {
-                caps.push(Capability::from_str(cap)?);
-            }
-
-            let caps: SpecCapabilities =
-                caps.iter().map(|c| SpecCapability::from_cap(*c)).collect();
-
-            if let Some(spec_caps) = spec
-                .process()
-                .as_ref()
-                .ok_or(MissingSpecError::Process)?
-                .capabilities()
-            {
-                let mut capabilities_builder = LinuxCapabilitiesBuilder::default();
-                capabilities_builder = match spec_caps.ambient() {
-                    Some(ambient) => {
-                        let ambient: SpecCapabilities = ambient.union(&caps).copied().collect();
-                        capabilities_builder.ambient(ambient)
-                    }
-                    None => capabilities_builder,
-                };
-                capabilities_builder = match spec_caps.bounding() {
-                    Some(bounding) => {
-                        let bounding: SpecCapabilities = bounding.union(&caps).copied().collect();
-                        capabilities_builder.bounding(bounding)
-                    }
-                    None => capabilities_builder,
-                };
-                capabilities_builder = match spec_caps.effective() {
-                    Some(effective) => {
-                        let effective: SpecCapabilities = effective.union(&caps).copied().collect();
-                        capabilities_builder.effective(effective)
-                    }
-                    None => capabilities_builder,
-                };
-                capabilities_builder = match spec_caps.inheritable() {
-                    Some(inheritable) => {
-                        let inheritable: SpecCapabilities =
-                            inheritable.union(&caps).copied().collect();
-                        capabilities_builder.inheritable(inheritable)
-                    }
-                    None => capabilities_builder,
-                };
-                capabilities_builder = match spec_caps.permitted() {
-                    Some(permitted) => {
-                        let permitted: SpecCapabilities = permitted.union(&caps).copied().collect();
-                        capabilities_builder.permitted(permitted)
-                    }
-                    None => capabilities_builder,
-                };
-
-                let c = capabilities_builder.build()?;
-                return Ok(Some(c));
-            }
-
-            return Ok(Some(
-                LinuxCapabilitiesBuilder::default()
-                    .bounding(caps.clone())
-                    .effective(caps.clone())
-                    .inheritable(caps.clone())
-                    .permitted(caps.clone())
-                    .ambient(caps)
-                    .build()?,
-            ));
-        }
-
-        Ok(None)
-    }
-
     fn get_namespaces(
         &self,
         init_namespaces: HashMap<OsString, Namespace>,
@@ -535,5 +534,159 @@ impl TenantContainerBuilder {
                 return name;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use caps::Capability as Cap;
+    use oci_spec::runtime::{
+        Capabilities, Capability as SpecCap, LinuxCapabilities, ProcessBuilder, Spec, SpecBuilder,
+    };
+
+    use super::{get_capabilities, LibcontainerError};
+    use crate::capabilities::CapabilityExt;
+
+    fn get_spec(caps: LinuxCapabilities) -> Spec {
+        SpecBuilder::default()
+            .process(
+                ProcessBuilder::default()
+                    .capabilities(caps)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap()
+    }
+
+    fn cap_to_string(caps: &[Cap]) -> Vec<String> {
+        caps.iter().map(|c| c.to_string()).collect()
+    }
+
+    fn caps_to_spec_set(caps: &[Cap]) -> Capabilities {
+        caps.iter().map(|c| SpecCap::from_cap(*c)).collect()
+    }
+
+    fn empty_caps() -> LinuxCapabilities {
+        let mut t = LinuxCapabilities::default();
+        t.set_effective(None)
+            .set_bounding(None)
+            .set_permitted(None)
+            .set_inheritable(None)
+            .set_ambient(None);
+        t
+    }
+
+    // if there are no existing capabilities, then tenant can only
+    // set effective, bounding and permitted caps ; not inheritable or ambient
+    #[test]
+    fn test_capabilities_no_existing() -> Result<(), LibcontainerError> {
+        let spec = get_spec(empty_caps());
+
+        let extra_caps = &[Cap::CAP_SYS_ADMIN, Cap::CAP_NET_ADMIN, Cap::CAP_AUDIT_READ];
+
+        let additional = cap_to_string(extra_caps);
+        let caps = get_capabilities(&additional, &spec)?;
+
+        let expected_caps = empty_caps()
+            .set_effective(Some(caps_to_spec_set(extra_caps)))
+            .set_bounding(Some(caps_to_spec_set(extra_caps)))
+            .set_permitted(Some(caps_to_spec_set(extra_caps)))
+            .clone();
+
+        assert_eq!(caps, expected_caps);
+        Ok(())
+    }
+
+    // If there are existing capabilities, but not inherent, then tenant should union
+    // existing and provided caps only for effective, bounding and permitted,
+    // inherent and ambient should be explicitly None
+    #[test]
+    fn test_capabilities_with_existing() -> Result<(), LibcontainerError> {
+        let existing_caps = &[Cap::CAP_SYS_ADMIN, Cap::CAP_BPF, Cap::CAP_MKNOD];
+
+        let existing = LinuxCapabilities::default()
+            .set_effective(Some(caps_to_spec_set(existing_caps)))
+            .set_bounding(Some(caps_to_spec_set(existing_caps)))
+            .set_permitted(Some(caps_to_spec_set(existing_caps)))
+            .set_inheritable(None)
+            .set_ambient(None)
+            .clone();
+
+        let spec = get_spec(existing);
+
+        let extra_caps = &[Cap::CAP_SYS_ADMIN, Cap::CAP_NET_ADMIN, Cap::CAP_AUDIT_READ];
+
+        let additional = cap_to_string(extra_caps);
+        let caps = get_capabilities(&additional, &spec)?;
+
+        let mut combined_caps = existing_caps.to_vec();
+        combined_caps.extend(extra_caps);
+        let expected_caps = empty_caps()
+            .set_effective(Some(caps_to_spec_set(&combined_caps)))
+            .set_bounding(Some(caps_to_spec_set(&combined_caps)))
+            .set_permitted(Some(caps_to_spec_set(&combined_caps)))
+            .clone();
+
+        assert_eq!(caps, expected_caps);
+        Ok(())
+    }
+
+    // we check that if inherent capabilities are present, ambient are set correctly
+    #[test]
+    fn test_capabilities_with_existing_inherent() -> Result<(), LibcontainerError> {
+        let existing_caps = &[Cap::CAP_SYS_ADMIN, Cap::CAP_BPF, Cap::CAP_MKNOD];
+        let extra_caps = &[Cap::CAP_SYS_ADMIN, Cap::CAP_NET_ADMIN, Cap::CAP_AUDIT_READ];
+
+        let mut combined_caps = existing_caps.to_vec();
+        combined_caps.extend(extra_caps);
+
+        // case 1 :  when inheritable are there, but no ambient
+
+        let existing = LinuxCapabilities::default()
+            .set_effective(Some(caps_to_spec_set(existing_caps)))
+            .set_bounding(Some(caps_to_spec_set(existing_caps)))
+            .set_permitted(Some(caps_to_spec_set(existing_caps)))
+            .set_inheritable(Some(caps_to_spec_set(existing_caps)))
+            .set_ambient(None)
+            .clone();
+        let spec = get_spec(existing);
+        let additional = cap_to_string(extra_caps);
+        let caps = get_capabilities(&additional, &spec)?;
+        let expected_caps = empty_caps()
+            .set_effective(Some(caps_to_spec_set(&combined_caps)))
+            .set_bounding(Some(caps_to_spec_set(&combined_caps)))
+            .set_permitted(Some(caps_to_spec_set(&combined_caps)))
+            // inheritable must not change
+            .set_inheritable(Some(caps_to_spec_set(existing_caps)))
+            // as there were no existing ambient, only extra will be set
+            .set_ambient(Some(caps_to_spec_set(extra_caps)))
+            .clone();
+        assert_eq!(caps, expected_caps);
+
+        // case 2 :  when inheritable and ambient both are present
+
+        let existing = LinuxCapabilities::default()
+            .set_effective(Some(caps_to_spec_set(existing_caps)))
+            .set_bounding(Some(caps_to_spec_set(existing_caps)))
+            .set_permitted(Some(caps_to_spec_set(existing_caps)))
+            .set_inheritable(Some(caps_to_spec_set(existing_caps)))
+            .set_ambient(Some(caps_to_spec_set(existing_caps)))
+            .clone();
+        let spec = get_spec(existing);
+        let additional = cap_to_string(extra_caps);
+        let caps = get_capabilities(&additional, &spec)?;
+        let expected_caps = empty_caps()
+            .set_effective(Some(caps_to_spec_set(&combined_caps)))
+            .set_bounding(Some(caps_to_spec_set(&combined_caps)))
+            .set_permitted(Some(caps_to_spec_set(&combined_caps)))
+            // inheritable must not change
+            .set_inheritable(Some(caps_to_spec_set(existing_caps)))
+            .set_ambient(Some(caps_to_spec_set(&combined_caps)))
+            .clone();
+        assert_eq!(caps, expected_caps);
+
+        Ok(())
     }
 }
