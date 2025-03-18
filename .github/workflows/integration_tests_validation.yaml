@@ -16,7 +16,7 @@ jobs:
     outputs:
       any_modified: ${{ steps.filter.outputs.any_modified }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0  # Required to get full history
       # Using Git commands instead of tj-actions/changed-files
@@ -79,11 +79,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Setup Rust toolchain and cache
-        uses: actions-rust-lang/setup-rust-toolchain@v1.3.7
+        uses: actions-rust-lang/setup-rust-toolchain@dfa8744db3c65831067d3386253fc8ec50fd8cfd # v1.3.7
       - name: Install just
-        uses: taiki-e/install-action@just
+        uses: taiki-e/install-action@62730e3d4f6bd81d824694e963e06d7153968c93 # v2.49.29
+        with:
+          tool: just
       - name: Add CRIU PPA
         run: sudo add-apt-repository -y ppa:criu/ppa
       - name: Install requirements

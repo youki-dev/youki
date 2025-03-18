@@ -26,15 +26,17 @@ jobs:
         arch: [ "x86_64", "aarch64" ]
         libc: [ "gnu", "musl" ]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           submodules: recursive
       - name: Setup Rust toolchain and cache
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@9399c7bb15d4c7d47b27263d024f0a4978346ba4 # v1.11.0
         env:
           RUST_CACHE_KEY_OS: rust-cache-${{ matrix.arch }}-${{ matrix.libc }}
       - name: Install just
-        uses: taiki-e/install-action@just
+        uses: taiki-e/install-action@62730e3d4f6bd81d824694e963e06d7153968c93 # v2.49.29
+        with:
+          tool: just
       - name: Install cross-rs
         run: cargo install cross --git https://github.com/cross-rs/cross
       - name: Setup target
@@ -53,7 +55,7 @@ jobs:
       - name: Create artifact
         run: tar -zcvf youki-${{ needs.parse.outputs.version }}-${{ matrix.arch }}-${{ matrix.libc }}.tar.gz youki README.md LICENSE
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         with:
           name: youki-${{ matrix.arch }}-${{ matrix.libc }}
           path: youki-${{ needs.parse.outputs.version }}-${{ matrix.arch }}-${{ matrix.libc }}.tar.gz
@@ -69,11 +71,11 @@ jobs:
       - parse
       - build
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Create artifacts directory
         run: mkdir -p artifacts
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
         with:
           path: artifacts
       - name: Show artifacts
@@ -96,9 +98,9 @@ jobs:
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Setup Rust toolchain and cache
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@9399c7bb15d4c7d47b27263d024f0a4978346ba4 # v1.11.0
       - name: Publish libcgroups
         run: cargo publish -p libcgroups --no-verify
       - name: Publish libcontainer
