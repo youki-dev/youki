@@ -17,7 +17,7 @@ jobs:
       any_modified: ${{ steps.filter.outputs.any_modified }}
     steps:
       - uses: actions/checkout@v4
-      - uses: tj-actions/changed-files@v41
+      - uses: tj-actions/changed-files@v46
         id: filter
         with:
           files_ignore: |
