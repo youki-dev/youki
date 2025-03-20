@@ -43,6 +43,8 @@ jobs:
           echo "TARGET=${{ matrix.arch }}-unknown-linux-${{ matrix.libc }}" >> ${GITHUB_ENV}
       - name: Release build
         run: just youki-release
+      - name: Disable AppArmor restrictions
+        run: echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
       - name: test
         # TODO(utam0k): The feature test needs nightly
         # run: just test-basic featuretest test-oci
