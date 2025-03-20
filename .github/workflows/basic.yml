@@ -23,6 +23,11 @@ jobs:
       - name: Get changed files
         id: filter
         run: |
+          # grep will exit with non-zero if no matching pattern
+          # but we are ok with that, so to prevent workflow failing
+          # we set allow errors
+          set +e 
+
           # Change the base commit depending on event type
           if [[ "${{ github.event_name }}" == "push" ]]; then
             # For push events
