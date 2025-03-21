@@ -1,5 +1,16 @@
 # Changelog
 
+## [v0.5.3](https://github.com/youki-dev/youki/compare/v0.5.2...v0.5.3) - 2025-03-21
+### 🐛 Bug Fixes
+- Security: Fix compromised `tj-actions/changed-files` action by @sou1118 in https://github.com/youki-dev/youki/pull/3112
+### 🧪 Test improvements and Misc Fixes
+- Fix the release flow by @utam0k in https://github.com/youki-dev/youki/pull/3098
+- chore(ci): add cgroup v1 compatibility for tests on ubuntu-24.04 by @sou1118 in https://github.com/youki-dev/youki/pull/3102
+- fix: CPU controller tests for Kernel 6.10 cgroup v2 changes by @sou1118 in https://github.com/youki-dev/youki/pull/3106
+- chore(ci): Upgrade GitHub Actions workflows for `ubuntu-24.04` by @sou1118 in https://github.com/youki-dev/youki/pull/3097
+- fix: release ci tests also need apparmor disable by @YJDoc2 in https://github.com/youki-dev/youki/pull/3118
+- chore(ci): add criu ppa for podman-tests ci by @sou1118 in https://github.com/youki-dev/youki/pull/3120
+
 ## [v0.5.2](https://github.com/youki-dev/youki/compare/v0.5.1...v0.5.2) - 2025-03-04
 ### 💪 Improvements
 - Support feature subcommand by @musaprg in https://github.com/youki-dev/youki/pull/2837
