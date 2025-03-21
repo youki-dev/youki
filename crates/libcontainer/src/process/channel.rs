@@ -28,16 +28,16 @@ pub enum ChannelError {
     OtherError(String),
 }
 
-/// Channel Design
-///
-/// Each of the main, intermediate, and init process will have a uni-directional
-/// channel, a sender and a receiver. Each process will hold the receiver and
-/// listen message on it. Each sender is shared between each process to send
-/// message to the corresponding receiver. For example, main_sender and
-/// main_receiver is used for the main process. The main process will use
-/// receiver to receive all message sent to the main process. The other
-/// processes will share the main_sender and use it to send message to the main
-/// process.
+// Channel Design
+//
+// Each of the main, intermediate, and init process will have a uni-directional
+// channel, a sender and a receiver. Each process will hold the receiver and
+// listen message on it. Each sender is shared between each process to send
+// message to the corresponding receiver. For example, main_sender and
+// main_receiver is used for the main process. The main process will use
+// receiver to receive all message sent to the main process. The other
+// processes will share the main_sender and use it to send message to the main
+// process.
 
 pub fn main_channel() -> Result<(MainSender, MainReceiver), ChannelError> {
     let (sender, receiver) = channel::<Message>()?;
