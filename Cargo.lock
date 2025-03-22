@@ -447,12 +447,6 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "cfg_aliases"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
-
-[[package]]
-name = "cfg_aliases"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
@@ -576,7 +570,7 @@ dependencies = [
  "flate2",
  "libcgroups",
  "libcontainer",
- "nix 0.28.0",
+ "nix",
  "num_cpus",
  "oci-spec",
  "once_cell",
@@ -1994,7 +1988,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2d8306b516a70a129cb6afed17c1e51e162d35aadfcc6339364addcebe32de90"
 dependencies = [
  "cc",
- "nix 0.29.0",
+ "nix",
  "pkg-config",
 ]
 
@@ -2016,7 +2010,7 @@ dependencies = [
  "libbpf-sys",
  "libc",
  "mockall",
- "nix 0.29.0",
+ "nix",
  "oci-spec",
  "procfs",
  "quickcheck",
@@ -2041,7 +2035,7 @@ dependencies = [
  "libcgroups",
  "libseccomp",
  "nc",
- "nix 0.29.0",
+ "nix",
  "oci-spec",
  "once_cell",
  "prctl",
@@ -2340,25 +2334,13 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
-dependencies = [
- "bitflags 2.6.0",
- "cfg-if",
- "cfg_aliases 0.1.1",
- "libc",
-]
-
-[[package]]
-name = "nix"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
 dependencies = [
  "bitflags 2.6.0",
  "cfg-if",
- "cfg_aliases 0.2.1",
+ "cfg_aliases",
  "libc",
  "memoffset 0.9.1",
 ]
@@ -2770,7 +2752,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "059a34f111a9dee2ce1ac2826a68b24601c4298cfeb1a587c3cb493d5ab46f52"
 dependencies = [
  "libc",
- "nix 0.29.0",
+ "nix",
 ]
 
 [[package]]
@@ -3308,7 +3290,7 @@ dependencies = [
  "anyhow",
  "libc",
  "nc",
- "nix 0.29.0",
+ "nix",
  "oci-spec",
 ]
 
@@ -6068,7 +6050,7 @@ dependencies = [
  "libcgroups",
  "libcontainer",
  "liboci-cli",
- "nix 0.28.0",
+ "nix",
  "pentacle",
  "procfs",
  "scopeguard",

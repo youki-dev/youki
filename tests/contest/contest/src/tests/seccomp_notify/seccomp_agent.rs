@@ -59,7 +59,7 @@ pub fn recv_seccomp_listener(seccomp_listener: &Path) -> SeccompAgentResult {
     drop(socket);
     // We are expecting 1 SCM_RIGHTS message with 1 fd.
     let cmsg = msg
-        .cmsgs()
+        .cmsgs()?
         .next()
         .context("expecting at least 1 SCM_RIGHTS message")?;
     let fd = match cmsg {
