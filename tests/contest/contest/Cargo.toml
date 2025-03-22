@@ -8,7 +8,7 @@ anyhow = "1.0"
 flate2 = "1.1"
 libcgroups = { path = "../../../crates/libcgroups" }
 libcontainer = { path = "../../../crates/libcontainer" }
-nix = "0.28.0"
+nix = "0.29.0"
 num_cpus = "1.16"
 oci-spec = { version = "0.7.1", features = ["runtime"] }
 once_cell = "1.21.1"
