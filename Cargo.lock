@@ -2016,7 +2016,7 @@ dependencies = [
  "libbpf-sys",
  "libc",
  "mockall",
- "nix 0.28.0",
+ "nix 0.29.0",
  "oci-spec",
  "procfs",
  "quickcheck",
@@ -2041,7 +2041,7 @@ dependencies = [
  "libcgroups",
  "libseccomp",
  "nc",
- "nix 0.28.0",
+ "nix 0.29.0",
  "oci-spec",
  "once_cell",
  "prctl",
@@ -2348,7 +2348,6 @@ dependencies = [
  "cfg-if",
  "cfg_aliases 0.1.1",
  "libc",
- "memoffset 0.9.1",
 ]
 
 [[package]]
@@ -2361,6 +2360,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases 0.2.1",
  "libc",
+ "memoffset 0.9.1",
 ]
 
 [[package]]
@@ -3308,7 +3308,7 @@ dependencies = [
  "anyhow",
  "libc",
  "nc",
- "nix 0.28.0",
+ "nix 0.29.0",
  "oci-spec",
 ]
 
