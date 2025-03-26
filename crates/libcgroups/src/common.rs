@@ -11,6 +11,7 @@ use oci_spec::runtime::LinuxResources;
 use oci_spec::runtime::{
     LinuxDevice, LinuxDeviceBuilder, LinuxDeviceCgroup, LinuxDeviceCgroupBuilder, LinuxDeviceType,
 };
+use serde::{Deserialize, Serialize};
 
 use super::stats::Stats;
 use super::{systemd, v1, v2};
@@ -326,7 +327,7 @@ pub enum CreateCgroupSetupError {
     Systemd(#[from] systemd::manager::SystemdManagerError),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CgroupConfig {
     pub cgroup_path: PathBuf,
     pub systemd_cgroup: bool,

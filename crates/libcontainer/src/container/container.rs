@@ -121,15 +121,6 @@ impl Container {
         self
     }
 
-    pub fn systemd(&self) -> bool {
-        self.state.use_systemd
-    }
-
-    pub fn set_systemd(&mut self, should_use: bool) -> &mut Self {
-        self.state.use_systemd = should_use;
-        self
-    }
-
     pub fn set_clean_up_intel_rdt_directory(&mut self, clean_up: bool) -> &mut Self {
         self.state.clean_up_intel_rdt_subdirectory = Some(clean_up);
         self
@@ -283,16 +274,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_set_systemd() {
-        let mut container = Container::default();
-        assert!(!container.systemd());
-        container.set_systemd(true);
-        assert!(container.systemd());
-        container.set_systemd(false);
-        assert!(!container.systemd());
-    }
-
-    #[test]
     fn test_get_set_creator() {
         let mut container = Container::default();
         assert_eq!(container.creator(), None);
@@ -331,7 +312,7 @@ mod tests {
         let tmp_dir = tempfile::tempdir().unwrap();
         use oci_spec::runtime::Spec;
         let spec = Spec::default();
-        let config = YoukiConfig::from_spec(&spec, "123").context("convert spec to config")?;
+        let config = YoukiConfig::from_spec(&spec, None).context("convert spec to config")?;
         config.save(tmp_dir.path()).context("save config")?;
 
         let container = Container {

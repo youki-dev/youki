@@ -355,7 +355,6 @@ pub fn container_init_process(
         utils::parse_env(proc.env().as_ref().unwrap_or(&vec![]));
     let rootfs_path = &args.rootfs;
     let hooks = spec.hooks().as_ref();
-    let container = args.container.as_ref();
     let namespaces = Namespaces::try_from(linux.namespaces().as_ref())?;
     let notify_listener = &args.notify_listener;
 
@@ -395,7 +394,7 @@ pub fn container_init_process(
         let _ = prctl::set_no_new_privileges(true);
     }
 
-    if matches!(args.container_type, ContainerType::InitContainer) {
+    if let ContainerType::InitContainer { container } = &args.container_type {
         // create_container hook needs to be called after the namespace setup, but
         // before pivot_root is called. This runs in the container namespaces.
         if let Some(hooks) = hooks {
@@ -694,7 +693,7 @@ pub fn container_init_process(
 
     // create_container hook needs to be called after the namespace setup, but
     // before pivot_root is called. This runs in the container namespaces.
-    if matches!(args.container_type, ContainerType::InitContainer) {
+    if let ContainerType::InitContainer { container } = &args.container_type {
         if let Some(hooks) = hooks {
             hooks::run_hooks(hooks.start_container().as_ref(), container, None).map_err(|err| {
                 tracing::error!(?err, "failed to run start container hooks");

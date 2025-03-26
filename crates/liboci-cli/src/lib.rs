@@ -94,4 +94,7 @@ pub struct GlobalOpts {
     /// Enable systemd cgroup manager, rather then use the cgroupfs directly.
     #[clap(short, long)]
     pub systemd_cgroup: bool,
+    /// Entirely disable cgroup manipulation (breaks some operations, e.g. pause)
+    #[clap(short, long)]
+    pub disable_cgroups: bool,
 }

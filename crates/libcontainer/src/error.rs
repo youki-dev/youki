@@ -14,6 +14,8 @@ pub enum MissingSpecError {
 pub enum LibcontainerError {
     #[error("failed to perform operation due to incorrect container status")]
     IncorrectStatus,
+    #[error("requested operation requires cgroups to be enabled on the container")]
+    CgroupsMissing,
     #[error("container already exists")]
     Exist,
     #[error("container state directory does not exist")]

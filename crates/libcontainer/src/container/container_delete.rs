@@ -5,7 +5,6 @@ use libcgroups::{self};
 use nix::sys::signal;
 
 use super::{Container, ContainerStatus};
-use crate::config::YoukiConfig;
 use crate::error::LibcontainerError;
 use crate::hooks;
 use crate::process::intel_rdt::delete_resctrl_subdirectory;
@@ -78,32 +77,26 @@ impl Container {
         }
 
         if self.root.exists() {
-            match YoukiConfig::load(&self.root) {
+            match self.spec() {
                 Ok(config) => {
                     tracing::debug!("config: {:?}", config);
 
                     // remove the cgroup created for the container
                     // check https://man7.org/linux/man-pages/man7/cgroups.7.html
                     // creating and removing cgroups section for more information on cgroups
-                    let cmanager = libcgroups::common::create_cgroup_manager(
-                        libcgroups::common::CgroupConfig {
-                            cgroup_path: config.cgroup_path.to_owned(),
-                            systemd_cgroup: self.systemd(),
-                            container_name: self.id().to_string(),
-                        },
-                    )?;
-                    cmanager.remove().map_err(|err| {
-                        tracing::error!(cgroup_path = ?config.cgroup_path, "failed to remove cgroup due to: {err:?}");
-                        err
-                    })?;
+                    if let Some(cc) = config.cgroup_config {
+                        let cmanager = libcgroups::common::create_cgroup_manager(cc.clone())?;
+                        cmanager.remove().map_err(|err| {
+                            tracing::error!(cgroup_config = ?cc, "failed to remove cgroup due to: {err:?}");
+                            err
+                        })?;
+                    }
 
                     if let Some(hooks) = config.hooks.as_ref() {
-                        hooks::run_hooks(hooks.poststop().as_ref(), Some(self), None).map_err(
-                            |err| {
-                                tracing::error!(err = ?err, "failed to run post stop hooks");
-                                err
-                            },
-                        )?;
+                        hooks::run_hooks(hooks.poststop().as_ref(), self, None).map_err(|err| {
+                            tracing::error!(err = ?err, "failed to run post stop hooks");
+                            err
+                        })?;
                     }
                 }
                 Err(err) => {

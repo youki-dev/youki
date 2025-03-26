@@ -79,32 +79,30 @@ impl Container {
         // For cgroup V1, a frozon process cannot respond to signals,
         // so we need to thaw it. Only thaw the cgroup for SIGKILL.
         if self.status() == ContainerStatus::Paused && signal == signal::Signal::SIGKILL {
-            match get_cgroup_setup()? {
-                libcgroups::common::CgroupSetup::Legacy
-                | libcgroups::common::CgroupSetup::Hybrid => {
-                    let cmanager = libcgroups::common::create_cgroup_manager(
-                        libcgroups::common::CgroupConfig {
-                            cgroup_path: self.spec()?.cgroup_path,
-                            systemd_cgroup: self.systemd(),
-                            container_name: self.id().to_string(),
-                        },
-                    )?;
-                    cmanager.freeze(libcgroups::common::FreezerState::Thawed)?;
+            if let Some(cgroup_config) = self.spec()?.cgroup_config {
+                match get_cgroup_setup()? {
+                    libcgroups::common::CgroupSetup::Legacy
+                    | libcgroups::common::CgroupSetup::Hybrid => {
+                        let cmanager = libcgroups::common::create_cgroup_manager(cgroup_config)?;
+                        cmanager.freeze(libcgroups::common::FreezerState::Thawed)?;
+                    }
+                    libcgroups::common::CgroupSetup::Unified => {}
                 }
-                libcgroups::common::CgroupSetup::Unified => {}
+            } else {
+                return Err(LibcontainerError::CgroupsMissing);
             }
         }
         Ok(())
     }
 
     fn kill_all_processes<S: Into<Signal>>(&self, signal: S) -> Result<(), LibcontainerError> {
+        let cgroup_config = match self.spec()?.cgroup_config {
+            Some(cc) => cc,
+            None => return Err(LibcontainerError::CgroupsMissing),
+        };
+
         let signal = signal.into().into_raw();
-        let cmanager =
-            libcgroups::common::create_cgroup_manager(libcgroups::common::CgroupConfig {
-                cgroup_path: self.spec()?.cgroup_path,
-                systemd_cgroup: self.systemd(),
-                container_name: self.id().to_string(),
-            })?;
+        let cmanager = libcgroups::common::create_cgroup_manager(cgroup_config)?;
 
         if let Err(e) = cmanager.freeze(libcgroups::common::FreezerState::Frozen) {
             tracing::warn!(
