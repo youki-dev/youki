@@ -2,7 +2,7 @@ name: 🧪 Test for podman
 
 on:
   schedule:
-  - cron: "0 0 * * *"
+    - cron: "0 0 * * *"
   workflow_dispatch:
 
 jobs:
@@ -16,51 +16,75 @@ jobs:
         run: sudo add-apt-repository -y ppa:criu/ppa
       - name: Install requirements
         run: sudo env PATH=$PATH just ci-prepare
-      
-      - name: Install skopeo and podman requirements
-        run: |
-          sudo apt-get install -y pkg-config libsystemd-dev libelf-dev libseccomp-dev libgpgme-dev libassuan-dev libbtrfs-dev libdevmapper-dev bats socat protobuf-compiler jq conmon
-          cargo install netavark aardvark-dns
-      
-      - name: Copy binaries
-        run: |
-          sudo mkdir -p /usr/local/lib/podman
-          sudo cp $(which netavark) /usr/local/lib/podman && sudo cp $(which netavark)-dhcp-proxy-client /usr/local/lib/podman && sudo cp $(which aardvark-dns) /usr/local/lib/podman
-      
-      # setup go
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-          cache: false
-      
-      # build skopeo
-      # These build steps are taken from https://github.com/containers/skopeo/issues/1648#issuecomment-1132161659
-      - name: Download skopeo 1.13.1 source # because ubuntu 22.04 does not have latest, and podman tests depend on that
-        run: mkdir /tmp/skopeo && curl -fsSL "https://github.com/containers/skopeo/archive/v1.13.1.tar.gz" | tar -xzf - -C /tmp/skopeo --strip-components=1
-      - name: Build skopeo
-        run: cd /tmp/skopeo && DISABLE_DOCS=1 make
-      - name: copy skopeo binaries
-        run: sudo cp /tmp/skopeo/bin/skopeo /usr/local/bin/skopeo && sudo cp /tmp/skopeo/default-policy.json /etc/containers/policy.json
-      - name: Skopeo version
-        run: skopeo --version
 
-      # build youki
-      - run: just youki-release
-      - run: sudo rm /usr/bin/crun && sudo cp youki /usr/local/bin && sudo cp youki /usr/bin/crun
-
-      # build podman
+      # clone podman repository
       - name: Clone podman repository
         uses: actions/checkout@v4
         with:
           repository: containers/podman
+          path: podman
+
+      # setup lima
+      - name: Setup Lima
+        uses: lima-vm/lima-actions/setup@v1
+        id: lima-actions-setup
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/lima
+          key: lima-${{ steps.lima-actions-setup.outputs.version }}
+
+      - name: Start the guest VM
+        run: |
+          set -eux
+          limactl start \
+            --name=default \
+            --cpus=4 \
+            --memory=8 \
+            --containerd=none \
+            --set '.mounts=[{"location":"~/","writable":true}]' \
+            template://fedora
+
+      # setup podman dependencies
+      - name: Install podman dependencies
+        working-directory: podman
+        run: |
+          lima sudo dnf -y remove podman
+          lima sudo dnf -y install catatonit conmon containers-common-extra buildah htpasswd skopeo jq bats slirp4netns nc socat
+          lima sudo dnf -y builddep rpm/podman.spec
+
+      # build youki
+      - name: Build youki
+        run: just youki-release
+
+      # install youki
+      - name: Install youki
+        run: |
+          lima sudo rm /usr/bin/crun
+          lima sudo cp youki /usr/local/bin
+          lima sudo cp youki /usr/bin/crun
+
+      # build podman
       - name: Build podman
-        run: make binaries
-      - name: Install tools
-        run: make install.tools
-      
+        working-directory: podman
+        run: lima make SELINUXOPT="" BUILDTAGS="selinux seccomp systemd"
+
+      # install podman
+      - name: Install podman
+        working-directory: podman
+        run: lima sudo make install SELINUXOPT=""
+
+      # disable selinux
+      - name: Disable SELinux
+        run: lima sudo setenforce 0
+
       # run tests
       - name: Run podman test
-        run: BATS_TEST_TMPDIR=$(mktemp -d --tmpdir=${BATS_TMPDIR:-/tmp} podman_bats.XXXXXX) && PODMAN_TMPDIR=$BATS_TEST_TMPDIR && OCI_RUNTIME=/usr/local/bin/youki sudo make localsystem 2>&1 | tee build.log 
+        working-directory: podman
+        run: lima OCI_RUNTIME=/usr/local/bin/youki sudo make localsystem SELINUXOPT="" 2>&1 | tee build.log
+
+      # add summary
       - name: Adding Summary
+        working-directory: podman
         run: |
           echo "Total tests: 600+ Failed tests: $(cat build.log | grep " ok " | wc -l)" >> $GITHUB_STEP_SUMMARY
