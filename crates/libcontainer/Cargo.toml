@@ -51,6 +51,7 @@ thiserror = "2.0.12"
 tracing = { version = "0.1.41", features = ["attributes"] }
 safe-path = "0.1.0"
 nc = "0.9.5"
+selinux = { path = "../../experiment/selinux" }
 
 [dev-dependencies]
 oci-spec = { version = "~0.7.1", features = ["proptests", "runtime"] }
