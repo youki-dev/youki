@@ -158,7 +158,7 @@ mod tests {
         fn property_test_apply_multiple_devices(devices: Vec<LinuxDeviceCgroup>) -> bool {
             let tmp = tempfile::tempdir().unwrap();
             devices.iter()
-                .map(|device| {
+                .all(|device| {
                     set_fixture(tmp.path(), "devices.allow", "").expect("create allowed devices list");
                     set_fixture(tmp.path(), "devices.deny", "").expect("create denied devices list");
                     Devices::apply_device(device, tmp.path()).expect("Apply default device");
@@ -172,7 +172,6 @@ mod tests {
                         denied_content == device.to_string()
                     }
                 })
-                .all(|is_ok| is_ok)
         }
     }
 }
