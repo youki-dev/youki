@@ -11,29 +11,72 @@ on:
 
 jobs:
   changes:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     outputs:
       any_modified: ${{ steps.filter.outputs.any_modified }}
     steps:
       - uses: actions/checkout@v4
-      - uses: tj-actions/changed-files@v41
-        id: filter
         with:
-          files_ignore: |
-            docs
-            LICENSE
-            **.md
+          fetch-depth: 0  # Required to get full history
+      # Using Git commands instead of tj-actions/changed-files
+      - name: Get changed files
+        id: filter
+        run: |
+          # grep will exit with non-zero if no matching pattern
+          # but we are ok with that, so to prevent workflow failing
+          # we set allow errors
+          set +e 
+
+          # Change the base commit depending on event type
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            # For push events
+            if [[ -n "${{ github.event.before }}" ]]; then
+              BASE_COMMIT="${{ github.event.before }}"
+            else
+              # For workflow dispatch, etc.
+              git fetch origin main --depth=1
+              BASE_COMMIT="origin/main"
+            fi
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # For pull request events
+            git fetch origin "${{ github.base_ref }}" --depth=1
+            BASE_COMMIT="origin/${{ github.base_ref }}"
+          else
+            # For workflow dispatch events
+            git fetch origin main --depth=1
+            BASE_COMMIT="HEAD~1"
+          fi
+          
+          echo "Using base commit: $BASE_COMMIT"
+          
+          # Get changed files and filter out the ones to ignore
+          ALL_CHANGED_FILES=$(git diff --name-only --diff-filter=ACMRT "$BASE_COMMIT" HEAD)
+          FILTERED_FILES=$(echo "$ALL_CHANGED_FILES" | grep -v -E '^docs/|^LICENSE$|\.md$')
+          
+          # Set the results
+          if [[ -n "$FILTERED_FILES" ]]; then
+            echo "any_modified=true" >> $GITHUB_OUTPUT
+            echo "all_modified_files<<EOF" >> $GITHUB_OUTPUT
+            echo "$FILTERED_FILES" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "any_modified=false" >> $GITHUB_OUTPUT
+            echo "all_modified_files=" >> $GITHUB_OUTPUT
+          fi
       - name: List all changed files
         run: |
-          for file in ${{ steps.filter.outputs.all_modified_files }}; do
-            echo "$file was changed"
-          done
+          if [[ "${{ steps.filter.outputs.any_modified }}" == "true" ]]; then
+            echo "Changed files detected:"
+            echo "${{ steps.filter.outputs.all_modified_files }}"
+          else
+            echo "No relevant changes detected"
+          fi
 
   check:
     needs: [changes]
     if: needs.changes.outputs.any_modified == 'true'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       matrix:
@@ -59,13 +102,17 @@ jobs:
           echo "TARGET=${{ matrix.arch }}-unknown-linux-${{ matrix.libc }}" >> ${GITHUB_ENV}
       - name: Check formatting and lints
         run: just lint
+      - name: Install cargo machete
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-machete@0.7.0
       - name: Check unused deps
-        uses: bnjbvr/cargo-machete@v0.7.0
+        run: cargo machete
 
   tests:
     needs: [changes]
     if: needs.changes.outputs.any_modified == 'true'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       matrix:
@@ -83,6 +130,8 @@ jobs:
         run: |
           echo "CARGO=cross" >> ${GITHUB_ENV}
           echo "TARGET=${{ matrix.arch }}-unknown-linux-${{ matrix.libc }}" >> ${GITHUB_ENV}
+      - name: Disable AppArmor restrictions
+        run: echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
       - name: Run tests
         run: just test-basic
       - name: Run feature tests
@@ -94,7 +143,7 @@ jobs:
   # coverage:
   #   needs: [changes]
   #   if: needs.changes.outputs.any_modified == 'true'
-  #   runs-on: ubuntu-22.04
+  #   runs-on: ubuntu-24.04
   #   timeout-minutes: 20
   #   name: Run test coverage
   #   steps:

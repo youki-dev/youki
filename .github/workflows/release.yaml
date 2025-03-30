@@ -18,7 +18,7 @@ jobs:
 
   build:
     name: Build
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs:
         - parse
     strategy:
@@ -43,6 +43,8 @@ jobs:
           echo "TARGET=${{ matrix.arch }}-unknown-linux-${{ matrix.libc }}" >> ${GITHUB_ENV}
       - name: Release build
         run: just youki-release
+      - name: Disable AppArmor restrictions
+        run: echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
       - name: test
         # TODO(utam0k): The feature test needs nightly
         # run: just test-basic featuretest test-oci
@@ -62,7 +64,7 @@ jobs:
     name: Create Draft Release
     environment:
       name: release
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     needs:
@@ -90,11 +92,9 @@ jobs:
 
   publish:
     name: Publish Packages
-    needs: build
-    environment:
-      name: release
-    runs-on: ubuntu-22.04
-    if: ${{ github.repository == 'containers/youki' }}
+    needs: release
+    runs-on: ubuntu-24.04
+    if: ${{ github.repository == 'youki-dev/youki' }}
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:

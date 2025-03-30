@@ -69,7 +69,7 @@ fn test_seccomp_notify() -> Result<()> {
             .send(res)
             .expect("failed to send seccomp agent result back to main thread");
     });
-    if let TestResult::Failed(err) = test_outside_container(spec, &move |data| {
+    if let TestResult::Failed(err) = test_outside_container(&spec, &move |data| {
         let (container_process_state, _) = receiver
             .recv()
             .expect("failed to receive from channel")

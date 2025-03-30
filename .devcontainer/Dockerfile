@@ -14,8 +14,9 @@ EOF
 
 RUN <<EOF
 apt-get update
+
+# For building
 apt-get install -y \
-  # For building
   build-essential \
   git \
   libclang-dev \
@@ -23,10 +24,12 @@ apt-get install -y \
   libseccomp-dev \
   libssl-dev \
   libsystemd-dev \
-  pkg-config \
-  # For debugging
-  bpftrace \
-  podman
+  pkg-config
+
+# For debugging
+apt-get install -y \
+  podman \
+  bpftrace
 
 curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/bin
 

@@ -37,7 +37,7 @@ fn seccomp_test() -> TestResult {
             .build()
             .unwrap(),
     );
-    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 pub fn get_seccomp_test() -> TestGroup {

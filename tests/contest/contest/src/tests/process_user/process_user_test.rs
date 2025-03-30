@@ -9,11 +9,11 @@ use crate::utils::test_utils::CreateOptions;
 // Generates a Vec<u32> with a random number of elements (between 5 and 15),
 // where each element is a random u32 value between 0 and 65535.
 fn generate_unique_random_vec() -> Vec<u32> {
-    let mut rng = rand::thread_rng();
-    let vec_size = rng.gen_range(5..=10);
+    let mut rng = rand::rng();
+    let vec_size = rng.random_range(5..=10);
     let mut ret = Vec::new();
     while ret.len() < vec_size {
-        let rand = rng.gen_range(100..=200);
+        let rand = rng.random_range(100..=200);
         if !ret.contains(&rand) {
             ret.push(rand);
         }
@@ -46,7 +46,7 @@ fn create_spec(gids: Vec<u32>) -> Result<Spec> {
 fn process_user_test_unique_gids() -> TestResult {
     let gids = generate_unique_random_vec();
     let spec = test_result!(create_spec(gids));
-    test_inside_container(spec, &CreateOptions::default(), &|_| Ok(()))
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 fn process_user_test_duplicate_gids() -> TestResult {
@@ -54,7 +54,7 @@ fn process_user_test_duplicate_gids() -> TestResult {
     let duplicate = gids[0];
     gids.push(duplicate);
     let spec = test_result!(create_spec(gids));
-    match test_inside_container(spec, &CreateOptions::default(), &|_| Ok(())) {
+    match test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(())) {
         TestResult::Passed => TestResult::Failed(anyhow!(
             "expected test with duplicate gids to fail, but it passed instead"
         )),

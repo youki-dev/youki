@@ -116,7 +116,7 @@ fn test_network_cgroups() -> TestResult {
     ];
 
     for spec in cases.into_iter() {
-        let test_result = test_outside_container(spec.clone(), &|data| {
+        let test_result = test_outside_container(&spec, &|data| {
             test_result!(check_container_created(&data));
             test_result!(validate_network(
                 format!("/runtime-test/{}", cgroup_name).as_str(),

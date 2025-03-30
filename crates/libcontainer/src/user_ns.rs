@@ -458,7 +458,7 @@ mod tests {
     use super::*;
 
     fn gen_u32() -> u32 {
-        rand::thread_rng().gen()
+        rand::rng().random()
     }
 
     #[test]

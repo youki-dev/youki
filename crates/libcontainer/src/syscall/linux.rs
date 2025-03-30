@@ -38,6 +38,145 @@ const MOUNT_ATTR_STRICTATIME: u64 = 0x00000020;
 const MOUNT_ATTR_NODIRATIME: u64 = 0x00000080;
 const MOUNT_ATTR_NOSYMFOLLOW: u64 = 0x00200000;
 
+/// Constants used by mount(2).
+pub enum MountOption {
+    Defaults(bool, MsFlags),
+    Ro(bool, MsFlags),
+    Rw(bool, MsFlags),
+    Suid(bool, MsFlags),
+    Nosuid(bool, MsFlags),
+    Dev(bool, MsFlags),
+    Nodev(bool, MsFlags),
+    Exec(bool, MsFlags),
+    Noexec(bool, MsFlags),
+    Sync(bool, MsFlags),
+    Async(bool, MsFlags),
+    Dirsync(bool, MsFlags),
+    Remount(bool, MsFlags),
+    Mand(bool, MsFlags),
+    Nomand(bool, MsFlags),
+    Atime(bool, MsFlags),
+    Noatime(bool, MsFlags),
+    Diratime(bool, MsFlags),
+    Nodiratime(bool, MsFlags),
+    Bind(bool, MsFlags),
+    Rbind(bool, MsFlags),
+    Unbindable(bool, MsFlags),
+    Runbindable(bool, MsFlags),
+    Private(bool, MsFlags),
+    Rprivate(bool, MsFlags),
+    Shared(bool, MsFlags),
+    Rshared(bool, MsFlags),
+    Slave(bool, MsFlags),
+    Rslave(bool, MsFlags),
+    Relatime(bool, MsFlags),
+    Norelatime(bool, MsFlags),
+    Strictatime(bool, MsFlags),
+    Nostrictatime(bool, MsFlags),
+}
+
+impl MountOption {
+    // Return all possible mount options
+    pub fn known_options() -> Vec<String> {
+        [
+            "defaults",
+            "ro",
+            "rw",
+            "suid",
+            "nosuid",
+            "dev",
+            "nodev",
+            "exec",
+            "noexec",
+            "sync",
+            "async",
+            "dirsync",
+            "remount",
+            "mand",
+            "nomand",
+            "atime",
+            "noatime",
+            "diratime",
+            "nodiratime",
+            "bind",
+            "rbind",
+            "unbindable",
+            "runbindable",
+            "private",
+            "rprivate",
+            "shared",
+            "rshared",
+            "slave",
+            "rslave",
+            "relatime",
+            "norelatime",
+            "strictatime",
+            "nostrictatime",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+    }
+}
+
+impl FromStr for MountOption {
+    type Err = String;
+
+    fn from_str(option: &str) -> std::result::Result<Self, Self::Err> {
+        match option {
+            "defaults" => Ok(MountOption::Defaults(false, MsFlags::empty())),
+            "ro" => Ok(MountOption::Ro(false, MsFlags::MS_RDONLY)),
+            "rw" => Ok(MountOption::Rw(true, MsFlags::MS_RDONLY)),
+            "suid" => Ok(MountOption::Suid(true, MsFlags::MS_NOSUID)),
+            "nosuid" => Ok(MountOption::Nosuid(false, MsFlags::MS_NOSUID)),
+            "dev" => Ok(MountOption::Dev(true, MsFlags::MS_NODEV)),
+            "nodev" => Ok(MountOption::Nodev(false, MsFlags::MS_NODEV)),
+            "exec" => Ok(MountOption::Exec(true, MsFlags::MS_NOEXEC)),
+            "noexec" => Ok(MountOption::Noexec(false, MsFlags::MS_NOEXEC)),
+            "sync" => Ok(MountOption::Sync(false, MsFlags::MS_SYNCHRONOUS)),
+            "async" => Ok(MountOption::Async(true, MsFlags::MS_SYNCHRONOUS)),
+            "dirsync" => Ok(MountOption::Dirsync(false, MsFlags::MS_DIRSYNC)),
+            "remount" => Ok(MountOption::Remount(false, MsFlags::MS_REMOUNT)),
+            "mand" => Ok(MountOption::Mand(false, MsFlags::MS_MANDLOCK)),
+            "nomand" => Ok(MountOption::Nomand(true, MsFlags::MS_MANDLOCK)),
+            "atime" => Ok(MountOption::Atime(true, MsFlags::MS_NOATIME)),
+            "noatime" => Ok(MountOption::Noatime(false, MsFlags::MS_NOATIME)),
+            "diratime" => Ok(MountOption::Diratime(true, MsFlags::MS_NODIRATIME)),
+            "nodiratime" => Ok(MountOption::Nodiratime(false, MsFlags::MS_NODIRATIME)),
+            "bind" => Ok(MountOption::Bind(false, MsFlags::MS_BIND)),
+            "rbind" => Ok(MountOption::Rbind(
+                false,
+                MsFlags::MS_BIND | MsFlags::MS_REC,
+            )),
+            "unbindable" => Ok(MountOption::Unbindable(false, MsFlags::MS_UNBINDABLE)),
+            "runbindable" => Ok(MountOption::Runbindable(
+                false,
+                MsFlags::MS_UNBINDABLE | MsFlags::MS_REC,
+            )),
+            "private" => Ok(MountOption::Private(true, MsFlags::MS_PRIVATE)),
+            "rprivate" => Ok(MountOption::Rprivate(
+                true,
+                MsFlags::MS_PRIVATE | MsFlags::MS_REC,
+            )),
+            "shared" => Ok(MountOption::Shared(true, MsFlags::MS_SHARED)),
+            "rshared" => Ok(MountOption::Rshared(
+                true,
+                MsFlags::MS_SHARED | MsFlags::MS_REC,
+            )),
+            "slave" => Ok(MountOption::Slave(true, MsFlags::MS_SLAVE)),
+            "rslave" => Ok(MountOption::Rslave(
+                true,
+                MsFlags::MS_SLAVE | MsFlags::MS_REC,
+            )),
+            "relatime" => Ok(MountOption::Relatime(false, MsFlags::MS_RELATIME)),
+            "norelatime" => Ok(MountOption::Norelatime(true, MsFlags::MS_RELATIME)),
+            "strictatime" => Ok(MountOption::Strictatime(false, MsFlags::MS_STRICTATIME)),
+            "nostrictatime" => Ok(MountOption::Nostrictatime(true, MsFlags::MS_STRICTATIME)),
+            _ => Err(option.to_string()),
+        }
+    }
+}
+
 /// Constants used by mount_setattr(2).
 pub enum MountRecursive {
     /// Mount read-only.
@@ -599,12 +738,13 @@ mod tests {
 
     use std::fs;
     use std::os::unix::prelude::AsRawFd;
+    use std::str::FromStr;
 
     use anyhow::{bail, Context, Result};
     use nix::{fcntl, sys, unistd};
     use serial_test::serial;
 
-    use super::LinuxSyscall;
+    use super::{LinuxSyscall, MountOption};
     use crate::syscall::Syscall;
 
     #[test]
@@ -664,6 +804,17 @@ mod tests {
         }
 
         unistd::close(fd)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_known_mount_options_implemented() -> Result<()> {
+        for option in MountOption::known_options() {
+            match MountOption::from_str(&option) {
+                Ok(_) => {}
+                Err(e) => bail!("failed to parse mount option: {}", e),
+            }
+        }
         Ok(())
     }
 }

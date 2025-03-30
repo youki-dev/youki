@@ -91,7 +91,7 @@ impl SELinux {
         label: SELinuxLabel,
     ) -> Result<(), SELinuxError> {
         let path = fpath.as_ref();
-        if !path.exists() {
+        if !path.is_symlink() && !path.exists() {
             return Err(SELinuxError::LSetFileLabel(ERR_EMPTY_PATH.to_string()));
         }
 

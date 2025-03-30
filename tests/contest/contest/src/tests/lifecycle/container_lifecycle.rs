@@ -86,6 +86,26 @@ impl ContainerLifecycle {
             &self.container_id,
         )
     }
+
+    /// Wait for the container to reach a specific state
+    pub fn wait_for_state(&self, expected_state: &str, timeout: Duration) -> TestResult {
+        use crate::tests::lifecycle::state;
+
+        match state::wait_for_state(
+            self.project_path.path(),
+            &self.container_id,
+            expected_state,
+            timeout,
+            Duration::from_millis(100),
+        ) {
+            Ok(_) => TestResult::Passed,
+            Err(e) => TestResult::Failed(anyhow::anyhow!(
+                "Container failed to reach {} state: {}",
+                expected_state,
+                e
+            )),
+        }
+    }
 }
 
 impl TestableGroup for ContainerLifecycle {

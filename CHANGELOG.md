@@ -1,5 +1,42 @@
 # Changelog
 
+## [v0.5.3](https://github.com/youki-dev/youki/compare/v0.5.2...v0.5.3) - 2025-03-21
+### 🐛 Bug Fixes
+- Security: Fix compromised `tj-actions/changed-files` action by @sou1118 in https://github.com/youki-dev/youki/pull/3112
+### 🧪 Test improvements and Misc Fixes
+- Fix the release flow by @utam0k in https://github.com/youki-dev/youki/pull/3098
+- chore(ci): add cgroup v1 compatibility for tests on ubuntu-24.04 by @sou1118 in https://github.com/youki-dev/youki/pull/3102
+- fix: CPU controller tests for Kernel 6.10 cgroup v2 changes by @sou1118 in https://github.com/youki-dev/youki/pull/3106
+- chore(ci): Upgrade GitHub Actions workflows for `ubuntu-24.04` by @sou1118 in https://github.com/youki-dev/youki/pull/3097
+- fix: release ci tests also need apparmor disable by @YJDoc2 in https://github.com/youki-dev/youki/pull/3118
+- chore(ci): add criu ppa for podman-tests ci by @sou1118 in https://github.com/youki-dev/youki/pull/3120
+
+## [v0.5.2](https://github.com/youki-dev/youki/compare/v0.5.1...v0.5.2) - 2025-03-04
+### 💪 Improvements
+- Support feature subcommand by @musaprg in https://github.com/youki-dev/youki/pull/2837
+### 🐛 Bug Fixes
+- fix(libcgroup): fix disable_oom_killer in cgroup v1 by @xujihui1985 in https://github.com/youki-dev/youki/pull/3090
+### 🧪 Test improvements and Misc Fixes
+- Add a PR template file by @Gekko0114 in https://github.com/youki-dev/youki/pull/3049
+- add process rlimits fail test by @ntkm61027 in https://github.com/youki-dev/youki/pull/3051
+- Use MountOption enum to parse mount options defined in the spec by @musaprg in https://github.com/youki-dev/youki/pull/2937
+- ci: Publish packages after the release flow by @utam0k in https://github.com/youki-dev/youki/pull/3064
+- Make `sepc` into `&spec` in test_{outside,inside}_containe by @utam0k in https://github.com/youki-dev/youki/pull/3068
+- linux_masked_paths integration test by @nayuta-ai in https://github.com/youki-dev/youki/pull/2950
+- fix: compilation errors in contest by @YJDoc2 in https://github.com/youki-dev/youki/pull/3086
+- Remove problematic comments between package name in apt install by @musaprg in https://github.com/youki-dev/youki/pull/3060
+- Add `delete` test by @sou1118 in https://github.com/youki-dev/youki/pull/3082
+### Other Changes
+- Upgrade direct dep rand to 0.9.0 by @YJDoc2 in https://github.com/youki-dev/youki/pull/3083
+- rollup multiple dep updates by @YJDoc2 in https://github.com/youki-dev/youki/pull/3084
+- lset_file_label should check for symlink instead of raw file by @foreverddong in https://github.com/youki-dev/youki/pull/3073
+
+## [v0.5.1](https://github.com/youki-dev/youki/compare/v0.5.0...v0.5.1) - 2025-01-06
+### 🐛 Bug Fixes
+- Fix building the wasmedge feature by @utam0k in https://github.com/youki-dev/youki/pull/3041
+### 🧪 Test improvements and Misc Fixes
+- Do `cargo check` before releasing a new version by @utam0k in https://github.com/youki-dev/youki/pull/3039
+
 ## [v0.5.0](https://github.com/youki-dev/youki/compare/v0.4.1...v0.5.0) - 2025-01-02
 ### 💪 Improvements
 - libcontainer: support set stdios for container by @abel-von in https://github.com/youki-dev/youki/pull/2961

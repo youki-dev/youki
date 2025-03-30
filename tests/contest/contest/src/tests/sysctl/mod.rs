@@ -29,7 +29,7 @@ fn sysctl_test() -> TestResult {
         "net.ipv4.ip_forward".to_string(),
         "1".to_string(),
     )]));
-    test_inside_container(spec, &CreateOptions::default(), &|_| {
+    test_inside_container(&spec, &CreateOptions::default(), &|_| {
         // As long as the container is created, we expect the kernel parameters to be determined by
         // the spec, so nothing to prepare prior.
         Ok(())
