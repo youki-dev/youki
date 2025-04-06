@@ -8,7 +8,7 @@ use oci_spec::runtime::{
 use pnet_datalink::interfaces;
 use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
 
-use super::validate_network;
+use super::{check_network_cgroup_paths, validate_network};
 use crate::utils::test_outside_container;
 use crate::utils::test_utils::check_container_created;
 
@@ -72,12 +72,7 @@ fn can_run() -> bool {
     let iface_exists = get_loopback_interface().is_some();
 
     // This is kind of annoying, network controller can be at a number of mount points
-    let cgroup_paths_exists = (Path::new("/sys/fs/cgroup/net_cls/net_cls.classid").exists()
-        && Path::new("/sys/fs/cgroup/net_prio/net_prio.ifpriomap").exists())
-        || (Path::new("/sys/fs/cgroup/net_cls,net_prio/net_cls.classid").exists()
-            && Path::new("/sys/fs/cgroup/net_cls,net_prio/net_prio.ifpriomap").exists())
-        || (Path::new("/sys/fs/cgroup/net_prio,net_cls/net_cls.classid").exists()
-            && Path::new("/sys/fs/cgroup/net_prio,net_cls/net_prio.ifpriomap").exists());
+    let cgroup_paths_exists = check_network_cgroup_paths().is_ok();
 
     iface_exists && cgroup_paths_exists
 }

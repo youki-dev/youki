@@ -4,13 +4,14 @@ pub mod relative_network;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use oci_spec::runtime::Spec;
 
 use crate::utils::test_utils::CGROUP_ROOT;
 
-/// validates the Network structure parsed from /sys/fs/cgroup/net_cls,net_prio with the spec
-fn validate_network(cgroup_name: &str, spec: &Spec) -> Result<()> {
+// check for available network cgroup mount points paths, as the network controller can be multiple mount points
+// see issue:#39 for discussion
+fn check_network_cgroup_paths() -> Result<(&'static str, &'static str)> {
     let net_cls_net_prio_independent = Path::new("/sys/fs/cgroup/net_cls/net_cls.classid").exists()
         && Path::new("/sys/fs/cgroup/net_prio/net_prio.ifpriomap").exists();
     let net_cls_net_prio = Path::new("/sys/fs/cgroup/net_cls,net_prio/net_cls.classid").exists()
@@ -18,16 +19,20 @@ fn validate_network(cgroup_name: &str, spec: &Spec) -> Result<()> {
     let net_prio_net_cls = Path::new("/sys/fs/cgroup/net_prio,net_cls/net_cls.classid").exists()
         && Path::new("/sys/fs/cgroup/net_prio,net_cls/net_prio.ifpriomap").exists();
 
-    let (net_cls_base, net_prio_base) = if net_cls_net_prio_independent {
-        ("net_cls", "net_prio")
+    if net_cls_net_prio_independent {
+        Ok(("net_cls", "net_prio"))
     } else if net_cls_net_prio {
-        ("net_cls,net_prio", "net_cls,net_prio")
+        Ok(("net_cls,net_prio", "net_cls,net_prio"))
     } else if net_prio_net_cls {
-        ("net_prio,net_cls", "net_prio,net_cls")
+        Ok(("net_prio,net_cls", "net_prio,net_cls"))
     } else {
-        return Err(anyhow::anyhow!("Required cgroup paths do not exist"));
-    };
+        Err(anyhow!("Required cgroup paths do not exist"))
+    }
+}
 
+// validates the Network structure parsed from /sys/fs/cgroup/net_cls,net_prio with the spec
+fn validate_network(cgroup_name: &str, spec: &Spec) -> Result<()> {
+    let (net_cls_base, net_prio_base) = check_network_cgroup_paths()?;
     let net_cls_path = PathBuf::from(CGROUP_ROOT)
         .join(net_cls_base)
         .join(cgroup_name.trim_start_matches('/'))
