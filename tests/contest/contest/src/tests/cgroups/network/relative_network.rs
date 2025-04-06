@@ -8,7 +8,7 @@ use oci_spec::runtime::{
 use pnet_datalink::interfaces;
 use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
 
-use crate::tests::cgroups::network::validate_network;
+use super::validate_network;
 use crate::utils::test_outside_container;
 use crate::utils::test_utils::check_container_created;
 
