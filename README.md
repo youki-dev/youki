@@ -3,7 +3,6 @@
 [![Discord](https://img.shields.io/discord/849943000770412575.svg?logo=discord)](https://discord.gg/zHnyXKSQFD)
 [![GitHub contributors](https://img.shields.io/github/contributors/containers/youki)](https://github.com/containers/youki/graphs/contributors)
 [![Github CI](https://github.com/containers/youki/actions/workflows/basic.yml/badge.svg?branch=main)](https://github.com/containers/youki/actions)
-[![codecov](https://codecov.io/gh/youki-dev/youki/branch/main/graph/badge.svg)](https://codecov.io/gh/youki-dev/youki)
 
 <p align="center">
   <img src="docs/youki.png" width="450">
