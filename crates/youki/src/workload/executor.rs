@@ -8,20 +8,22 @@ impl Executor for DefaultExecutor {
     fn exec(&self, spec: &Spec) -> Result<(), ExecutorError> {
         #[cfg(feature = "wasm-wasmer")]
         match super::wasmer::get_executor().exec(spec) {
-            Ok(_) => return Ok(()),
+            Ok(_) => std::process::exit(0),
             Err(ExecutorError::CantHandle(_)) => (),
+            Err(ExecutorError::ExitCode(code)) => std::process::exit(code),
             Err(err) => return Err(err),
         }
         #[cfg(feature = "wasm-wasmedge")]
         match super::wasmedge::get_executor().exec(spec) {
-            Ok(_) => return Ok(()),
+            Ok(_) => std::process::exit(0),
             Err(ExecutorError::CantHandle(_)) => (),
             Err(err) => return Err(err),
         }
         #[cfg(feature = "wasm-wasmtime")]
         match super::wasmtime::get_executor().exec(spec) {
-            Ok(_) => return Ok(()),
+            Ok(_) => std::process::exit(0),
             Err(ExecutorError::CantHandle(_)) => (),
+            Err(ExecutorError::ExitCode(code)) => std::process::exit(code),
             Err(err) => return Err(err),
         }
 

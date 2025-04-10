@@ -14,6 +14,8 @@ pub enum ExecutorError {
     #[error("failed to execute workload")]
     Execution(#[from] Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
+    ExitCode(i32),
+    #[error("{0}")]
     Other(String),
     #[error("{0} executor can't handle spec")]
     CantHandle(&'static str),

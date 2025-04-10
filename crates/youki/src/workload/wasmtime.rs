@@ -1,6 +1,9 @@
 use libcontainer::oci_spec::runtime::Spec;
 use libcontainer::workload::{Executor, ExecutorError, ExecutorValidationError, EMPTY};
-use wasi_common::sync::{add_to_linker, WasiCtxBuilder};
+use wasi_common::{
+    sync::{add_to_linker, WasiCtxBuilder},
+    I32Exit,
+};
 use wasmtime::{Engine, Linker, Module, Store};
 
 const EXECUTOR_NAME: &str = "wasmtime";
@@ -87,7 +90,10 @@ impl Executor for WasmtimeExecutor {
 
         start
             .call(&mut store, &[], &mut [])
-            .map_err(|err| ExecutorError::Execution(err.into()))
+            .map_err(|err| match err.downcast_ref::<I32Exit>() {
+                Some(exit) => ExecutorError::ExitCode(exit.0),
+                None => ExecutorError::Execution(err.into()),
+            })
     }
 
     fn validate(&self, spec: &Spec) -> Result<(), ExecutorValidationError> {
