@@ -62,11 +62,13 @@ pub fn container_intermediate_process(
     // In addition this needs to be done before we enter the cgroup namespace as
     // the cgroup of the process will form the root of the cgroup hierarchy in
     // the cgroup namespace.
-    apply_cgroups(
-        &cgroup_manager,
-        linux.resources().as_ref(),
-        matches!(args.container_type, ContainerType::InitContainer),
-    )?;
+    if let Some(cgroup_manager) = cgroup_manager {
+        apply_cgroups(
+            &cgroup_manager,
+            linux.resources().as_ref(),
+            matches!(args.container_type, ContainerType::InitContainer),
+        )?;
+    }
 
     // if new user is specified in specification, this will be true and new
     // namespace will be created, check
