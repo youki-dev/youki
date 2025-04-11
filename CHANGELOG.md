@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.5.4](https://github.com/youki-dev/youki/compare/v0.5.3...v0.5.4) - 2025-04-10
+### 📖 Documentation improvements
+- Add the CNCF footer in README.md by @utam0k in https://github.com/youki-dev/youki/pull/3140
+- chore(docs): Fix codecov link in README by @khanhtc1202 in https://github.com/youki-dev/youki/pull/3129
+### 🧪 Test improvements and Misc Fixes
+- bump nix to 0.29.0 by @kemingy in https://github.com/youki-dev/youki/pull/3123
+- update rust version to 1.85.0 by @YJDoc2 in https://github.com/youki-dev/youki/pull/3085
+- add-test-linux_rootfs_propagation by @saku3 in https://github.com/youki-dev/youki/pull/3024
+
 ## [v0.5.3](https://github.com/youki-dev/youki/compare/v0.5.2...v0.5.3) - 2025-03-21
 ### 🐛 Bug Fixes
 - Security: Fix compromised `tj-actions/changed-files` action by @sou1118 in https://github.com/youki-dev/youki/pull/3112
