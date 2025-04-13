@@ -220,30 +220,38 @@ fn get_syscall_number(arc: &Arch, name: &str) -> Option<u64> {
     }
 }
 
-fn translate_action(action: LinuxSeccompAction) -> u32 {
-    let action = match action {
-        LinuxSeccompAction::ScmpActKill => SECCOMP_RET_KILL_THREAD,
-        LinuxSeccompAction::ScmpActTrap => SECCOMP_RET_TRAP,
-        LinuxSeccompAction::ScmpActErrno => SECCOMP_RET_ERRNO,
-        LinuxSeccompAction::ScmpActTrace => SECCOMP_RET_TRACE,
-        LinuxSeccompAction::ScmpActAllow => SECCOMP_RET_ALLOW,
-        LinuxSeccompAction::ScmpActKillProcess => SECCOMP_RET_KILL_PROCESS,
-        LinuxSeccompAction::ScmpActNotify => SECCOMP_RET_USER_NOTIF,
-        LinuxSeccompAction::ScmpActLog => SECCOMP_RET_LOG,
-        LinuxSeccompAction::ScmpActKillThread => SECCOMP_RET_KILL_THREAD,
-    };
-    action
+// This wrapper type is used to implement the `From` trait while avoiding the orphan rule's restrictions.
+pub struct SeccompActionWrapper(pub LinuxSeccompAction);
+
+impl From<SeccompActionWrapper> for u32 {
+    fn from(wrapped_action: SeccompActionWrapper) -> Self {
+        // Extracts the wrapped LinuxSeccompAction
+        let action = wrapped_action.0;
+        match action {
+            LinuxSeccompAction::ScmpActKill => SECCOMP_RET_KILL_THREAD,
+            LinuxSeccompAction::ScmpActTrap => SECCOMP_RET_TRAP,
+            LinuxSeccompAction::ScmpActErrno => SECCOMP_RET_ERRNO,
+            LinuxSeccompAction::ScmpActTrace => SECCOMP_RET_TRACE,
+            LinuxSeccompAction::ScmpActAllow => SECCOMP_RET_ALLOW,
+            LinuxSeccompAction::ScmpActKillProcess => SECCOMP_RET_KILL_PROCESS,
+            LinuxSeccompAction::ScmpActNotify => SECCOMP_RET_USER_NOTIF,
+            LinuxSeccompAction::ScmpActLog => SECCOMP_RET_LOG,
+            LinuxSeccompAction::ScmpActKillThread => SECCOMP_RET_KILL_THREAD,
+        }
+    }
 }
 
-fn translate_op(op: LinuxSeccompOperator) -> SeccompCompareOp {
-    match op {
-        LinuxSeccompOperator::ScmpCmpNe => SeccompCompareOp::NotEqual,
-        LinuxSeccompOperator::ScmpCmpLt => SeccompCompareOp::LessThan,
-        LinuxSeccompOperator::ScmpCmpLe => SeccompCompareOp::LessOrEqual,
-        LinuxSeccompOperator::ScmpCmpEq => SeccompCompareOp::Equal,
-        LinuxSeccompOperator::ScmpCmpGe => SeccompCompareOp::GreaterOrEqual,
-        LinuxSeccompOperator::ScmpCmpGt => SeccompCompareOp::GreaterThan,
-        LinuxSeccompOperator::ScmpCmpMaskedEq => SeccompCompareOp::MaskedEqual,
+impl From<LinuxSeccompOperator> for SeccompCompareOp {
+    fn from(op: LinuxSeccompOperator) -> Self {
+        match op {
+            LinuxSeccompOperator::ScmpCmpNe => SeccompCompareOp::NotEqual,
+            LinuxSeccompOperator::ScmpCmpLt => SeccompCompareOp::LessThan,
+            LinuxSeccompOperator::ScmpCmpLe => SeccompCompareOp::LessOrEqual,
+            LinuxSeccompOperator::ScmpCmpEq => SeccompCompareOp::Equal,
+            LinuxSeccompOperator::ScmpCmpGe => SeccompCompareOp::GreaterOrEqual,
+            LinuxSeccompOperator::ScmpCmpGt => SeccompCompareOp::GreaterThan,
+            LinuxSeccompOperator::ScmpCmpMaskedEq => SeccompCompareOp::MaskedEqual,
+        }
     }
 }
 
@@ -307,7 +315,8 @@ impl InstructionData {
         let mut rules: Vec<Rule> = Vec::new();
 
         check_seccomp(seccomp)?;
-        data.def_action = translate_action(seccomp.default_action());
+        // data.def_action = translate_action(seccomp.default_action());
+        data.def_action = u32::from(seccomp.default_action());
         if let Some(ret) = seccomp.default_errno_ret() {
             data.def_errno_ret = ret
         } else {
@@ -343,7 +352,7 @@ impl InstructionData {
         if let Some(syscalls) = seccomp.syscalls() {
             for syscall in syscalls {
                 let mut rule: Rule = Default::default();
-                rule.action = translate_action(syscall.action());
+                rule.action = u32::from(syscall.action());
                 if rule.action == SECCOMP_RET_USER_NOTIF {
                     rule.is_notify = true
                 } else {
@@ -362,7 +371,7 @@ impl InstructionData {
                                         syscall_args!(arg.value() as usize, arg.value_two().unwrap() as usize)
                                     );
                                 }
-                                rule.op = Option::from(translate_op(arg.op()))
+                                rule.op = Option::from(SeccompCompareOp::from(arg.op()))
                             }
                         }
                         None => {
