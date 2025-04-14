@@ -89,10 +89,10 @@ async fn main() -> Result<()> {
 
     let _ = prctl::set_no_new_privileges(true);
 
-    let getcwd = LinuxSyscallBuilder::default()
+    let _getcwd = LinuxSyscallBuilder::default()
         .names(vec!["getcwd".to_string()])
         .build()?;
-    let write = LinuxSyscallBuilder::default()
+    let _write = LinuxSyscallBuilder::default()
         .names(vec!["write".to_string()])
         .args(vec![LinuxSeccompArgBuilder::default()
             .index(1usize)
@@ -100,22 +100,37 @@ async fn main() -> Result<()> {
             .op(LinuxSeccompOperator::ScmpCmpEq)
             .build()?])
         .build()?;
-    let syscall_mkdir = LinuxSyscallBuilder::default()
+    let _syscall_mkdir = LinuxSyscallBuilder::default()
         .names(vec!["mkdir".to_string()])
         .action(LinuxSeccompAction::ScmpActNotify)
+        .build()?;
+    let _personality = LinuxSyscallBuilder::default()
+        .names(vec!["personality".to_string()])
+        // .args(vec![LinuxSeccompArgBuilder::default()
+        //     .index(0usize)
+        //     .value(8u64)
+        //     .op(LinuxSeccompOperator::ScmpCmpEq)
+        //     .build()?])
+        .action(LinuxSeccompAction::ScmpActAllow)
         .build()?;
 
     let spec_seccomp = LinuxSeccompBuilder::default()
         .architectures(vec![OciSpecArch::ScmpArchX86_64])
         .default_action(LinuxSeccompAction::ScmpActKillProcess)
         .default_errno_ret(LinuxSeccompAction::ScmpActErrno)
-        .syscalls(vec![getcwd, write, syscall_mkdir])
+        .syscalls(vec![_personality])
         .build()?;
 
     let inst_data = InstructionData::from_linux_seccomp(&spec_seccomp)?;
-    let seccomp = Seccomp {
-        filters: Vec::from(inst_data),
-    };
+    let mut seccomp = Seccomp::new();
+    if !inst_data.flags.is_empty() {
+        seccomp.set_flags(inst_data.flags.clone());
+    }
+    seccomp.filters = Vec::from(inst_data);
+
+    for filter in &seccomp.filters {
+        println!("code: {:02x}, jt: {:02x}, jf: {:02x}, k: {:08x}", filter.code, filter.offset_jump_true, filter.offset_jump_false, filter.multiuse_field)
+    }
 
     tokio::spawn(async move {
         tokio::signal::ctrl_c()

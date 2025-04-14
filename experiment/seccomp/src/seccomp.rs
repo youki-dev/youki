@@ -6,7 +6,7 @@ use std::{
         unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd},
     },
 };
-
+use std::os::raw::c_uchar;
 use crate::instruction::*;
 use crate::instruction::{Arch, Instruction, SECCOMP_IOC_MAGIC};
 use anyhow::anyhow;
@@ -22,6 +22,7 @@ use oci_spec::runtime::{
     LinuxSeccompOperator,
 };
 use std::str::FromStr;
+use nix::libc::{SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_SPEC_ALLOW, SECCOMP_FILTER_FLAG_TSYNC};
 use syscalls::{syscall_args, SyscallArgs};
 
 #[derive(Debug, thiserror::Error)]
@@ -32,6 +33,7 @@ pub enum SeccompError {
 
 pub struct Seccomp {
     pub filters: Vec<Instruction>,
+    pub flags: c_ulong,
 }
 
 impl Default for Seccomp {
@@ -44,6 +46,13 @@ impl Seccomp {
     pub fn new() -> Self {
         Seccomp {
             filters: Vec::new(),
+            flags: SECCOMP_FILTER_FLAG_NEW_LISTENER,
+        }
+    }
+
+    pub fn set_flags(&mut self, flags: Vec<c_ulong>) {
+        for flag in flags {
+            self.flags |= flag;
         }
     }
 
@@ -58,7 +67,7 @@ impl Seccomp {
         let notify_fd = unsafe {
             seccomp(
                 SECCOMP_SET_MODE_FILTER,
-                SECCOMP_FILTER_FLAG_NEW_LISTENER,
+                self.flags,
                 &mut prog as *mut _ as *mut c_void,
             )
         };
@@ -291,19 +300,22 @@ pub struct InstructionData {
     pub arc: Arch,
     pub def_action: u32,
     pub def_errno_ret: u32,
-    pub flags: Vec<u32>,
-    pub rule_arr: Vec<Rule>,
+    pub flags: Vec<c_ulong>,
+    pub rule: Rule,
 }
 
 impl From<InstructionData> for Vec<Instruction> {
     fn from(inst_data: InstructionData) -> Self {
-        let mut bpf_prog = gen_validate(&inst_data.arc);
+        // let mut bpf_prog = gen_validate(&inst_data.arc);
 
-        for rule in &inst_data.rule_arr {
-            bpf_prog.append(&mut Rule::to_instruction(&inst_data.arc, inst_data.def_action, rule));
+        let mut bpf_prog = vec![];
+
+        let jump_num = inst_data.rule.syscall.len();
+        for syscall in &inst_data.rule.syscall {
+            bpf_prog.append(&mut Rule::to_instruction(&inst_data.arc, &inst_data.rule, jump_num, syscall));
         }
-
-        bpf_prog.append(&mut vec![Instruction::stmt(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)]);
+        bpf_prog.append(&mut vec![Instruction::stmt(BPF_RET | BPF_K, inst_data.def_action)]);
+        bpf_prog.append(&mut vec![Instruction::stmt(BPF_RET | BPF_K, inst_data.rule.action)]);
         bpf_prog
     }
 }
@@ -312,7 +324,7 @@ impl InstructionData {
 
     pub fn from_linux_seccomp(seccomp: &LinuxSeccomp) -> Result<Self> {
         let mut data: InstructionData = Default::default();
-        let mut rules: Vec<Rule> = Vec::new();
+        // let mut rules: Vec<Rule> = Vec::new();
 
         check_seccomp(seccomp)?;
         // data.def_action = translate_action(seccomp.default_action());
@@ -351,27 +363,27 @@ impl InstructionData {
          */
         if let Some(syscalls) = seccomp.syscalls() {
             for syscall in syscalls {
-                let mut rule: Rule = Default::default();
-                rule.action = u32::from(syscall.action());
-                if rule.action == SECCOMP_RET_USER_NOTIF {
-                    rule.is_notify = true
+                // let mut rule: Rule = Default::default();
+                data.rule.action = u32::from(syscall.action());
+                if data.rule.action == SECCOMP_RET_USER_NOTIF {
+                    data.rule.is_notify = true
                 } else {
-                    rule.is_notify = false
+                    data.rule.is_notify = false
                 }
 
                 for name in syscall.names() {
-                    rule.syscall = name.to_string();
+                    data.rule.syscall.append(&mut vec![name.to_string()]);
                     match syscall.args() {
                         Some(args) => {
                             for arg in args {
-                                rule.arg_cnt = Option::from(arg.index() as u8);
-                                rule.args = Option::from(syscall_args!(arg.value() as usize));
+                                data.rule.arg_cnt = Option::from(arg.index() as u8);
+                                data.rule.args = Option::from(syscall_args!(arg.value() as usize));
                                 if arg.value_two().is_some() {
-                                    rule.args = Option::from(
+                                    data.rule.args = Option::from(
                                         syscall_args!(arg.value() as usize, arg.value_two().unwrap() as usize)
                                     );
                                 }
-                                rule.op = Option::from(SeccompCompareOp::from(arg.op()))
+                                data.rule.op = Option::from(SeccompCompareOp::from(arg.op()))
                             }
                         }
                         None => {
@@ -379,17 +391,15 @@ impl InstructionData {
                         }
                     }
                 }
-                rules.push(rule);
             }
         }
-        data.rule_arr = rules;
         Ok(data)
     }
 }
 
 #[derive(Debug, Default)]
 pub struct Rule {
-    pub syscall: String,
+    pub syscall: Vec<String>,
     pub action: u32,
     pub arg_cnt: Option<u8>,
     pub args: Option<SyscallArgs>,
@@ -398,7 +408,7 @@ pub struct Rule {
 }
 
 impl Rule {
-    pub fn new(syscall: String, action: u32, arg_cnt: Option<u8>, args: Option<SyscallArgs>, op: Option<SeccompCompareOp>, is_notify: bool) -> Self {
+    pub fn new(syscall: Vec<String>, action: u32, arg_cnt: Option<u8>, args: Option<SyscallArgs>, op: Option<SeccompCompareOp>, is_notify: bool) -> Self {
         Self {
             syscall,
             action,
@@ -409,21 +419,17 @@ impl Rule {
         }
     }
 
-    pub fn to_instruction(arch: &Arch, action: u32, rule: &Rule) -> Vec<Instruction> {
-        let mut bpf_prog = gen_validate(arch);
+    pub fn to_instruction(arch: &Arch, rule: &Rule, jump_num: usize, syscall: &String) -> Vec<Instruction> {
+        let mut bpf_prog = vec![];
+        let mut jump_cnt = jump_num.clone();
         bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, 0)]);
-        bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 1,
-                                                    get_syscall_number(arch, &rule.syscall).unwrap() as c_uint)]);
+        bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, jump_cnt as c_uchar,
+                                                    get_syscall_number(arch, syscall).unwrap() as c_uint)]);
         if rule.arg_cnt.is_some() {
             bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, seccomp_data_args_offset().into())]);
             bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, rule.args.unwrap().arg0 as c_uint)]);
         }
-
-        if rule.is_notify {
-            bpf_prog.append(&mut vec![Instruction::stmt(BPF_RET | BPF_K, SECCOMP_RET_USER_NOTIF)]);
-        } else {
-            bpf_prog.append(&mut vec![Instruction::stmt(BPF_RET | BPF_K, action)]);
-        }
+        jump_cnt--
         bpf_prog
     }
 }
@@ -447,7 +453,7 @@ mod tests {
 
     #[test]
     fn test_to_instruction_x86() {
-        let rule = Rule::new("getcwd".parse().unwrap(), SECCOMP_RET_ALLOW, None, None, None,false);
+        let rule = Rule::new(vec!["getcwd".parse().unwrap()], SECCOMP_RET_ALLOW, None, None, None,false);
         let inst = Rule::to_instruction(&Arch::X86, SECCOMP_RET_KILL_PROCESS, &rule);
         let bpf_prog = gen_validate(&Arch::X86);
         assert_eq!(inst[0], bpf_prog[0]);
@@ -461,7 +467,7 @@ mod tests {
 
     #[test]
     fn test_to_instruction_aarch64() {
-        let rule = Rule::new("getcwd".parse().unwrap(), SECCOMP_RET_ALLOW, None, None, None,false);
+        let rule = Rule::new(vec!["getcwd".parse().unwrap()], SECCOMP_RET_ALLOW, None, None, None,false);
         let inst = Rule::to_instruction(&Arch::AArch64, SECCOMP_RET_KILL_PROCESS, &rule);
         let bpf_prog = gen_validate(&Arch::AArch64);
         assert_eq!(inst[0], bpf_prog[0]);
