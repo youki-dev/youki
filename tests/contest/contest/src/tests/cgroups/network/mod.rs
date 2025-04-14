@@ -1,4 +1,4 @@
-pub mod network;
+pub mod absolute_network;
 pub mod relative_network;
 
 use std::fs;
