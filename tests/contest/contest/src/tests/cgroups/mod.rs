@@ -9,6 +9,7 @@ pub mod cpu;
 pub mod memory;
 pub mod network;
 pub mod pids;
+pub mod relative_blkio;
 
 pub fn cleanup_v1() -> Result<()> {
     for subsystem in list_subsystem_mount_points()? {
