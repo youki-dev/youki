@@ -26,7 +26,7 @@ chrono = { version = "0.4", default-features = false, features = [
     "serde",
 ] }
 fastrand = "^2.3.0"
-libc = "0.2.171"
+libc = "0.2.172"
 nix = { version = "0.29.0", features = [
     "socket",
     "sched",
@@ -38,7 +38,7 @@ nix = { version = "0.29.0", features = [
     "hostname",
 ] }
 oci-spec = { version = "0.7.1", features = ["runtime"] }
-once_cell = "1.21.2"
+once_cell = "1.21.3"
 procfs = "0.17.0"
 prctl = "1.0.0"
 libcgroups = { path = "../libcgroups", default-features = false, version = "0.5.3" } # MARK: Version
@@ -50,7 +50,7 @@ regex = { version = "1.10.6", default-features = false, features = ["std", "unic
 thiserror = "2.0.12"
 tracing = { version = "0.1.41", features = ["attributes"] }
 safe-path = "0.1.0"
-nc = "0.9.5"
+nc = "0.9.6"
 
 [dev-dependencies]
 oci-spec = { version = "~0.7.1", features = ["proptests", "runtime"] }
@@ -58,5 +58,5 @@ quickcheck = "1"
 serial_test = "3.1.1"
 tempfile = "3"
 anyhow = "1.0"
-rand = "0.9.0"
+rand = "0.9.1"
 scopeguard = "1"

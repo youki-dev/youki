@@ -31,6 +31,7 @@ use crate::tests::process_rlimits_fail::get_process_rlimits_fail_test;
 use crate::tests::process_user::get_process_user_test;
 use crate::tests::readonly_paths::get_ro_paths_test;
 use crate::tests::root_readonly_true::get_root_readonly_test;
+use crate::tests::rootfs_propagation::get_rootfs_propagation_test;
 use crate::tests::scheduler::get_scheduler_test;
 use crate::tests::seccomp::get_seccomp_test;
 use crate::tests::seccomp_notify::get_seccomp_notify_test;
@@ -134,6 +135,7 @@ fn main() -> Result<()> {
     let process_oom_score_adj = get_process_oom_score_adj_test();
     let fd_control = get_fd_control_test();
     let masked_paths = get_linux_masked_paths_tests();
+    let rootfs_propagation = get_rootfs_propagation_test();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -168,6 +170,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(masked_paths));
     tm.add_test_group(Box::new(process_oom_score_adj));
     tm.add_test_group(Box::new(fd_control));
+    tm.add_test_group(Box::new(rootfs_propagation));
 
     tm.add_test_group(Box::new(io_priority_test));
     tm.add_cleanup(Box::new(cgroups::cleanup_v1));
