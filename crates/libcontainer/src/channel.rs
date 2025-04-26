@@ -123,7 +123,7 @@ where
         // there is only one SCM_RIGHTS message and will only process the first
         // message.
         let fds: Option<F> = msg
-            .cmsgs()
+            .cmsgs()?
             .find_map(|cmsg| {
                 if let socket::ControlMessageOwned::ScmRights(fds) = cmsg {
                     Some(fds)

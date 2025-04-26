@@ -38,7 +38,7 @@ fn recv_fd<F: FromRawFd>(sock: RawFd) -> nix::Result<Option<F>> {
 
     let mut cmsg_buf = nix::cmsg_space!(RawFd);
     let msg = socket::recvmsg::<UnixAddr>(sock, &mut iov, Some(&mut cmsg_buf), MsgFlags::empty())?;
-    match msg.cmsgs().next() {
+    match msg.cmsgs()?.next() {
         Some(ControlMessageOwned::ScmRights(fds)) if !fds.is_empty() => {
             let fd = unsafe { F::from_raw_fd(fds[0]) };
             Ok(Some(fd))

@@ -5,7 +5,8 @@ edition = "2021"
 
 [dependencies]
 oci-spec = { version = "0.7.1", features = ["runtime"] }
-nix = "0.28.0"
+nix = "0.29.0"
 anyhow = "1.0"
-libc = "0.2.170" # TODO (YJDoc2) upgrade to latest
-nc = "0.9.5"
+libc = "0.2.172" # TODO (YJDoc2) upgrade to latest
+nc = "0.9.6"
+tempfile = "3"

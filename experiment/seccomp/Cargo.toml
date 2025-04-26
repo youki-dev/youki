@@ -12,7 +12,7 @@ autoexamples = true
 keywords = ["youki", "container", "seccomp"]
 
 [dependencies]
-nix = { version = "0.27.1", features = [
+nix = { version = "0.29.0", features = [
     "ioctl",
     "socket",
     "sched",

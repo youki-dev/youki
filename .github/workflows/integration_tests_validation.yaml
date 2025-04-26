@@ -11,29 +11,76 @@ on:
 
 jobs:
   changes:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     outputs:
       any_modified: ${{ steps.filter.outputs.any_modified }}
     steps:
       - uses: actions/checkout@v4
-      - uses: tj-actions/changed-files@v41
-        id: filter
         with:
-          files: |
-            .github/workflows/integration_tests_validation.yaml
-            tests/contest/**
-          files_ignore: |
-            **.md
+          fetch-depth: 0  # Required to get full history
+      # Using Git commands instead of tj-actions/changed-files
+      - name: Get changed files
+        id: filter
+        run: |
+          # grep will exit with non-zero if no matching pattern
+          # but we are ok with that, so to prevent workflow failing
+          # we set allow errors
+          set +e 
+          # Change the base commit depending on event type
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            # For push events
+            if [[ -n "${{ github.event.before }}" ]]; then
+              BASE_COMMIT="${{ github.event.before }}"
+            else
+              # For workflow dispatch, etc.
+              git fetch origin main --depth=1
+              BASE_COMMIT="origin/main"
+            fi
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # For pull request events
+            git fetch origin "${{ github.base_ref }}" --depth=1
+            BASE_COMMIT="origin/${{ github.base_ref }}"
+          else
+            # For workflow dispatch events
+            git fetch origin main --depth=1
+            BASE_COMMIT="HEAD~1"
+          fi
+          
+          echo "Using base commit: $BASE_COMMIT"
+          
+          # Get all changed files
+          ALL_CHANGED_FILES=$(git diff --name-only --diff-filter=ACMRT "$BASE_COMMIT" HEAD)
+          
+          # Filter only files matching the specified patterns
+          # Match files in .github/workflows/integration_tests_validation.yaml and tests/contest/**
+          TARGET_FILES=$(echo "$ALL_CHANGED_FILES" | grep -E '^.github/workflows/integration_tests_validation.yaml$|^tests/contest/')
+          
+          # Exclude markdown files
+          FILTERED_FILES=$(echo "$TARGET_FILES" | grep -v '\.md$')
+          
+          # Set the results
+          if [[ -n "$FILTERED_FILES" ]]; then
+            echo "any_modified=true" >> $GITHUB_OUTPUT
+            echo "all_modified_files<<EOF" >> $GITHUB_OUTPUT
+            echo "$FILTERED_FILES" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "any_modified=false" >> $GITHUB_OUTPUT
+            echo "all_modified_files=" >> $GITHUB_OUTPUT
+          fi
       - name: List all changed files
         run: |
-          for file in ${{ steps.filter.outputs.all_modified_files }}; do
-            echo "$file was changed"
-          done
+          if [[ "${{ steps.filter.outputs.any_modified }}" == "true" ]]; then
+            echo "Changed files detected:"
+            echo "${{ steps.filter.outputs.all_modified_files }}"
+          else
+            echo "No relevant changes detected"
+          fi
   validate:
     needs: [changes]
     if: needs.changes.outputs.any_modified == 'true'
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +88,8 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1.3.7
       - name: Install just
         uses: taiki-e/install-action@just
+      - name: Add CRIU PPA
+        run: sudo add-apt-repository -y ppa:criu/ppa
       - name: Install requirements
         run: sudo env PATH=$PATH just ci-prepare
       - name: Install runc 1.1.11

@@ -7,11 +7,13 @@ on:
 
 jobs:
   podman-tests:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Install just
         uses: taiki-e/install-action@just
+      - name: Add CRIU PPA
+        run: sudo add-apt-repository -y ppa:criu/ppa
       - name: Install requirements
         run: sudo env PATH=$PATH just ci-prepare
       

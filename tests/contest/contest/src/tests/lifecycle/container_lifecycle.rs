@@ -98,29 +98,24 @@ impl ContainerLifecycle {
         )
     }
 
-    pub fn waiting_for_status(
-        &self,
-        retry_timeout: Duration,
-        poll_interval: Duration,
-        target_status: &str,
-    ) -> TestResult {
-        let start = Instant::now();
-        while start.elapsed() < retry_timeout {
-            let (out, err) = get_state(&self.container_id, &self.project_path).unwrap();
-            if !err.is_empty() {
-                self.kill();
-                self.delete();
-                return TestResult::Failed(anyhow!("error in state : {}", err));
-            }
+    /// Wait for the container to reach a specific state
+    pub fn wait_for_state(&self, expected_state: &str, timeout: Duration) -> TestResult {
+        use crate::tests::lifecycle::state;
 
-            let state: State = serde_json::from_str(&out).unwrap();
-
-            if state.status == target_status {
-                return TestResult::Passed;
-            }
-            sleep(poll_interval);
+        match state::wait_for_state(
+            self.project_path.path(),
+            &self.container_id,
+            expected_state,
+            timeout,
+            Duration::from_millis(100),
+        ) {
+            Ok(_) => TestResult::Passed,
+            Err(e) => TestResult::Failed(anyhow::anyhow!(
+                "Container failed to reach {} state: {}",
+                expected_state,
+                e
+            )),
         }
-        TestResult::Failed(anyhow!("error pod status is not update"))
     }
 }
 

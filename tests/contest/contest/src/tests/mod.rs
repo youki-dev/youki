@@ -1,4 +1,5 @@
 pub mod cgroups;
+pub mod delete;
 pub mod devices;
 pub mod domainname;
 pub mod example;
@@ -21,6 +22,7 @@ pub mod process_rlimits_fail;
 pub mod process_user;
 pub mod readonly_paths;
 pub mod root_readonly_true;
+pub mod rootfs_propagation;
 pub mod scheduler;
 pub mod seccomp;
 pub mod seccomp_notify;

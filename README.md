@@ -3,7 +3,6 @@
 [![Discord](https://img.shields.io/discord/849943000770412575.svg?logo=discord)](https://discord.gg/zHnyXKSQFD)
 [![GitHub contributors](https://img.shields.io/github/contributors/containers/youki)](https://github.com/containers/youki/graphs/contributors)
 [![Github CI](https://github.com/containers/youki/actions/workflows/basic.yml/badge.svg?branch=main)](https://github.com/containers/youki/actions)
-[![codecov](https://codecov.io/gh/containers/youki/branch/main/graph/badge.svg)](https://codecov.io/gh/containers/youki)
 
 <p align="center">
   <img src="docs/youki.png" width="450">
@@ -284,3 +283,13 @@ Thanks to all the people who already contributed!
 <a href="https://github.com/containers/youki/graphs/contributors">
   <img src="https://contributors-img.web.app/image?repo=containers/youki" />
 </a>
+
+- - -
+**We are a [Cloud Native Computing Foundation](https://cncf.io/) sandbox project.**
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://www.cncf.io/wp-content/uploads/2022/07/cncf-white-logo.svg">
+  <img src="https://www.cncf.io/wp-content/uploads/2022/07/cncf-color-bg.svg" width=300 />
+</picture>
+
+The Linux Foundation® (TLF) has registered trademarks and uses trademarks. For a list of TLF trademarks, see [Trademark Usage](https://www.linuxfoundation.org/legal/trademark-usage).

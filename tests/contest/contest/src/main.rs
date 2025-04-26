@@ -9,6 +9,7 @@ use contest::logger;
 use test_framework::TestManager;
 use tests::cgroups;
 
+use crate::tests::delete::get_delete_test;
 use crate::tests::devices::get_devices_test;
 use crate::tests::domainname::get_domainname_tests;
 use crate::tests::example::get_example_test;
@@ -31,6 +32,7 @@ use crate::tests::process_rlimits_fail::get_process_rlimits_fail_test;
 use crate::tests::process_user::get_process_user_test;
 use crate::tests::readonly_paths::get_ro_paths_test;
 use crate::tests::root_readonly_true::get_root_readonly_test;
+use crate::tests::rootfs_propagation::get_rootfs_propagation_test;
 use crate::tests::scheduler::get_scheduler_test;
 use crate::tests::seccomp::get_seccomp_test;
 use crate::tests::seccomp_notify::get_seccomp_notify_test;
@@ -110,8 +112,9 @@ fn main() -> Result<()> {
     let cgroup_v1_cpu = cgroups::cpu::v1::get_test_group();
     let cgroup_v2_cpu = cgroups::cpu::v2::get_test_group();
     let cgroup_v1_memory = cgroups::memory::get_test_group();
-    let cgroup_v1_network = cgroups::network::get_test_group();
     let cgroup_v1_blkio = cgroups::blkio::get_test_group();
+    let cgroup_v1_absolute_network = cgroups::network::absolute_network::get_test_group();
+    let cgroup_v1_relative_network = cgroups::network::relative_network::get_test_group();
     let seccomp = get_seccomp_test();
     let seccomp_notify = get_seccomp_notify_test();
     let ro_paths = get_ro_paths_test();
@@ -122,6 +125,7 @@ fn main() -> Result<()> {
     let sysctl = get_sysctl_test();
     let scheduler = get_scheduler_test();
     let io_priority_test = get_io_priority_test();
+    let delete = get_delete_test();
     let devices = get_devices_test();
     let root_readonly = get_root_readonly_test();
     let process = get_process_test();
@@ -133,6 +137,7 @@ fn main() -> Result<()> {
     let fd_control = get_fd_control_test();
     let kill = get_kill_test();
     let masked_paths = get_linux_masked_paths_tests();
+    let rootfs_propagation = get_rootfs_propagation_test();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -144,8 +149,9 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(cgroup_v1_cpu));
     tm.add_test_group(Box::new(cgroup_v2_cpu));
     tm.add_test_group(Box::new(cgroup_v1_memory));
-    tm.add_test_group(Box::new(cgroup_v1_network));
+    tm.add_test_group(Box::new(cgroup_v1_absolute_network));
     tm.add_test_group(Box::new(cgroup_v1_blkio));
+    tm.add_test_group(Box::new(cgroup_v1_relative_network));
     tm.add_test_group(Box::new(seccomp));
     tm.add_test_group(Box::new(seccomp_notify));
     tm.add_test_group(Box::new(ro_paths));
@@ -155,6 +161,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(intel_rdt));
     tm.add_test_group(Box::new(sysctl));
     tm.add_test_group(Box::new(scheduler));
+    tm.add_test_group(Box::new(delete));
     tm.add_test_group(Box::new(devices));
     tm.add_test_group(Box::new(root_readonly));
     tm.add_test_group(Box::new(process));
@@ -166,6 +173,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(process_oom_score_adj));
     tm.add_test_group(Box::new(fd_control));
     tm.add_test_group(Box::new(kill));
+    tm.add_test_group(Box::new(rootfs_propagation));
 
     tm.add_test_group(Box::new(io_priority_test));
     tm.add_cleanup(Box::new(cgroups::cleanup_v1));

@@ -10,7 +10,7 @@ on:
 
 jobs:
   youki-build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       matrix:
@@ -25,7 +25,7 @@ jobs:
       - name: Install just
         uses: taiki-e/install-action@just
       - name: Install cross-rs
-        run: cargo install cross --git https://github.com/cross-rs/cross
+        run: RUSTFLAGS="" cargo install cross --git https://github.com/cross-rs/cross
       - name: Setup target
         run: |
           echo "CARGO=cross" >> ${GITHUB_ENV}
@@ -40,7 +40,7 @@ jobs:
           path: youki
 
   containerd-integration-tests:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [youki-build]
     timeout-minutes: 40
     strategy:
@@ -79,7 +79,7 @@ jobs:
         run: sudo make RUNC_FLAVOR=crun TEST_RUNTIME=io.containerd.runc.v2 TESTFLAGS="-timeout 40m" integration
 
   k8s-tests:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [youki-build]
     timeout-minutes: 40
     strategy:
@@ -100,7 +100,7 @@ jobs:
         run: just test-kind
 
   oci-validation-go:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [youki-build]
     timeout-minutes: 15
     strategy:
@@ -130,7 +130,7 @@ jobs:
         run: just test-oci
 
   oci-validation-rust:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [youki-build]
     timeout-minutes: 20
     strategy:
@@ -145,6 +145,8 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install just
         uses: taiki-e/install-action@just
+      - name: Add CRIU PPA
+        run: sudo add-apt-repository -y ppa:criu/ppa
       - name: Install requirements
         run: sudo env PATH=$PATH just ci-prepare
       - name: Download youki binary
@@ -157,7 +159,7 @@ jobs:
         run: just test-contest
 
   rootless-podman-test:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [youki-build]
     timeout-minutes: 20
     strategy:
@@ -172,6 +174,8 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install just
         uses: taiki-e/install-action@just
+      - name: Add CRIU PPA
+        run: sudo add-apt-repository -y ppa:criu/ppa
       - name: Install requirements
         run: sudo env PATH=$PATH just ci-prepare
       - name: Download youki binary
@@ -184,14 +188,11 @@ jobs:
         run: just test-rootless-podman
   
   docker-in-docker:
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     needs: [youki-build]
-    timeout-minutes: 5
     strategy:
       matrix:
-        # ubuntu 20.04 has cgroups-v1
-        # ubuntu 22.04 has cgroups-v2
-        os: [ "ubuntu-22.04", "ubuntu-20.04" ]
+        cgroup-version: ["v1", "v2"]
     steps:
       - uses: actions/checkout@v4
       - name: Install just
@@ -202,7 +203,53 @@ jobs:
           name: youki-x86_64-musl
       - name: Add the permission to run
         run: chmod +x ./youki
-      - name: Run tests
+      # Steps for cgroups-v1 only (using Lima with AlmaLinux 8)
+      - name: Setup Lima
+        if: matrix.cgroup-version == 'v1'
+        uses: lima-vm/lima-actions/setup@v1
+        id: lima-actions-setup
+      - uses: actions/cache@v4
+        if: matrix.cgroup-version == 'v1'
+        with:
+          path: ~/.cache/lima
+          key: lima-${{ steps.lima-actions-setup.outputs.version }}
+      - name: Start the guest VM
+        if: matrix.cgroup-version == 'v1'
+        run: |
+          set -eux
+          # containerd=none is set because the built-in containerd support conflicts with Docker
+          limactl start \
+            --name=default \
+            --cpus=4 \
+            --memory=8 \
+            --containerd=none \
+            --set '.mounts=[{"location":"~/","writable":true}] | .portForwards=[{"guestSocket":"/var/run/docker.sock","hostSocket":"{{.Dir}}/sock/docker.sock"}]' \
+            template://almalinux-8
+      - name: Install dockerd in the guest VM
+        if: matrix.cgroup-version == 'v1'
+        run: |
+          set -eux
+          lima sudo mkdir -p /etc/systemd/system/docker.socket.d
+          cat <<-EOF | lima sudo tee /etc/systemd/system/docker.socket.d/override.conf
+          [Socket]
+          SocketUser=$(whoami)
+          EOF
+          lima sudo dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
+          lima sudo dnf -q -y install docker-ce --nobest
+          lima sudo systemctl enable --now docker
+      - name: Configure the host to use dockerd in the guest VM
+        if: matrix.cgroup-version == 'v1'
+        run: |
+          set -eux
+          sudo systemctl disable --now docker.service docker.socket
+          export DOCKER_HOST="unix://$(limactl ls --format '{{.Dir}}/sock/docker.sock' default)"
+          echo "DOCKER_HOST=${DOCKER_HOST}" >>$GITHUB_ENV
+          docker info
+          docker version
+      # Run tests differently based on cgroup version
+      - name: Run tests (cgroups-v2)
+        if: matrix.cgroup-version == 'v2'
         run: just test-dind
-
-    
+      - name: Run tests (cgroups-v1)
+        if: matrix.cgroup-version == 'v1'
+        run: just test-dind

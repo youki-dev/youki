@@ -1,6 +1,6 @@
 [package]
 name = "youki"
-version = "0.5.1" # MARK: Version
+version = "0.5.3" # MARK: Version
 description = "A container runtime written in Rust"
 license = "Apache-2.0"
 repository = "https://github.com/containers/youki"
@@ -28,12 +28,12 @@ default-features = false
 features = ["std", "suggestions", "derive", "cargo", "help", "usage", "error-context"]
 
 [dependencies]
-anyhow = "1.0.96"
+anyhow = "1.0.98"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
-libcgroups = { path = "../libcgroups", default-features = false, version = "0.5.1" } # MARK: Version
-libcontainer = { path = "../libcontainer", default-features = false, version = "0.5.1" } # MARK: Version
-liboci-cli = { path = "../liboci-cli", version = "0.5.1" } # MARK: Version
-nix = "0.28.0"
+libcgroups = { path = "../libcgroups", default-features = false, version = "0.5.3" } # MARK: Version
+libcontainer = { path = "../libcontainer", default-features = false, version = "0.5.3" } # MARK: Version
+liboci-cli = { path = "../liboci-cli", version = "0.5.3" } # MARK: Version
+nix = "0.29.0"
 pentacle = "1.1.0"
 procfs = "0.17.0"
 serde_json = "1.0"
@@ -43,8 +43,8 @@ caps = "0.5.5"
 wasmer = { version = "4.0.0", optional = true }
 wasmer-wasix = { version = "0.9.0", optional = true }
 wasmedge-sdk = { version = "0.14.0", optional = true }
-wasmtime = { version = "29.0.1", optional = true }
-wasi-common = { version = "29.0.1", optional = true }
+wasmtime = { version = "31.0.0", optional = true }
+wasi-common = { version = "31.0.0", optional = true }
 tracing = { version = "0.1.41", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.19", features = ["json", "env-filter"] }
 tracing-journald = "0.3.1"
@@ -55,5 +55,5 @@ tempfile = "3"
 scopeguard = "1.2.0"
 
 [build-dependencies]
-anyhow = "1.0.96"
-vergen-gitcl = { version = "1.0.5", features = ["build"] }
+anyhow = "1.0.98"
+vergen-gitcl = { version = "1.0.8", features = ["build"] }
