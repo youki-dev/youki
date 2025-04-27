@@ -27,6 +27,7 @@ use crate::notify_socket::NotifySocket;
 use crate::process::args::ContainerType;
 use crate::user_ns::UserNamespaceConfig;
 use crate::{tty, utils};
+use crate::syscall::syscall::create_syscall;
 
 const NAMESPACE_TYPES: &[&str] = &["ipc", "uts", "net", "pid", "mnt", "cgroup"];
 const TENANT_NOTIFY: &str = "tenant-notify-";
@@ -416,7 +417,9 @@ impl TenantContainerBuilder {
             }
         }
 
-        utils::validate_spec_for_new_user_ns(spec)?;
+        let syscall = create_syscall();
+        utils::validate_spec_for_new_user_ns(spec, &*syscall)?;
+        utils::validate_spec_for_net_devices(spec, &*syscall).map_err(LibcontainerError::NetDevicesError)?;
 
         Ok(())
     }
