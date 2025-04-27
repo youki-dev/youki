@@ -13,6 +13,7 @@ use crate::error::{ErrInvalidSpec, LibcontainerError, MissingSpecError};
 use crate::notify_socket::NOTIFY_FILE;
 use crate::process::args::ContainerType;
 use crate::{apparmor, tty, user_ns, utils};
+use crate::syscall::syscall::create_syscall;
 
 // Builder that can be used to configure the properties of a new container
 pub struct InitContainerBuilder {
@@ -200,7 +201,9 @@ impl InitContainerBuilder {
             }
         }
 
-        utils::validate_spec_for_new_user_ns(spec)?;
+        let syscall = create_syscall();
+        utils::validate_spec_for_new_user_ns(spec, &*syscall)?;
+        utils::validate_spec_for_net_devices(spec, &*syscall).map_err(LibcontainerError::NetDevicesError)?;
 
         Ok(())
     }

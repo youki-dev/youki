@@ -1,15 +1,17 @@
 use std::fs;
 use std::io::Write;
 use std::os::fd::{AsRawFd, OwnedFd};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use libcgroups::common::CgroupManager;
 use nix::unistd::Pid;
-use oci_spec::runtime::Spec;
+use oci_spec::runtime::{LinuxNamespaceType, Spec};
+use tokio::runtime::Runtime;
 
 use super::{Container, ContainerStatus};
 use crate::error::{CreateContainerError, LibcontainerError, MissingSpecError};
+use crate::network::dev_change_net_namespace;
 use crate::notify_socket::NotifyListener;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::intel_rdt::delete_resctrl_subdirectory;
@@ -175,6 +177,8 @@ impl ContainerBuilderImpl {
                 },
             )?;
 
+        self.setup_network_device(&self.spec, init_pid)?;
+
         // if file to write the pid to is specified, write pid of the child
         if let Some(pid_file) = &self.pid_file {
             fs::write(pid_file, format!("{init_pid}")).map_err(|err| {
@@ -244,6 +248,64 @@ impl ContainerBuilderImpl {
                 "failed to cleanup container: {}",
                 errors.join(";")
             )));
+        }
+
+        Ok(())
+    }
+
+    /// setup_network_device sets up and initializes any defined network interface inside the container.
+    fn setup_network_device(&self, spec: &Spec, init_pid: Pid) -> Result<(), LibcontainerError> {
+        let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
+        // host network pods does not move network devices.
+        if let Some(namespaces) = linux.namespaces() {
+            if !namespaces
+                .iter()
+                .any(|ns| ns.typ() == LinuxNamespaceType::Network)
+            {
+                return Ok(());
+            }
+
+            // get the namespace defined by the config and fall back
+            // to the one created by youki to run the container process.
+            let ns_path = namespaces.iter().find_map(|ns| {
+                if ns.typ() == LinuxNamespaceType::Network {
+                    ns.path().clone()
+                } else {
+                    Some(Path::new("/proc").join(format!("{}/ns/net", init_pid.as_raw())))
+                }
+            });
+            // If moving any of the network devices fails, we return an error immediately.
+            // The runtime spec requires that the kernel handles moving back any devices
+            // that were successfully moved before the failure occurred.
+            // See: https://github.com/opencontainers/runtime-spec/blob/27cb0027fd92ef81eda1ea3a8153b8337f56d94a/config-linux.md#namespace-lifecycle-and-container-termination
+            if let Some(devices) = linux.net_devices() {
+                for (name, net_dev) in devices {
+                    let rt = Runtime::new().map_err(|err| {
+                        tracing::error!(error = ?err, "failed to create tokio runtime");
+                        LibcontainerError::Other(err.to_string())
+                    })?;
+                    if let Some(ns_path) = ns_path.clone() {
+                        let result = rt.block_on(async {
+                            dev_change_net_namespace(
+                                name.clone(),
+                                ns_path.to_string_lossy().into_owned(),
+                                net_dev.clone(),
+                            )
+                            .await
+                        });
+
+                        if let Err(err) = result {
+                            tracing::error!(
+                                ?err,
+                                "move netDevice {} to namespace {}",
+                                name,
+                                ns_path.to_string_lossy()
+                            );
+                            return Err(LibcontainerError::Other(err.to_string()));
+                        }
+                    }
+                }
+            }
         }
 
         Ok(())
