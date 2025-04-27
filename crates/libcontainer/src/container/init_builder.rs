@@ -201,6 +201,7 @@ impl InitContainerBuilder {
         }
 
         utils::validate_spec_for_new_user_ns(spec)?;
+        utils::validate_spec_for_net_devices(spec).map_err(LibcontainerError::NetDevicesError)?;
 
         Ok(())
     }
