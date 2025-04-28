@@ -1,8 +1,8 @@
 //! Contains Functionality of `features` container command
 use anyhow::Result;
 use libcontainer::oci_spec::runtime::{
-    version, ApparmorBuilder, CgroupBuilder, FeaturesBuilder, IDMapBuilder, IntelRdtBuilder,
-    LinuxFeatureBuilder, LinuxNamespaceType, MountExtensionsBuilder, SelinuxBuilder,
+    ApparmorBuilder, CgroupBuilder, FeaturesBuilder, IDMapBuilder, IntelRdtBuilder,
+    LinuxFeatureBuilder, LinuxNamespaceType, MountExtensionsBuilder, SelinuxBuilder, VERSION,
 };
 use libcontainer::syscall::linux::MountOption;
 use liboci_cli::Features;
@@ -91,7 +91,7 @@ pub fn features(_: Features) -> Result<()> {
         .unwrap();
 
     let features = FeaturesBuilder::default()
-        .oci_version_max(version())
+        .oci_version_max(VERSION)
         .oci_version_min(String::from("1.0.0"))
         .hooks(known_hooks())
         .mount_options(MountOption::known_options())
