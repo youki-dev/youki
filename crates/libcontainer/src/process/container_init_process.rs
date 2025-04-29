@@ -9,11 +9,12 @@ use nix::sched::CloneFlags;
 use nix::sys::stat::Mode;
 use nix::unistd::{self, close, dup2, setsid, Gid, Uid};
 use oci_spec::runtime::{
-    IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxSchedulerFlag, LinuxSchedulerPolicy,
-    Scheduler, Spec, User,
+    self, IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxSchedulerFlag,
+    LinuxSchedulerPolicy, Scheduler, Spec, User,
 };
 
 use super::args::{ContainerArgs, ContainerType};
+use crate::container::Container;
 use crate::error::MissingSpecError;
 use crate::namespaces::{NamespaceError, Namespaces};
 use crate::process::channel;
@@ -81,9 +82,438 @@ pub enum InitProcessError {
     SchedSetattr(String),
     #[error("failed to verify if current working directory is safe")]
     InvalidCwd(#[source] nix::Error),
+    #[error("missing linux section in spec")]
+    NoLinux,
+    #[error("missing process section in spec")]
+    NoProcess,
 }
 
 type Result<T> = std::result::Result<T, InitProcessError>;
+
+pub struct InitContext<'a> {
+    spec: &'a runtime::Spec,
+    linux: &'a runtime::Linux,
+    process: &'a runtime::Process,
+    rootfs: &'a Path,
+    envs: HashMap<String, String>,
+    ns: Namespaces,
+    syscall: Box<dyn Syscall>,
+    notify_listener: &'a notify_socket::NotifyListener,
+    hooks: Option<&'a runtime::Hooks>,
+    container: Option<&'a Container>,
+    rootfs_ro: bool,
+}
+
+impl<'a> InitContext<'a> {
+    pub fn builder(args: &'a ContainerArgs) -> Result<Self> {
+        let spec = args.spec.as_ref();
+        let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
+        let process = spec.process().as_ref().ok_or(MissingSpecError::Process)?;
+        let envs: HashMap<String, String> =
+            utils::parse_env(process.env().as_ref().unwrap_or(&vec![]));
+        let rootfs = spec.root().as_ref().ok_or(MissingSpecError::Root)?;
+        let rootfs_ro = rootfs.readonly().unwrap_or(false);
+
+        Ok(Self {
+            spec,
+            linux,
+            process,
+            rootfs: &args.rootfs,
+            envs,
+            rootfs_ro,
+            ns: Namespaces::try_from(linux.namespaces().as_ref())?,
+            syscall: args.syscall.create_syscall(),
+            notify_listener: &args.notify_listener,
+            hooks: spec.hooks().as_ref(),
+            container: args.container.as_ref(),
+        })
+    }
+}
+
+// Some variables are unused in the case where libseccomp feature is not enabled.
+#[allow(unused_variables)]
+pub fn container_init_process(
+    args: &ContainerArgs,
+    main_sender: &mut channel::MainSender,
+    init_receiver: &mut channel::InitReceiver,
+) -> Result<()> {
+    let mut ctx = InitContext::builder(args)?;
+
+    setsid().map_err(|err| {
+        tracing::error!(?err, "failed to setsid to create a session");
+        InitProcessError::NixOther(err)
+    })?;
+
+    set_io_priority(ctx.syscall.as_ref(), ctx.process.io_priority())?;
+
+    setup_scheduler(ctx.process.scheduler())?;
+
+    // set up tty if specified
+    if let Some(csocketfd) = args.console_socket {
+        tty::setup_console(csocketfd).map_err(|err| {
+            tracing::error!(?err, "failed to set up tty");
+            InitProcessError::Tty(err)
+        })?;
+    } else {
+        if let Some(stdin) = args.stdin {
+            dup2(stdin, 0).map_err(InitProcessError::NixOther)?;
+            close(stdin).map_err(InitProcessError::NixOther)?;
+        }
+        if let Some(stdout) = args.stdout {
+            dup2(stdout, 1).map_err(InitProcessError::NixOther)?;
+            close(stdout).map_err(InitProcessError::NixOther)?;
+        }
+        if let Some(stderr) = args.stderr {
+            dup2(stderr, 2).map_err(InitProcessError::NixOther)?;
+            close(stderr).map_err(InitProcessError::NixOther)?;
+        }
+    }
+
+    apply_rest_namespaces(&ctx.ns, ctx.spec, ctx.syscall.as_ref())?;
+
+    if let Some(true) = ctx.process.no_new_privileges() {
+        let _ = prctl::set_no_new_privileges(true);
+    }
+
+    if matches!(args.container_type, ContainerType::InitContainer) {
+        // create_container hook needs to be called after the namespace setup, but
+        // before pivot_root is called. This runs in the container namespaces.
+        if let Some(hooks) = ctx.hooks {
+            hooks::run_hooks(hooks.create_container().as_ref(), ctx.container, None).map_err(
+                |err| {
+                    tracing::error!(?err, "failed to run create container hooks");
+                    InitProcessError::Hooks(err)
+                },
+            )?;
+        }
+        let in_user_ns = utils::is_in_new_userns().map_err(InitProcessError::Io)?;
+        let bind_service = ctx.ns.get(LinuxNamespaceType::User)?.is_some() || in_user_ns;
+        let rootfs = RootFS::new();
+        rootfs
+            .prepare_rootfs(
+                ctx.spec,
+                ctx.rootfs,
+                bind_service,
+                ctx.ns.get(LinuxNamespaceType::Cgroup)?.is_some(),
+            )
+            .map_err(|err| {
+                tracing::error!(?err, "failed to prepare rootfs");
+                InitProcessError::RootFS(err)
+            })?;
+
+        // Entering into the rootfs jail. If mount namespace is specified, then
+        // we use pivot_root, but if we are on the host mount namespace, we will
+        // use simple chroot. Scary things will happen if you try to pivot_root
+        // in the host mount namespace...
+        do_pivot_root(ctx.syscall.as_ref(), &ctx.ns, args.no_pivot, ctx.rootfs)?;
+
+        // As we have changed the root mount, from here on
+        // logs are no longer visible in journalctl
+        // so make sure that you bubble up any errors
+        // and do not call unwrap() as any panics would not be correctly logged
+        rootfs
+            .adjust_root_mount_propagation(ctx.linux)
+            .map_err(|err| {
+                tracing::error!(?err, "failed to adjust root mount propagation");
+                InitProcessError::RootFS(err)
+            })?;
+
+        reopen_dev_null().map_err(|err| {
+            tracing::error!(?err, "failed to reopen /dev/null");
+            err
+        })?;
+
+        if let Some(kernel_params) = ctx.linux.sysctl() {
+            sysctl(kernel_params)?;
+        }
+    }
+
+    if let Some(profile) = ctx.process.apparmor_profile() {
+        apparmor::apply_profile(profile).map_err(|err| {
+            tracing::error!(?err, "failed to apply apparmor profile");
+            InitProcessError::AppArmor(err)
+        })?;
+    }
+
+    if ctx.rootfs_ro {
+        ctx.syscall
+            .mount(
+                None,
+                Path::new("/"),
+                None,
+                MsFlags::MS_RDONLY | MsFlags::MS_REMOUNT | MsFlags::MS_BIND,
+                None,
+            )
+            .map_err(|err| {
+                tracing::error!(?err, "failed to remount root `/` as readonly");
+                InitProcessError::SyscallOther(err)
+            })?;
+    }
+
+    if let Some(umask) = ctx.process.user().umask() {
+        match Mode::from_bits(umask) {
+            Some(mode) => {
+                nix::sys::stat::umask(mode);
+            }
+            None => {
+                return Err(InitProcessError::InvalidUmask(umask));
+            }
+        }
+    }
+
+    if let Some(paths) = ctx.linux.readonly_paths() {
+        // mount readonly path
+        for path in paths {
+            readonly_path(Path::new(path), ctx.syscall.as_ref()).map_err(|err| {
+                tracing::error!(?err, ?path, "failed to set readonly path");
+                err
+            })?;
+        }
+    }
+
+    if let Some(paths) = ctx.linux.masked_paths() {
+        // mount masked path
+        for path in paths {
+            masked_path(
+                Path::new(path),
+                ctx.linux.mount_label(),
+                ctx.syscall.as_ref(),
+            )
+            .map_err(|err| {
+                tracing::error!(?err, ?path, "failed to set masked path");
+                err
+            })?;
+        }
+    }
+
+    let cwd = format!("{}", ctx.process.cwd().display());
+    let do_chdir = if cwd.is_empty() {
+        false
+    } else {
+        // This chdir must run before setting up the user.
+        // This may allow the user running youki to access directories
+        // that the container user cannot access.
+        match unistd::chdir(ctx.process.cwd()) {
+            std::result::Result::Ok(_) => false,
+            Err(nix::Error::EPERM) => true,
+            Err(e) => {
+                tracing::error!(?e, "failed to chdir");
+                return Err(InitProcessError::NixOther(e));
+            }
+        }
+    };
+
+    set_supplementary_gids(
+        ctx.process.user(),
+        &args.user_ns_config,
+        ctx.syscall.as_ref(),
+    )
+    .map_err(|err| {
+        tracing::error!(?err, "failed to set supplementary gids");
+        err
+    })?;
+
+    ctx.syscall
+        .set_id(
+            Uid::from_raw(ctx.process.user().uid()),
+            Gid::from_raw(ctx.process.user().gid()),
+        )
+        .map_err(|err| {
+            let uid = ctx.process.user().uid();
+            let gid = ctx.process.user().gid();
+            tracing::error!(?err, ?uid, ?gid, "failed to set uid and gid");
+            InitProcessError::SyscallOther(err)
+        })?;
+
+    // Take care of LISTEN_FDS used for systemd-active-socket. If the value is
+    // not 0, then we have to preserve those fds as well, and set up the correct
+    // environment variables.
+    let preserve_fds: i32 = match env::var("LISTEN_FDS") {
+        std::result::Result::Ok(listen_fds_str) => {
+            let listen_fds = match listen_fds_str.parse::<i32>() {
+                std::result::Result::Ok(v) => v,
+                Err(error) => {
+                    tracing::warn!(
+                        "LISTEN_FDS entered is not a fd. Ignore the value. {:?}",
+                        error
+                    );
+
+                    0
+                }
+            };
+
+            // The LISTEN_FDS will have to be passed to container init process.
+            // The LISTEN_PID will be set to PID 1. Based on the spec, if
+            // LISTEN_FDS is 0, the variable should be unset, so we just ignore
+            // it here, if it is 0.
+            if listen_fds > 0 {
+                ctx.envs
+                    .insert("LISTEN_FDS".to_owned(), listen_fds.to_string());
+                ctx.envs.insert("LISTEN_PID".to_owned(), 1.to_string());
+            }
+
+            args.preserve_fds + listen_fds
+        }
+        Err(env::VarError::NotPresent) => args.preserve_fds,
+        Err(env::VarError::NotUnicode(value)) => {
+            tracing::warn!(
+                "LISTEN_FDS entered is malformed: {:?}. Ignore the value.",
+                &value
+            );
+            args.preserve_fds
+        }
+    };
+
+    // Cleanup any extra file descriptors, so the new container process will not
+    // leak a file descriptor from before execve gets executed. The first 3 fd will
+    // stay open: stdio, stdout, and stderr. We would further preserve the next
+    // "preserve_fds" number of fds. Set the rest of fd with CLOEXEC flag, so they
+    // will be closed after execve into the container payload. We can't close the
+    // fds immediately since we at least still need it for the pipe used to wait on
+    // starting the container.
+    //
+    // Note: this should happen very late, in order to avoid accidentally leaking FDs
+    // Please refer to https://github.com/opencontainers/runc/security/advisories/GHSA-xr7r-f8xq-vfvv for more details.
+    ctx.syscall.close_range(preserve_fds).map_err(|err| {
+        tracing::error!(?err, "failed to cleanup extra fds");
+        InitProcessError::SyscallOther(err)
+    })?;
+
+    // Without no new privileges, seccomp is a privileged operation. We have to
+    // do this before dropping capabilities. Otherwise, we should do it later,
+    // as close to exec as possible.
+    #[cfg(feature = "libseccomp")]
+    if let Some(seccomp) = ctx.linux.seccomp() {
+        if ctx.process.no_new_privileges().is_none() {
+            let notify_fd = seccomp::initialize_seccomp(seccomp).map_err(|err| {
+                tracing::error!(?err, "failed to initialize seccomp");
+                err
+            })?;
+            sync_seccomp(notify_fd, main_sender, init_receiver).map_err(|err| {
+                tracing::error!(?err, "failed to sync seccomp");
+                err
+            })?;
+        }
+    }
+    #[cfg(not(feature = "libseccomp"))]
+    if proc.no_new_privileges().is_none() {
+        tracing::warn!("seccomp not available, unable to enforce no_new_privileges!")
+    }
+
+    capabilities::reset_effective(ctx.syscall.as_ref()).map_err(|err| {
+        tracing::error!(?err, "failed to reset effective capabilities");
+        InitProcessError::SyscallOther(err)
+    })?;
+    if let Some(caps) = ctx.process.capabilities() {
+        capabilities::drop_privileges(caps, ctx.syscall.as_ref()).map_err(|err| {
+            tracing::error!(?err, "failed to drop capabilities");
+            InitProcessError::SyscallOther(err)
+        })?;
+    }
+
+    // Change directory to process.cwd if process.cwd is not empty
+    if do_chdir {
+        unistd::chdir(ctx.process.cwd()).map_err(|err| {
+            let cwd = ctx.process.cwd();
+            tracing::error!(?err, ?cwd, "failed to chdir to cwd");
+            InitProcessError::NixOther(err)
+        })?;
+    }
+
+    // Ensure that the current working directory is actually inside the container.
+    verify_cwd().map_err(|err| {
+        tracing::error!(?err, "failed to verify cwd");
+        err
+    })?;
+
+    // Initialize seccomp profile right before we are ready to execute the
+    // payload so as few syscalls will happen between here and payload exec. The
+    // notify socket will still need network related syscalls.
+    #[cfg(feature = "libseccomp")]
+    if let Some(seccomp) = ctx.linux.seccomp() {
+        if ctx.process.no_new_privileges().is_some() {
+            let notify_fd = seccomp::initialize_seccomp(seccomp).map_err(|err| {
+                tracing::error!(?err, "failed to initialize seccomp");
+                err
+            })?;
+            sync_seccomp(notify_fd, main_sender, init_receiver).map_err(|err| {
+                tracing::error!(?err, "failed to sync seccomp");
+                err
+            })?;
+        }
+    }
+    #[cfg(not(feature = "libseccomp"))]
+    if proc.no_new_privileges().is_some() {
+        tracing::warn!("seccomp not available, unable to set seccomp privileges!")
+    }
+
+    // add HOME into envs if not exists
+    if !ctx.envs.contains_key("HOME") {
+        if let Some(dir_home) = utils::get_user_home(ctx.process.user().uid()) {
+            ctx.envs
+                .insert("HOME".to_owned(), dir_home.to_string_lossy().to_string());
+        }
+    }
+
+    args.executor.validate(ctx.spec)?;
+    args.executor.setup_envs(ctx.envs)?;
+
+    // Notify main process that the init process is ready to execute the
+    // payload.  Note, because we are already inside the pid namespace, the pid
+    // outside the pid namespace should be recorded by the intermediate process
+    // already.
+    main_sender.init_ready().map_err(|err| {
+        tracing::error!(
+            ?err,
+            "failed to notify main process that init process is ready"
+        );
+        InitProcessError::Channel(err)
+    })?;
+    main_sender.close().map_err(|err| {
+        tracing::error!(?err, "failed to close down main sender in init process");
+        InitProcessError::Channel(err)
+    })?;
+
+    // listing on the notify socket for container start command
+    ctx.notify_listener
+        .wait_for_container_start()
+        .map_err(|err| {
+            tracing::error!(?err, "failed to wait for container start");
+            err
+        })?;
+    ctx.notify_listener.close().map_err(|err| {
+        tracing::error!(?err, "failed to close notify socket");
+        err
+    })?;
+
+    // create_container hook needs to be called after the namespace setup, but
+    // before pivot_root is called. This runs in the container namespaces.
+    if matches!(args.container_type, ContainerType::InitContainer) {
+        if let Some(hooks) = ctx.hooks {
+            hooks::run_hooks(hooks.start_container().as_ref(), ctx.container, None).map_err(
+                |err| {
+                    tracing::error!(?err, "failed to run start container hooks");
+                    err
+                },
+            )?;
+        }
+    }
+
+    if ctx.process.args().is_none() {
+        tracing::error!("on non-Windows, at least one process arg entry is required");
+        Err(MissingSpecError::Args)?;
+    }
+
+    args.executor.exec(ctx.spec).map_err(|err| {
+        tracing::error!(?err, "failed to execute payload");
+        err
+    })?;
+
+    // Once the executor is executed without error, it should not return. For
+    // example, the default executor is expected to call `exec` and replace the
+    // current process.
+    unreachable!("the executor should not return if it is successful.");
+}
 
 fn sysctl(kernel_params: &HashMap<String, String>) -> Result<()> {
     let sys = PathBuf::from("/proc/sys");
@@ -338,385 +768,6 @@ fn do_pivot_root(
             .chroot(rootfs_path)
             .map_err(|err| handle_error(err, "failed to chroot")),
     }
-}
-
-// Some variables are unused in the case where libseccomp feature is not enabled.
-#[allow(unused_variables)]
-pub fn container_init_process(
-    args: &ContainerArgs,
-    main_sender: &mut channel::MainSender,
-    init_receiver: &mut channel::InitReceiver,
-) -> Result<()> {
-    let syscall = args.syscall.create_syscall();
-    let spec = &args.spec;
-    let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
-    let proc = spec.process().as_ref().ok_or(MissingSpecError::Process)?;
-    let mut envs: HashMap<String, String> =
-        utils::parse_env(proc.env().as_ref().unwrap_or(&vec![]));
-    let rootfs_path = &args.rootfs;
-    let hooks = spec.hooks().as_ref();
-    let container = args.container.as_ref();
-    let namespaces = Namespaces::try_from(linux.namespaces().as_ref())?;
-    let notify_listener = &args.notify_listener;
-
-    setsid().map_err(|err| {
-        tracing::error!(?err, "failed to setsid to create a session");
-        InitProcessError::NixOther(err)
-    })?;
-
-    set_io_priority(syscall.as_ref(), proc.io_priority())?;
-
-    setup_scheduler(proc.scheduler())?;
-
-    // set up tty if specified
-    if let Some(csocketfd) = args.console_socket {
-        tty::setup_console(csocketfd).map_err(|err| {
-            tracing::error!(?err, "failed to set up tty");
-            InitProcessError::Tty(err)
-        })?;
-    } else {
-        if let Some(stdin) = args.stdin {
-            dup2(stdin, 0).map_err(InitProcessError::NixOther)?;
-            close(stdin).map_err(InitProcessError::NixOther)?;
-        }
-        if let Some(stdout) = args.stdout {
-            dup2(stdout, 1).map_err(InitProcessError::NixOther)?;
-            close(stdout).map_err(InitProcessError::NixOther)?;
-        }
-        if let Some(stderr) = args.stderr {
-            dup2(stderr, 2).map_err(InitProcessError::NixOther)?;
-            close(stderr).map_err(InitProcessError::NixOther)?;
-        }
-    }
-
-    apply_rest_namespaces(&namespaces, spec, syscall.as_ref())?;
-
-    if let Some(true) = proc.no_new_privileges() {
-        let _ = prctl::set_no_new_privileges(true);
-    }
-
-    if matches!(args.container_type, ContainerType::InitContainer) {
-        // create_container hook needs to be called after the namespace setup, but
-        // before pivot_root is called. This runs in the container namespaces.
-        if let Some(hooks) = hooks {
-            hooks::run_hooks(hooks.create_container().as_ref(), container, None).map_err(
-                |err| {
-                    tracing::error!(?err, "failed to run create container hooks");
-                    InitProcessError::Hooks(err)
-                },
-            )?;
-        }
-
-        let in_user_ns = utils::is_in_new_userns().map_err(InitProcessError::Io)?;
-        let bind_service = namespaces.get(LinuxNamespaceType::User)?.is_some() || in_user_ns;
-        let rootfs = RootFS::new();
-        rootfs
-            .prepare_rootfs(
-                spec,
-                rootfs_path,
-                bind_service,
-                namespaces.get(LinuxNamespaceType::Cgroup)?.is_some(),
-            )
-            .map_err(|err| {
-                tracing::error!(?err, "failed to prepare rootfs");
-                InitProcessError::RootFS(err)
-            })?;
-
-        // Entering into the rootfs jail. If mount namespace is specified, then
-        // we use pivot_root, but if we are on the host mount namespace, we will
-        // use simple chroot. Scary things will happen if you try to pivot_root
-        // in the host mount namespace...
-        do_pivot_root(syscall.as_ref(), &namespaces, args.no_pivot, rootfs_path)?;
-
-        // As we have changed the root mount, from here on
-        // logs are no longer visible in journalctl
-        // so make sure that you bubble up any errors
-        // and do not call unwrap() as any panics would not be correctly logged
-
-        rootfs.adjust_root_mount_propagation(linux).map_err(|err| {
-            tracing::error!(?err, "failed to adjust root mount propagation");
-            InitProcessError::RootFS(err)
-        })?;
-
-        reopen_dev_null().map_err(|err| {
-            tracing::error!(?err, "failed to reopen /dev/null");
-            err
-        })?;
-
-        if let Some(kernel_params) = linux.sysctl() {
-            sysctl(kernel_params)?;
-        }
-    }
-
-    if let Some(profile) = proc.apparmor_profile() {
-        apparmor::apply_profile(profile).map_err(|err| {
-            tracing::error!(?err, "failed to apply apparmor profile");
-            InitProcessError::AppArmor(err)
-        })?;
-    }
-
-    if let Some(true) = spec.root().as_ref().map(|r| r.readonly().unwrap_or(false)) {
-        syscall
-            .mount(
-                None,
-                Path::new("/"),
-                None,
-                MsFlags::MS_RDONLY | MsFlags::MS_REMOUNT | MsFlags::MS_BIND,
-                None,
-            )
-            .map_err(|err| {
-                tracing::error!(?err, "failed to remount root `/` as readonly");
-                InitProcessError::SyscallOther(err)
-            })?;
-    }
-
-    if let Some(umask) = proc.user().umask() {
-        match Mode::from_bits(umask) {
-            Some(mode) => {
-                nix::sys::stat::umask(mode);
-            }
-            None => {
-                return Err(InitProcessError::InvalidUmask(umask));
-            }
-        }
-    }
-
-    if let Some(paths) = linux.readonly_paths() {
-        // mount readonly path
-        for path in paths {
-            readonly_path(Path::new(path), syscall.as_ref()).map_err(|err| {
-                tracing::error!(?err, ?path, "failed to set readonly path");
-                err
-            })?;
-        }
-    }
-
-    if let Some(paths) = linux.masked_paths() {
-        // mount masked path
-        for path in paths {
-            masked_path(Path::new(path), linux.mount_label(), syscall.as_ref()).map_err(|err| {
-                tracing::error!(?err, ?path, "failed to set masked path");
-                err
-            })?;
-        }
-    }
-
-    let cwd = format!("{}", proc.cwd().display());
-    let do_chdir = if cwd.is_empty() {
-        false
-    } else {
-        // This chdir must run before setting up the user.
-        // This may allow the user running youki to access directories
-        // that the container user cannot access.
-        match unistd::chdir(proc.cwd()) {
-            std::result::Result::Ok(_) => false,
-            Err(nix::Error::EPERM) => true,
-            Err(e) => {
-                tracing::error!(?e, "failed to chdir");
-                return Err(InitProcessError::NixOther(e));
-            }
-        }
-    };
-
-    set_supplementary_gids(proc.user(), &args.user_ns_config, syscall.as_ref()).map_err(|err| {
-        tracing::error!(?err, "failed to set supplementary gids");
-        err
-    })?;
-
-    syscall
-        .set_id(
-            Uid::from_raw(proc.user().uid()),
-            Gid::from_raw(proc.user().gid()),
-        )
-        .map_err(|err| {
-            let uid = proc.user().uid();
-            let gid = proc.user().gid();
-            tracing::error!(?err, ?uid, ?gid, "failed to set uid and gid");
-            InitProcessError::SyscallOther(err)
-        })?;
-
-    // Take care of LISTEN_FDS used for systemd-active-socket. If the value is
-    // not 0, then we have to preserve those fds as well, and set up the correct
-    // environment variables.
-    let preserve_fds: i32 = match env::var("LISTEN_FDS") {
-        std::result::Result::Ok(listen_fds_str) => {
-            let listen_fds = match listen_fds_str.parse::<i32>() {
-                std::result::Result::Ok(v) => v,
-                Err(error) => {
-                    tracing::warn!(
-                        "LISTEN_FDS entered is not a fd. Ignore the value. {:?}",
-                        error
-                    );
-
-                    0
-                }
-            };
-
-            // The LISTEN_FDS will have to be passed to container init process.
-            // The LISTEN_PID will be set to PID 1. Based on the spec, if
-            // LISTEN_FDS is 0, the variable should be unset, so we just ignore
-            // it here, if it is 0.
-            if listen_fds > 0 {
-                envs.insert("LISTEN_FDS".to_owned(), listen_fds.to_string());
-                envs.insert("LISTEN_PID".to_owned(), 1.to_string());
-            }
-
-            args.preserve_fds + listen_fds
-        }
-        Err(env::VarError::NotPresent) => args.preserve_fds,
-        Err(env::VarError::NotUnicode(value)) => {
-            tracing::warn!(
-                "LISTEN_FDS entered is malformed: {:?}. Ignore the value.",
-                &value
-            );
-            args.preserve_fds
-        }
-    };
-
-    // Cleanup any extra file descriptors, so the new container process will not
-    // leak a file descriptor from before execve gets executed. The first 3 fd will
-    // stay open: stdio, stdout, and stderr. We would further preserve the next
-    // "preserve_fds" number of fds. Set the rest of fd with CLOEXEC flag, so they
-    // will be closed after execve into the container payload. We can't close the
-    // fds immediately since we at least still need it for the pipe used to wait on
-    // starting the container.
-    //
-    // Note: this should happen very late, in order to avoid accidentally leaking FDs
-    // Please refer to https://github.com/opencontainers/runc/security/advisories/GHSA-xr7r-f8xq-vfvv for more details.
-    syscall.close_range(preserve_fds).map_err(|err| {
-        tracing::error!(?err, "failed to cleanup extra fds");
-        InitProcessError::SyscallOther(err)
-    })?;
-
-    // Without no new privileges, seccomp is a privileged operation. We have to
-    // do this before dropping capabilities. Otherwise, we should do it later,
-    // as close to exec as possible.
-    #[cfg(feature = "libseccomp")]
-    if let Some(seccomp) = linux.seccomp() {
-        if proc.no_new_privileges().is_none() {
-            let notify_fd = seccomp::initialize_seccomp(seccomp).map_err(|err| {
-                tracing::error!(?err, "failed to initialize seccomp");
-                err
-            })?;
-            sync_seccomp(notify_fd, main_sender, init_receiver).map_err(|err| {
-                tracing::error!(?err, "failed to sync seccomp");
-                err
-            })?;
-        }
-    }
-    #[cfg(not(feature = "libseccomp"))]
-    if proc.no_new_privileges().is_none() {
-        tracing::warn!("seccomp not available, unable to enforce no_new_privileges!")
-    }
-
-    capabilities::reset_effective(syscall.as_ref()).map_err(|err| {
-        tracing::error!(?err, "failed to reset effective capabilities");
-        InitProcessError::SyscallOther(err)
-    })?;
-    if let Some(caps) = proc.capabilities() {
-        capabilities::drop_privileges(caps, syscall.as_ref()).map_err(|err| {
-            tracing::error!(?err, "failed to drop capabilities");
-            InitProcessError::SyscallOther(err)
-        })?;
-    }
-
-    // Change directory to process.cwd if process.cwd is not empty
-    if do_chdir {
-        unistd::chdir(proc.cwd()).map_err(|err| {
-            let cwd = proc.cwd();
-            tracing::error!(?err, ?cwd, "failed to chdir to cwd");
-            InitProcessError::NixOther(err)
-        })?;
-    }
-
-    // Ensure that the current working directory is actually inside the container.
-    verify_cwd().map_err(|err| {
-        tracing::error!(?err, "failed to verify cwd");
-        err
-    })?;
-
-    // Initialize seccomp profile right before we are ready to execute the
-    // payload so as few syscalls will happen between here and payload exec. The
-    // notify socket will still need network related syscalls.
-    #[cfg(feature = "libseccomp")]
-    if let Some(seccomp) = linux.seccomp() {
-        if proc.no_new_privileges().is_some() {
-            let notify_fd = seccomp::initialize_seccomp(seccomp).map_err(|err| {
-                tracing::error!(?err, "failed to initialize seccomp");
-                err
-            })?;
-            sync_seccomp(notify_fd, main_sender, init_receiver).map_err(|err| {
-                tracing::error!(?err, "failed to sync seccomp");
-                err
-            })?;
-        }
-    }
-    #[cfg(not(feature = "libseccomp"))]
-    if proc.no_new_privileges().is_some() {
-        tracing::warn!("seccomp not available, unable to set seccomp privileges!")
-    }
-
-    // add HOME into envs if not exists
-    if !envs.contains_key("HOME") {
-        if let Some(dir_home) = utils::get_user_home(proc.user().uid()) {
-            envs.insert("HOME".to_owned(), dir_home.to_string_lossy().to_string());
-        }
-    }
-
-    args.executor.validate(spec)?;
-    args.executor.setup_envs(envs)?;
-
-    // Notify main process that the init process is ready to execute the
-    // payload.  Note, because we are already inside the pid namespace, the pid
-    // outside the pid namespace should be recorded by the intermediate process
-    // already.
-    main_sender.init_ready().map_err(|err| {
-        tracing::error!(
-            ?err,
-            "failed to notify main process that init process is ready"
-        );
-        InitProcessError::Channel(err)
-    })?;
-    main_sender.close().map_err(|err| {
-        tracing::error!(?err, "failed to close down main sender in init process");
-        InitProcessError::Channel(err)
-    })?;
-
-    // listing on the notify socket for container start command
-    notify_listener.wait_for_container_start().map_err(|err| {
-        tracing::error!(?err, "failed to wait for container start");
-        err
-    })?;
-    notify_listener.close().map_err(|err| {
-        tracing::error!(?err, "failed to close notify socket");
-        err
-    })?;
-
-    // create_container hook needs to be called after the namespace setup, but
-    // before pivot_root is called. This runs in the container namespaces.
-    if matches!(args.container_type, ContainerType::InitContainer) {
-        if let Some(hooks) = hooks {
-            hooks::run_hooks(hooks.start_container().as_ref(), container, None).map_err(|err| {
-                tracing::error!(?err, "failed to run start container hooks");
-                err
-            })?;
-        }
-    }
-
-    if proc.args().is_none() {
-        tracing::error!("on non-Windows, at least one process arg entry is required");
-        Err(MissingSpecError::Args)?;
-    }
-
-    args.executor.exec(spec).map_err(|err| {
-        tracing::error!(?err, "failed to execute payload");
-        err
-    })?;
-
-    // Once the executor is executed without error, it should not return. For
-    // example, the default executor is expected to call `exec` and replace the
-    // current process.
-    unreachable!("the executor should not return if it is successful.");
 }
 
 // Before 3.19 it was possible for an unprivileged user to enter an user namespace,
