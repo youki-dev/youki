@@ -1,3 +1,5 @@
+use std::os::raw::c_uchar;
+use nix::errno::Errno::ENOSYS;
 use crate::instruction::Instruction;
 use crate::instruction::*;
 
@@ -8,16 +10,23 @@ pub enum Arch {
     AArch64,
 }
 
-pub fn gen_validate(arc: &Arch) -> Vec<Instruction> {
+pub fn gen_validate(arc: &Arch, jump_num: usize) -> Vec<Instruction> {
     let arch = match arc {
         Arch::X86 => AUDIT_ARCH_X86_64,
         Arch::AArch64 => AUDIT_ARCH_AARCH64,
     };
 
     vec![
+        //  load offset architecture
         Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, seccomp_data_arch_offset() as u32),
-        Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 0, arch),
-        // Instruction::stmt(BPF_RET | BPF_K, def_action),
+        // if not match architecture, jump to default action
+        Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, (jump_num + 3) as c_uchar, arch),
+        // load offset system call number
+        Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, seccomp_data_nr_offset() as u32),
+        // check system call is not using 32bit ABI
+        // see https://github.com/elastic/go-seccomp-bpf/blob/main/filter.go#L231
+        Instruction::jump(BPF_JMP | BPF_JGE | BPF_K, 0, 1, X32_SYSCALL_BIT),
+        Instruction::stmt(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | ENOSYS as u32),
     ]
 }
 
