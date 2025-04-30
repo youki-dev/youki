@@ -638,7 +638,7 @@ mod tests {
     use crate::syscall::test::{MountArgs, TestHelperSyscall};
 
     #[test]
-    fn test_mount_to_container() -> Result<()> {
+    fn test_mount_into_container() -> Result<()> {
         let tmp_dir = tempfile::tempdir()?;
         {
             let m = Mount::new();
