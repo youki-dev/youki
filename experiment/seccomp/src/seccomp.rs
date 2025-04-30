@@ -306,17 +306,18 @@ pub struct InstructionData {
 
 impl From<InstructionData> for Vec<Instruction> {
     fn from(inst_data: InstructionData) -> Self {
-        // let mut bpf_prog = gen_validate(&inst_data.arc);
-
         let mut bpf_prog = vec![];
-
-        let jump_num = inst_data.rule.syscall.len();
+        let mut jump_num = inst_data.rule.syscall.len();
         for syscall in &inst_data.rule.syscall {
             bpf_prog.append(&mut Rule::to_instruction(&inst_data.arc, &inst_data.rule, jump_num, syscall));
+            jump_num -= 1;
         }
-        bpf_prog.append(&mut vec![Instruction::stmt(BPF_RET | BPF_K, inst_data.def_action)]);
-        bpf_prog.append(&mut vec![Instruction::stmt(BPF_RET | BPF_K, inst_data.rule.action)]);
-        bpf_prog
+
+        let mut all_bpf_prog = gen_validate(&inst_data.arc, bpf_prog.len());
+        all_bpf_prog.append(&mut bpf_prog);
+        all_bpf_prog.append(&mut vec![Instruction::stmt(BPF_RET | BPF_K, inst_data.def_action)]);
+        all_bpf_prog.append(&mut vec![Instruction::stmt(BPF_RET | BPF_K, inst_data.rule.action)]);
+        all_bpf_prog
     }
 }
 
@@ -421,15 +422,12 @@ impl Rule {
 
     pub fn to_instruction(arch: &Arch, rule: &Rule, jump_num: usize, syscall: &String) -> Vec<Instruction> {
         let mut bpf_prog = vec![];
-        let mut jump_cnt = jump_num.clone();
-        bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, 0)]);
-        bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, jump_cnt as c_uchar,
+        bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, jump_num as c_uchar, 0,
                                                     get_syscall_number(arch, syscall).unwrap() as c_uint)]);
         if rule.arg_cnt.is_some() {
             bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, seccomp_data_args_offset().into())]);
             bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, rule.args.unwrap().arg0 as c_uint)]);
         }
-        jump_cnt--
         bpf_prog
     }
 }
