@@ -7,8 +7,8 @@ use procfs::process::Process;
 
 use super::args::{ContainerArgs, ContainerType};
 use super::channel::{IntermediateReceiver, MainSender};
-use super::container_init_process::container_init_process;
 use super::fork::CloneCb;
+use super::init::process as init_process;
 use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
 use crate::process::{channel, fork};
@@ -118,7 +118,7 @@ pub fn container_intermediate_process(
                 tracing::error!(?err, "failed to close sender in the intermediate process");
                 return -1;
             }
-            match container_init_process(args, main_sender, init_receiver) {
+            match init_process::container_init_process(args, main_sender, init_receiver) {
                 Ok(_) => 0,
                 Err(e) => {
                     tracing::error!("failed to initialize container process: {e}");

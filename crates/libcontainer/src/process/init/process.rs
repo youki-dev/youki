@@ -9,126 +9,23 @@ use nix::sched::CloneFlags;
 use nix::sys::stat::Mode;
 use nix::unistd::{self, close, dup2, setsid, Gid, Uid};
 use oci_spec::runtime::{
-    self, IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxSchedulerFlag,
-    LinuxSchedulerPolicy, Scheduler, Spec, User,
+    IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxSchedulerFlag, LinuxSchedulerPolicy,
+    Scheduler, Spec, User,
 };
 
-use super::args::{ContainerArgs, ContainerType};
-use crate::container::Container;
+use super::context::InitContext;
+use super::error::InitProcessError;
+use super::Result;
 use crate::error::MissingSpecError;
-use crate::namespaces::{NamespaceError, Namespaces};
+use crate::namespaces::Namespaces;
+use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::channel;
 use crate::rootfs::RootFS;
 #[cfg(feature = "libseccomp")]
 use crate::seccomp;
 use crate::syscall::{Syscall, SyscallError};
 use crate::user_ns::UserNamespaceConfig;
-use crate::{apparmor, capabilities, hooks, notify_socket, rootfs, tty, utils, workload};
-
-#[derive(Debug, thiserror::Error)]
-pub enum InitProcessError {
-    #[error("failed to set sysctl")]
-    Sysctl(#[source] std::io::Error),
-    #[error("failed to mount path as readonly")]
-    MountPathReadonly(#[source] SyscallError),
-    #[error("failed to mount path as masked")]
-    MountPathMasked(#[source] SyscallError),
-    #[error(transparent)]
-    Namespaces(#[from] NamespaceError),
-    #[error("failed to set hostname")]
-    SetHostname(#[source] SyscallError),
-    #[error("failed to set domainname")]
-    SetDomainname(#[source] SyscallError),
-    #[error("failed to reopen /dev/null")]
-    ReopenDevNull(#[source] std::io::Error),
-    #[error("failed to unix syscall")]
-    NixOther(#[source] nix::Error),
-    #[error(transparent)]
-    MissingSpec(#[from] crate::error::MissingSpecError),
-    #[error("failed to setup tty")]
-    Tty(#[source] tty::TTYError),
-    #[error("failed to run hooks")]
-    Hooks(#[from] hooks::HookError),
-    #[error("failed to prepare rootfs")]
-    RootFS(#[source] rootfs::RootfsError),
-    #[error("failed syscall")]
-    SyscallOther(#[source] SyscallError),
-    #[error("failed apparmor")]
-    AppArmor(#[source] apparmor::AppArmorError),
-    #[error("invalid umask")]
-    InvalidUmask(u32),
-    #[error(transparent)]
-    #[cfg(feature = "libseccomp")]
-    Seccomp(#[from] seccomp::SeccompError),
-    #[error("invalid executable: {0}")]
-    InvalidExecutable(String),
-    #[error("io error")]
-    Io(#[source] std::io::Error),
-    #[error(transparent)]
-    Channel(#[from] channel::ChannelError),
-    #[error("setgroup is disabled")]
-    SetGroupDisabled,
-    #[error(transparent)]
-    NotifyListener(#[from] notify_socket::NotifyListenerError),
-    #[error(transparent)]
-    Workload(#[from] workload::ExecutorError),
-    #[error(transparent)]
-    WorkloadValidation(#[from] workload::ExecutorValidationError),
-    #[error(transparent)]
-    WorkloadSetEnvs(#[from] workload::ExecutorSetEnvsError),
-    #[error("invalid io priority class: {0}")]
-    IoPriorityClass(String),
-    #[error("call exec sched_setattr error: {0}")]
-    SchedSetattr(String),
-    #[error("failed to verify if current working directory is safe")]
-    InvalidCwd(#[source] nix::Error),
-    #[error("missing linux section in spec")]
-    NoLinux,
-    #[error("missing process section in spec")]
-    NoProcess,
-}
-
-type Result<T> = std::result::Result<T, InitProcessError>;
-
-pub struct InitContext<'a> {
-    spec: &'a runtime::Spec,
-    linux: &'a runtime::Linux,
-    process: &'a runtime::Process,
-    rootfs: &'a Path,
-    envs: HashMap<String, String>,
-    ns: Namespaces,
-    syscall: Box<dyn Syscall>,
-    notify_listener: &'a notify_socket::NotifyListener,
-    hooks: Option<&'a runtime::Hooks>,
-    container: Option<&'a Container>,
-    rootfs_ro: bool,
-}
-
-impl<'a> InitContext<'a> {
-    pub fn builder(args: &'a ContainerArgs) -> Result<Self> {
-        let spec = args.spec.as_ref();
-        let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
-        let process = spec.process().as_ref().ok_or(MissingSpecError::Process)?;
-        let envs: HashMap<String, String> =
-            utils::parse_env(process.env().as_ref().unwrap_or(&vec![]));
-        let rootfs = spec.root().as_ref().ok_or(MissingSpecError::Root)?;
-        let rootfs_ro = rootfs.readonly().unwrap_or(false);
-
-        Ok(Self {
-            spec,
-            linux,
-            process,
-            rootfs: &args.rootfs,
-            envs,
-            rootfs_ro,
-            ns: Namespaces::try_from(linux.namespaces().as_ref())?,
-            syscall: args.syscall.create_syscall(),
-            notify_listener: &args.notify_listener,
-            hooks: spec.hooks().as_ref(),
-            container: args.container.as_ref(),
-        })
-    }
-}
+use crate::{apparmor, capabilities, hooks, tty, utils};
 
 // Some variables are unused in the case where libseccomp feature is not enabled.
 #[allow(unused_variables)]
@@ -396,7 +293,7 @@ pub fn container_init_process(
         }
     }
     #[cfg(not(feature = "libseccomp"))]
-    if proc.no_new_privileges().is_none() {
+    if ctx.process.no_new_privileges().is_none() {
         tracing::warn!("seccomp not available, unable to enforce no_new_privileges!")
     }
 
@@ -443,7 +340,7 @@ pub fn container_init_process(
         }
     }
     #[cfg(not(feature = "libseccomp"))]
-    if proc.no_new_privileges().is_some() {
+    if ctx.process.no_new_privileges().is_some() {
         tracing::warn!("seccomp not available, unable to set seccomp privileges!")
     }
 
