@@ -447,6 +447,12 @@ impl TenantContainerBuilder {
                 process_builder = process_builder.cwd(cwd);
             }
 
+            if let Some(process) = spec.process() {
+                if let Some(cpu_affinity) = process.exec_cpu_affinity() {
+                    process_builder = process_builder.exec_cpu_affinity(cpu_affinity.clone());
+                }
+            }
+
             if let Some(no_new_priv) = self.get_no_new_privileges() {
                 process_builder = process_builder.no_new_privileges(no_new_priv);
             }
