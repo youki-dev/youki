@@ -50,7 +50,6 @@ pub const SECCOMP_RET_USER_NOTIF: u32 = 0x7fc00000;
 pub const AUDIT_ARCH_X86_64: u32 = 62 | 0x8000_0000 | 0x4000_0000;
 pub const AUDIT_ARCH_AARCH64: u32 = 183 | 0x8000_0000 | 0x4000_0000;
 
-// Inspired from go-seccomp-bpf
 // See /arch/x86/include/uapi/asm/unistd.h
 pub const X32_SYSCALL_BIT: u32 = 0x4000_0000;
 
@@ -83,6 +82,10 @@ struct SeccompData {
     arch: u32,
     instruction_pointer: u64,
     args: [u64; 6],
+}
+
+pub const fn seccomp_data_nr_offset() -> u8 {
+    offset_of!(SeccompData, nr) as u8
 }
 
 pub const fn seccomp_data_arch_offset() -> u8 {
