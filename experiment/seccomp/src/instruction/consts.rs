@@ -30,6 +30,7 @@ pub const BPF_JA: u16 = 0x00;
 pub const BPF_JEQ: u16 = 0x10;
 pub const BPF_JGT: u16 = 0x20;
 pub const BPF_JGE: u16 = 0x30;
+pub const BPF_JSET: u16 = 0x40;
 // Test against the value in the K register.
 pub const BPF_K: u16 = 0x00;
 
@@ -56,7 +57,7 @@ pub const X32_SYSCALL_BIT: u32 = 0x4000_0000;
 
 // Comparison operators
 // See libseccomp/include/seccomp.h.in
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum SeccompCompareOp {
     NotEqual = 1,
     LessThan,
@@ -96,8 +97,16 @@ pub const fn seccomp_data_arg_size() -> u8 {
     8
 }
 
-pub const fn seccomp_data_args_offset() -> u8 {
-    offset_of!(SeccompData, args) as u8
+pub const fn seccomp_data_args_offset(index: u8) -> u8 {
+    match index {
+        0 => offset_of!(SeccompData, args) as u8,
+        1 => offset_of!(SeccompData, args) as u8 + 8,
+        2 => offset_of!(SeccompData, args) as u8 + 16,
+        3 => offset_of!(SeccompData, args) as u8 + 24,
+        4 => offset_of!(SeccompData, args) as u8 + 32,
+        5 => offset_of!(SeccompData, args) as u8 + 48,
+        _ => panic!()
+    }
 }
 
 pub const SECCOMP_IOC_MAGIC: u8 = b'!';
@@ -123,7 +132,12 @@ mod tests {
     #[test]
     fn test_seccomp_data_args_offset() {
         if cfg!(target_arch = "x86_64") {
-            assert_eq!(seccomp_data_args_offset(), 16);
+            assert_eq!(seccomp_data_args_offset(0), 16);
+            assert_eq!(seccomp_data_args_offset(1), 16 + 8);
+            assert_eq!(seccomp_data_args_offset(2), 16 + 16);
+            assert_eq!(seccomp_data_args_offset(3), 16 + 24);
+            assert_eq!(seccomp_data_args_offset(4), 16 + 32);
+            assert_eq!(seccomp_data_args_offset(5), 16 + 48);
         }
     }
 }

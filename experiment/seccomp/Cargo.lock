@@ -456,6 +456,8 @@ dependencies = [
  "nix 0.27.1",
  "oci-spec",
  "prctl",
+ "serde",
+ "serde_json",
  "syscall-numbers",
  "syscalls",
  "thiserror 1.0.58",

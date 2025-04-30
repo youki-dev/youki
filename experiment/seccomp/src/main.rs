@@ -20,6 +20,7 @@ use oci_spec::runtime::{
 };
 use seccomp::seccomp::InstructionData;
 use syscall_numbers::x86_64;
+use seccomp::testutil::*;
 
 fn send_fd<F: AsRawFd>(sock: OwnedFd, fd: &F) -> nix::Result<()> {
     let fd = fd.as_raw_fd();
@@ -78,8 +79,18 @@ async fn handle_signal(pid: nix::unistd::Pid) -> Result<()> {
     }
 }
 
+fn main() -> Result<()> {
+    match generate_seccomp_instruction("default_x86_64.json") {
+        Err(e) => {
+            eprintln!("Something wrong : {}", e);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn sub() -> Result<()> {
     let (sock_for_child, sock_for_parent) = socket::socketpair(
         socket::AddressFamily::Unix,
         SockType::Stream,
@@ -105,19 +116,19 @@ async fn main() -> Result<()> {
         .action(LinuxSeccompAction::ScmpActNotify)
         .build()?;
     let _personality = LinuxSyscallBuilder::default()
-        .names(vec!["personality".to_string()])
+        .names(vec!["clone3".to_string()])
         // .args(vec![LinuxSeccompArgBuilder::default()
         //     .index(0usize)
-        //     .value(8u64)
-        //     .op(LinuxSeccompOperator::ScmpCmpEq)
+        //     .value(2114060288u64)
+        //     .op(LinuxSeccompOperator::ScmpCmpLe)
         //     .build()?])
-        .action(LinuxSeccompAction::ScmpActAllow)
+        .action(LinuxSeccompAction::ScmpActErrno)
         .build()?;
 
     let spec_seccomp = LinuxSeccompBuilder::default()
         .architectures(vec![OciSpecArch::ScmpArchX86_64])
-        .default_action(LinuxSeccompAction::ScmpActKillProcess)
-        .default_errno_ret(LinuxSeccompAction::ScmpActErrno)
+        .default_action(LinuxSeccompAction::ScmpActErrno)
+        .default_errno_ret(1u32)
         .syscalls(vec![_personality])
         .build()?;
 
