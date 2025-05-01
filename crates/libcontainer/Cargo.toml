@@ -61,3 +61,6 @@ tempfile = "3"
 anyhow = "1.0"
 rand = "0.9.1"
 scopeguard = "1"
+
+[package.metadata.cargo-machete]
+ignored = ["protobuf"]
