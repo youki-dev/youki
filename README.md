@@ -34,7 +34,7 @@ youki is named after the Japanese word 'youki', which means 'a container'. In Ja
 
 Here is why we are writing a new container runtime in Rust.
 
-- Rust is one of the best languages to implement the oci-runtime spec. Many very nice container tools are currently written in Go. However, the container runtime requires the use of system calls, which requires a bit of special handling when implemented in Go. This tricky (e.g. _namespaces(7)_, _fork(2)_); with Rust too, but it's not that tricky. And, unlike in C, Rust provides the benefit of memory safety. While Rust is not yet a major player in the container field, it has the potential to contribute a lot: something this project attempts to exemplify.
+- Rust is one of the best languages to implement the oci-runtime spec. Many very nice container tools are currently written in Go. However, the container runtime requires the use of system calls, which requires a bit of special handling when implemented in Go. This is tricky (e.g. _namespaces(7)_, _fork(2)_); with Rust too, but it's not that tricky. And, unlike in C, Rust provides the benefit of memory safety. While Rust is not yet a major player in the container field, it has the potential to contribute a lot: something this project attempts to exemplify.
 - youki has the potential to be faster and use less memory than runc, and therefore work in environments with tight memory usage requirements. Here is a simple benchmark of a container from creation to deletion.
   |  Runtime | Time (mean ± σ) | 	Range (min … max) | vs youki(mean) | Version | 
   | -------- | -------- | -------- | -------- | -------- |
