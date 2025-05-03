@@ -101,7 +101,7 @@ fn kill_stopped_container_test() -> TestResult {
         TestResult::Passed => {}
         _ => return failed_and_delete("Failed to start container".to_string(), container),
     }
-    container.waiting_for_status(Duration::from_secs(10), Duration::from_secs(1), "stopped");
+    container.wait_for_state("stopped", Duration::from_secs(1));
     let kill_result = match container.kill() {
         TestResult::Failed(_) => TestResult::Passed,
         TestResult::Passed => TestResult::Failed(anyhow!("Expected failure but got success")),
@@ -125,7 +125,7 @@ fn kill_start_container_test() -> TestResult {
         TestResult::Passed => {}
         _ => return failed_and_delete(("Failed to start container").to_string(), container),
     }
-    container.waiting_for_status(Duration::from_secs(10), Duration::from_secs(1), "running");
+    container.wait_for_state("running", Duration::from_secs(1));
     let kill_result = container.kill();
     let delete_result = container.delete();
     merge_test_results(kill_result, delete_result)
