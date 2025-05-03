@@ -34,7 +34,7 @@ pub fn container_init_process(
     main_sender: &mut channel::MainSender,
     init_receiver: &mut channel::InitReceiver,
 ) -> Result<()> {
-    let mut ctx = InitContext::builder(args)?;
+    let mut ctx = InitContext::try_from(args)?;
 
     setsid().map_err(|err| {
         tracing::error!(?err, "failed to setsid to create a session");

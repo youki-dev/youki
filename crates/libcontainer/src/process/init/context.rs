@@ -26,7 +26,7 @@ pub(crate) struct InitContext<'a> {
 }
 
 impl<'a> InitContext<'a> {
-    pub fn builder(args: &'a ContainerArgs) -> Result<Self> {
+    pub fn try_from(args: &'a ContainerArgs) -> Result<Self> {
         let spec = args.spec.as_ref();
         let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
         let process = spec.process().as_ref().ok_or(MissingSpecError::Process)?;
