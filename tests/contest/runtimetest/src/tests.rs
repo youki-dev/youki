@@ -1,6 +1,7 @@
 use std::env;
 use std::ffi::OsStr;
 use std::fs::{self, read_dir, File};
+use std::io::{self, BufRead};
 use std::os::linux::fs::MetadataExt;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::Path;
@@ -15,7 +16,8 @@ use nix::sys::utsname;
 use nix::unistd::{getcwd, getgid, getgroups, getuid, Gid, Uid};
 use oci_spec::runtime::IOPriorityClass::{self, IoprioClassBe, IoprioClassIdle, IoprioClassRt};
 use oci_spec::runtime::{
-    LinuxDevice, LinuxDeviceType, LinuxSchedulerPolicy, PosixRlimit, PosixRlimitType, Spec,
+    LinuxDevice, LinuxDeviceType, LinuxIdMapping, LinuxSchedulerPolicy, PosixRlimit,
+    PosixRlimitType, Spec,
 };
 use tempfile::Builder;
 
@@ -963,4 +965,75 @@ pub fn validate_rootfs_propagation(spec: &Spec) {
             eprintln!("Unrecognized rootfsPropagation: {}", propagation);
         }
     }
+}
+
+fn validate_id_mappings(expected_id_mappings: &[LinuxIdMapping], path: &str, property: &str) {
+    let file = match File::open(path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to open {}: {}", path, e);
+            return;
+        }
+    };
+
+    let reader = io::BufReader::new(file);
+
+    if let Some(Ok(line)) = reader.lines().next() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+
+        // "man 7 user_namespaces" explains the format of uid_map and gid_map:
+        // <container_id> <host_id> <map_size>
+        if parts.len() != 3 {
+            eprintln!("Unexpected format in {}: {}", path, line);
+        }
+        let actual_container_id = match parts.first().and_then(|s| s.parse::<u32>().ok()) {
+            Some(id) => id,
+            None => {
+                eprintln!("Failed to parse container_id from {}: {}", path, line);
+                return;
+            }
+        };
+        let actual_host_id = match parts.get(1).and_then(|s| s.parse::<u32>().ok()) {
+            Some(id) => id,
+            None => {
+                eprintln!("Failed to parse host_id from {}: {}", path, line);
+                return;
+            }
+        };
+        let actual_map_size = match parts.get(2).and_then(|s| s.parse::<u32>().ok()) {
+            Some(size) => size,
+            None => {
+                eprintln!("Failed to parse map_size from {}: {}", path, line);
+                return;
+            }
+        };
+
+        if !(actual_host_id == expected_id_mappings[0].host_id()
+            && actual_container_id == expected_id_mappings[0].container_id()
+            && actual_map_size == expected_id_mappings[0].size())
+        {
+            eprintln!(
+                "Unexpected {}, expected: ({} {} {}) found: ({} {} {})",
+                property,
+                expected_id_mappings[0].container_id(),
+                expected_id_mappings[0].host_id(),
+                expected_id_mappings[0].size(),
+                actual_container_id,
+                actual_host_id,
+                actual_map_size
+            );
+        }
+    } else {
+        eprintln!("Failed to read line from {}", path);
+    }
+}
+
+pub fn validate_uid_mappings(spec: &Spec) {
+    let linux = spec.linux().as_ref().unwrap();
+
+    let expected_uid_mappings = linux.uid_mappings().as_ref().unwrap();
+    validate_id_mappings(expected_uid_mappings, "/proc/self/uid_map", "uid_mappings");
+
+    let expected_gid_mappings = linux.gid_mappings().as_ref().unwrap();
+    validate_id_mappings(expected_gid_mappings, "/proc/self/gid_map", "gid_mappings");
 }
