@@ -89,6 +89,7 @@ impl InitContainerBuilder {
         };
 
         let user_ns_config = UserNamespaceConfig::new(&spec)?;
+        container.set_rootless(user_ns_config.is_some());
 
         let config = YoukiConfig::from_spec(&spec, container.id())?;
         config.save(&container_dir).map_err(|err| {
