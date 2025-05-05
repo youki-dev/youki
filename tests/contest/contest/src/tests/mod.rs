@@ -8,6 +8,7 @@ pub mod hooks;
 pub mod hostname;
 pub mod intel_rdt;
 pub mod io_priority;
+pub mod kill;
 pub mod lifecycle;
 pub mod linux_masked_paths;
 pub mod linux_ns_itype;
