@@ -1,5 +1,5 @@
 use std::thread::sleep;
-use std::time::{Duration};
+use std::time::Duration;
 
 use oci_spec::runtime::Spec;
 use test_framework::{TestResult, TestableGroup};
