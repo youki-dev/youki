@@ -14,6 +14,7 @@ pub mod lifecycle;
 pub mod linux_masked_paths;
 pub mod linux_ns_itype;
 pub mod mounts_recursive;
+pub mod net_devices;
 pub mod no_pivot;
 pub mod pidfile;
 pub mod process;

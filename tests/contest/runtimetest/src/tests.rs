@@ -7,6 +7,7 @@ use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::Path;
 
 use anyhow::{bail, Result};
+use futures::stream::TryStreamExt;
 use nix::errno::Errno;
 use nix::libc;
 use nix::mount::{mount, MsFlags};
@@ -19,7 +20,9 @@ use oci_spec::runtime::{
     LinuxDevice, LinuxDeviceType, LinuxIdMapping, LinuxSchedulerPolicy, PosixRlimit,
     PosixRlimitType, Spec,
 };
+use rtnetlink::new_connection;
 use tempfile::Builder;
+use tokio::runtime::Runtime;
 
 use crate::utils::{
     self, test_dir_read_access, test_dir_write_access, test_read_access, test_write_access,
@@ -1004,4 +1007,38 @@ pub fn validate_uid_mappings(spec: &Spec) {
 
     let expected_gid_mappings = linux.gid_mappings().as_ref().unwrap();
     validate_id_mappings(expected_gid_mappings, "/proc/self/gid_map", "gid_mappings");
+}
+
+pub fn validate_net_devices(spec: &Spec) {
+    let linux = spec.linux().as_ref().unwrap();
+    if let Some(net_devices) = linux.net_devices() {
+        for (name, net_device) in net_devices {
+            let net_device_name = net_device
+                .name()
+                .as_ref()
+                .filter(|d| !d.is_empty())
+                .map_or(name.clone(), |d| d.to_string());
+            validate_net_device(net_device_name);
+        }
+    }
+}
+
+fn validate_net_device(net_device_name: String) {
+    let rt = Runtime::new().unwrap();
+    rt.block_on(async {
+        let (connection, handle, _) = new_connection().unwrap();
+        tokio::spawn(connection);
+
+        let mut links = handle
+            .link()
+            .get()
+            .match_name(net_device_name.clone())
+            .execute();
+
+        if links.try_next().await.unwrap().is_some() {
+            println!("network device {} is present", net_device_name);
+        } else {
+            eprintln!("network device {} is not present", net_device_name);
+        }
+    });
 }
