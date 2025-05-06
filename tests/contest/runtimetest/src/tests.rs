@@ -207,7 +207,6 @@ pub fn validate_mounts_recursive(spec: &Spec) {
                             }
                         }
                         "rdiratime" => {
-                            println!("test_dir_update_access_time: {mount:?}");
                             let rest = utils::test_dir_update_access_time(
                                 mount.destination().to_str().unwrap(),
                             );
@@ -216,7 +215,6 @@ pub fn validate_mounts_recursive(spec: &Spec) {
                             }
                         }
                         "rnodiratime" => {
-                            println!("test_dir_not_update_access_time: {mount:?}");
                             let rest = utils::test_dir_not_update_access_time(
                                 mount.destination().to_str().unwrap(),
                             );
@@ -225,7 +223,6 @@ pub fn validate_mounts_recursive(spec: &Spec) {
                             }
                         }
                         "rdev" => {
-                            println!("test_device_access: {mount:?}");
                             let rest =
                                 utils::test_device_access(mount.destination().to_str().unwrap());
                             if let Err(e) = rest {
@@ -233,7 +230,6 @@ pub fn validate_mounts_recursive(spec: &Spec) {
                             }
                         }
                         "rnodev" => {
-                            println!("test_device_unaccess: {mount:?}");
                             let rest =
                                 utils::test_device_unaccess(mount.destination().to_str().unwrap());
                             if rest.is_ok() {
@@ -242,7 +238,6 @@ pub fn validate_mounts_recursive(spec: &Spec) {
                             }
                         }
                         "rrelatime" => {
-                            println!("rrelatime: {mount:?}");
                             if let Err(e) = utils::test_mount_releatime_option(
                                 mount.destination().to_str().unwrap(),
                             ) {
@@ -250,7 +245,6 @@ pub fn validate_mounts_recursive(spec: &Spec) {
                             }
                         }
                         "rnorelatime" => {
-                            println!("rnorelatime: {mount:?}");
                             if let Err(e) = utils::test_mount_noreleatime_option(
                                 mount.destination().to_str().unwrap(),
                             ) {
@@ -258,7 +252,6 @@ pub fn validate_mounts_recursive(spec: &Spec) {
                             }
                         }
                         "rnoatime" => {
-                            println!("rnoatime: {mount:?}");
                             if let Err(e) = utils::test_mount_rnoatime_option(
                                 mount.destination().to_str().unwrap(),
                             ) {
@@ -268,7 +261,6 @@ pub fn validate_mounts_recursive(spec: &Spec) {
                             }
                         }
                         "rstrictatime" => {
-                            println!("rstrictatime: {mount:?}");
                             if let Err(e) = utils::test_mount_rstrictatime_option(
                                 mount.destination().to_str().unwrap(),
                             ) {
@@ -348,7 +340,6 @@ pub fn validate_sysctl(spec: &Spec) {
 pub fn validate_scheduler_policy(spec: &Spec) {
     let proc = spec.process().as_ref().unwrap();
     let sc = proc.scheduler().as_ref().unwrap();
-    println!("schedule is {:?}", spec);
     let mut get_sched_attr = nc::sched_attr_t {
         size: 0,
         sched_policy: 0,
@@ -363,15 +354,12 @@ pub fn validate_scheduler_policy(spec: &Spec) {
     };
     unsafe {
         match nc::sched_getattr(0, &mut get_sched_attr, 0) {
-            Ok(_) => {
-                println!("sched_getattr get success");
-            }
+            Ok(_) => {}
             Err(e) => {
                 return eprintln!("error due to fail to get sched attr error: {e}");
             }
         };
     }
-    println!("get_sched_attr is {:?}", get_sched_attr);
     let sp = get_sched_attr.sched_policy;
     let want_sp: u32 = match *sc.policy() {
         LinuxSchedulerPolicy::SchedOther => 0,
@@ -382,7 +370,6 @@ pub fn validate_scheduler_policy(spec: &Spec) {
         LinuxSchedulerPolicy::SchedIdle => 5,
         LinuxSchedulerPolicy::SchedDeadline => 6,
     };
-    println!("want_sp {:?}", want_sp);
     if sp != want_sp {
         return eprintln!("error due to sched_policy want {want_sp}, got {sp}");
     }
@@ -802,14 +789,12 @@ pub fn validate_fd_control(_spec: &Spec) {
     let mut fd_details = vec![];
     let mut found_dirfd = false;
     for (path, linkpath) in &entries {
-        println!("found fd in container {} {:?}", path.display(), linkpath);
         // The difference between metadata.unwrap() and fs::metadata is that the latter
         // will now try to follow the symlink
         match fs::metadata(path) {
             Ok(m) => fd_details.push((path, linkpath, m)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound && !found_dirfd => {
                 // Expected for the dirfd
-                println!("(ignoring dirfd)");
                 found_dirfd = true
             }
             Err(e) => {
@@ -919,9 +904,7 @@ pub fn validate_rootfs_propagation(spec: &Spec) {
 
             match propagation.as_str() {
                 "shared" => {
-                    if file_visible {
-                        println!("shared root propagation exposes {:?}", target_file);
-                    } else {
+                    if !file_visible {
                         eprintln!(
                             "Error: shared root propagation failed to expose {:?}",
                             target_file
@@ -929,12 +912,7 @@ pub fn validate_rootfs_propagation(spec: &Spec) {
                     }
                 }
                 "slave" | "private" => {
-                    if !file_visible {
-                        println!(
-                            "{} root propagation does not expose {:?}",
-                            propagation, target_file
-                        );
-                    } else {
+                    if file_visible {
                         eprintln!(
                             "Error: {} root propagation unexpectedly exposed {:?}",
                             propagation, target_file
@@ -952,9 +930,7 @@ pub fn validate_rootfs_propagation(spec: &Spec) {
                 MsFlags::MS_BIND | MsFlags::MS_REC,
                 None::<&str>,
             ) {
-                if e == nix::errno::Errno::EINVAL {
-                    println!("root propagation is unbindable");
-                } else {
+                if e != nix::errno::Errno::EINVAL {
                     eprintln!("Error occurred during mount: {}", e);
                 }
             }

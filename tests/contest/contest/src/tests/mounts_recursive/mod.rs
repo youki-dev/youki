@@ -553,14 +553,12 @@ fn check_recursive_rnosymfollow() -> TestResult {
         let original_file_path = format!("{}/{}", rnosymfollow_dir_path.to_str().unwrap(), "file");
         let file = File::create(&original_file_path)?;
         let link_file_path = format!("{}/{}", rnosymfollow_dir_path.to_str().unwrap(), "link");
-        println!("original file: {original_file_path:?},link file: {link_file_path:?}");
         let mut permission = file.metadata()?.permissions();
         permission.set_mode(permission.mode() | libc::S_ISUID | libc::S_ISGID);
         file.set_permissions(permission)
             .with_context(|| "failed to set permission")?;
 
         symlink(original_file_path, link_file_path)?;
-        println!("symlink success");
         Ok(())
     });
 
@@ -598,7 +596,6 @@ fn check_recursive_rsymfollow() -> TestResult {
             .with_context(|| "failed to set permission")?;
 
         symlink(original_file_path, link_file_path)?;
-        println!("symlink success");
         Ok(())
     });
 
