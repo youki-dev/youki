@@ -1,18 +1,51 @@
-This is an experimental project in order to create selinux library in Rust.  
+# SELinux for Youki
+
+This is an experimental project to create a SELinux library in Rust.
 Ref: https://github.com/containers/youki/issues/2718.  
 Reimplementation of [opencontainers/selinux](https://github.com/opencontainers/selinux) in Rust.  
-Also selinux depends on xattr, but nix doesn't cover xattr function. 
-Therefore, this PR will implement xattr in Rust.  
-Referenced the implementation of xattr in [unix](golang.org/x/sys/unix) repo.  
 
-Please import and use this project.
+## Requirements
+
+- [Lima](https://github.com/lima-vm/lima)
+- QEMU
+- Rust and Cargo
+
+## Development Environment
+
+### Setup with Lima
 
 ```console
-$ cargo run
+# Start the VM with default settings (non-interactive mode)
+$ ./lima-setup.sh
+
+# For interactive mode (when not running in CI)
+$ ./lima-setup.sh --interactive
+
+# See all available options
+$ ./lima-setup.sh --help
 ```
 
-You can create an selinux environment via the Vagrantfile.
+### Running the Project
+
+Once the VM is set up:
 
 ```console
-$ vagrant up
+# Inside the VM, run tests
+$ ./lima-run.sh cargo test
+
+# Inside the VM, run the application
+$ ./lima-run.sh cargo run
+
+# Connect to the VM
+$ limactl shell --workdir /workdir/youki/experiment/shared youki-selinux
+
+```
+
+### Cleaning Up
+
+When finished with development:
+
+```console
+# Remove the Lima VM
+$ ./lima-setup.sh --cleanup
 ```
