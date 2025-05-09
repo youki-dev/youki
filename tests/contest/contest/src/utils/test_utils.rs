@@ -181,12 +181,13 @@ pub fn test_inside_container(
     let id_str = id.to_string();
     let bundle = prepare_bundle().unwrap();
 
+    set_config(&bundle, spec).unwrap();
+
     // This will do the required setup for the test
     test_result!(setup_for_test(
         &bundle.as_ref().join("bundle").join("rootfs")
     ));
 
-    set_config(&bundle, spec).unwrap();
     // as we have to run runtimetest inside the container, and is expects
     // the config.json to be at path /config.json we save it there
     let path = bundle
@@ -209,7 +210,10 @@ pub fn test_inside_container(
             .join("runtimetest"),
     )
     .unwrap();
-    let create_process = create_container(&id_str, &bundle, options).unwrap();
+    let create_process = match create_container(&id_str, &bundle, options) {
+        Ok(p) => p,
+        Err(e) => return TestResult::Failed(anyhow!("container create failed : {:?}", e)),
+    };
     // here we do not wait for the process by calling wait() as in the test_outside_container
     // function because we need the output of the runtimetest. If we call wait, it will return
     // and we won't have an easy way of getting the stdio of the runtimetest.
