@@ -181,12 +181,13 @@ pub fn test_inside_container(
     let id_str = id.to_string();
     let bundle = prepare_bundle().unwrap();
 
+    set_config(&bundle, spec).unwrap();
+
     // This will do the required setup for the test
     test_result!(setup_for_test(
         &bundle.as_ref().join("bundle").join("rootfs")
     ));
 
-    set_config(&bundle, spec).unwrap();
     // as we have to run runtimetest inside the container, and is expects
     // the config.json to be at path /config.json we save it there
     let path = bundle
