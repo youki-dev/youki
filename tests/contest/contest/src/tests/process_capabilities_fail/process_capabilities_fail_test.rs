@@ -61,9 +61,7 @@ fn process_capabilities_fail_test() -> TestResult {
 
     // Check the test result: Fail if the container was created successfully (because it should fail)
     match result {
-        TestResult::Failed(e) => {
-            TestResult::Passed
-        }
+        TestResult::Failed(_e) => TestResult::Passed,
         TestResult::Skipped => TestResult::Failed(anyhow!("test was skipped unexpectedly.")),
         TestResult::Passed => {
             TestResult::Failed(anyhow!("container creation succeeded unexpectedly."))
