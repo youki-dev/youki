@@ -978,53 +978,74 @@ fn validate_id_mappings(expected_id_mappings: &[LinuxIdMapping], path: &str, pro
 
     let reader = io::BufReader::new(file);
 
-    if let Some(Ok(line)) = reader.lines().next() {
+    for (i, line_result) in reader.lines().enumerate() {
+        let line = match line_result {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("Failed to read line {} from {}: {}", i + 1, path, e);
+                return;
+            }
+        };
+
         let parts: Vec<&str> = line.split_whitespace().collect();
 
         // "man 7 user_namespaces" explains the format of uid_map and gid_map:
         // <container_id> <host_id> <map_size>
         if parts.len() != 3 {
             eprintln!("Unexpected format in {}: {}", path, line);
+            continue;
         }
+
         let actual_container_id = match parts.first().and_then(|s| s.parse::<u32>().ok()) {
             Some(id) => id,
             None => {
                 eprintln!("Failed to parse container_id from {}: {}", path, line);
-                return;
+                continue;
             }
         };
         let actual_host_id = match parts.get(1).and_then(|s| s.parse::<u32>().ok()) {
             Some(id) => id,
             None => {
                 eprintln!("Failed to parse host_id from {}: {}", path, line);
-                return;
+                continue;
             }
         };
         let actual_map_size = match parts.get(2).and_then(|s| s.parse::<u32>().ok()) {
             Some(size) => size,
             None => {
                 eprintln!("Failed to parse map_size from {}: {}", path, line);
-                return;
+                continue;
             }
         };
 
-        if !(actual_host_id == expected_id_mappings[0].host_id()
-            && actual_container_id == expected_id_mappings[0].container_id()
-            && actual_map_size == expected_id_mappings[0].size())
+        if i >= expected_id_mappings.len() {
+            eprintln!("Unexpected extra mapping in {}: {}", path, line);
+            continue;
+        }
+
+        if !(actual_host_id == expected_id_mappings[i].host_id()
+            && actual_container_id == expected_id_mappings[i].container_id()
+            && actual_map_size == expected_id_mappings[i].size())
         {
             eprintln!(
                 "Unexpected {}, expected: ({} {} {}) found: ({} {} {})",
                 property,
-                expected_id_mappings[0].container_id(),
-                expected_id_mappings[0].host_id(),
-                expected_id_mappings[0].size(),
+                expected_id_mappings[i].container_id(),
+                expected_id_mappings[i].host_id(),
+                expected_id_mappings[i].size(),
                 actual_container_id,
                 actual_host_id,
                 actual_map_size
             );
         }
-    } else {
-        eprintln!("Failed to read line from {}", path);
+    }
+
+    if expected_id_mappings.len() > reader.lines().count() {
+        eprintln!(
+            "Missing mappings in {}, expected {} but found fewer.",
+            path,
+            expected_id_mappings.len()
+        );
     }
 }
 
