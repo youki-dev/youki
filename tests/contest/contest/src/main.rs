@@ -37,6 +37,7 @@ use crate::tests::seccomp::get_seccomp_test;
 use crate::tests::seccomp_notify::get_seccomp_notify_test;
 use crate::tests::sysctl::get_sysctl_test;
 use crate::tests::tlb::get_tlb_test;
+use crate::tests::uid_mappings::get_uid_mappings_test;
 use crate::utils::support::{set_runtime_path, set_runtimetest_path};
 
 #[derive(Parser, Debug)]
@@ -136,6 +137,7 @@ fn main() -> Result<()> {
     let fd_control = get_fd_control_test();
     let masked_paths = get_linux_masked_paths_tests();
     let rootfs_propagation = get_rootfs_propagation_test();
+    let uid_mappings = get_uid_mappings_test();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -171,6 +173,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(process_oom_score_adj));
     tm.add_test_group(Box::new(fd_control));
     tm.add_test_group(Box::new(rootfs_propagation));
+    tm.add_test_group(Box::new(uid_mappings));
 
     tm.add_test_group(Box::new(io_priority_test));
     tm.add_cleanup(Box::new(cgroups::cleanup_v1));
