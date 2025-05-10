@@ -979,7 +979,16 @@ fn validate_id_mappings(expected_id_mappings: &[LinuxIdMapping], path: &str, pro
     let reader = io::BufReader::new(file);
     let lines: Vec<String> = reader.lines().map_while(|line| line.ok()).collect();
 
-    for (i, line) in lines.iter().enumerate() {
+    if expected_id_mappings.len() != lines.len() {
+        eprintln!(
+            "Mismatch in {}: expected {} lines, found {}",
+            property,
+            expected_id_mappings.len(),
+            lines.len()
+        );
+    }
+
+    for (expected, line) in expected_id_mappings.iter().zip(lines.iter()) {
         let parts: Vec<&str> = line.split_whitespace().collect();
 
         // "man 7 user_namespaces" explains the format of uid_map and gid_map:
@@ -1011,30 +1020,21 @@ fn validate_id_mappings(expected_id_mappings: &[LinuxIdMapping], path: &str, pro
             }
         };
 
-        if !(actual_host_id == expected_id_mappings[i].host_id()
-            && actual_container_id == expected_id_mappings[i].container_id()
-            && actual_map_size == expected_id_mappings[i].size())
+        if !(actual_host_id == expected.host_id()
+            && actual_container_id == expected.container_id()
+            && actual_map_size == expected.size())
         {
             eprintln!(
                 "Unexpected {}, expected: ({} {} {}) found: ({} {} {})",
                 property,
-                expected_id_mappings[i].container_id(),
-                expected_id_mappings[i].host_id(),
-                expected_id_mappings[i].size(),
+                expected.container_id(),
+                expected.host_id(),
+                expected.size(),
                 actual_container_id,
                 actual_host_id,
                 actual_map_size
             );
         }
-    }
-
-    if expected_id_mappings.len() != lines.len() {
-        eprintln!(
-            "Mismatch in {}: expected {} lines, found {}",
-            property,
-            expected_id_mappings.len(),
-            lines.len()
-        );
     }
 }
 
