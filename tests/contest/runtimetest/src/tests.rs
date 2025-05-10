@@ -977,16 +977,9 @@ fn validate_id_mappings(expected_id_mappings: &[LinuxIdMapping], path: &str, pro
     };
 
     let reader = io::BufReader::new(file);
+    let lines: Vec<String> = reader.lines().map_while(|line| line.ok()).collect();
 
-    for (i, line_result) in reader.lines().enumerate() {
-        let line = match line_result {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!("Failed to read line {} from {}: {}", i + 1, path, e);
-                return;
-            }
-        };
-
+    for (i, line) in lines.iter().enumerate() {
         let parts: Vec<&str> = line.split_whitespace().collect();
 
         // "man 7 user_namespaces" explains the format of uid_map and gid_map:
@@ -1018,11 +1011,6 @@ fn validate_id_mappings(expected_id_mappings: &[LinuxIdMapping], path: &str, pro
             }
         };
 
-        if i >= expected_id_mappings.len() {
-            eprintln!("Unexpected extra mapping in {}: {}", path, line);
-            continue;
-        }
-
         if !(actual_host_id == expected_id_mappings[i].host_id()
             && actual_container_id == expected_id_mappings[i].container_id()
             && actual_map_size == expected_id_mappings[i].size())
@@ -1040,9 +1028,10 @@ fn validate_id_mappings(expected_id_mappings: &[LinuxIdMapping], path: &str, pro
         }
     }
 
-    if expected_id_mappings.len() > reader.lines().count() {
+    if expected_id_mappings.len() != lines.len() {
         eprintln!(
-            "Missing mappings in {}, expected {} but found fewer.",
+            "Mismatch in {}: expected {} lines, found {}",
+            property,
             path,
             expected_id_mappings.len()
         );
