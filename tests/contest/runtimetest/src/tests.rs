@@ -1032,8 +1032,8 @@ fn validate_id_mappings(expected_id_mappings: &[LinuxIdMapping], path: &str, pro
         eprintln!(
             "Mismatch in {}: expected {} lines, found {}",
             property,
-            path,
-            expected_id_mappings.len()
+            expected_id_mappings.len(),
+            lines.len()
         );
     }
 }
