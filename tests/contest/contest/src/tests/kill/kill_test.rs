@@ -44,6 +44,7 @@ fn merge_test_results(kill_result: TestResult, delete_result: TestResult) -> Tes
     }
 }
 
+// Killing a container with an empty ID should fail.
 fn kill_with_empty_id_test() -> TestResult {
     let mut container = ContainerLifecycle::new();
 
@@ -60,6 +61,7 @@ fn kill_with_empty_id_test() -> TestResult {
     }
 }
 
+// Killing a non-existent container should fail.
 fn kill_non_existed_container() -> TestResult {
     let container = ContainerLifecycle::new();
 
@@ -75,6 +77,7 @@ fn kill_non_existed_container() -> TestResult {
     }
 }
 
+// Create a container, then kill and delete it successfully.
 fn kill_created_container_test() -> TestResult {
     let container = ContainerLifecycle::new();
 
@@ -88,6 +91,7 @@ fn kill_created_container_test() -> TestResult {
     merge_test_results(kill_result, delete_result)
 }
 
+// After a container stops naturally, killing it should fail, then deletion should succeed.
 fn kill_stopped_container_test() -> TestResult {
     let container = ContainerLifecycle::new();
     let spec = create_spec(&["true"]).unwrap();
@@ -111,6 +115,7 @@ fn kill_stopped_container_test() -> TestResult {
     merge_test_results(kill_result, delete_result)
 }
 
+// Kill a running container should succeed, then delete should succeed.
 fn kill_start_container_test() -> TestResult {
     let container = ContainerLifecycle::new();
     let spec = create_spec(&["sleep", "30"]).unwrap();
