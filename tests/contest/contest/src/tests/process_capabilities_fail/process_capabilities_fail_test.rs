@@ -26,7 +26,6 @@ fn create_spec() -> Result<Spec> {
 
 fn process_capabilities_fail_test() -> TestResult {
     let spec = test_result!(create_spec());
-    // let result = test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()));
     let result = test_inside_container(&spec, &CreateOptions::default(), &|bundle| {
         let spec_path = bundle.join("../config.json");
         let spec_str = fs::read_to_string(spec_path.clone()).unwrap();
@@ -61,7 +60,14 @@ fn process_capabilities_fail_test() -> TestResult {
 
     // Check the test result: Fail if the container was created successfully (because it should fail)
     match result {
-        TestResult::Failed(_e) => TestResult::Passed,
+        TestResult::Failed(e) => {
+            let err_str = format!("{:?}", e);
+            if err_str.contains("no variant for TEST_CAP") {
+                TestResult::Passed
+            } else {
+                TestResult::Failed(anyhow!("unexpected error: {e:?}"))
+            }
+        }
         TestResult::Skipped => TestResult::Failed(anyhow!("test was skipped unexpectedly.")),
         TestResult::Passed => {
             TestResult::Failed(anyhow!("container creation succeeded unexpectedly."))
