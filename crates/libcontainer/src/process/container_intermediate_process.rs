@@ -11,7 +11,7 @@ use super::fork::CloneCb;
 use super::init::process as init_process;
 use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
-use crate::process::{channel, fork};
+use crate::process::{channel, cpu_affinity, fork};
 
 #[derive(Debug, thiserror::Error)]
 pub enum IntermediateProcessError {
@@ -31,6 +31,8 @@ pub enum IntermediateProcessError {
     ExecNotify(#[source] nix::Error),
     #[error(transparent)]
     MissingSpec(#[from] crate::error::MissingSpecError),
+    #[error("CPU affinity error {0}")]
+    CpuAffinity(#[from] cpu_affinity::CPUAffinityError),
     #[error("other error")]
     Other(String),
 }
@@ -52,6 +54,21 @@ pub fn container_intermediate_process(
     let cgroup_manager = libcgroups::common::create_cgroup_manager(args.cgroup_config.to_owned())
         .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?;
 
+    let current_pid = Pid::this();
+    // setting CPU affinity for tenant container before cgroup move
+    if matches!(args.container_type, ContainerType::TenantContainer { .. }) {
+        if let Some(exec_cpu_affinity) = spec
+            .process()
+            .as_ref()
+            .and_then(|p| p.exec_cpu_affinity().as_ref())
+        {
+            if let Some(initial) = exec_cpu_affinity.initial() {
+                cpu_affinity::set_cpuset_affinity_from_string(current_pid, initial)?;
+            }
+        }
+    }
+    let _ = cpu_affinity::log_cpu_affinity();
+
     // this needs to be done before we create the init process, so that the init
     // process will already be captured by the cgroup. It also needs to be done
     // before we enter the user namespace because if a privileged user starts a
@@ -67,6 +84,19 @@ pub fn container_intermediate_process(
         linux.resources().as_ref(),
         matches!(args.container_type, ContainerType::InitContainer),
     )?;
+
+    // setting CPU affinity for tenant container after cgroup move
+    if matches!(args.container_type, ContainerType::TenantContainer { .. }) {
+        if let Some(exec_cpu_affinity) = spec
+            .process()
+            .as_ref()
+            .and_then(|p| p.exec_cpu_affinity().as_ref())
+        {
+            if let Some(cpu_affinity_final) = exec_cpu_affinity.cpu_affinity_final() {
+                cpu_affinity::set_cpuset_affinity_from_string(current_pid, cpu_affinity_final)?;
+            }
+        }
+    }
 
     // if new user is specified in specification, this will be true and new
     // namespace will be created, check
