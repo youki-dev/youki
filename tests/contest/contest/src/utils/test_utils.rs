@@ -210,10 +210,7 @@ pub fn test_inside_container(
             .join("runtimetest"),
     )
     .unwrap();
-    let create_process = match create_container(&id_str, &bundle, options) {
-        Ok(p) => p,
-        Err(e) => return TestResult::Failed(anyhow!("container create failed : {:?}", e)),
-    };
+    let create_process = create_container(&id_str, &bundle, options).unwrap();
     // here we do not wait for the process by calling wait() as in the test_outside_container
     // function because we need the output of the runtimetest. If we call wait, it will return
     // and we won't have an easy way of getting the stdio of the runtimetest.
