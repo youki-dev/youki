@@ -8,7 +8,8 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
-use oci_spec::runtime::Spec;
+use nix::mount::{umount2, MntFlags};
+use oci_spec::runtime::{LinuxNamespaceType, Spec};
 use serde::{Deserialize, Serialize};
 use test_framework::{test_result, TestResult};
 
@@ -166,6 +167,17 @@ pub fn test_outside_container(
         create_result,
     };
     let test_result = execute_test(data);
+    // this is to unmount the mounted rootfs. The issue here is that for ns_itype test
+    // we do not create mount namespace, which results in mounting the actual root on bundle
+    // thus the deletion in tempdir on drop fails and the tempdir remains. So, we check if there
+    // is no mount namespace in the spec's namespaces, and if there is no mount namespace,
+    // we manually unmount the rootfs so tmpdir deletion can succeed and cleanup is done.
+    let ns = spec.linux().as_ref().and_then(|l| l.namespaces().clone());
+    if let Some(ns) = ns {
+        if !ns.into_iter().any(|n| n.typ() == LinuxNamespaceType::Mount) {
+            umount2(&bundle.path().join("bundle/rootfs"), MntFlags::MNT_DETACH).unwrap();
+        }
+    }
     kill_container(&id_str, &bundle).unwrap().wait().unwrap();
     delete_container(&id_str, &bundle).unwrap().wait().unwrap();
     test_result
