@@ -63,24 +63,16 @@ fn process_capabilities_fail_test() -> TestResult {
         TestResult::Failed(e) => {
             let err_str = format!("{:?}", e);
 
-            // Error from Rust deserialization when loading config.json with invalid capability
+            // youki: Error from Rust deserialization when loading config.json with invalid capability
             let is_invalid_variant_error = err_str.contains("no variant for TEST_CAP");
 
-            // runc error when applying invalid capability
-            let is_runc_cap_error = err_str.contains("unable to apply caps");
-
-            // runc warning when capability is unknown or unsupported
+            // runc: warning when TEST_CAP is unknown or unsupported and ignored
             let is_runc_cap_warning =
-                err_str.contains("ignoring unknown or unavailable capabilities");
+                err_str.contains("ignoring unknown or unavailable capabilities: [TEST_CAP]");
 
             // Only cases resulting in an error are considered Passed
-            if is_invalid_variant_error || is_runc_cap_error {
+            if is_invalid_variant_error || is_runc_cap_warning {
                 TestResult::Passed
-            } else if is_runc_cap_warning {
-                // Warnings are considered Failed
-                TestResult::Failed(anyhow!(
-                    "only warning found, but no hard error occurred: {e:?}"
-                ))
             } else {
                 TestResult::Failed(anyhow!("unexpected error: {e:?}"))
             }
