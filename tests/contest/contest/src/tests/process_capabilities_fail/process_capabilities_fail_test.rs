@@ -63,14 +63,13 @@ fn process_capabilities_fail_test() -> TestResult {
         TestResult::Failed(e) => {
             let err_str = format!("{:?}", e);
 
-            // youki: Error from Rust deserialization when loading config.json with invalid capability
+            // youki: error from rust deserialization when loading config.json with invalid capability
             let is_invalid_variant_error = err_str.contains("no variant for TEST_CAP");
 
             // runc: warning when TEST_CAP is unknown or unsupported and ignored
             let is_runc_cap_warning =
                 err_str.contains("ignoring unknown or unavailable capabilities: [TEST_CAP]");
 
-            // Only cases resulting in an error are considered Passed
             if is_invalid_variant_error || is_runc_cap_warning {
                 TestResult::Passed
             } else {
