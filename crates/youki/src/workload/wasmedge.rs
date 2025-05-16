@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use libcontainer::oci_spec::runtime::Spec;
 use libcontainer::workload::{Executor, ExecutorError, ExecutorValidationError};
+use wasmedge_sdk::error::{CoreError, CoreExecutionError, WasmEdgeError};
 use wasmedge_sdk::wasi::WasiModule;
 use wasmedge_sdk::{params, Module, Store, Vm};
 
@@ -47,9 +48,15 @@ impl Executor for WasmedgeExecutor {
         vm.register_module(Some("main"), module).unwrap();
 
         vm.run_func(Some("main"), "_start", params!())
-            .map_err(|err| ExecutorError::Execution(err))?;
+            .map_err(|err| match *err {
+                // This case indicates that the wasm code panicked.
+                WasmEdgeError::Core(CoreError::Execution(CoreExecutionError::Unreachable)) => {
+                    std::process::exit(101)
+                }
+                _ => ExecutorError::Execution(err),
+            })?;
 
-        Ok(())
+        std::process::exit(0)
     }
 
     fn validate(&self, spec: &Spec) -> Result<(), ExecutorValidationError> {
