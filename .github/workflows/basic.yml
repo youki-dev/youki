@@ -91,7 +91,7 @@ jobs:
       - name: Install nightly rustfmt
         run: rustup toolchain install nightly --component rustfmt --profile minimal --no-self-update
       - name: typos-action
-        uses: crate-ci/typos@v1.22.9
+        uses: crate-ci/typos@v1.32.0
       - name: Install just
         uses: taiki-e/install-action@just
       - name: Install cross-rs
