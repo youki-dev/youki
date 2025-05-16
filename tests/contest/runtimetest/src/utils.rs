@@ -121,11 +121,9 @@ pub fn test_file_executable(path: &str) -> Result<(), std::io::Error> {
 }
 
 pub fn test_dir_update_access_time(path: &str) -> Result<(), std::io::Error> {
-    println!("test_dir_update_access_time path: {path:?}");
     let metadata = fs::metadata(PathBuf::from(path))?;
     let rest = metadata.accessed();
     let first_access_time = rest.unwrap();
-    println!("{path:?} dir first access time is {first_access_time:?}");
     // execute ls command to update access time
     Command::new("ls")
         .arg(path)
@@ -135,7 +133,6 @@ pub fn test_dir_update_access_time(path: &str) -> Result<(), std::io::Error> {
     let metadata = fs::metadata(PathBuf::from(path))?;
     let rest = metadata.accessed();
     let second_access_time = rest.unwrap();
-    println!("{path:?} dir second access time is {second_access_time:?}");
     if first_access_time == second_access_time {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,
@@ -146,11 +143,9 @@ pub fn test_dir_update_access_time(path: &str) -> Result<(), std::io::Error> {
 }
 
 pub fn test_dir_not_update_access_time(path: &str) -> Result<(), std::io::Error> {
-    println!("test_dir_not_update_access_time path: {path:?}");
     let metadata = fs::metadata(PathBuf::from(path))?;
     let rest = metadata.accessed();
     let first_access_time = rest.unwrap();
-    println!("{path:?} dir first access time is {first_access_time:?}");
     // execute ls command to update access time
     Command::new("ls")
         .arg(path)
@@ -160,7 +155,6 @@ pub fn test_dir_not_update_access_time(path: &str) -> Result<(), std::io::Error>
     let metadata = fs::metadata(PathBuf::from(path))?;
     let rest = metadata.accessed();
     let second_access_time = rest.unwrap();
-    println!("{path:?} dir second access time is {second_access_time:?}");
     if first_access_time != second_access_time {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,
@@ -171,7 +165,6 @@ pub fn test_dir_not_update_access_time(path: &str) -> Result<(), std::io::Error>
 }
 
 pub fn test_device_access(path: &str) -> Result<(), std::io::Error> {
-    println!("test_device_access path: {path:?}");
     let _ = std::fs::OpenOptions::new()
         .create(true)
         .truncate(true)
@@ -181,7 +174,6 @@ pub fn test_device_access(path: &str) -> Result<(), std::io::Error> {
 }
 
 pub fn test_device_unaccess(path: &str) -> Result<(), std::io::Error> {
-    println!("test_device_unaccess path: {path:?}");
     let _ = std::fs::OpenOptions::new()
         .create(true)
         .truncate(true)
@@ -206,13 +198,6 @@ pub fn test_mount_releatime_option(path: &str) -> Result<(), std::io::Error> {
         .arg(test_file_path.to_str().unwrap())
         .output()?;
     let one_metadata = fs::metadata(test_file_path.clone())?;
-    println!(
-        "{:?} file one metadata atime is {:?},mtime is {:?},current time is{:?}",
-        test_file_path,
-        one_metadata.atime(),
-        one_metadata.mtime(),
-        std::time::SystemTime::now()
-    );
     std::thread::sleep(std::time::Duration::from_millis(1000));
 
     // execute cat command to update access time
@@ -221,13 +206,6 @@ pub fn test_mount_releatime_option(path: &str) -> Result<(), std::io::Error> {
         .output()
         .expect("execute cat command error");
     let two_metadata = fs::metadata(test_file_path.clone())?;
-    println!(
-        "{:?} file two metadata atime is {:?},mtime is {:?},current time is{:?}",
-        test_file_path,
-        two_metadata.atime(),
-        two_metadata.mtime(),
-        std::time::SystemTime::now()
-    );
 
     if one_metadata.atime() == two_metadata.atime() {
         return Err(std::io::Error::new(
@@ -246,11 +224,6 @@ pub fn test_mount_releatime_option(path: &str) -> Result<(), std::io::Error> {
         .output()
         .expect("execute cat command error");
     let three_metadata = fs::metadata(test_file_path.clone())?;
-    println!(
-        "{:?} file three metadata atime is {:?}",
-        test_file_path,
-        three_metadata.atime()
-    );
     if two_metadata.atime() != three_metadata.atime() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,
@@ -271,13 +244,6 @@ pub fn test_mount_noreleatime_option(path: &str) -> Result<(), std::io::Error> {
         .arg(test_file_path.to_str().unwrap())
         .output()?;
     let one_metadata = fs::metadata(test_file_path.clone())?;
-    println!(
-        "{:?} file one atime is {:?},mtime is {:?}, current time is {:?}",
-        test_file_path,
-        one_metadata.atime(),
-        one_metadata.mtime(),
-        std::time::SystemTime::now()
-    );
 
     std::thread::sleep(std::time::Duration::from_millis(1000));
     // execute cat command to update access time
@@ -286,13 +252,6 @@ pub fn test_mount_noreleatime_option(path: &str) -> Result<(), std::io::Error> {
         .output()
         .expect("execute cat command error");
     let two_metadata = fs::metadata(test_file_path.clone())?;
-    println!(
-        "{:?} file two atime is {:?},mtime is {:?},current time is {:?}",
-        test_file_path,
-        two_metadata.atime(),
-        two_metadata.mtime(),
-        std::time::SystemTime::now()
-    );
 
     if one_metadata.atime() == two_metadata.atime() {
         return Err(std::io::Error::new(
@@ -311,13 +270,6 @@ pub fn test_mount_noreleatime_option(path: &str) -> Result<(), std::io::Error> {
         .output()
         .expect("execute cat command error");
     let three_metadata = fs::metadata(test_file_path.clone())?;
-    println!(
-        "{:?} file three atime is {:?},mtime is {:?},current time is {:?}",
-        test_file_path,
-        three_metadata.atime(),
-        three_metadata.mtime(),
-        std::time::SystemTime::now()
-    );
 
     if two_metadata.atime() != three_metadata.atime() {
         return Err(std::io::Error::new(
@@ -338,13 +290,7 @@ pub fn test_mount_rnoatime_option(path: &str) -> Result<(), std::io::Error> {
         .arg(test_file_path.to_str().unwrap())
         .output()?;
     let one_metadata = fs::metadata(test_file_path.clone())?;
-    println!(
-        "{:?} file one atime is {:?},mtime is {:?}, current time is {:?}",
-        test_file_path,
-        one_metadata.atime(),
-        one_metadata.mtime(),
-        std::time::SystemTime::now()
-    );
+
     std::thread::sleep(std::time::Duration::from_millis(1000));
 
     // execute cat command to update access time
@@ -353,13 +299,7 @@ pub fn test_mount_rnoatime_option(path: &str) -> Result<(), std::io::Error> {
         .output()
         .expect("execute cat command error");
     let two_metadata = fs::metadata(test_file_path.clone())?;
-    println!(
-        "{:?} file two atime is {:?},mtime is {:?},current time is {:?}",
-        test_file_path,
-        two_metadata.atime(),
-        two_metadata.mtime(),
-        std::time::SystemTime::now()
-    );
+
     if one_metadata.atime() != two_metadata.atime() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,
@@ -379,13 +319,6 @@ pub fn test_mount_rstrictatime_option(path: &str) -> Result<(), std::io::Error> 
         .arg(test_file_path.to_str().unwrap())
         .output()?;
     let one_metadata = fs::metadata(test_file_path.clone())?;
-    println!(
-        "{:?} file one atime is {:?},mtime is {:?}, current time is {:?}",
-        test_file_path,
-        one_metadata.atime(),
-        one_metadata.mtime(),
-        std::time::SystemTime::now()
-    );
 
     std::thread::sleep(std::time::Duration::from_millis(1000));
     // execute cat command to update access time
@@ -394,13 +327,6 @@ pub fn test_mount_rstrictatime_option(path: &str) -> Result<(), std::io::Error> 
         .output()
         .expect("execute cat command error");
     let two_metadata = fs::metadata(test_file_path.clone())?;
-    println!(
-        "{:?} file two atime is {:?},mtime is {:?},current time is {:?}",
-        test_file_path,
-        two_metadata.atime(),
-        two_metadata.mtime(),
-        std::time::SystemTime::now()
-    );
 
     if one_metadata.atime() == two_metadata.atime() {
         return Err(std::io::Error::new(
@@ -419,13 +345,6 @@ pub fn test_mount_rstrictatime_option(path: &str) -> Result<(), std::io::Error> 
         .output()
         .expect("execute cat command error");
     let three_metadata = fs::metadata(test_file_path.clone())?;
-    println!(
-        "{:?} file three atime is {:?},mtime is {:?},current time is {:?}",
-        test_file_path,
-        two_metadata.atime(),
-        two_metadata.mtime(),
-        std::time::SystemTime::now()
-    );
 
     if two_metadata.atime() == three_metadata.atime() {
         return Err(std::io::Error::new(
@@ -492,7 +411,7 @@ pub fn test_mount_rsuid_option(path: &str) -> Result<(), std::io::Error> {
     // check suid and sgid
     let suid = metadata.mode() & 0o4000 == 0o4000;
     let sgid = metadata.mode() & 0o2000 == 0o2000;
-    println!("suid: {suid:?},sgid: {sgid:?}");
+
     if suid && sgid {
         return Ok(());
     }
