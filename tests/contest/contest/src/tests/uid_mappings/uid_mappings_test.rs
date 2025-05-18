@@ -11,15 +11,15 @@ use crate::utils::test_utils::CreateOptions;
 
 fn create_spec(uid_mappings: Vec<LinuxIdMapping>, gid_mappings: Vec<LinuxIdMapping>) -> Spec {
     // Get default namespaces and add user namespaces
-    let mut default_namespaces: Vec<LinuxNamespace> = oci_spec::runtime::get_default_namespaces();
+    let mut namespaces: Vec<LinuxNamespace> = oci_spec::runtime::get_default_namespaces();
     let userns = LinuxNamespaceBuilder::default()
         .typ(LinuxNamespaceType::User)
         .build()
         .unwrap();
-    default_namespaces.push(userns);
+    namespaces.push(userns);
 
     let linux_builder = LinuxBuilder::default()
-        .namespaces(default_namespaces)
+        .namespaces(namespaces)
         .uid_mappings(uid_mappings)
         .gid_mappings(gid_mappings)
         .build()
