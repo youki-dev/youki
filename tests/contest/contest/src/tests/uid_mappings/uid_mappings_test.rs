@@ -9,7 +9,7 @@ use test_framework::{Test, TestGroup, TestResult};
 use crate::utils::test_inside_container;
 use crate::utils::test_utils::CreateOptions;
 
-fn create_spec(uid_mapping: Vec<LinuxIdMapping>, gid_mapping: Vec<LinuxIdMapping>) -> Spec {
+fn create_spec(uid_mappings: Vec<LinuxIdMapping>, gid_mappings: Vec<LinuxIdMapping>) -> Spec {
     // Get default namespaces and add user namespaces
     let mut default_namespaces: Vec<LinuxNamespace> = oci_spec::runtime::get_default_namespaces();
     let userns = LinuxNamespaceBuilder::default()
@@ -20,8 +20,8 @@ fn create_spec(uid_mapping: Vec<LinuxIdMapping>, gid_mapping: Vec<LinuxIdMapping
 
     let linux_builder = LinuxBuilder::default()
         .namespaces(default_namespaces)
-        .uid_mappings(uid_mapping)
-        .gid_mappings(gid_mapping)
+        .uid_mappings(uid_mappings)
+        .gid_mappings(gid_mappings)
         .build()
         .expect("error in building linux config");
 
@@ -45,14 +45,14 @@ fn uid_mappings_test() -> TestResult {
         .build()
         .unwrap()];
 
-    let gid_mapping = vec![LinuxIdMappingBuilder::default()
+    let gid_mappings = vec![LinuxIdMappingBuilder::default()
         .host_id(1000_u32)
         .container_id(0_u32)
         .size(3000_u32)
         .build()
         .unwrap()];
 
-    let spec = create_spec(uid_mappings, gid_mapping);
+    let spec = create_spec(uid_mappings, gid_mappings);
     test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
