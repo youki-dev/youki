@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
+use libcontainer::syscall::syscall::create_syscall;
 use libcontainer::utils::{create_dir_all_with_mode, rootless_required};
 use nix::libc;
 use nix::sys::stat::Mode;
@@ -9,6 +10,7 @@ use nix::unistd::getuid;
 
 pub fn determine(root_path: Option<PathBuf>) -> Result<PathBuf> {
     let uid = getuid().as_raw();
+    let syscall = create_syscall();
 
     if let Some(path) = root_path {
         if !path.exists() {
@@ -18,7 +20,7 @@ pub fn determine(root_path: Option<PathBuf>) -> Result<PathBuf> {
         return Ok(path);
     }
 
-    if !rootless_required()? {
+    if !rootless_required(&*syscall)? {
         let path = get_default_not_rootless_path();
         create_dir_all_with_mode(&path, uid, Mode::S_IRWXU)?;
         return Ok(path);

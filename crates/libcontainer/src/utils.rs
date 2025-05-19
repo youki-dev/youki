@@ -13,6 +13,7 @@ use nix::unistd::{Uid, User};
 use oci_spec::runtime::{LinuxNamespaceType, Spec};
 
 use crate::error::{LibcontainerError, MissingSpecError};
+use crate::syscall::Syscall;
 use crate::user_ns::UserNamespaceConfig;
 
 #[derive(Debug, thiserror::Error)]
@@ -259,18 +260,21 @@ pub fn is_in_new_userns() -> Result<bool, std::io::Error> {
 }
 
 /// Checks if rootless mode needs to be used
-pub fn rootless_required() -> Result<bool, std::io::Error> {
-    if !nix::unistd::geteuid().is_root() {
+pub fn rootless_required(syscall: &dyn Syscall) -> Result<bool, std::io::Error> {
+    if !syscall.get_euid().is_root() {
         return Ok(true);
     }
     is_in_new_userns()
 }
 
 /// checks if given spec is valid for current user namespace setup
-pub fn validate_spec_for_new_user_ns(spec: &Spec) -> Result<(), LibcontainerError> {
+pub fn validate_spec_for_new_user_ns(
+    spec: &Spec,
+    syscall: &dyn Syscall,
+) -> Result<(), LibcontainerError> {
     let config = UserNamespaceConfig::new(spec)?;
     let in_user_ns = is_in_new_userns().map_err(LibcontainerError::OtherIO)?;
-    let is_rootless_required = rootless_required().map_err(LibcontainerError::OtherIO)?;
+    let is_rootless_required = rootless_required(syscall).map_err(LibcontainerError::OtherIO)?;
     // In case of rootless, there are 2 possible cases :
     // we have a new user ns specified in the spec
     // or the youki is launched in a new user ns (this is how podman does it)
@@ -298,7 +302,10 @@ pub enum NetDevicesError {
 }
 
 // check if given spec is valid for netDevices
-pub fn validate_spec_for_net_devices(spec: &Spec) -> Result<(), NetDevicesError> {
+pub fn validate_spec_for_net_devices(
+    spec: &Spec,
+    syscall: &dyn Syscall,
+) -> Result<(), NetDevicesError> {
     let linux = spec
         .linux()
         .as_ref()
@@ -318,7 +325,7 @@ pub fn validate_spec_for_net_devices(spec: &Spec) -> Result<(), NetDevicesError>
         return Err(NetDevicesError::NoNetNamespace);
     }
 
-    let is_rootless = rootless_required().map_err(NetDevicesError::IO)?;
+    let is_rootless = rootless_required(syscall).map_err(NetDevicesError::IO)?;
     if is_rootless {
         return Err(NetDevicesError::RootlessNotSupported);
     }
@@ -362,12 +369,13 @@ mod tests {
     use core::panic;
 
     use anyhow::{bail, Result};
+    use nix::unistd::Gid;
     use oci_spec::runtime::{LinuxBuilder, LinuxNamespaceBuilder, LinuxNetDevice, SpecBuilder};
     use serial_test::serial;
 
     use super::*;
+    use crate::syscall::syscall::create_syscall;
     use crate::test_utils;
-
     #[test]
     pub fn test_get_unix_user() {
         let user = get_unix_user(Uid::from_raw(0));
@@ -476,28 +484,30 @@ mod tests {
     #[serial]
     fn test_userns_spec_validation() -> Result<(), test_utils::TestError> {
         use nix::sched::{unshare, CloneFlags};
+        let syscall = create_syscall();
         // default rootful spec
         let rootful_spec = Spec::default();
         // as we are not in a user ns, and spec does not have user ns
         // we should get error here
-        assert!(validate_spec_for_new_user_ns(&rootful_spec).is_err());
+        assert!(validate_spec_for_new_user_ns(&rootful_spec, &*syscall).is_err());
 
         let rootless_spec = Spec::rootless(1000, 1000);
         // because the spec contains user ns info, we should not get error
-        assert!(validate_spec_for_new_user_ns(&rootless_spec).is_ok());
+        assert!(validate_spec_for_new_user_ns(&rootless_spec, &*syscall).is_ok());
 
         test_utils::test_in_child_process(|| {
             unshare(CloneFlags::CLONE_NEWUSER).unwrap();
             // here we are in a new user namespace
             let rootful_spec = Spec::default();
+            let syscall = create_syscall();
             // because we are already in a new user ns, it is fine if spec
             // does not have user ns, and because the test is running as
             // non root
-            assert!(validate_spec_for_new_user_ns(&rootful_spec).is_ok());
+            assert!(validate_spec_for_new_user_ns(&rootful_spec, &*syscall).is_ok());
 
             let rootless_spec = Spec::rootless(1000, 1000);
             // following should succeed irrespective if we're in user ns or not
-            assert!(validate_spec_for_new_user_ns(&rootless_spec).is_ok());
+            assert!(validate_spec_for_new_user_ns(&rootless_spec, &*syscall).is_ok());
             Ok(())
         })
     }
@@ -556,24 +566,28 @@ mod tests {
     }
 
     #[test]
-    fn test_linux_none_ok() {
-        let mut spec = Spec::default();
-        spec.set_linux(None);
-        let result = validate_spec_for_net_devices(&spec);
+    fn test_net_devices_none() {
+        let spec = Spec::default();
+        let syscall = create_syscall();
+        syscall.set_id(Uid::from_raw(0), Gid::from_raw(0)).unwrap();
+        let result = validate_spec_for_net_devices(&spec, &*syscall);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_missing_net_namespace() {
         let spec = build_spec_with_ns_and_devices(false, vec![]);
-        let err = validate_spec_for_net_devices(&spec).unwrap_err();
+        let syscall = create_syscall();
+        let err = validate_spec_for_net_devices(&spec, &*syscall).unwrap_err();
         assert!(matches!(err, NetDevicesError::NoNetNamespace));
     }
 
     #[test]
     fn test_invalid_device_name() {
         let spec = build_spec_with_ns_and_devices(true, vec![("eth0", "/:invalid")]);
-        let err = validate_spec_for_net_devices(&spec).unwrap_err();
+        let syscall = create_syscall();
+        syscall.set_id(Uid::from_raw(0), Gid::from_raw(0)).unwrap();
+        let err = validate_spec_for_net_devices(&spec, &*syscall).unwrap_err();
         if let NetDevicesError::InvalidDeviceName(name) = err {
             assert_eq!(name, "/:invalid");
         } else {
@@ -584,7 +598,9 @@ mod tests {
     #[test]
     fn test_valid_config() {
         let spec = build_spec_with_ns_and_devices(true, vec![("eth0", "eth0_container")]);
-        let result = validate_spec_for_net_devices(&spec);
+        let syscall = create_syscall();
+        syscall.set_id(Uid::from_raw(0), Gid::from_raw(0)).unwrap();
+        let result = validate_spec_for_net_devices(&spec, &*syscall);
         assert!(result.is_ok());
     }
 }

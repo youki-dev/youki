@@ -7,6 +7,7 @@ use oci_spec::runtime::{Linux, LinuxIdMapping, LinuxNamespace, LinuxNamespaceTyp
 
 use crate::error::MissingSpecError;
 use crate::namespaces::{NamespaceError, Namespaces};
+use crate::syscall::syscall::create_syscall;
 use crate::utils;
 
 // Wrap the uid/gid path function into a struct for dependency injection. This
@@ -211,6 +212,7 @@ impl TryFrom<&Linux> for UserNamespaceConfig {
     type Error = UserNamespaceError;
 
     fn try_from(linux: &Linux) -> Result<Self> {
+        let syscall = create_syscall();
         let namespaces = Namespaces::try_from(linux.namespaces().as_ref())
             .map_err(ValidateSpecError::Namespaces)?;
         let user_namespace = namespaces
@@ -222,7 +224,7 @@ impl TryFrom<&Linux> for UserNamespaceConfig {
             uid_mappings: linux.uid_mappings().to_owned(),
             gid_mappings: linux.gid_mappings().to_owned(),
             user_namespace: user_namespace.cloned(),
-            privileged: !utils::rootless_required()?,
+            privileged: !utils::rootless_required(&*syscall)?,
             id_mapper: UserNamespaceIDMapper::new(),
         })
     }
@@ -256,6 +258,7 @@ fn validate_spec_for_new_user_ns(spec: &Spec) -> std::result::Result<(), Validat
         "validating spec for container with new user namespace"
     );
     let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
+    let syscall = create_syscall();
 
     let gid_mappings = linux
         .gid_mappings()
@@ -286,7 +289,7 @@ fn validate_spec_for_new_user_ns(spec: &Spec) -> std::result::Result<(), Validat
         .as_ref()
         .and_then(|process| process.user().additional_gids().as_ref())
     {
-        let privileged = !utils::rootless_required()?;
+        let privileged = !utils::rootless_required(&*syscall)?;
 
         match (privileged, additional_gids.is_empty()) {
             (true, false) => {

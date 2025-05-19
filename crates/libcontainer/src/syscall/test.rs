@@ -140,7 +140,26 @@ impl MockCalls {
 
 #[derive(Default)]
 pub struct TestHelperSyscall {
+    id: RefCell<MockId>,
     mocks: MockCalls,
+}
+
+pub struct MockId {
+    uid: Uid,
+    gid: Gid,
+    euid: Uid,
+    egid: Gid,
+}
+
+impl Default for MockId {
+    fn default() -> Self {
+        Self {
+            uid: Uid::from_raw(unsafe { libc::getuid() }),
+            gid: Gid::from_raw(unsafe { libc::getgid() }),
+            euid: Uid::from_raw(unsafe { libc::geteuid() }),
+            egid: Gid::from_raw(unsafe { libc::getegid() }),
+        }
+    }
 }
 
 impl Syscall for TestHelperSyscall {
@@ -157,8 +176,13 @@ impl Syscall for TestHelperSyscall {
             .act(ArgName::Namespace, Box::new((rawfd, nstype)))
     }
 
-    fn set_id(&self, _uid: Uid, _gid: Gid) -> Result<()> {
-        unimplemented!()
+    fn set_id(&self, uid: Uid, gid: Gid) -> Result<()> {
+        let mut id = self.id.borrow_mut();
+        id.uid = uid;
+        id.gid = gid;
+        id.euid = uid;
+        id.egid = gid;
+        Ok(())
     }
 
     fn unshare(&self, flags: CloneFlags) -> Result<()> {
@@ -275,6 +299,10 @@ impl Syscall for TestHelperSyscall {
                 flags,
             }),
         )
+    }
+
+    fn get_euid(&self) -> Uid {
+        self.id.borrow().euid
     }
 }
 
