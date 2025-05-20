@@ -12,8 +12,8 @@ use crate::config::YoukiConfig;
 use crate::error::{ErrInvalidSpec, LibcontainerError, MissingSpecError};
 use crate::notify_socket::NOTIFY_FILE;
 use crate::process::args::ContainerType;
+use crate::syscall::syscall::create_syscall;
 use crate::{apparmor, tty, user_ns, utils};
-
 // Builder that can be used to configure the properties of a new container
 pub struct InitContainerBuilder {
     base: ContainerBuilder,
@@ -161,6 +161,7 @@ impl InitContainerBuilder {
 
     fn validate_spec(spec: &Spec) -> Result<(), LibcontainerError> {
         let version = spec.version();
+        let syscall = create_syscall();
         if !version.starts_with("1.") {
             tracing::error!(
                 "runtime spec has incompatible version '{}'. Only 1.X.Y is supported",
@@ -200,7 +201,9 @@ impl InitContainerBuilder {
             }
         }
 
-        utils::validate_spec_for_new_user_ns(spec)?;
+        utils::validate_spec_for_new_user_ns(spec, &*syscall)?;
+        utils::validate_spec_for_net_devices(spec, &*syscall)
+            .map_err(LibcontainerError::NetDevicesError)?;
 
         Ok(())
     }

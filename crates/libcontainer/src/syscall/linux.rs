@@ -727,6 +727,10 @@ impl Syscall for LinuxSyscall {
         umount2(target, flags)?;
         Ok(())
     }
+
+    fn get_euid(&self) -> Uid {
+        Uid::from_raw(unsafe { libc::geteuid() })
+    }
 }
 
 #[cfg(test)]

@@ -23,6 +23,7 @@ use crate::tests::lifecycle::{ContainerCreate, ContainerLifecycle};
 use crate::tests::linux_masked_paths::get_linux_masked_paths_tests;
 use crate::tests::linux_ns_itype::get_ns_itype_tests;
 use crate::tests::mounts_recursive::get_mounts_recursive_test;
+use crate::tests::net_devices::get_net_devices_test;
 use crate::tests::no_pivot::get_no_pivot_test;
 use crate::tests::pidfile::get_pidfile_test;
 use crate::tests::process::get_process_test;
@@ -140,6 +141,7 @@ fn main() -> Result<()> {
     let masked_paths = get_linux_masked_paths_tests();
     let rootfs_propagation = get_rootfs_propagation_test();
     let process_capabilities_fail = get_process_capabilities_fail_test();
+    let net_devices = get_net_devices_test();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -176,6 +178,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(fd_control));
     tm.add_test_group(Box::new(kill));
     tm.add_test_group(Box::new(rootfs_propagation));
+    tm.add_test_group(Box::new(net_devices));
     tm.add_test_group(Box::new(process_capabilities_fail));
 
     tm.add_test_group(Box::new(io_priority_test));
