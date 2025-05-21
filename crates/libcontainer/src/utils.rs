@@ -5,6 +5,7 @@ use std::fs::{self, DirBuilder, File};
 use std::os::linux::fs::MetadataExt;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 
 use nix::sys::stat::Mode;
 use nix::sys::statfs;
@@ -280,6 +281,33 @@ pub fn validate_spec_for_new_user_ns(spec: &Spec) -> Result<(), LibcontainerErro
         return Err(LibcontainerError::NoUserNamespace);
     }
     Ok(())
+}
+
+// Generic retry function with delay and policy.
+// Retries the operation `op` up to `attempts` times if it fails.
+// Waits for `delay` duration between retries.
+// Only retries if the error satisfies the `policy` function.
+pub fn retry<F, T, E, P>(mut op: F, attempts: u32, delay: Duration, policy: P) -> Result<T, E>
+where
+    F: FnMut() -> Result<T, E>,
+    P: Fn(&E) -> bool,
+{
+    if attempts == 0 {
+        panic!("retry called with 0 attempts. Minimum attempts is 1.");
+    }
+    for attempt in 0..attempts {
+        match op() {
+            Ok(res) => return Ok(res),
+            Err(err) => {
+                if attempt + 1 < attempts && policy(&err) {
+                    std::thread::sleep(delay);
+                } else {
+                    return Err(err);
+                }
+            }
+        }
+    }
+    unreachable!("retry loop completed without returning a result.");
 }
 
 #[cfg(test)]
