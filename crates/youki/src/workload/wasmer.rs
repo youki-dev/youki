@@ -1,7 +1,9 @@
+use std::error::Error;
+
 use libcontainer::oci_spec::runtime::Spec;
 use libcontainer::workload::{Executor, ExecutorError, ExecutorValidationError, EMPTY};
 use wasmer::{Instance, Module, Store};
-use wasmer_wasix::WasiEnv;
+use wasmer_wasix::{WasiEnv, WasiError};
 
 const EXECUTOR_NAME: &str = "wasmer";
 
@@ -71,13 +73,21 @@ impl Executor for WasmerExecutor {
                 "could not retrieve wasm module main function: {err}"
             ))
         })?;
-        start
-            .call(&mut store, &[])
-            .map_err(|err| ExecutorError::Execution(err.into()))?;
+
+        start.call(&mut store, &[]).map_err(|err| {
+            if let Some(WasiError::Exit(exit_code)) = err
+                .source()
+                .and_then(|err_source| err_source.downcast_ref::<WasiError>())
+            {
+                std::process::exit(exit_code.raw())
+            } else {
+                ExecutorError::Execution(err.into())
+            }
+        })?;
 
         wasi_env.cleanup(&mut store, None);
 
-        Ok(())
+        std::process::exit(0)
     }
 
     fn validate(&self, spec: &Spec) -> Result<(), ExecutorValidationError> {
