@@ -1,5 +1,29 @@
 # Changelog
 
+## [v0.5.4](https://github.com/youki-dev/youki/compare/v0.5.3...v0.5.4) - 2025-05-22
+### 🐛 Bug Fixes
+- use additional gids,user,group in exec, inject path iif not given by @YJDoc2 in https://github.com/youki-dev/youki/pull/3131
+- fix: mount retry and logging by @z63d in https://github.com/youki-dev/youki/pull/3157
+- fix: Gracefully terminate processes after successful execution of Wasm executors by @z63d in https://github.com/youki-dev/youki/pull/3099
+### 📖 Documentation improvements
+- Add the CNCF footer in README.md by @utam0k in https://github.com/youki-dev/youki/pull/3140
+- chore(docs): Fix codecov link in README by @khanhtc1202 in https://github.com/youki-dev/youki/pull/3129
+- Fixed grammatical error in README by @CheatCodeSam in https://github.com/youki-dev/youki/pull/3160
+### 🧪 Test improvements and Misc Fixes
+- bump nix to 0.29.0 by @kemingy in https://github.com/youki-dev/youki/pull/3123
+- update rust version to 1.85.0 by @YJDoc2 in https://github.com/youki-dev/youki/pull/3085
+- add-test-linux_rootfs_propagation by @saku3 in https://github.com/youki-dev/youki/pull/3024
+- Add a relative_network_cgroups test as one of the integration tests by @moz-sec in https://github.com/youki-dev/youki/pull/2986
+- Refactor init process by @utam0k in https://github.com/youki-dev/youki/pull/3158
+- add kill test by @YamasouA in https://github.com/youki-dev/youki/pull/2996
+- allow running selected tests in contest.sh and justfile by @saku3 in https://github.com/youki-dev/youki/pull/3165
+- fix: capet Ambient log level by @z63d in https://github.com/youki-dev/youki/pull/3150
+- add test process_capabilities_fail by @kazmsk in https://github.com/youki-dev/youki/pull/3010
+- fix typos and outdated typos ci action by @howjmay in https://github.com/youki-dev/youki/pull/3168
+### Other Changes
+- Bump oci-spec.rs to v0.8.1 by @saku3 in https://github.com/youki-dev/youki/pull/3154
+- selinux: lima vm by @utam0k in https://github.com/youki-dev/youki/pull/3162
+
 ## [v0.5.3](https://github.com/youki-dev/youki/compare/v0.5.2...v0.5.3) - 2025-03-21
 ### 🐛 Bug Fixes
 - Security: Fix compromised `tj-actions/changed-files` action by @sou1118 in https://github.com/youki-dev/youki/pull/3112
