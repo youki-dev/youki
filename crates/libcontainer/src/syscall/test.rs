@@ -140,7 +140,27 @@ impl MockCalls {
 
 #[derive(Default)]
 pub struct TestHelperSyscall {
+    mock_id: RefCell<MockId>,
     mocks: MockCalls,
+}
+
+pub struct MockId {
+    uid: Uid,
+    gid: Gid,
+    euid: Uid,
+    egid: Gid,
+    // TODO: add more fields such as suid, sgid, etc.
+}
+
+impl Default for MockId {
+    fn default() -> Self {
+        Self {
+            uid: nix::unistd::getuid(),
+            gid: nix::unistd::getgid(),
+            euid: nix::unistd::geteuid(),
+            egid: nix::unistd::getegid(),
+        }
+    }
 }
 
 impl Syscall for TestHelperSyscall {
@@ -158,7 +178,11 @@ impl Syscall for TestHelperSyscall {
     }
 
     fn set_id(&self, _uid: Uid, _gid: Gid) -> Result<()> {
-        unimplemented!()
+        self.mock_id.borrow_mut().uid = _uid;
+        self.mock_id.borrow_mut().gid = _gid;
+        self.mock_id.borrow_mut().euid = _uid;
+        self.mock_id.borrow_mut().egid = _gid;
+        Ok(())
     }
 
     fn unshare(&self, flags: CloneFlags) -> Result<()> {
@@ -275,6 +299,22 @@ impl Syscall for TestHelperSyscall {
                 flags,
             }),
         )
+    }
+
+    fn get_uid(&self) -> Uid {
+        self.mock_id.borrow().uid
+    }
+
+    fn get_gid(&self) -> Gid {
+        self.mock_id.borrow().gid
+    }
+
+    fn get_euid(&self) -> Uid {
+        self.mock_id.borrow().euid
+    }
+
+    fn get_egid(&self) -> Gid {
+        self.mock_id.borrow().egid
     }
 }
 

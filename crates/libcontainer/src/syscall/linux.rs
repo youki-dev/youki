@@ -576,7 +576,7 @@ impl Syscall for LinuxSyscall {
 
         if result.is_null() {
             // There is no such user, or an error has occurred.
-            // errno gets set if there’s an error.
+            // errno gets set if there's an error.
             return None;
         }
 
@@ -726,6 +726,22 @@ impl Syscall for LinuxSyscall {
     fn umount2(&self, target: &Path, flags: MntFlags) -> Result<()> {
         umount2(target, flags)?;
         Ok(())
+    }
+
+    fn get_uid(&self) -> Uid {
+        nix::unistd::getuid()
+    }
+
+    fn get_gid(&self) -> Gid {
+        nix::unistd::getgid()
+    }
+
+    fn get_euid(&self) -> Uid {
+        nix::unistd::geteuid()
+    }
+
+    fn get_egid(&self) -> Gid {
+        nix::unistd::getegid()
     }
 }
 

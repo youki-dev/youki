@@ -8,6 +8,7 @@ mod workload;
 
 use anyhow::{Context, Result};
 use clap::{crate_version, CommandFactory, Parser};
+use libcontainer::syscall::syscall::create_syscall;
 use liboci_cli::{CommonCmd, GlobalOpts, StandardCmd};
 
 use crate::commands::info;
@@ -88,6 +89,7 @@ fn main() -> Result<()> {
 
     let opts = Opts::parse();
     let mut app = Opts::command();
+    let syscall = create_syscall();
 
     observability::init(&opts).map_err(|err| {
         eprintln!("failed to initialize observability: {}", err);
@@ -96,10 +98,11 @@ fn main() -> Result<()> {
 
     tracing::debug!(
         "started by user {} with {:?}",
-        nix::unistd::geteuid(),
+        syscall.get_euid(),
         std::env::args_os()
     );
-    let root_path = rootpath::determine(opts.global.root)?;
+
+    let root_path = rootpath::determine(opts.global.root, &*syscall)?;
     let systemd_cgroup = opts.global.systemd_cgroup;
 
     let cmd_result = match opts.subcmd {
@@ -138,7 +141,7 @@ fn main() -> Result<()> {
                     std::process::exit(-1);
                 }
             },
-            CommonCmd::Spec(spec) => commands::spec_json::spec(spec),
+            CommonCmd::Spec(spec) => commands::spec_json::spec(spec, &*syscall),
             CommonCmd::Update(update) => commands::update::update(update, root_path),
         },
 

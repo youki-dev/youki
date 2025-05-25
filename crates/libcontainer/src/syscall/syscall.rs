@@ -55,6 +55,10 @@ pub trait Syscall {
     ) -> Result<()>;
     fn set_io_priority(&self, class: i64, priority: i64) -> Result<()>;
     fn umount2(&self, target: &Path, flags: MntFlags) -> Result<()>;
+    fn get_uid(&self) -> Uid;
+    fn get_gid(&self) -> Gid;
+    fn get_euid(&self) -> Uid;
+    fn get_egid(&self) -> Gid;
 }
 
 #[derive(Clone, Copy)]

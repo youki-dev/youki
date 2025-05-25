@@ -7,8 +7,8 @@ use oci_spec::runtime::{Linux, LinuxIdMapping, LinuxNamespace, LinuxNamespaceTyp
 
 use crate::error::MissingSpecError;
 use crate::namespaces::{NamespaceError, Namespaces};
+use crate::syscall::syscall::{create_syscall, Syscall};
 use crate::utils;
-
 // Wrap the uid/gid path function into a struct for dependency injection. This
 // allows us to mock the id mapping logic in unit tests by using a different
 // base path other than `/proc`.
@@ -149,6 +149,7 @@ pub struct UserNamespaceConfig {
 
 impl UserNamespaceConfig {
     pub fn new(spec: &Spec) -> Result<Option<Self>> {
+        let syscall = create_syscall();
         let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
         let namespaces = Namespaces::try_from(linux.namespaces().as_ref())
             .map_err(ValidateSpecError::Namespaces)?;
@@ -159,7 +160,7 @@ impl UserNamespaceConfig {
         if user_namespace.is_some() && user_namespace.unwrap().path().is_none() {
             tracing::debug!("container with new user namespace should be created");
 
-            validate_spec_for_new_user_ns(spec).map_err(|err| {
+            validate_spec_for_new_user_ns(spec, &*syscall).map_err(|err| {
                 tracing::error!("failed to validate spec for new user namespace: {}", err);
                 err
             })?;
@@ -216,13 +217,14 @@ impl TryFrom<&Linux> for UserNamespaceConfig {
         let user_namespace = namespaces
             .get(LinuxNamespaceType::User)
             .map_err(ValidateSpecError::Namespaces)?;
+        let syscall = create_syscall();
         Ok(Self {
             newuidmap: None,
             newgidmap: None,
             uid_mappings: linux.uid_mappings().to_owned(),
             gid_mappings: linux.gid_mappings().to_owned(),
             user_namespace: user_namespace.cloned(),
-            privileged: !utils::rootless_required()?,
+            privileged: !utils::rootless_required(&*syscall)?,
             id_mapper: UserNamespaceIDMapper::new(),
         })
     }
@@ -250,7 +252,10 @@ pub fn unprivileged_user_ns_enabled() -> Result<bool> {
 
 /// Validates that the spec contains the required information for
 /// creating a new user namespace
-fn validate_spec_for_new_user_ns(spec: &Spec) -> std::result::Result<(), ValidateSpecError> {
+fn validate_spec_for_new_user_ns(
+    spec: &Spec,
+    syscall: &dyn Syscall,
+) -> std::result::Result<(), ValidateSpecError> {
     tracing::debug!(
         ?spec,
         "validating spec for container with new user namespace"
@@ -286,7 +291,7 @@ fn validate_spec_for_new_user_ns(spec: &Spec) -> std::result::Result<(), Validat
         .as_ref()
         .and_then(|process| process.user().additional_gids().as_ref())
     {
-        let privileged = !utils::rootless_required()?;
+        let privileged = !utils::rootless_required(syscall)?;
 
         match (privileged, additional_gids.is_empty()) {
             (true, false) => {
@@ -299,7 +304,7 @@ fn validate_spec_for_new_user_ns(spec: &Spec) -> std::result::Result<(), Validat
             }
             (false, false) => {
                 tracing::error!(
-                    user = ?nix::unistd::geteuid(),
+                    user = ?syscall.get_euid(),
                     "user is unprivileged. Supplementary groups cannot be set in \
                         a rootless container for this user due to CVE-2014-8989",
                 );
@@ -463,6 +468,7 @@ mod tests {
 
     #[test]
     fn test_validate_ok() -> Result<()> {
+        let syscall = create_syscall();
         let userns = LinuxNamespaceBuilder::default()
             .typ(LinuxNamespaceType::User)
             .build()?;
@@ -482,12 +488,13 @@ mod tests {
             .gid_mappings(gid_mappings)
             .build()?;
         let spec = SpecBuilder::default().linux(linux).build()?;
-        assert!(validate_spec_for_new_user_ns(&spec).is_ok());
+        assert!(validate_spec_for_new_user_ns(&spec, &*syscall).is_ok());
         Ok(())
     }
 
     #[test]
     fn test_validate_err() -> Result<()> {
+        let syscall = create_syscall();
         let userns = LinuxNamespaceBuilder::default()
             .typ(LinuxNamespaceType::User)
             .build()?;
@@ -511,7 +518,8 @@ mod tests {
             &SpecBuilder::default()
                 .linux(linux_uid_empty)
                 .build()
-                .unwrap()
+                .unwrap(),
+            &*syscall
         )
         .is_err());
 
@@ -524,7 +532,8 @@ mod tests {
             &SpecBuilder::default()
                 .linux(linux_gid_empty)
                 .build()
-                .unwrap()
+                .unwrap(),
+            &*syscall
         )
         .is_err());
 
@@ -536,7 +545,8 @@ mod tests {
             &SpecBuilder::default()
                 .linux(linux_uid_none)
                 .build()
-                .unwrap()
+                .unwrap(),
+            &*syscall
         )
         .is_err());
 
@@ -548,7 +558,8 @@ mod tests {
             &SpecBuilder::default()
                 .linux(linux_gid_none)
                 .build()
-                .unwrap()
+                .unwrap(),
+            &*syscall
         )
         .is_err());
 
