@@ -149,7 +149,6 @@ pub struct MockId {
     gid: Gid,
     euid: Uid,
     egid: Gid,
-    // TODO: add more fields such as suid, sgid, etc.
 }
 
 impl Default for MockId {
