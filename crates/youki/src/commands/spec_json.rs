@@ -7,14 +7,14 @@ use libcontainer::oci_spec::runtime::{
     LinuxBuilder, LinuxIdMappingBuilder, LinuxNamespace, LinuxNamespaceBuilder, LinuxNamespaceType,
     Mount, Spec,
 };
-use nix;
+use libcontainer::syscall::syscall::Syscall;
 use serde_json::to_writer_pretty;
 
 pub fn get_default() -> Result<Spec> {
     Ok(Spec::default())
 }
 
-pub fn get_rootless() -> Result<Spec> {
+pub fn get_rootless(syscall: &dyn Syscall) -> Result<Spec> {
     // Remove network and user namespace from the default spec
     let mut namespaces: Vec<LinuxNamespace> =
         libcontainer::oci_spec::runtime::get_default_namespaces()
@@ -31,8 +31,8 @@ pub fn get_rootless() -> Result<Spec> {
             .build()?,
     );
 
-    let uid = nix::unistd::geteuid().as_raw();
-    let gid = nix::unistd::getegid().as_raw();
+    let uid = syscall.get_euid().as_raw();
+    let gid = syscall.get_egid().as_raw();
 
     let linux = LinuxBuilder::default()
         .namespaces(namespaces)
@@ -82,9 +82,9 @@ pub fn get_rootless() -> Result<Spec> {
 }
 
 /// spec Cli command
-pub fn spec(args: liboci_cli::Spec) -> Result<()> {
+pub fn spec(args: liboci_cli::Spec, syscall: &dyn Syscall) -> Result<()> {
     let spec = if args.rootless {
-        get_rootless()?
+        get_rootless(syscall)?
     } else {
         get_default()?
     };
@@ -100,6 +100,7 @@ pub fn spec(args: liboci_cli::Spec) -> Result<()> {
 #[cfg(test)]
 // Tests become unstable if not serial. The cause is not known.
 mod tests {
+    use libcontainer::syscall::syscall::create_syscall;
     use serial_test::serial;
 
     use super::*;
@@ -107,7 +108,8 @@ mod tests {
     #[test]
     #[serial]
     fn test_spec_json() -> Result<()> {
-        let spec = get_rootless()?;
+        let syscall = create_syscall();
+        let spec = get_rootless(&*syscall)?;
         let tmpdir = tempfile::tempdir().expect("failed to create temp dir");
         let path = tmpdir.path().join("config.json");
         let file = File::create(path)?;
