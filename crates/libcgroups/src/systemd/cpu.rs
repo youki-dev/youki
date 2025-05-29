@@ -42,7 +42,12 @@ impl Cpu {
         properties: &mut HashMap<&str, Variant>,
     ) -> Result<(), SystemdCpuError> {
         if Self::is_realtime_requested(cpu) {
-            return Err(SystemdCpuError::RealtimeSystemd);
+            let realtime_runtime = cpu.realtime_runtime();
+            let runtime_period = cpu.realtime_period();
+
+            if !matches!((realtime_runtime, runtime_period), (Some(0), Some(0))) {
+                return Err(SystemdCpuError::RealtimeSystemd);
+            }
         }
 
         if let Some(mut shares) = cpu.shares() {
