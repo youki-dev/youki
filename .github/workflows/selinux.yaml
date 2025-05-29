@@ -1,0 +1,68 @@
+name: 🧪 SELinux Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      dirs: ${{ steps.filter.outputs.changes }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Check for changes
+        uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            selinux: experiment/selinux/**
+
+  test:
+    name: SELinux Lima Tests
+    needs: [changes]
+    if: ${{ !contains(needs.changes.outputs.dirs, '[]') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Lima
+        uses: lima-vm/lima-actions/setup@v1
+        id: lima-setup
+
+      - name: Cache Lima images
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/lima
+          key: lima-${{ steps.lima-setup.outputs.version }}-selinux
+
+      - name: Create Lima VM
+        working-directory: experiment/selinux
+        run: |
+          chmod +x ./lima-setup.sh
+          ./lima-setup.sh --cpus 2 --memory 2GiB
+
+      - name: Run tests
+        working-directory: experiment/selinux
+        run: |
+          ./lima-run.sh cargo test
+
+      - name: Run application
+        working-directory: experiment/selinux
+        run: |
+          ./lima-run.sh cargo run
+
+      - name: Clean up
+        if: always()
+        working-directory: experiment/selinux
+        run: |
+          ./lima-setup.sh --cleanup

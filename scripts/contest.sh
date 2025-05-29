@@ -2,6 +2,7 @@
 
 ROOT=$(git rev-parse --show-toplevel)
 RUNTIME=$1
+shift
 
 if [ "$RUNTIME" = "" ]; then
     echo "please specify runtime"
@@ -15,8 +16,6 @@ if [ ! -e $RUNTIME ]; then
   fi
 fi
 
-ROOT=${2-$(git rev-parse --show-toplevel)}
-
 LOGFILE="${ROOT}/test.log"
 
 if [ ! -f ${ROOT}/bundle.tar.gz ]; then
@@ -24,14 +23,18 @@ if [ ! -f ${ROOT}/bundle.tar.gz ]; then
 fi
 touch ${LOGFILE}
 
-${ROOT}/contest run --runtime "$RUNTIME" --runtimetest ${ROOT}/runtimetest > $LOGFILE
+if [ $# -gt 0 ]; then
+    ${ROOT}/contest run --runtime "$RUNTIME" --runtimetest "${ROOT}/runtimetest" -t "$@" > "$LOGFILE"
+else
+    ${ROOT}/contest run --runtime "$RUNTIME" --runtimetest "${ROOT}/runtimetest" > "$LOGFILE"
+fi
 
 if [ 0 -ne $(grep "not ok" $LOGFILE | wc -l ) ]; then
     cat $LOGFILE
     exit 1
 fi
 
-echo "Validation successful for runtime $1"
+echo "Validation successful for runtime $RUNTIME"
 exit 0
 
 

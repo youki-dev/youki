@@ -19,8 +19,10 @@ flate = "flate"
 clos = "clos"
 Setted = "Setted"
 hve = "hve"
+typ = "typ"
 
 [type.md.extend-words]
-# This is used as "yoh-key" in markdown files to describe the pronounciation 
+# This is used as "yoh-key" in markdown files to describe the pronunciation 
 # for Youki
 "yoh" = "yoh"
+"typ" = "typ"

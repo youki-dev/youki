@@ -155,7 +155,7 @@ pub fn drop_privileges<S: Syscall + ?Sized>(
     if let Some(ambient) = cs.ambient() {
         // check specifically for ambient, as those might not always be available
         if let Err(e) = syscall.set_capability(CapSet::Ambient, &to_set(ambient)) {
-            tracing::error!("failed to set ambient capabilities: {}", e);
+            tracing::warn!("failed to set ambient capabilities: {}", e);
         }
     }
 

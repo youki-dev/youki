@@ -54,12 +54,12 @@ test-oci:
     {{ cwd }}/scripts/oci_integration_tests.sh {{ cwd }}
 
 # run rust oci integration tests
-test-contest: youki-release contest
-    sudo {{ cwd }}/scripts/contest.sh {{ cwd }}/youki
+test-contest *TESTNAME: youki-release contest
+    sudo {{ cwd }}/scripts/contest.sh {{ cwd }}/youki {{TESTNAME}}
 
 # validate rust oci integration tests on runc
-validate-contest-runc: contest
-    sudo RUNTIME_KIND="runc" {{ cwd }}/scripts/contest.sh runc
+validate-contest-runc *TESTNAME: contest
+    sudo RUNTIME_KIND="runc" {{ cwd }}/scripts/contest.sh runc {{TESTNAME}}
 
 # test podman rootless works with youki
 test-rootless-podman:
@@ -202,3 +202,6 @@ version-up version:
     sed -i "s/{{version}}/$NEXT_VERSION/g" .tagpr
     # Need to update the lockfile.
     cargo check
+
+contest-list: contest
+   {{ cwd }}/contest list

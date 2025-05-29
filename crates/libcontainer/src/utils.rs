@@ -5,6 +5,7 @@ use std::fs::{self, DirBuilder, File};
 use std::os::linux::fs::MetadataExt;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 
 use nix::sys::stat::Mode;
 use nix::sys::statfs;
@@ -12,6 +13,7 @@ use nix::unistd::{Uid, User};
 use oci_spec::runtime::Spec;
 
 use crate::error::LibcontainerError;
+use crate::syscall::syscall::{create_syscall, Syscall};
 use crate::user_ns::UserNamespaceConfig;
 
 #[derive(Debug, thiserror::Error)]
@@ -258,8 +260,8 @@ pub fn is_in_new_userns() -> Result<bool, std::io::Error> {
 }
 
 /// Checks if rootless mode needs to be used
-pub fn rootless_required() -> Result<bool, std::io::Error> {
-    if !nix::unistd::geteuid().is_root() {
+pub fn rootless_required(syscall: &dyn Syscall) -> Result<bool, std::io::Error> {
+    if !syscall.get_euid().is_root() {
         return Ok(true);
     }
     is_in_new_userns()
@@ -267,9 +269,10 @@ pub fn rootless_required() -> Result<bool, std::io::Error> {
 
 /// checks if given spec is valid for current user namespace setup
 pub fn validate_spec_for_new_user_ns(spec: &Spec) -> Result<(), LibcontainerError> {
+    let syscall = create_syscall();
     let config = UserNamespaceConfig::new(spec)?;
     let in_user_ns = is_in_new_userns().map_err(LibcontainerError::OtherIO)?;
-    let is_rootless_required = rootless_required().map_err(LibcontainerError::OtherIO)?;
+    let is_rootless_required = rootless_required(&*syscall).map_err(LibcontainerError::OtherIO)?;
     // In case of rootless, there are 2 possible cases :
     // we have a new user ns specified in the spec
     // or the youki is launched in a new user ns (this is how podman does it)
@@ -280,6 +283,33 @@ pub fn validate_spec_for_new_user_ns(spec: &Spec) -> Result<(), LibcontainerErro
         return Err(LibcontainerError::NoUserNamespace);
     }
     Ok(())
+}
+
+// Generic retry function with delay and policy.
+// Retries the operation `op` up to `attempts` times if it fails.
+// Waits for `delay` duration between retries.
+// Only retries if the error satisfies the `policy` function.
+pub fn retry<F, T, E, P>(mut op: F, attempts: u32, delay: Duration, policy: P) -> Result<T, E>
+where
+    F: FnMut() -> Result<T, E>,
+    P: Fn(&E) -> bool,
+{
+    if attempts == 0 {
+        panic!("retry called with 0 attempts. Minimum attempts is 1.");
+    }
+    for attempt in 0..attempts {
+        match op() {
+            Ok(res) => return Ok(res),
+            Err(err) => {
+                if attempt + 1 < attempts && policy(&err) {
+                    std::thread::sleep(delay);
+                } else {
+                    return Err(err);
+                }
+            }
+        }
+    }
+    unreachable!("retry loop completed without returning a result.");
 }
 
 #[cfg(test)]
@@ -344,7 +374,8 @@ mod tests {
         {
             let temdir = tempfile::tempdir()?;
             let path = temdir.path().join("test");
-            let uid = nix::unistd::getuid().as_raw();
+            let syscall = create_syscall();
+            let uid = syscall.get_uid().as_raw();
             let mode = Mode::S_IRWXU;
             create_dir_all_with_mode(&path, uid, mode)?;
             let metadata = path.metadata()?;

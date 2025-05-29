@@ -145,7 +145,7 @@ fn validate_rsvd_tlb(id: &str, size: &str, limit: i64) -> TestResult {
 
 fn test_valid_tlb() -> TestResult {
     // When setting the limit just for checking if writing works, the amount of memory
-    // requested does not matter, as all insigned integers will be accepted.
+    // requested does not matter, as all unsigned integers will be accepted.
     // Use 1GiB as an example
     let limit: i64 = 1 << 30;
     let tlb_sizes = get_tlb_sizes();
