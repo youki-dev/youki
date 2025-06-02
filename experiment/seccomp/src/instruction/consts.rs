@@ -141,12 +141,12 @@ mod tests {
     #[test]
     fn test_seccomp_data_args_offset() {
         if cfg!(target_arch = "x86_64") {
-            assert_eq!(seccomp_data_args_offset(0), 16);
-            assert_eq!(seccomp_data_args_offset(1), 16 + 8);
-            assert_eq!(seccomp_data_args_offset(2), 16 + 16);
-            assert_eq!(seccomp_data_args_offset(3), 16 + 24);
-            assert_eq!(seccomp_data_args_offset(4), 16 + 32);
-            assert_eq!(seccomp_data_args_offset(5), 16 + 48);
+            assert_eq!(seccomp_data_args_offset(0).unwrap(), 16);
+            assert_eq!(seccomp_data_args_offset(1).unwrap(), 16 + 8);
+            assert_eq!(seccomp_data_args_offset(2).unwrap(), 16 + 16);
+            assert_eq!(seccomp_data_args_offset(3).unwrap(), 16 + 24);
+            assert_eq!(seccomp_data_args_offset(4).unwrap(), 16 + 32);
+            assert_eq!(seccomp_data_args_offset(5).unwrap(), 16 + 48);
         }
     }
 }

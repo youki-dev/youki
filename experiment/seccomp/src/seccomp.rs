@@ -461,10 +461,10 @@ impl Rule {
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 4,
                                                             get_syscall_number(arch, syscall).unwrap() as c_uint)]);
                 // uppper 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset+ 4).into())]);
+                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())]);
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 3, (rule.args.unwrap().arg0 >> 32) as c_uint)]);
                 // lower 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())]);
+                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())]);
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, rule.args.unwrap().arg0 as c_uint)]);
             }
             SeccompCompareOp::LessThan => {
@@ -472,22 +472,22 @@ impl Rule {
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 5,
                                                             get_syscall_number(arch, syscall).unwrap() as c_uint)]);
                 // uppper 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())]);
+                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())]);
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JGE | BPF_K, 0, 4, (rule.args.unwrap().arg0 >> 32) as c_uint)]);
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 2, (rule.args.unwrap().arg0 >> 32) as c_uint)]);
                 // lower 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())]);
+                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())]);
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JGE | BPF_K, 0, 1, rule.args.unwrap().arg0 as c_uint)]);
             }
             SeccompCompareOp::LessOrEqual => {
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 5,
                                                             get_syscall_number(arch, syscall).unwrap() as c_uint)]);
                 // uppper 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())]);
+                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())]);
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JGE | BPF_K, 0, 4, (rule.args.unwrap().arg0 >> 32) as c_uint)]);
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 2, (rule.args.unwrap().arg0 >> 32) as c_uint)]);
                 // lower 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())]);
+                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())]);
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JGT | BPF_K, 0, 1, rule.args.unwrap().arg0 as c_uint)]);
             }
             SeccompCompareOp::Equal => {
@@ -495,10 +495,10 @@ impl Rule {
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 4,
                                                             get_syscall_number(arch, syscall).unwrap() as c_uint)]);
                 // uppper 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())]);
+                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())]);
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 2, (rule.args.unwrap().arg0 >> 32) as c_uint)]);
                 // lower 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())]);
+                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())]);
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 1, 0, rule.args.unwrap().arg0 as c_uint)]);
             }
             SeccompCompareOp::GreaterOrEqual => {
@@ -506,11 +506,11 @@ impl Rule {
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 5,
                                                             get_syscall_number(arch, syscall).unwrap() as c_uint)]);
                 // uppper 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())]);
+                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())]);
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JGT | BPF_K, 4, 0, (rule.args.unwrap().arg0 >> 32) as c_uint)]);
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 2, (rule.args.unwrap().arg0 >> 32) as c_uint)]);
                 // lower 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())]);
+                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())]);
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JGE | BPF_K, 1, 0, rule.args.unwrap().arg0 as c_uint)]);
             }
             SeccompCompareOp::GreaterThan => {
@@ -518,11 +518,11 @@ impl Rule {
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 5,
                                                             get_syscall_number(arch, syscall).unwrap() as c_uint)]);
                 // uppper 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())]);
+                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())]);
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JGT | BPF_K, 4, 0, (rule.args.unwrap().arg0 >> 32) as c_uint)]);
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 2, (rule.args.unwrap().arg0 >> 32) as c_uint)]);
                 // lower 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())]);
+                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())]);
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JGE | BPF_K, 1, 0, rule.args.unwrap().arg0 as c_uint)]);
             }
             SeccompCompareOp::MaskedEqual => {
@@ -531,11 +531,11 @@ impl Rule {
                                                             get_syscall_number(arch, syscall).unwrap() as c_uint)]);
 
                 // uppper 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())]);
+                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())]);
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JSET | BPF_K, 3, 0, (rule.args.unwrap().arg0 >> 32) as c_uint)]);
 
                 // lower 32bit check of
-                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())]);
+                bpf_prog.append(&mut vec![Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())]);
                 bpf_prog.append(&mut vec![Instruction::jump(BPF_JMP | BPF_JSET | BPF_K, 1, 0, rule.args.unwrap().arg0 as c_uint)]);
             }
         }
@@ -613,9 +613,9 @@ mod tests {
 
         assert_eq!(inst[0], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 4,
                                               get_syscall_number(&Arch::X86, "personality").unwrap() as c_uint));
-        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into()));
+        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into()));
         assert_eq!(inst[2], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 2, (rule.args.unwrap().arg0 >> 32) as c_uint));
-        assert_eq!(inst[3], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into()));
+        assert_eq!(inst[3], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into()));
         assert_eq!(inst[4], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 1, 0, rule.args.unwrap().arg0 as c_uint));
     }
 
@@ -641,9 +641,9 @@ mod tests {
 
         assert_eq!(inst[0], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 4,
                                               get_syscall_number(&Arch::AArch64, "personality").unwrap() as c_uint));
-        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into()));
+        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into()));
         assert_eq!(inst[2], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 2, (rule.args.unwrap().arg0 >> 32) as c_uint));
-        assert_eq!(inst[3], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into()));
+        assert_eq!(inst[3], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into()));
         assert_eq!(inst[4], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 1, 0, rule.args.unwrap().arg0 as c_uint));
     }
 
@@ -672,9 +672,9 @@ mod tests {
 
         assert_eq!(inst[0], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 4,
             get_syscall_number(&Arch::X86, "personality").unwrap() as c_uint));
-        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into()));
+        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into()));
         assert_eq!(inst[2], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 3, (args.arg0 >> 32) as c_uint));
-        assert_eq!(inst[3], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into()));
+        assert_eq!(inst[3], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into()));
         assert_eq!(inst[4], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, args.arg0 as c_uint));
     }
 
@@ -703,9 +703,9 @@ mod tests {
 
         assert_eq!(inst[0], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 4,
                                               get_syscall_number(&Arch::AArch64, "personality").unwrap() as c_uint));
-        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into()));
+        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into()));
         assert_eq!(inst[2], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 3, (args.arg0 >> 32) as c_uint));
-        assert_eq!(inst[3], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into()));
+        assert_eq!(inst[3], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into()));
         assert_eq!(inst[4], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, args.arg0 as c_uint));
     }
 
@@ -734,10 +734,10 @@ mod tests {
 
         assert_eq!(inst[0], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 5,
             get_syscall_number(&Arch::X86, "personality").unwrap() as c_uint));
-        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into()));
+        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into()));
         assert_eq!(inst[2], Instruction::jump(BPF_JMP | BPF_JGE | BPF_K, 0, 4, (args.arg0 >> 32) as c_uint));
         assert_eq!(inst[3], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 2, (args.arg0 >> 32) as c_uint));
-        assert_eq!(inst[4], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into()));
+        assert_eq!(inst[4], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into()));
         assert_eq!(inst[5], Instruction::jump(BPF_JMP | BPF_JGE | BPF_K, 0, 1, args.arg0 as c_uint));
     }
 
@@ -766,10 +766,10 @@ mod tests {
 
         assert_eq!(inst[0], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 5,
                                               get_syscall_number(&Arch::AArch64, "personality").unwrap() as c_uint));
-        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into()));
+        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into()));
         assert_eq!(inst[2], Instruction::jump(BPF_JMP | BPF_JGE | BPF_K, 0, 4, (args.arg0 >> 32) as c_uint));
         assert_eq!(inst[3], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 2, (args.arg0 >> 32) as c_uint));
-        assert_eq!(inst[4], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into()));
+        assert_eq!(inst[4], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into()));
         assert_eq!(inst[5], Instruction::jump(BPF_JMP | BPF_JGE | BPF_K, 0, 1, args.arg0 as c_uint));
     }
 
@@ -798,10 +798,10 @@ mod tests {
 
         assert_eq!(inst[0], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 5,
             get_syscall_number(&Arch::X86, "personality").unwrap() as c_uint));
-        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into()));
+        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into()));
         assert_eq!(inst[2], Instruction::jump(BPF_JMP | BPF_JGE | BPF_K, 0, 4, (args.arg0 >> 32) as c_uint));
         assert_eq!(inst[3], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 2, (args.arg0 >> 32) as c_uint));
-        assert_eq!(inst[4], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into()));
+        assert_eq!(inst[4], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into()));
         assert_eq!(inst[5], Instruction::jump(BPF_JMP | BPF_JGT | BPF_K, 0, 1, args.arg0 as c_uint));
     }
 
@@ -830,10 +830,10 @@ mod tests {
 
         assert_eq!(inst[0], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 5,
                                               get_syscall_number(&Arch::AArch64, "personality").unwrap() as c_uint));
-        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into()));
+        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into()));
         assert_eq!(inst[2], Instruction::jump(BPF_JMP | BPF_JGE | BPF_K, 0, 4, (args.arg0 >> 32) as c_uint));
         assert_eq!(inst[3], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 2, (args.arg0 >> 32) as c_uint));
-        assert_eq!(inst[4], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into()));
+        assert_eq!(inst[4], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into()));
         assert_eq!(inst[5], Instruction::jump(BPF_JMP | BPF_JGT | BPF_K, 0, 1, args.arg0 as c_uint));
     }
 
@@ -862,10 +862,10 @@ mod tests {
 
         assert_eq!(inst[0], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 5,
             get_syscall_number(&Arch::X86, "personality").unwrap() as c_uint));
-        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into()));
+        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into()));
         assert_eq!(inst[2], Instruction::jump(BPF_JMP | BPF_JGT | BPF_K, 4, 0, (args.arg0 >> 32) as c_uint));
         assert_eq!(inst[3], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 2, (args.arg0 >> 32) as c_uint));
-        assert_eq!(inst[4], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into()));
+        assert_eq!(inst[4], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into()));
         assert_eq!(inst[5], Instruction::jump(BPF_JMP | BPF_JGE | BPF_K, 1, 0, args.arg0 as c_uint));
     }
 
@@ -894,10 +894,10 @@ mod tests {
 
         assert_eq!(inst[0], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 5,
                                               get_syscall_number(&Arch::AArch64, "personality").unwrap() as c_uint));
-        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into()));
+        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into()));
         assert_eq!(inst[2], Instruction::jump(BPF_JMP | BPF_JGT | BPF_K, 4, 0, (args.arg0 >> 32) as c_uint));
         assert_eq!(inst[3], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 2, (args.arg0 >> 32) as c_uint));
-        assert_eq!(inst[4], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into()));
+        assert_eq!(inst[4], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into()));
         assert_eq!(inst[5], Instruction::jump(BPF_JMP | BPF_JGE | BPF_K, 1, 0, args.arg0 as c_uint));
     }
 
@@ -926,10 +926,10 @@ mod tests {
 
         assert_eq!(inst[0], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 5,
             get_syscall_number(&Arch::X86, "personality").unwrap() as c_uint));
-        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into()));
+        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into()));
         assert_eq!(inst[2], Instruction::jump(BPF_JMP | BPF_JGT | BPF_K, 4, 0, (args.arg0 >> 32) as c_uint));
         assert_eq!(inst[3], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 2, (args.arg0 >> 32) as c_uint));
-        assert_eq!(inst[4], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into()));
+        assert_eq!(inst[4], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into()));
         assert_eq!(inst[5], Instruction::jump(BPF_JMP | BPF_JGE | BPF_K, 1, 0, args.arg0 as c_uint));
     }
 
@@ -958,10 +958,10 @@ mod tests {
 
         assert_eq!(inst[0], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 5,
                                               get_syscall_number(&Arch::AArch64, "personality").unwrap() as c_uint));
-        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into()));
+        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into()));
         assert_eq!(inst[2], Instruction::jump(BPF_JMP | BPF_JGT | BPF_K, 4, 0, (args.arg0 >> 32) as c_uint));
         assert_eq!(inst[3], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 2, (args.arg0 >> 32) as c_uint));
-        assert_eq!(inst[4], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into()));
+        assert_eq!(inst[4], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into()));
         assert_eq!(inst[5], Instruction::jump(BPF_JMP | BPF_JGE | BPF_K, 1, 0, args.arg0 as c_uint));
     }
 
@@ -990,9 +990,9 @@ mod tests {
 
         assert_eq!(inst[0], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 4,
             get_syscall_number(&Arch::X86, "personality").unwrap() as c_uint));
-        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into()));
+        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into()));
         assert_eq!(inst[2], Instruction::jump(BPF_JMP | BPF_JSET | BPF_K, 3, 0, (args.arg0 >> 32) as c_uint));
-        assert_eq!(inst[3], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into()));
+        assert_eq!(inst[3], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into()));
         assert_eq!(inst[4], Instruction::jump(BPF_JMP | BPF_JSET | BPF_K, 1, 0, args.arg0 as c_uint));
     }
 
@@ -1021,9 +1021,9 @@ mod tests {
 
         assert_eq!(inst[0], Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 4,
                                               get_syscall_number(&Arch::AArch64, "personality").unwrap() as c_uint));
-        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into()));
+        assert_eq!(inst[1], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into()));
         assert_eq!(inst[2], Instruction::jump(BPF_JMP | BPF_JSET | BPF_K, 3, 0, (args.arg0 >> 32) as c_uint));
-        assert_eq!(inst[3], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into()));
+        assert_eq!(inst[3], Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into()));
         assert_eq!(inst[4], Instruction::jump(BPF_JMP | BPF_JSET | BPF_K, 1, 0, args.arg0 as c_uint));
     }
 }

@@ -103,7 +103,7 @@ pub fn generate_seccomp_instruction(file_path: &str) -> anyhow::Result<()> {
             build_syscall = LinuxSyscallBuilder::default()
                 .names(syscall.names)
                 .action(action)
-                .args(convert_argument(syscall.args.unwrap()))
+                .args(convert_argument(syscall.args.unwrap()).unwrap())
                 .build()?;
         } else {
             build_syscall = LinuxSyscallBuilder::default()
