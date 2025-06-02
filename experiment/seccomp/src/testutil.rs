@@ -52,19 +52,20 @@ pub fn convert_operation(op_str :&str) -> Option<LinuxSeccompOperator>{
     }
 }
 
-pub fn convert_argument(args: Vec<Argument>) -> Vec<LinuxSeccompArg> {
-    let mut seccomp_args:Vec<LinuxSeccompArg> = vec![];
-    for args in args {
-        seccomp_args.append(
-            &mut vec![
-                LinuxSeccompArgBuilder::default()
-                    .index(args.index as usize)
-                    .value(args.value)
-                    .op(convert_operation(&args.op).unwrap()).build().unwrap()
-            ]
-        )
+pub fn convert_argument(args: Vec<Argument>) -> Result<Vec<LinuxSeccompArg>, String> {
+    let mut seccomp_args: Vec<LinuxSeccompArg> = vec![];
+    for arg in args {
+        let op = convert_operation(&arg.op)
+            .ok_or_else(|| format!("Invalid operation: {}", arg.op))?;
+        let seccomp_arg = LinuxSeccompArgBuilder::default()
+            .index(arg.index as usize)
+            .value(arg.value)
+            .op(op)
+            .build()
+            .map_err(|e| format!("Failed to build LinuxSeccompArg: {}", e))?;
+        seccomp_args.push(seccomp_arg);
     }
-    seccomp_args
+    Ok(seccomp_args)
 }
 
 pub fn convert_action(action_str :&str) -> Option<LinuxSeccompAction>{
