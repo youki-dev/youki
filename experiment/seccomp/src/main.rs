@@ -80,7 +80,7 @@ async fn handle_signal(pid: nix::unistd::Pid) -> Result<()> {
 }
 
 fn main() -> Result<()> {
-    match generate_seccomp_instruction("default_x86_64.json") {
+    match generate_seccomp_instruction("tests/default_x86_64.json") {
         Err(e) => {
             eprintln!("Something wrong : {}", e);
         }
