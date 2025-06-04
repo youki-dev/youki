@@ -1,5 +1,6 @@
-use clap::builder;
 use libcontainer::container::Container;
+use libcontainer::oci_spec::runtime::LinuxMemory;
+use libcontainer::process::intel_rdt::setup_intel_rdt;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
@@ -10,12 +11,7 @@ use anyhow::bail;
 use anyhow::Result;
 use libcgroups::common::CgroupManager;
 use libcgroups::{self, common::ControllerOpt};
-use libcontainer::oci_spec::runtime::LinuxBlockIoBuilder;
-use libcontainer::oci_spec::runtime::LinuxCpuBuilder;
-use libcontainer::oci_spec::runtime::LinuxIntelRdtBuilder;
-use libcontainer::oci_spec::runtime::LinuxMemoryBuilder;
 use libcontainer::oci_spec::runtime::Spec;
-use libcontainer::oci_spec::runtime::{LinuxPidsBuilder, LinuxResources, LinuxResourcesBuilder};
 use liboci_cli::Update;
 
 macro_rules! set_resource {
@@ -71,17 +67,17 @@ struct UpdateConfig {
 
 macro_rules! _extract_field {
     ($cfg:ident, $type:ident, $field:ident) => {
-        $cfg.resources.$type.$field = $type.$field().unwrap_or_default();
+        $cfg.resources.$type.$field = $type.$field().clone().unwrap_or_default();
     };
 }
 
 fn get_existing_config(spec: &Spec) -> UpdateConfig {
     let mut cfg = UpdateConfig::default();
-    let resources = spec.linux().unwrap().resources().unwrap_or_default();
+    let resources = spec.linux().as_ref().unwrap().resources().as_ref().unwrap();
 
-    let memory = resources.memory().unwrap_or_default();
-    let cpu = resources.cpu().unwrap_or_default();
-    let block_io = resources.block_io().unwrap_or_default();
+    let memory = resources.memory().as_ref().cloned().unwrap_or_default();
+    let cpu = resources.cpu().as_ref().cloned().unwrap_or_default();
+    let block_io = resources.block_io().as_ref().cloned().unwrap_or_default();
 
     _extract_field!(cfg, memory, limit);
     _extract_field!(cfg, memory, swap);
@@ -98,10 +94,18 @@ fn get_existing_config(spec: &Spec) -> UpdateConfig {
 
     cfg.resources.block_io.blkio_weight = block_io.weight().unwrap_or_default();
 
-    if let Some(pids) = spec.linux().unwrap().resources().unwrap().pids() {
+    if let Some(pids) = spec
+        .linux()
+        .as_ref()
+        .unwrap()
+        .resources()
+        .as_ref()
+        .unwrap()
+        .pids()
+    {
         cfg.pids_limit = Some(pids.limit());
     }
-    if let Some(rtd) = spec.linux().unwrap().intel_rdt() {
+    if let Some(rtd) = spec.linux().as_ref().unwrap().intel_rdt() {
         if let Some(schema) = rtd.mem_bw_schema() {
             cfg.mem_bw_schema = Some(schema.clone());
         }
@@ -116,7 +120,14 @@ pub fn update(args: Update, root_path: PathBuf) -> Result<()> {
     let container = Container::load(root_path.join(&args.container_id))?;
     let spec = Spec::load(container.bundle().join("config.json"))?;
     let existing_config = get_existing_config(&spec);
-    let existing_resources = spec.linux().unwrap().resources().unwrap();
+    let mut existing_resources = spec
+        .linux()
+        .as_ref()
+        .unwrap()
+        .resources()
+        .as_ref()
+        .unwrap()
+        .clone();
 
     let cmanager = create_cgroup_manager(root_path.clone(), &args.container_id)?;
 
@@ -140,7 +151,6 @@ pub fn update(args: Update, root_path: PathBuf) -> Result<()> {
         };
     } else {
         let mut input_config = UpdateConfig::default();
-        let mut res = Resources::default();
         // runc allows setting one or other, due to backward comppatibility issues,
         // but we can, so we do the sensible option. see
         // https://github.com/opencontainers/runc/blob/6a2813f16ad4e3be44903f6fb499c02837530ad5/update.go#L277-L287
@@ -221,36 +231,68 @@ pub fn update(args: Update, root_path: PathBuf) -> Result<()> {
     }
 
     // TODO decide how to apply intel
-
     // add ANOTHER macro to set the values here
-    let mut cpu = existing_resources.cpu().as_mut().unwrap();
+    let mut cpu = existing_resources
+        .cpu()
+        .as_ref()
+        .cloned()
+        .unwrap_or_default();
     cpu.set_period(Some(update_config.resources.cpu.period));
     cpu.set_quota(Some(update_config.resources.cpu.quota));
     cpu.set_burst(Some(update_config.resources.cpu.burst));
     cpu.set_shares(Some(update_config.resources.cpu.shares));
-    cpu.set_realtime_period(Some(update_config.resources.cpu.realtime_period));
-    cpu.set_realtime_runtime(Some(update_config.resources.cpu.realtime_runtime));
+    // cpu.set_realtime_period(Some(update_config.resources.cpu.realtime_period));
+    // cpu.set_realtime_runtime(Some(update_config.resources.cpu.realtime_runtime));
     cpu.set_cpus(Some(update_config.resources.cpu.cpus));
     cpu.set_mems(Some(update_config.resources.cpu.mems));
-    drop(cpu);
-    
-    let mut mem = existing_resources.memory().as_mut().unwrap();
-    mem.set_limit(Some(update_config.resources.memory.limit));
+    existing_resources.set_cpu(Some(cpu));
 
-    let memory = LinuxMemoryBuilder::default()
-        .limit(update_config.resources.memory.limit)
-        .reservation(update_config.resources.memory.reservation)
-        .swap(update_config.resources.memory.swap)
-        .build()?;
-    let blk_io = LinuxBlockIoBuilder::default()
-        .weight(update_config.resources.block_io.blkio_weight)
-        .build()?;
+    let mut mem = existing_resources
+        .memory()
+        .as_ref()
+        .cloned()
+        .unwrap_or_default();
+
+    mem.set_limit(Some(update_config.resources.memory.limit));
+    mem.set_reservation(Some(update_config.resources.memory.reservation));
+    mem.set_swap(Some(update_config.resources.memory.swap));
+    existing_resources.set_memory(Some(mem));
+
+    let mut blk_io = existing_resources
+        .block_io()
+        .as_ref()
+        .cloned()
+        .unwrap_or_default();
+    blk_io.set_weight(Some(update_config.resources.block_io.blkio_weight));
+    existing_resources.set_block_io(Some(blk_io));
+
+    if let Some(lim) = update_config.pids_limit {
+        let mut pids = existing_resources
+            .pids()
+            .as_ref()
+            .cloned()
+            .unwrap_or_default();
+        pids.set_limit(lim);
+        existing_resources.set_pids(Some(pids));
+    }
 
     cmanager.apply(&ControllerOpt {
-        resources: &linux_res,
+        resources: &existing_resources,
         disable_oom_killer: false,
         oom_score_adj: None,
         freezer_state: None,
     })?;
+
+    let mut intel_rdt = spec
+        .linux()
+        .as_ref()
+        .unwrap()
+        .intel_rdt()
+        .as_ref()
+        .unwrap()
+        .clone();
+    intel_rdt.set_mem_bw_schema(update_config.mem_bw_schema);
+    intel_rdt.set_l3_cache_schema(update_config.l3_cache_schema);
+    setup_intel_rdt(Some(container.id()), &container.pid().unwrap(), &intel_rdt)?;
     Ok(())
 }

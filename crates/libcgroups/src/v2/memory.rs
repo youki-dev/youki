@@ -113,6 +113,8 @@ impl Memory {
         if memory.reservation().is_none() && memory.limit().is_none() && memory.swap().is_none() {
             return Ok(());
         }
+        // TODO(YJDoc2) check memory before setting new values
+        // specifically used for update command 
 
         match memory.limit() {
             Some(limit) if limit < -1 => {

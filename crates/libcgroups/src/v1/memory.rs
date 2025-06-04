@@ -514,7 +514,7 @@ mod tests {
 
 
                 // clone to avoid use of moved value later on
-                let memory_limits = linux_memory;
+                let memory_limits = linux_memory.clone();
 
                 let linux_resources = LinuxResourcesBuilder::default().devices(vec![]).memory(linux_memory).hugepage_limits(vec![]).build().unwrap();
 
