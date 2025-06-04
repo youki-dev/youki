@@ -13,6 +13,7 @@ use crate::tests::delete::get_delete_test;
 use crate::tests::devices::get_devices_test;
 use crate::tests::domainname::get_domainname_tests;
 use crate::tests::example::get_example_test;
+use crate::tests::exec_cpu_affinity::get_exec_cpu_affinity_test;
 use crate::tests::fd_control::get_fd_control_test;
 use crate::tests::hooks::get_hooks_tests;
 use crate::tests::hostname::get_hostname_test;
@@ -140,6 +141,7 @@ fn main() -> Result<()> {
     let masked_paths = get_linux_masked_paths_tests();
     let rootfs_propagation = get_rootfs_propagation_test();
     let process_capabilities_fail = get_process_capabilities_fail_test();
+    let exec_cpu_affinity = get_exec_cpu_affinity_test();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -177,6 +179,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(kill));
     tm.add_test_group(Box::new(rootfs_propagation));
     tm.add_test_group(Box::new(process_capabilities_fail));
+    tm.add_test_group(Box::new(exec_cpu_affinity));
 
     tm.add_test_group(Box::new(io_priority_test));
     tm.add_cleanup(Box::new(cgroups::cleanup_v1));
