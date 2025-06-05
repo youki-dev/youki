@@ -18,8 +18,6 @@ type Result<T> = std::result::Result<T, NetworkError>;
 #[derive(Debug, thiserror::Error)]
 pub enum NetworkError {
     #[error(transparent)]
-    Rtnetlink(#[from] rtnetlink::Error),
-    #[error(transparent)]
     Nix(#[from] nix::Error),
     #[error(transparent)]
     IO(#[from] std::io::Error),
