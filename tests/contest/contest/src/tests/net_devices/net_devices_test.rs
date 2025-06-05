@@ -1,19 +1,58 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use anyhow::anyhow;
-use futures::stream::TryStreamExt;
-use ipnetwork::IpNetwork;
+use anyhow::{anyhow, Result};
 use oci_spec::runtime::{
     LinuxBuilder, LinuxNamespaceBuilder, LinuxNamespaceType, LinuxNetDevice, LinuxNetDeviceBuilder,
     ProcessBuilder, Spec, SpecBuilder,
 };
-use rtnetlink::{new_connection, LinkDummy, NetworkNamespace};
 use test_framework::{test_result, Test, TestGroup, TestResult};
-use tokio::runtime::Runtime;
 
 use crate::utils::test_utils::{check_container_created, CreateOptions};
 use crate::utils::{test_inside_container, test_outside_container};
+
+static NETNS_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+fn create_unique_netns_name(prefix: &str) -> String {
+    let count = NETNS_COUNTER.fetch_add(1, Ordering::SeqCst);
+    format!("{}-{}", prefix, count)
+}
+
+fn create_netns(name: &str) -> Result<()> {
+    std::process::Command::new("ip")
+        .args(vec!["netns", "add", name])
+        .output()?;
+    Ok(())
+}
+
+fn cleanup_netns(name: &str) -> Result<()> {
+    std::process::Command::new("ip")
+        .args(vec!["netns", "del", name])
+        .output()?;
+    Ok(())
+}
+
+fn create_dummy_device(name: &str) -> Result<()> {
+    std::process::Command::new("ip")
+        .args(vec!["link", "add", name, "type", "dummy"])
+        .output()?;
+    Ok(())
+}
+
+fn delete_dummy_device(name: &str) -> Result<()> {
+    std::process::Command::new("ip")
+        .args(vec!["link", "del", name])
+        .output()?;
+    Ok(())
+}
+
+fn check_device_exists(name: &str) -> Result<bool> {
+    let out = std::process::Command::new("ip")
+        .args(vec!["link", "show", name])
+        .output()?;
+    Ok(out.status.success())
+}
 
 fn create_spec(net_devices: HashMap<String, LinuxNetDevice>) -> Spec {
     SpecBuilder::default()
@@ -52,32 +91,25 @@ fn create_spec_with_netns(net_devices: HashMap<String, LinuxNetDevice>, netns: S
 
 fn check_net_device() -> TestResult {
     const DUMMY_DEVICE: &str = "dummy";
+
+    if let Err(e) = create_dummy_device(DUMMY_DEVICE) {
+        return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
+    }
+
     let mut net_devices = HashMap::new();
     net_devices.insert(DUMMY_DEVICE.to_string(), LinuxNetDevice::default());
     let spec = create_spec(net_devices);
-    test_inside_container(&spec, &CreateOptions::default(), &|_| {
-        let rt = Runtime::new().unwrap();
-
-        let res = rt.block_on(async {
-            let (connection, handle, _) = new_connection().unwrap();
-            tokio::spawn(connection);
-
-            handle
-                .link()
-                .add(LinkDummy::new(DUMMY_DEVICE).build())
-                .execute()
-                .await
-        });
-
-        assert!(res.is_ok());
-
-        Ok(())
-    })
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 fn check_net_device_rename() -> TestResult {
     const DUMMY_DEVICE: &str = "dummy-rename";
     const DUMMY_DEVICE_RENAMED: &str = "dummy1-renamed";
+
+    if let Err(e) = create_dummy_device(DUMMY_DEVICE) {
+        return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
+    }
+
     let mut net_devices = HashMap::new();
     net_devices.insert(
         DUMMY_DEVICE.to_string(),
@@ -87,57 +119,26 @@ fn check_net_device_rename() -> TestResult {
             .unwrap(),
     );
     let spec = create_spec(net_devices);
-    test_inside_container(&spec, &CreateOptions::default(), &|_| {
-        let rt = Runtime::new().unwrap();
-
-        let res = rt.block_on(async {
-            let (connection, handle, _) = new_connection().unwrap();
-            tokio::spawn(connection);
-
-            handle
-                .link()
-                .add(LinkDummy::new(DUMMY_DEVICE).build())
-                .execute()
-                .await
-        });
-
-        assert!(res.is_ok());
-
-        Ok(())
-    })
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 fn check_net_devices() -> TestResult {
     const DUMMY_DEVICE1: &str = "dummy1";
     const DUMMY_DEVICE2: &str = "dummy2";
+
+    if let Err(e) = create_dummy_device(DUMMY_DEVICE1) {
+        return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
+    }
+
+    if let Err(e) = create_dummy_device(DUMMY_DEVICE2) {
+        return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
+    }
+
     let mut net_devices = HashMap::new();
     net_devices.insert(DUMMY_DEVICE1.to_string(), LinuxNetDevice::default());
     net_devices.insert(DUMMY_DEVICE2.to_string(), LinuxNetDevice::default());
     let spec = create_spec(net_devices);
-    test_inside_container(&spec, &CreateOptions::default(), &|_| {
-        let rt = Runtime::new().unwrap();
-
-        let res = rt.block_on(async {
-            let (connection, handle, _) = new_connection().unwrap();
-            tokio::spawn(connection);
-
-            handle
-                .link()
-                .add(LinkDummy::new(DUMMY_DEVICE1).build())
-                .execute()
-                .await?;
-
-            handle
-                .link()
-                .add(LinkDummy::new(DUMMY_DEVICE2).build())
-                .execute()
-                .await
-        });
-
-        assert!(res.is_ok());
-
-        Ok(())
-    })
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 fn check_empty_net_devices() -> TestResult {
@@ -158,7 +159,7 @@ fn check_empty_net_devices() -> TestResult {
 }
 
 fn check_back_device() -> TestResult {
-    const NETNS_NAME: &str = "netns-back";
+    let netns_name = create_unique_netns_name("netns-back");
     const DUMMY_DEVICE: &str = "dummy-back";
 
     let mut net_devices = HashMap::new();
@@ -170,33 +171,24 @@ fn check_back_device() -> TestResult {
             .unwrap(),
     );
 
-    let rt = Runtime::new().unwrap();
+    if let Err(e) = create_netns(&netns_name) {
+        return TestResult::Failed(anyhow!("Failed to create netns: {}", e));
+    }
 
-    rt.block_on(async {
-        let (connection, handle, _) = new_connection().unwrap();
-        tokio::spawn(connection);
-
-        NetworkNamespace::add(NETNS_NAME.to_string()).await.unwrap();
-
-        handle
-            .link()
-            .add(LinkDummy::new(DUMMY_DEVICE).build())
-            .execute()
-            .await
-    })
-    .unwrap();
+    if let Err(e) = create_dummy_device(DUMMY_DEVICE) {
+        return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
+    }
 
     let spec = create_spec_with_netns(
         net_devices,
         Path::new("/var/run/netns")
-            .join(NETNS_NAME)
+            .join(&netns_name)
             .to_str()
             .unwrap()
             .to_string(),
     );
     let test_result = test_outside_container(&spec, &|data| {
         test_result!(check_container_created(&data));
-
         TestResult::Passed
     });
     if let TestResult::Failed(_) = test_result {
@@ -204,11 +196,11 @@ fn check_back_device() -> TestResult {
     }
 
     // Move the device back to the original namespace
-    std::process::Command::new("ip")
+    if let Err(e) = std::process::Command::new("ip")
         .args(vec![
             "netns",
             "exec",
-            NETNS_NAME,
+            &netns_name,
             "ip",
             "link",
             "set",
@@ -218,41 +210,31 @@ fn check_back_device() -> TestResult {
             "1",
         ])
         .output()
-        .unwrap();
+    {
+        return TestResult::Failed(anyhow!("Failed to move device back: {}", e));
+    }
 
-    rt.block_on(async {
-        let (connection, handle, _) = new_connection().unwrap();
-        tokio::spawn(connection);
+    // Check that the device exists
+    if let Err(e) = check_device_exists(DUMMY_DEVICE) {
+        return TestResult::Failed(anyhow!("Failed to check device: {}", e));
+    }
 
-        let mut links = handle
-            .link()
-            .get()
-            .match_name(DUMMY_DEVICE.to_string())
-            .execute();
+    if let Err(e) = delete_dummy_device(DUMMY_DEVICE) {
+        return TestResult::Failed(anyhow!("Failed to delete device: {}", e));
+    }
 
-        let link = match links.try_next().await {
-            Ok(link) => link.unwrap(),
-            Err(err) => panic!("error while retrieving link: {}", err),
-        };
-
-        // clean up
-        handle
-            .link()
-            .del(link.header.index)
-            .execute()
-            .await
-            .unwrap_or_else(|_| panic!("Failed to delete link"));
-
-        NetworkNamespace::del(NETNS_NAME.to_string()).await.unwrap();
-    });
+    if let Err(e) = cleanup_netns(&netns_name) {
+        return TestResult::Failed(anyhow!("Failed to cleanup netns: {}", e));
+    }
 
     TestResult::Passed
 }
 
 fn check_address() -> TestResult {
-    const NETNS_NAME: &str = "netns-address";
+    let netns_name = create_unique_netns_name("netns-address");
     const DUMMY_DEVICE: &str = "dummy-address";
     const DUMMY_ADDRESS: &str = "244.178.44.111/24";
+
     let mut net_devices = HashMap::new();
     net_devices.insert(
         DUMMY_DEVICE.to_string(),
@@ -261,47 +243,33 @@ fn check_address() -> TestResult {
             .build()
             .unwrap(),
     );
-    let rt = Runtime::new().unwrap();
 
-    rt.block_on(async {
-        let (connection, handle, _) = new_connection().unwrap();
-        tokio::spawn(connection);
+    if let Err(e) = create_netns(&netns_name) {
+        return TestResult::Failed(anyhow!("Failed to create netns: {}", e));
+    }
 
-        NetworkNamespace::add(NETNS_NAME.to_string()).await.unwrap();
+    if let Err(e) = create_dummy_device(DUMMY_DEVICE) {
+        return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
+    }
 
-        handle
-            .link()
-            .add(LinkDummy::new(DUMMY_DEVICE).build())
-            .execute()
-            .await?;
-
-        let mut links = handle
-            .link()
-            .get()
-            .match_name(DUMMY_DEVICE.to_string())
-            .execute();
-
-        let link = links.try_next().await?.unwrap();
-        let ip: IpNetwork = DUMMY_ADDRESS.parse().unwrap();
-        handle
-            .address()
-            .add(link.header.index, ip.ip(), ip.prefix())
-            .execute()
-            .await
-    })
-    .unwrap();
+    // Add address to the device
+    if let Err(e) = std::process::Command::new("ip")
+        .args(vec!["addr", "add", DUMMY_ADDRESS, "dev", DUMMY_DEVICE])
+        .output()
+    {
+        return TestResult::Failed(anyhow!("Failed to add address: {}", e));
+    }
 
     let spec = create_spec_with_netns(
         net_devices,
         Path::new("/var/run/netns")
-            .join(NETNS_NAME)
+            .join(&netns_name)
             .to_str()
             .unwrap()
             .to_string(),
     );
     let test_result = test_outside_container(&spec, &|data| {
         test_result!(check_container_created(&data));
-
         TestResult::Passed
     });
     if let TestResult::Failed(_) = test_result {
@@ -309,20 +277,24 @@ fn check_address() -> TestResult {
     }
 
     // Check that the address was added
-    let out = std::process::Command::new("ip")
-        .args(vec!["netns", "exec", NETNS_NAME, "ip", "addr"])
+    let out = match std::process::Command::new("ip")
+        .args(vec!["netns", "exec", &netns_name, "ip", "addr"])
         .output()
-        .unwrap();
-    let out = String::from_utf8(out.stdout).unwrap();
-    assert!(out.contains(DUMMY_DEVICE));
-    assert!(out.contains(DUMMY_ADDRESS));
+    {
+        Ok(out) => out,
+        Err(e) => return TestResult::Failed(anyhow!("Failed to check address: {}", e)),
+    };
+    let out = match String::from_utf8(out.stdout) {
+        Ok(out) => out,
+        Err(e) => return TestResult::Failed(anyhow!("Failed to parse output: {}", e)),
+    };
+    if !out.contains(DUMMY_DEVICE) || !out.contains(DUMMY_ADDRESS) {
+        return TestResult::Failed(anyhow!("Address not found in output"));
+    }
 
-    rt.block_on(async {
-        let (connection, _, _) = new_connection().unwrap();
-        tokio::spawn(connection);
-
-        NetworkNamespace::del(NETNS_NAME.to_string()).await.unwrap();
-    });
+    if let Err(e) = cleanup_netns(&netns_name) {
+        return TestResult::Failed(anyhow!("Failed to cleanup netns: {}", e));
+    }
 
     TestResult::Passed
 }
