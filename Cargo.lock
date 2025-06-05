@@ -576,8 +576,6 @@ dependencies = [
  "anyhow",
  "clap",
  "flate2",
- "futures",
- "ipnetwork",
  "libcgroups",
  "libcontainer",
  "nix 0.29.0",
@@ -588,14 +586,12 @@ dependencies = [
  "procfs",
  "rand 0.9.1",
  "regex",
- "rtnetlink",
  "scopeguard",
  "serde",
  "serde_json",
  "tar",
  "tempfile",
  "test_framework",
- "tokio",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -3443,14 +3439,14 @@ name = "runtimetest"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "futures",
  "libc",
  "nc",
+ "netlink-packet-core",
+ "netlink-packet-route",
+ "netlink-sys",
  "nix 0.29.0",
  "oci-spec",
- "rtnetlink",
  "tempfile",
- "tokio",
 ]
 
 [[package]]
