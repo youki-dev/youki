@@ -7,7 +7,6 @@ use std::rc::Rc;
 use libcgroups::common::CgroupManager;
 use nix::unistd::Pid;
 use oci_spec::runtime::{LinuxNamespaceType, Spec};
-use tokio::runtime::Runtime;
 
 use super::{Container, ContainerStatus};
 use crate::error::{CreateContainerError, LibcontainerError, MissingSpecError};
@@ -280,29 +279,12 @@ impl ContainerBuilderImpl {
             // See: https://github.com/opencontainers/runtime-spec/blob/27cb0027fd92ef81eda1ea3a8153b8337f56d94a/config-linux.md#namespace-lifecycle-and-container-termination
             if let Some(devices) = linux.net_devices() {
                 for (name, net_dev) in devices {
-                    let rt = Runtime::new().map_err(|err| {
-                        tracing::error!(error = ?err, "failed to create tokio runtime");
-                        LibcontainerError::Other(err.to_string())
-                    })?;
                     if let Some(ns_path) = ns_path.clone() {
-                        let result = rt.block_on(async {
-                            dev_change_net_namespace(
-                                name.clone(),
-                                ns_path.to_string_lossy().into_owned(),
-                                net_dev.clone(),
-                            )
-                            .await
-                        });
-
-                        if let Err(err) = result {
-                            tracing::error!(
-                                ?err,
-                                "move netDevice {} to namespace {}",
-                                name,
-                                ns_path.to_string_lossy()
-                            );
-                            return Err(LibcontainerError::Other(err.to_string()));
-                        }
+                        dev_change_net_namespace(
+                            name.to_string(),
+                            ns_path.to_string_lossy().to_string(),
+                            net_dev.clone(),
+                        )?;
                     }
                 }
             }

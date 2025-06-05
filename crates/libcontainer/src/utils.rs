@@ -275,7 +275,7 @@ pub fn validate_spec_for_new_user_ns(
 ) -> Result<(), LibcontainerError> {
     let config = UserNamespaceConfig::new(spec)?;
     let in_user_ns = is_in_new_userns().map_err(LibcontainerError::OtherIO)?;
-    let is_rootless_required = rootless_required(&*syscall).map_err(LibcontainerError::OtherIO)?;
+    let is_rootless_required = rootless_required(syscall).map_err(LibcontainerError::OtherIO)?;
     // In case of rootless, there are 2 possible cases :
     // we have a new user ns specified in the spec
     // or the youki is launched in a new user ns (this is how podman does it)
@@ -402,8 +402,8 @@ mod tests {
     use serial_test::serial;
 
     use super::*;
-    use crate::test_utils;
     use crate::syscall::syscall::create_syscall;
+    use crate::test_utils;
 
     #[test]
     pub fn test_get_unix_user() {
