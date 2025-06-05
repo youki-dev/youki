@@ -998,27 +998,9 @@ fn validate_id_mappings(expected_id_mappings: &[LinuxIdMapping], path: &str, pro
             continue;
         }
 
-        let actual_container_id = match parts.first().and_then(|s| s.parse::<u32>().ok()) {
-            Some(id) => id,
-            None => {
-                eprintln!("Failed to parse container_id from {}: {}", path, line);
-                continue;
-            }
-        };
-        let actual_host_id = match parts.get(1).and_then(|s| s.parse::<u32>().ok()) {
-            Some(id) => id,
-            None => {
-                eprintln!("Failed to parse host_id from {}: {}", path, line);
-                continue;
-            }
-        };
-        let actual_map_size = match parts.get(2).and_then(|s| s.parse::<u32>().ok()) {
-            Some(size) => size,
-            None => {
-                eprintln!("Failed to parse map_size from {}: {}", path, line);
-                continue;
-            }
-        };
+        let actual_container_id = parts.first().unwrap().parse::<u32>().unwrap();
+        let actual_host_id = parts.get(1).unwrap().parse::<u32>().unwrap();
+        let actual_map_size = parts.get(2).unwrap().parse::<u32>().unwrap();
 
         if !(actual_host_id == expected.host_id()
             && actual_container_id == expected.container_id()
