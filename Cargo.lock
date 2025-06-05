@@ -2065,12 +2065,13 @@ dependencies = [
  "caps",
  "chrono",
  "fastrand",
- "futures",
  "libc",
  "libcgroups",
  "libseccomp",
  "nc",
+ "netlink-packet-core",
  "netlink-packet-route",
+ "netlink-sys",
  "nix 0.29.0",
  "oci-spec",
  "once_cell",
@@ -2088,7 +2089,6 @@ dependencies = [
  "serial_test",
  "tempfile",
  "thiserror 2.0.12",
- "tokio",
  "tracing",
 ]
 

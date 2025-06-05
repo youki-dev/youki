@@ -53,8 +53,8 @@ tracing = { version = "0.1.41", features = ["attributes"] }
 safe-path = "0.1.0"
 nc = "0.9.6"
 netlink-packet-route = "0.22.0"
-futures = "0.3.31"
-tokio = { version = "1", features = ["full"] }
+netlink-sys = "0.8.5"
+netlink-packet-core = "0.7.0"
 
 [dev-dependencies]
 oci-spec = { version = "~0.8.1", features = ["proptests", "runtime"] }
