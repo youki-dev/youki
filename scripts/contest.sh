@@ -23,10 +23,18 @@ if [ ! -f ${ROOT}/bundle.tar.gz ]; then
 fi
 touch ${LOGFILE}
 
+# TODO: This is a temporary change to exclude net_devices test for non-youki runtimes
+# This should be removed once the net_devices test is fixed for other runtimes
+if [ "$(basename "$RUNTIME")" != "youki" ]; then
+    TEST_LIST=$(${ROOT}/contest list | grep -v "net_devices" | grep -v " " | tr '\n' ' ')
+else
+    TEST_LIST=$(${ROOT}/contest list | grep -v " " | tr '\n' ' ')
+fi
+
 if [ $# -gt 0 ]; then
     ${ROOT}/contest run --runtime "$RUNTIME" --runtimetest "${ROOT}/runtimetest" -t "$@" > "$LOGFILE"
 else
-    ${ROOT}/contest run --runtime "$RUNTIME" --runtimetest "${ROOT}/runtimetest" > "$LOGFILE"
+    ${ROOT}/contest run --runtime "$RUNTIME" --runtimetest "${ROOT}/runtimetest" -t $TEST_LIST > "$LOGFILE"
 fi
 
 if [ 0 -ne $(grep "not ok" $LOGFILE | wc -l ) ]; then
