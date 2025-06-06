@@ -86,7 +86,12 @@ impl StatsProvider for Cpu {
 impl Cpu {
     fn apply(path: &Path, cpu: &LinuxCpu) -> Result<(), V2CpuControllerError> {
         if Self::is_realtime_requested(cpu) {
-            return Err(V2CpuControllerError::RealtimeV2);
+            let realtime_runtime = cpu.realtime_runtime();
+            let runtime_period = cpu.realtime_period();
+
+            if !matches!((realtime_runtime, runtime_period), (Some(0), Some(0))) {
+                return Err(V2CpuControllerError::RealtimeV2);
+            }
         }
 
         if let Some(mut shares) = cpu.shares() {
