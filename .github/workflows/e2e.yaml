@@ -253,3 +253,39 @@ jobs:
       - name: Run tests (cgroups-v1)
         if: matrix.cgroup-version == 'v1'
         run: just test-dind
+
+  runc-integration-tests:
+    runs-on: ubuntu-24.04
+    needs: [youki-build]
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        arch: [ "x86_64" ]
+        libc: [ "gnu" ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.5'
+          cache: true
+      - run: sudo apt-get -y update
+      - run: sudo apt-get install -y pkg-config libsystemd-dev libelf-dev libseccomp-dev btrfs-progs libbtrfs-dev
+      - name: Download youki binary
+        uses: actions/download-artifact@v4
+        with:
+          name: youki-${{ matrix.arch }}-${{ matrix.libc }}
+      - name: youki
+        run: |
+          sudo chmod 755 youki
+      - name: Setup Bats and bats libs
+        uses: bats-core/bats-action@3.0.1
+        with:
+          bats-version: 1.9.0
+          support-install: false
+          assert-install: false
+          detik-install: false
+          file-install: false
+      - name: runc integration tests
+        run: scripts/runc_integration.sh
