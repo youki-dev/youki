@@ -77,7 +77,6 @@ test_cases=(
   # "process/process.t"
   # "process_rlimits/process_rlimits.t"
   # "process_user/process_user.t"
-  '
 )
 
 check_environment() {
