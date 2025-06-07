@@ -1,8 +1,5 @@
 {
 	"name": "Youki",
-	"extensions": [
-		"rust-analyzer"
-	],
     "features": {
         "ghcr.io/devcontainers/features/docker-in-docker:2": {}
     },
@@ -13,7 +10,9 @@
 				"files.watcherExclude": {
 					"**/target/**": true
 				},
-				"rust-analyzer.checkOnSave.command": "clippy"
+				"rust-analyzer.check": {
+					"command": "clippy"
+				}
 			},
 			
 			"extensions": [
@@ -21,7 +20,7 @@
 				"mutantdino.resourcemonitor",
 				"rust-lang.rust-analyzer",
 				"tamasfe.even-better-toml",
-				"serayuzgur.crates"
+				"fill-labs.dependi"
 			]
 		}
 	},
