@@ -585,6 +585,7 @@ dependencies = [
  "pnet_datalink",
  "procfs",
  "rand 0.9.1",
+ "regex",
  "scopeguard",
  "serde",
  "serde_json",
