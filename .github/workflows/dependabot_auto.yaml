@@ -30,6 +30,9 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This is needed otherwise the pr edit fails for some reason
+          # see https://github.com/cli/cli/issues/7558
+          GH_REPO: ${{ github.repository_owner }}/${{ github.event.repository.name }}
       - name: Automerge
         id: automerge
         uses: pascalgn/automerge-action@v0.15.6
