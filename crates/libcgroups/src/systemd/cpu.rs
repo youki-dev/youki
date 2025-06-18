@@ -45,7 +45,10 @@ impl Cpu {
             let realtime_runtime = cpu.realtime_runtime();
             let runtime_period = cpu.realtime_period();
 
-            if !matches!((realtime_runtime, runtime_period), (Some(0), Some(0))) {
+            let realtime_is_zero = realtime_runtime.is_none() || realtime_runtime.unwrap() == 0;
+            let period_is_zero = runtime_period.is_none() || runtime_period.unwrap() == 0;
+
+            if !realtime_is_zero && !period_is_zero {
                 return Err(SystemdCpuError::RealtimeSystemd);
             }
         }
