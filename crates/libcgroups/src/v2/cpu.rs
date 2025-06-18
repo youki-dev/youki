@@ -377,4 +377,36 @@ mod tests {
         let actual = fs::read_to_string(burst_file).expect("read burst file");
         assert_eq!(actual, expected.to_string());
     }
+
+    #[test]
+    fn test_cgroupsv2_but_runtime_set_to_zero() {
+        // arrange
+        let tmp = tempfile::tempdir().unwrap();
+        let cpu = LinuxCpuBuilder::default()
+            .realtime_runtime(0i64)
+            .build()
+            .unwrap();
+
+        // act
+        let result = Cpu::apply(tmp.path(), &cpu);
+
+        // assert
+        assert!(result.is_ok())
+    }
+
+    #[test]
+    fn test_cgroupsv2_but_period_set_to_zero() {
+        // arrange
+        let tmp = tempfile::tempdir().unwrap();
+        let cpu = LinuxCpuBuilder::default()
+            .realtime_period(0u64)
+            .build()
+            .unwrap();
+
+        // act
+        let result = Cpu::apply(tmp.path(), &cpu);
+
+        // assert
+        assert!(result.is_ok())
+    }
 }
