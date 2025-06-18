@@ -86,13 +86,10 @@ impl StatsProvider for Cpu {
 impl Cpu {
     fn apply(path: &Path, cpu: &LinuxCpu) -> Result<(), V2CpuControllerError> {
         if Self::is_realtime_requested(cpu) {
-            let realtime_runtime = cpu.realtime_runtime();
-            let runtime_period = cpu.realtime_period();
+            let runtime = cpu.realtime_runtime().unwrap_or(0);
+            let period = cpu.realtime_period().unwrap_or(0);
 
-            let realtime_is_zero = realtime_runtime.is_none() || realtime_runtime.unwrap() == 0;
-            let period_is_zero = runtime_period.is_none() || runtime_period.unwrap() == 0;
-
-            if !realtime_is_zero && !period_is_zero {
+            if runtime > 0 || period > 0 {
                 return Err(V2CpuControllerError::RealtimeV2);
             }
         }
