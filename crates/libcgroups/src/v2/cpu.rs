@@ -406,4 +406,21 @@ mod tests {
         // assert
         assert!(result.is_ok())
     }
+
+    #[test]
+    fn test_cgroupsv2_but_period_and_runtime_set_to_zero() {
+        // arrange
+        let tmp = tempfile::tempdir().unwrap();
+        let cpu = LinuxCpuBuilder::default()
+            .realtime_period(0u64)
+            .realtime_runtime(0i64)
+            .build()
+            .unwrap();
+
+        // act
+        let result = Cpu::apply(tmp.path(), &cpu);
+
+        // assert
+        assert!(result.is_ok())
+    }
 }
