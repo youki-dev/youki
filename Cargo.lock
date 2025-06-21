@@ -2071,6 +2071,7 @@ dependencies = [
  "once_cell",
  "prctl",
  "procfs",
+ "protobuf",
  "quickcheck",
  "rand 0.9.1",
  "regex",
