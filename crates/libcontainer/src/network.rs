@@ -531,7 +531,7 @@ impl AddressClient {
 pub fn dev_change_net_namespace(
     name: String,
     netns_path: String,
-    device: LinuxNetDevice,
+    device: &LinuxNetDevice,
 ) -> Result<()> {
     tracing::debug!(
         "attaching network device {} to network namespace {}",

@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use libcgroups::common::CgroupManager;
 use nix::unistd::Pid;
-use oci_spec::runtime::{LinuxNamespaceType, Spec};
+use oci_spec::runtime::{Linux, LinuxNamespaceType, Spec};
 
 use super::{Container, ContainerStatus};
 use crate::error::{CreateContainerError, LibcontainerError, MissingSpecError};
@@ -176,7 +176,7 @@ impl ContainerBuilderImpl {
                 },
             )?;
 
-        self.setup_network_device(&self.spec, init_pid)?;
+        self.setup_network_device(linux, init_pid)?;
 
         // if file to write the pid to is specified, write pid of the child
         if let Some(pid_file) = &self.pid_file {
@@ -253,8 +253,7 @@ impl ContainerBuilderImpl {
     }
 
     /// setup_network_device sets up and initializes any defined network interface inside the container.
-    fn setup_network_device(&self, spec: &Spec, init_pid: Pid) -> Result<(), LibcontainerError> {
-        let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
+    fn setup_network_device(&self, linux: &Linux, init_pid: Pid) -> Result<(), LibcontainerError> {
         // host network pods does not move network devices.
         if let Some(namespaces) = linux.namespaces() {
             if !namespaces
@@ -283,7 +282,7 @@ impl ContainerBuilderImpl {
                         dev_change_net_namespace(
                             name.to_string(),
                             ns_path.to_string_lossy().to_string(),
-                            net_dev.clone(),
+                            &net_dev,
                         )?;
                     }
                 }
