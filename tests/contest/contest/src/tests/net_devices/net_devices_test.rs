@@ -13,9 +13,15 @@ use crate::utils::test_utils::{check_container_created, CreateOptions};
 use crate::utils::{test_inside_container, test_outside_container};
 
 static NETNS_COUNTER: AtomicUsize = AtomicUsize::new(0);
+static DEVICE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 fn create_unique_netns_name(prefix: &str) -> String {
     let count = NETNS_COUNTER.fetch_add(1, Ordering::SeqCst);
+    format!("{}-{}", prefix, count)
+}
+
+pub fn create_unique_device_name(prefix: &str) -> String {
+    let count = DEVICE_COUNTER.fetch_add(1, Ordering::SeqCst);
     format!("{}-{}", prefix, count)
 }
 
@@ -90,93 +96,93 @@ fn create_spec_with_netns(net_devices: HashMap<String, LinuxNetDevice>, netns: S
 }
 
 fn check_net_device() -> TestResult {
-    const DUMMY_DEVICE: &str = "dummy";
+    let device_name = create_unique_device_name("dummy");
 
-    if let Err(e) = create_dummy_device(DUMMY_DEVICE) {
+    if let Err(e) = create_dummy_device(&device_name) {
         return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
     }
 
     let mut net_devices = HashMap::new();
-    net_devices.insert(DUMMY_DEVICE.to_string(), LinuxNetDevice::default());
+    net_devices.insert(device_name.clone(), LinuxNetDevice::default());
     let spec = create_spec(net_devices);
     test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()));
 
-    match check_device_exists(DUMMY_DEVICE) {
+    match check_device_exists(&device_name) {
         Ok(true) => {
-            if let Err(e) = delete_dummy_device(DUMMY_DEVICE) {
+            if let Err(e) = delete_dummy_device(&device_name) {
                 return TestResult::Failed(anyhow!("Failed to delete device: {}", e));
             }
-            return TestResult::Failed(anyhow!("Device still exists after test"));
+            TestResult::Failed(anyhow!("The device still exists after test"))
         }
         Ok(false) => TestResult::Passed,
         Err(e) => {
-            if let Err(e) = delete_dummy_device(DUMMY_DEVICE) {
+            if let Err(e) = delete_dummy_device(&device_name) {
                 return TestResult::Failed(anyhow!("Failed to delete device: {}", e));
             }
-            return TestResult::Failed(anyhow!("Failed to check device: {}", e));
+            TestResult::Failed(anyhow!("Failed to check device: {}", e))
         }
     }
 }
 
 fn check_net_device_rename() -> TestResult {
-    const DUMMY_DEVICE: &str = "dummy-rename";
-    const DUMMY_DEVICE_RENAMED: &str = "dummy1-renamed";
+    let device_name = create_unique_device_name("dummy-rename");
+    let device_name_rename = create_unique_device_name("dummy-renamed");
 
-    if let Err(e) = create_dummy_device(DUMMY_DEVICE) {
+    if let Err(e) = create_dummy_device(&device_name) {
         return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
     }
 
     let mut net_devices = HashMap::new();
     net_devices.insert(
-        DUMMY_DEVICE.to_string(),
+        device_name.clone(),
         LinuxNetDeviceBuilder::default()
-            .name(DUMMY_DEVICE_RENAMED)
+            .name(&device_name_rename)
             .build()
             .unwrap(),
     );
     let spec = create_spec(net_devices);
     test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()));
 
-    match check_device_exists(DUMMY_DEVICE) {
+    match check_device_exists(&device_name) {
         Ok(true) => {
-            if let Err(e) = delete_dummy_device(DUMMY_DEVICE) {
+            if let Err(e) = delete_dummy_device(&device_name) {
                 return TestResult::Failed(anyhow!("Failed to delete device: {}", e));
             }
-            return TestResult::Failed(anyhow!("Device still exists after test"));
+            TestResult::Failed(anyhow!("The device still exists after test"))
         }
         Ok(false) => TestResult::Passed,
         Err(e) => {
-            if let Err(e) = delete_dummy_device(DUMMY_DEVICE) {
+            if let Err(e) = delete_dummy_device(&device_name) {
                 return TestResult::Failed(anyhow!("Failed to delete device: {}", e));
             }
-            return TestResult::Failed(anyhow!("Failed to check device: {}", e));
+            TestResult::Failed(anyhow!("Failed to check device: {}", e))
         }
     }
 }
 
 fn check_net_devices() -> TestResult {
-    const DUMMY_DEVICE1: &str = "dummy1";
-    const DUMMY_DEVICE2: &str = "dummy2";
+    let device_name1 = create_unique_device_name("dummy1");
+    let device_name2 = create_unique_device_name("dummy2");
 
-    if let Err(e) = create_dummy_device(DUMMY_DEVICE1) {
+    if let Err(e) = create_dummy_device(&device_name1) {
         return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
     }
 
-    if let Err(e) = create_dummy_device(DUMMY_DEVICE2) {
+    if let Err(e) = create_dummy_device(&device_name2) {
         return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
     }
 
     let mut net_devices = HashMap::new();
-    net_devices.insert(DUMMY_DEVICE1.to_string(), LinuxNetDevice::default());
-    net_devices.insert(DUMMY_DEVICE2.to_string(), LinuxNetDevice::default());
+    net_devices.insert(device_name1.clone(), LinuxNetDevice::default());
+    net_devices.insert(device_name2.clone(), LinuxNetDevice::default());
     let spec = create_spec(net_devices);
     test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()));
 
     let mut result = TestResult::Passed;
 
-    match check_device_exists(DUMMY_DEVICE1) {
+    match check_device_exists(&device_name1) {
         Ok(true) => {
-            result = TestResult::Failed(anyhow!("Device1 still exists after test"));
+            result = TestResult::Failed(anyhow!("The device1 still exists after test"));
         }
         Ok(false) => {}
         Err(e) => {
@@ -184,10 +190,10 @@ fn check_net_devices() -> TestResult {
         }
     }
 
-    match check_device_exists(DUMMY_DEVICE2) {
+    match check_device_exists(&device_name2) {
         Ok(true) => {
             if let TestResult::Passed = result {
-                result = TestResult::Failed(anyhow!("Device2 still exists after test"));
+                result = TestResult::Failed(anyhow!("The device2 still exists after test"));
             }
         }
         Ok(false) => {}
@@ -199,16 +205,17 @@ fn check_net_devices() -> TestResult {
     }
 
     // cleanup both devices regardless of test result
-    let _ = delete_dummy_device(DUMMY_DEVICE1);
-    let _ = delete_dummy_device(DUMMY_DEVICE2);
+    let _ = delete_dummy_device(&device_name1);
+    let _ = delete_dummy_device(&device_name2);
 
     result
 }
 
 fn check_empty_net_devices() -> TestResult {
-    const DUMMY_DEVICE: &str = "dummy-empty";
+    let device_name = create_unique_device_name("dummy-empty");
+
     let mut net_devices = HashMap::new();
-    net_devices.insert(DUMMY_DEVICE.to_string(), LinuxNetDevice::default());
+    net_devices.insert(device_name.clone(), LinuxNetDevice::default());
     let spec = create_spec(net_devices);
     let result = test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()));
 
@@ -224,13 +231,13 @@ fn check_empty_net_devices() -> TestResult {
 
 fn check_back_device() -> TestResult {
     let netns_name = create_unique_netns_name("netns-back");
-    const DUMMY_DEVICE: &str = "dummy-back";
+    let device_name = create_unique_device_name("dummy-back");
 
     let mut net_devices = HashMap::new();
     net_devices.insert(
-        DUMMY_DEVICE.to_string(),
+        device_name.clone(),
         LinuxNetDeviceBuilder::default()
-            .name(DUMMY_DEVICE.to_string())
+            .name(&device_name)
             .build()
             .unwrap(),
     );
@@ -239,7 +246,7 @@ fn check_back_device() -> TestResult {
         return TestResult::Failed(anyhow!("Failed to create netns: {}", e));
     }
 
-    if let Err(e) = create_dummy_device(DUMMY_DEVICE) {
+    if let Err(e) = create_dummy_device(&device_name) {
         return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
     }
 
@@ -269,7 +276,7 @@ fn check_back_device() -> TestResult {
             "link",
             "set",
             "dev",
-            DUMMY_DEVICE,
+            &device_name,
             "netns",
             "1",
         ])
@@ -279,11 +286,11 @@ fn check_back_device() -> TestResult {
     }
 
     // Check that the device exists
-    if let Err(e) = check_device_exists(DUMMY_DEVICE) {
+    if let Err(e) = check_device_exists(&device_name) {
         return TestResult::Failed(anyhow!("Failed to check device: {}", e));
     }
 
-    if let Err(e) = delete_dummy_device(DUMMY_DEVICE) {
+    if let Err(e) = delete_dummy_device(&device_name) {
         return TestResult::Failed(anyhow!("Failed to delete device: {}", e));
     }
 
@@ -296,14 +303,14 @@ fn check_back_device() -> TestResult {
 
 fn check_address() -> TestResult {
     let netns_name = create_unique_netns_name("netns-address");
-    const DUMMY_DEVICE: &str = "dummy-address";
+    let device_name = create_unique_device_name("dummy-address");
     const DUMMY_ADDRESS: &str = "244.178.44.111/24";
 
     let mut net_devices = HashMap::new();
     net_devices.insert(
-        DUMMY_DEVICE.to_string(),
+        device_name.clone(),
         LinuxNetDeviceBuilder::default()
-            .name(DUMMY_DEVICE.to_string())
+            .name(&device_name)
             .build()
             .unwrap(),
     );
@@ -312,13 +319,13 @@ fn check_address() -> TestResult {
         return TestResult::Failed(anyhow!("Failed to create netns: {}", e));
     }
 
-    if let Err(e) = create_dummy_device(DUMMY_DEVICE) {
+    if let Err(e) = create_dummy_device(&device_name) {
         return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
     }
 
     // Add address to the device
     if let Err(e) = std::process::Command::new("ip")
-        .args(vec!["addr", "add", DUMMY_ADDRESS, "dev", DUMMY_DEVICE])
+        .args(vec!["addr", "add", DUMMY_ADDRESS, "dev", &device_name])
         .output()
     {
         return TestResult::Failed(anyhow!("Failed to add address: {}", e));
@@ -352,7 +359,7 @@ fn check_address() -> TestResult {
         Ok(out) => out,
         Err(e) => return TestResult::Failed(anyhow!("Failed to parse output: {}", e)),
     };
-    if !out.contains(DUMMY_DEVICE) || !out.contains(DUMMY_ADDRESS) {
+    if !out.contains(&device_name) || !out.contains(DUMMY_ADDRESS) {
         return TestResult::Failed(anyhow!("Address not found in output"));
     }
 
