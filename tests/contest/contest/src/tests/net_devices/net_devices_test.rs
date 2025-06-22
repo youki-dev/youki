@@ -99,7 +99,23 @@ fn check_net_device() -> TestResult {
     let mut net_devices = HashMap::new();
     net_devices.insert(DUMMY_DEVICE.to_string(), LinuxNetDevice::default());
     let spec = create_spec(net_devices);
-    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()));
+
+    match check_device_exists(DUMMY_DEVICE) {
+        Ok(true) => {
+            if let Err(e) = delete_dummy_device(DUMMY_DEVICE) {
+                return TestResult::Failed(anyhow!("Failed to delete device: {}", e));
+            }
+            return TestResult::Failed(anyhow!("Device still exists after test"));
+        }
+        Ok(false) => TestResult::Passed,
+        Err(e) => {
+            if let Err(e) = delete_dummy_device(DUMMY_DEVICE) {
+                return TestResult::Failed(anyhow!("Failed to delete device: {}", e));
+            }
+            return TestResult::Failed(anyhow!("Failed to check device: {}", e));
+        }
+    }
 }
 
 fn check_net_device_rename() -> TestResult {
@@ -119,7 +135,23 @@ fn check_net_device_rename() -> TestResult {
             .unwrap(),
     );
     let spec = create_spec(net_devices);
-    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()));
+
+    match check_device_exists(DUMMY_DEVICE) {
+        Ok(true) => {
+            if let Err(e) = delete_dummy_device(DUMMY_DEVICE) {
+                return TestResult::Failed(anyhow!("Failed to delete device: {}", e));
+            }
+            return TestResult::Failed(anyhow!("Device still exists after test"));
+        }
+        Ok(false) => TestResult::Passed,
+        Err(e) => {
+            if let Err(e) = delete_dummy_device(DUMMY_DEVICE) {
+                return TestResult::Failed(anyhow!("Failed to delete device: {}", e));
+            }
+            return TestResult::Failed(anyhow!("Failed to check device: {}", e));
+        }
+    }
 }
 
 fn check_net_devices() -> TestResult {
@@ -138,7 +170,39 @@ fn check_net_devices() -> TestResult {
     net_devices.insert(DUMMY_DEVICE1.to_string(), LinuxNetDevice::default());
     net_devices.insert(DUMMY_DEVICE2.to_string(), LinuxNetDevice::default());
     let spec = create_spec(net_devices);
-    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()));
+
+    let mut result = TestResult::Passed;
+
+    match check_device_exists(DUMMY_DEVICE1) {
+        Ok(true) => {
+            result = TestResult::Failed(anyhow!("Device1 still exists after test"));
+        }
+        Ok(false) => {}
+        Err(e) => {
+            result = TestResult::Failed(anyhow!("Failed to check device1: {}", e));
+        }
+    }
+
+    match check_device_exists(DUMMY_DEVICE2) {
+        Ok(true) => {
+            if let TestResult::Passed = result {
+                result = TestResult::Failed(anyhow!("Device2 still exists after test"));
+            }
+        }
+        Ok(false) => {}
+        Err(e) => {
+            if let TestResult::Passed = result {
+                result = TestResult::Failed(anyhow!("Failed to check device2: {}", e));
+            }
+        }
+    }
+
+    // cleanup both devices regardless of test result
+    let _ = delete_dummy_device(DUMMY_DEVICE1);
+    let _ = delete_dummy_device(DUMMY_DEVICE2);
+
+    result
 }
 
 fn check_empty_net_devices() -> TestResult {

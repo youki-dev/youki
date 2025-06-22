@@ -1,7 +1,7 @@
 use std::fs;
 use std::io::Write;
 use std::os::fd::{AsRawFd, OwnedFd};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use libcgroups::common::CgroupManager;
@@ -265,26 +265,28 @@ impl ContainerBuilderImpl {
 
             // get the namespace defined by the config and fall back
             // to the one created by youki to run the container process.
-            let ns_path = namespaces.iter().find_map(|ns| {
-                if ns.typ() == LinuxNamespaceType::Network {
-                    ns.path().clone()
-                } else {
-                    Some(Path::new("/proc").join(format!("{}/ns/net", init_pid.as_raw())))
-                }
-            });
+            let fallback_ns_path = PathBuf::from(format!("/proc/{}/ns/net", init_pid.as_raw()));
+            let ns_path = namespaces
+                .iter()
+                .find_map(|ns| {
+                    if ns.typ() == LinuxNamespaceType::Network {
+                        ns.path().as_deref()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| &fallback_ns_path);
             // If moving any of the network devices fails, we return an error immediately.
             // The runtime spec requires that the kernel handles moving back any devices
             // that were successfully moved before the failure occurred.
             // See: https://github.com/opencontainers/runtime-spec/blob/27cb0027fd92ef81eda1ea3a8153b8337f56d94a/config-linux.md#namespace-lifecycle-and-container-termination
             if let Some(devices) = linux.net_devices() {
                 for (name, net_dev) in devices {
-                    if let Some(ns_path) = ns_path.clone() {
-                        dev_change_net_namespace(
-                            name.to_string(),
-                            ns_path.to_string_lossy().to_string(),
-                            &net_dev,
-                        )?;
-                    }
+                    dev_change_net_namespace(
+                        name.to_string(),
+                        ns_path.to_string_lossy().to_string(),
+                        net_dev,
+                    )?;
                 }
             }
         }
