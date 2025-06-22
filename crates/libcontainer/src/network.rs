@@ -525,7 +525,7 @@ impl AddressClient {
 
 /// dev_change_netns allows to move a device given by name to a network namespace given by nsPath
 /// and optionally change the device name.
-/// The device name will be kept the same if device.Name is the zero value.
+/// The device name will be kept the same if device.Name is None or an empty string.
 /// This function ensures that the move and rename operations occur atomically.
 /// It preserves existing interface attributes, including IP addresses.
 pub fn dev_change_net_namespace(
@@ -565,8 +565,22 @@ pub fn dev_change_net_namespace(
 
     link_client.set_ns_fd(index, &new_name, netns_file.as_raw_fd())?;
 
+    // Move the device to the new network namespace and perform necessary setup.
+    // We must use a separate thread for the following reasons:
+    //
+    // 1. setns(2) only changes the network namespace of the calling thread, not the whole process.
+    //    If we called setns in the main thread, it would affect the main thread's namespace for the rest of its lifetime,
+    //    which could break other parts of the program that expect to remain in the original namespace.
+    // 2. By spawning a new thread, we can safely enter the target namespace, perform the required operations (like
+    //    re-adding IP addresses and bringing the interface up), and then return to the original namespace, all without
+    //    affecting the main thread or the rest of the process.
+    // 3. When the thread exits, its namespace context is cleaned up, ensuring that namespace changes are tightly scoped
+    //    and do not leak outside the intended context.
+    //
+    // This pattern is necessary for correct and safe manipulation of network namespaces in multi-threaded programs.
     let thread_handle = std::thread::spawn({
         move || -> Result<()> {
+            // Enter the target network namespace for this thread only.
             setns(
                 unsafe { BorrowedFd::borrow_raw(netns_file.as_raw_fd()) },
                 CloneFlags::CLONE_NEWNET,
@@ -630,6 +644,7 @@ pub fn dev_change_net_namespace(
 
             link_client.set_up(ns_index)?;
 
+            // Return to the original network namespace before exiting the thread.
             setns(
                 unsafe { BorrowedFd::borrow_raw(origin_netns_file.as_raw_fd()) },
                 CloneFlags::CLONE_NEWNET,
