@@ -1,5 +1,43 @@
 # Changelog
 
+## [v0.5.4](https://github.com/youki-dev/youki/compare/v0.5.3...v0.5.4) - 2025-06-24
+### 💪 Improvements
+- add support exec-cpu-affinity by @saku3 in https://github.com/youki-dev/youki/pull/3164
+- fix: allow duplicate additionalGids by @saku3 in https://github.com/youki-dev/youki/pull/3189
+### 🐛 Bug Fixes
+- use additional gids,user,group in exec, inject path iif not given by @YJDoc2 in https://github.com/youki-dev/youki/pull/3131
+- fix: mount retry and logging by @z63d in https://github.com/youki-dev/youki/pull/3157
+- fix: Gracefully terminate processes after successful execution of Wasm executors by @z63d in https://github.com/youki-dev/youki/pull/3099
+- fix: Running create_runtime hook after container is set to created. by @CheatCodeSam in https://github.com/youki-dev/youki/pull/3181
+- fix: Ignoring CPU realtime on cgroupsv2 if set to zero by @CheatCodeSam in https://github.com/youki-dev/youki/pull/3180
+### 📖 Documentation improvements
+- Add the CNCF footer in README.md by @utam0k in https://github.com/youki-dev/youki/pull/3140
+- chore(docs): Fix codecov link in README by @khanhtc1202 in https://github.com/youki-dev/youki/pull/3129
+- Fixed grammatical error in README by @CheatCodeSam in https://github.com/youki-dev/youki/pull/3160
+- fix: protobuf bug on docs rs by @mdaffad in https://github.com/youki-dev/youki/pull/3159
+- docs: clarify reviewer qualification and self-nomination process by @utam0k in https://github.com/youki-dev/youki/pull/3175
+### 🧪 Test improvements and Misc Fixes
+- bump nix to 0.29.0 by @kemingy in https://github.com/youki-dev/youki/pull/3123
+- update rust version to 1.85.0 by @YJDoc2 in https://github.com/youki-dev/youki/pull/3085
+- add-test-linux_rootfs_propagation by @saku3 in https://github.com/youki-dev/youki/pull/3024
+- Add a relative_network_cgroups test as one of the integration tests by @moz-sec in https://github.com/youki-dev/youki/pull/2986
+- Refactor init process by @utam0k in https://github.com/youki-dev/youki/pull/3158
+- add kill test by @YamasouA in https://github.com/youki-dev/youki/pull/2996
+- allow running selected tests in contest.sh and justfile by @saku3 in https://github.com/youki-dev/youki/pull/3165
+- fix: capet Ambient log level by @z63d in https://github.com/youki-dev/youki/pull/3150
+- add test process_capabilities_fail by @kazmsk in https://github.com/youki-dev/youki/pull/3010
+- fix typos and outdated typos ci action by @howjmay in https://github.com/youki-dev/youki/pull/3168
+- add a system call mock for uid/gid. by @nayuta-ai in https://github.com/youki-dev/youki/pull/3173
+- fix: remove println statements from contest tests by @YJDoc2 in https://github.com/youki-dev/youki/pull/3167
+- Installing kubectl in dev container. by @CheatCodeSam in https://github.com/youki-dev/youki/pull/3177
+- Add uid_mappings test by @moz-sec in https://github.com/youki-dev/youki/pull/3161
+- fix: update devcontainer.json by @AobaIwaki123 in https://github.com/youki-dev/youki/pull/3172
+- Remove oci tests that are duplicates of contest by @utam0k in https://github.com/youki-dev/youki/pull/3042
+- Remove oci tests that are duplicates of contest by @saku3 in https://github.com/youki-dev/youki/pull/3184
+### Other Changes
+- Bump oci-spec.rs to v0.8.1 by @saku3 in https://github.com/youki-dev/youki/pull/3154
+- selinux: lima vm by @utam0k in https://github.com/youki-dev/youki/pull/3162
+
 ## [v0.5.3](https://github.com/youki-dev/youki/compare/v0.5.2...v0.5.3) - 2025-03-21
 ### 🐛 Bug Fixes
 - Security: Fix compromised `tj-actions/changed-files` action by @sou1118 in https://github.com/youki-dev/youki/pull/3112
