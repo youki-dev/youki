@@ -32,21 +32,33 @@
         <!-- Custom theme stylesheets -->
 
 
-        <!-- Provide site root to javascript -->
+        <!-- Provide site root and default themes to javascript -->
         <script>
-            var path_to_root = "";
-            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc.js"></script>
     </head>
     <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
     <div id="body-container">
         <!-- Work around some values being stored in localStorage wrapped in quotes -->
         <script>
             try {
-                var theme = localStorage.getItem('mdbook-theme');
-                var sidebar = localStorage.getItem('mdbook-sidebar');
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
 
                 if (theme.startsWith('"') && theme.endsWith('"')) {
                     localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
@@ -60,7 +72,8 @@
 
         <!-- Set the theme before any content is loaded, prevents flash -->
         <script>
-            var theme;
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
             try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
             if (theme === null || theme === undefined) { theme = default_theme; }
             const html = document.documentElement;
@@ -73,8 +86,8 @@
 
         <!-- Hide / unhide sidebar before it is displayed -->
         <script>
-            var sidebar = null;
-            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
             if (document.body.clientWidth >= 1080) {
                 try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
                 sidebar = sidebar || 'visible';
@@ -110,13 +123,14 @@
                             <i class="fa fa-paint-brush"></i>
                         </button>
                         <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
                         </ul>
-                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
                             <i class="fa fa-search"></i>
                         </button>
                     </div>
@@ -685,17 +699,18 @@ vi src/main.rs
 COPY target/wasm32-wasi/debug/wasm-module.wasm /
 ENTRYPOINT ["wasm-module.wasm"]
 </code></pre>
-<p>Then build a container image with <code>module.wasm.image/variant=compat</code> annotation. <sup class="footnote-reference"><a href="#1">1</a></sup></p>
+<p>Then build a container image with <code>module.wasm.image/variant=compat</code> annotation. <sup class="footnote-reference" id="fr-1-1"><a href="#footnote-1">1</a></sup></p>
 <pre><code class="language-console">sudo buildah build --annotation "module.wasm.image/variant=compat" -t wasm-module .
 </code></pre>
 <h2 id="run-the-wasm-module-with-youki-and-podman"><a class="header" href="#run-the-wasm-module-with-youki-and-podman">Run the wasm module with youki and podman</a></h2>
-<p>Run podman with youki as runtime. <sup class="footnote-reference"><a href="#1">1</a></sup></p>
+<p>Run podman with youki as runtime. <sup class="footnote-reference" id="fr-1-2"><a href="#footnote-1">1</a></sup></p>
 <pre><code class="language-bash">sudo podman --runtime /PATH/WHARE/YOU/BUILT/WITH/WASM-WASMER/youki run localhost/wasm-module 1 2 3
 </code></pre>
-<div class="footnote-definition" id="1"><sup class="footnote-definition-label">1</sup>
-<p>You might need <code>sudo</code> because of <a href="https://github.com/containers/youki/issues/719">#719</a>.</p>
-</div>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="community"><a class="header" href="#community">Community</a></h1>
+<hr>
+<ol class="footnote-definition"><li id="footnote-1">
+<p>You might need <code>sudo</code> because of <a href="https://github.com/containers/youki/issues/719">#719</a>. <a href="#fr-1-1">↩</a> <a href="#fr-1-2">↩2</a></p>
+</li>
+</ol><div style="break-before: page; page-break-before: always;"></div><h1 id="community"><a class="header" href="#community">Community</a></h1>
 <ul>
 <li><a href="community/./maintainer.html">Maintainer</a></li>
 <li><a href="community/./goversance.html">Governance</a></li>
@@ -732,7 +747,9 @@ A Reviewer is considered as a candidate to become a Committer.</p>
 </li>
 </ul>
 <h2 id="addition-and-promotion-of-maintainers"><a class="header" href="#addition-and-promotion-of-maintainers">Addition and promotion of Maintainers</a></h2>
-<p>A contributor who have made significant contributions in quality and in quantity can be directly invited as a Committer.
+<p>A contributor who has successfully merged 10 or more pull requests to the project has the qualification to become a Reviewer.
+At least 5 of these pull requests must be code-related.
+Contributors who meet this qualification can self-nominate by creating a GitHub issue.
 A proposal to add or promote a Maintainer must be approved by 2/3 of the Committers who vote within 7 days.
 Voting needs a minimum of 2 approvals. The proposer can vote too. Votes from the same company will be counted as one vote.
 A proposal should be made via a GitHub pull request to the file containing the list of Maintainer defined above.
