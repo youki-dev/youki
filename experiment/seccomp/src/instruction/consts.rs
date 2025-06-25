@@ -54,7 +54,6 @@ pub const AUDIT_ARCH_AARCH64: u32 = 183 | 0x8000_0000 | 0x4000_0000;
 // See /arch/x86/include/uapi/asm/unistd.h
 pub const X32_SYSCALL_BIT: u32 = 0x4000_0000;
 
-
 // Comparison operators
 // See libseccomp/include/seccomp.h.in
 #[derive(Debug, PartialEq)]
@@ -98,13 +97,13 @@ pub const fn seccomp_data_arg_size() -> u8 {
 }
 
 /// Returns the offset of the `args` field in `SeccompData` for the given index.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `index` - The index of the argument (0–5).
-/// 
+///
 /// # Returns
-/// 
+///
 /// A `Result` containing the offset as `u8` if the index is valid, or an error message if the index is out of range.
 pub const fn seccomp_data_args_offset(index: u8) -> Result<u8, &'static str> {
     match index {

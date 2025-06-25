@@ -1,7 +1,7 @@
-use std::os::raw::c_uchar;
-use nix::errno::Errno::ENOSYS;
 use crate::instruction::Instruction;
 use crate::instruction::*;
+use nix::errno::Errno::ENOSYS;
+use std::os::raw::c_uchar;
 
 #[derive(PartialEq, Debug, Default)]
 pub enum Arch {
@@ -21,7 +21,12 @@ pub fn gen_validate(arc: &Arch, def_action: u32, jump_num: usize) -> Vec<Instruc
             //  load offset architecture
             Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, seccomp_data_arch_offset() as u32),
             // if not match architecture, jump to default action
-            Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 0, (jump_num + 3) as c_uchar, arch),
+            Instruction::jump(
+                BPF_JMP | BPF_JEQ | BPF_K,
+                0,
+                (jump_num + 3) as c_uchar,
+                arch,
+            ),
             // load offset system call number
             Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, seccomp_data_nr_offset() as u32),
             // check system call is not using 32bit ABI

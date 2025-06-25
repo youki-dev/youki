@@ -1,8 +1,11 @@
+use crate::seccomp::{InstructionData, Seccomp};
+use oci_spec::runtime::{
+    Arch as OciSpecArch, LinuxSeccompAction, LinuxSeccompArg, LinuxSeccompArgBuilder,
+    LinuxSeccompBuilder, LinuxSeccompOperator, LinuxSyscall, LinuxSyscallBuilder,
+};
 use serde::Deserialize;
 use std::fs;
 use std::io;
-use oci_spec::runtime::{Arch as OciSpecArch, LinuxSeccompAction, LinuxSeccompArg, LinuxSeccompArgBuilder, LinuxSeccompBuilder, LinuxSeccompOperator, LinuxSyscall, LinuxSyscallBuilder};
-use crate::seccomp::{InstructionData, Seccomp};
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -43,8 +46,8 @@ pub struct Syscall {
     comment: Option<String>,
 }
 
-pub fn convert_operation(op_str :&str) -> Option<LinuxSeccompOperator>{
-    match op_str  {
+pub fn convert_operation(op_str: &str) -> Option<LinuxSeccompOperator> {
+    match op_str {
         "SCMP_CMP_EQ" => Some(LinuxSeccompOperator::ScmpCmpEq),
         "SCMP_CMP_NE" => Some(LinuxSeccompOperator::ScmpCmpNe),
         "SCMP_CMP_MASKED_EQ" => Some(LinuxSeccompOperator::ScmpCmpMaskedEq),
@@ -55,8 +58,8 @@ pub fn convert_operation(op_str :&str) -> Option<LinuxSeccompOperator>{
 pub fn convert_argument(args: Vec<Argument>) -> Result<Vec<LinuxSeccompArg>, String> {
     let mut seccomp_args: Vec<LinuxSeccompArg> = vec![];
     for arg in args {
-        let op = convert_operation(&arg.op)
-            .ok_or_else(|| format!("Invalid operation: {}", arg.op))?;
+        let op =
+            convert_operation(&arg.op).ok_or_else(|| format!("Invalid operation: {}", arg.op))?;
         let seccomp_arg = LinuxSeccompArgBuilder::default()
             .index(arg.index as usize)
             .value(arg.value)
@@ -68,8 +71,8 @@ pub fn convert_argument(args: Vec<Argument>) -> Result<Vec<LinuxSeccompArg>, Str
     Ok(seccomp_args)
 }
 
-pub fn convert_action(action_str :&str) -> Option<LinuxSeccompAction>{
-    match action_str  {
+pub fn convert_action(action_str: &str) -> Option<LinuxSeccompAction> {
+    match action_str {
         "SCMP_ACT_ALLOW" => Some(LinuxSeccompAction::ScmpActAllow),
         "SCMP_ACT_ERRNO" => Some(LinuxSeccompAction::ScmpActErrno),
         _ => None,
@@ -92,13 +95,12 @@ pub fn read_seccomp_testdata(file_path: &str) -> Result<SeccompData, io::Error> 
 }
 
 pub fn generate_seccomp_instruction(file_path: &str) -> anyhow::Result<()> {
-
     let seccomp = read_seccomp_testdata(file_path)?;
     let mut cnt = 0;
     for syscall in seccomp.syscalls {
         let action = convert_action(&syscall.action).unwrap();
 
-        let mut build_syscall :LinuxSyscall;
+        let build_syscall: LinuxSyscall;
         if syscall.args.is_some() {
             build_syscall = LinuxSyscallBuilder::default()
                 .names(syscall.names)
@@ -128,7 +130,13 @@ pub fn generate_seccomp_instruction(file_path: &str) -> anyhow::Result<()> {
 
         println!("--- test case {}---", cnt);
         for filter in &seccomp.filters {
-            println!("code: {:02x}, jt: {:02x}, jf: {:02x}, k: {:08x}", filter.code, filter.offset_jump_true, filter.offset_jump_false, filter.multiuse_field)
+            println!(
+                "code: {:02x}, jt: {:02x}, jf: {:02x}, k: {:08x}",
+                filter.code,
+                filter.offset_jump_true,
+                filter.offset_jump_false,
+                filter.multiuse_field
+            )
         }
         println!("--- test case {} end", cnt);
         cnt += 1;

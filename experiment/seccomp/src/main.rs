@@ -6,21 +6,25 @@ use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::slice;
 
 use anyhow::Result;
-use nix::{libc, sys::{
-    signal::Signal,
-    socket::{
-        self, ControlMessage, ControlMessageOwned, MsgFlags, SockFlag, SockType, UnixAddr,
+use nix::{
+    libc,
+    sys::{
+        signal::Signal,
+        socket::{
+            self, ControlMessage, ControlMessageOwned, MsgFlags, SockFlag, SockType, UnixAddr,
+        },
+        stat::Mode,
+        wait::{self, WaitStatus},
     },
-    stat::Mode,
-    wait::{self, WaitStatus},
-}, unistd::{close, mkdir}};
+    unistd::{close, mkdir},
+};
 use oci_spec::runtime::{
     Arch as OciSpecArch, LinuxSeccompAction, LinuxSeccompArgBuilder, LinuxSeccompBuilder,
     LinuxSeccompOperator, LinuxSyscallBuilder,
 };
 use seccomp::seccomp::InstructionData;
-use syscall_numbers::x86_64;
 use seccomp::testutil::*;
+use syscall_numbers::x86_64;
 
 fn send_fd<F: AsRawFd>(sock: OwnedFd, fd: &F) -> nix::Result<()> {
     let fd = fd.as_raw_fd();
@@ -140,7 +144,10 @@ async fn sub() -> Result<()> {
     seccomp.filters = Vec::from(inst_data);
 
     for filter in &seccomp.filters {
-        println!("code: {:02x}, jt: {:02x}, jf: {:02x}, k: {:08x}", filter.code, filter.offset_jump_true, filter.offset_jump_false, filter.multiuse_field)
+        println!(
+            "code: {:02x}, jt: {:02x}, jf: {:02x}, k: {:08x}",
+            filter.code, filter.offset_jump_true, filter.offset_jump_false, filter.multiuse_field
+        )
     }
 
     tokio::spawn(async move {
