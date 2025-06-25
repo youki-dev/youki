@@ -107,12 +107,9 @@ pub const fn seccomp_data_arg_size() -> u8 {
 /// A `Result` containing the offset as `u8` if the index is valid, or an error message if the index is out of range.
 pub const fn seccomp_data_args_offset(index: u8) -> Result<u8, &'static str> {
     match index {
-        0 => Ok(offset_of!(SeccompData, args) as u8),
-        1 => Ok(offset_of!(SeccompData, args) as u8 + 8),
-        2 => Ok(offset_of!(SeccompData, args) as u8 + 16),
-        3 => Ok(offset_of!(SeccompData, args) as u8 + 24),
-        4 => Ok(offset_of!(SeccompData, args) as u8 + 32),
-        5 => Ok(offset_of!(SeccompData, args) as u8 + 48),
+        0..=5 => {
+            Ok((offset_of!(SeccompData, args) as u8) + (index * 8))
+        }
         _ => Err("Index out of range. Valid indices are 0–5."),
     }
 }
@@ -145,7 +142,7 @@ mod tests {
             assert_eq!(seccomp_data_args_offset(2).unwrap(), 16 + 16);
             assert_eq!(seccomp_data_args_offset(3).unwrap(), 16 + 24);
             assert_eq!(seccomp_data_args_offset(4).unwrap(), 16 + 32);
-            assert_eq!(seccomp_data_args_offset(5).unwrap(), 16 + 48);
+            assert_eq!(seccomp_data_args_offset(5).unwrap(), 16 + 40);
         }
     }
 }
