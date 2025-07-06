@@ -10,7 +10,7 @@ use oci_spec::runtime::{Linux, LinuxNamespaceType, Spec};
 
 use super::{Container, ContainerStatus};
 use crate::error::{CreateContainerError, LibcontainerError, MissingSpecError};
-use crate::network::dev_change_net_namespace;
+use crate::network_device::dev_change_net_namespace;
 use crate::notify_socket::NotifyListener;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::intel_rdt::delete_resctrl_subdirectory;
