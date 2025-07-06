@@ -7,7 +7,8 @@ use oci_spec::runtime::LinuxNetDevice;
 
 use crate::network::address::AddressClient;
 use crate::network::link::LinkClient;
-use crate::network::netlink::{create_network_client, NetworkError};
+use crate::network::wrapper::create_network_client;
+use crate::network::NetworkError;
 
 type Result<T> = std::result::Result<T, NetworkError>;
 

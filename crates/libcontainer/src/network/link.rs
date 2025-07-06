@@ -6,11 +6,9 @@ use netlink_packet_core::{
 use netlink_packet_route::link::{LinkAttribute, LinkFlags, LinkMessage};
 use netlink_packet_route::RouteNetlinkMessage;
 
-use crate::network::netlink::{
-    Client, ClientWrapper, NetlinkMessageHandler, NetlinkResponse, NetworkError,
-};
-
-type Result<T> = std::result::Result<T, NetworkError>;
+use super::traits::{Client, NetlinkMessageHandler};
+use super::wrapper::ClientWrapper;
+use super::{NetlinkResponse, NetworkError, Result};
 
 /// Handler for Link messages in Netlink communication.
 ///
@@ -170,9 +168,9 @@ impl LinkClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::netlink::{
-        create_network_client, ClientWrapper, FakeNetlinkClient, NetlinkResponse,
-    };
+    use crate::network::fake::FakeNetlinkClient;
+    use crate::network::wrapper::{create_network_client, ClientWrapper};
+    use crate::network::NetlinkResponse;
 
     #[test]
     fn test_link_message_handler_success() {

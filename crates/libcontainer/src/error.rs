@@ -67,7 +67,7 @@ pub enum LibcontainerError {
     #[error(transparent)]
     NetDevicesError(#[from] crate::utils::NetDevicesError),
     #[error(transparent)]
-    NetworkError(#[from] crate::network::netlink::NetworkError),
+    NetworkError(#[from] crate::network::NetworkError),
 
     // Catch all errors that are not covered by the above
     #[error("syscall error")]

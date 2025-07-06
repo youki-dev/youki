@@ -6,11 +6,9 @@ use netlink_packet_core::{
 use netlink_packet_route::address::{AddressAttribute, AddressMessage};
 use netlink_packet_route::{AddressFamily, RouteNetlinkMessage};
 
-use crate::network::netlink::{
-    Client, ClientWrapper, NetlinkMessageHandler, NetlinkResponse, NetworkError,
-};
-
-type Result<T> = std::result::Result<T, NetworkError>;
+use crate::network::traits::{Client, NetlinkMessageHandler};
+use crate::network::wrapper::ClientWrapper;
+use crate::network::{NetlinkResponse, NetworkError, Result};
 
 /// Handler for Address messages in Netlink communication.
 ///
@@ -156,7 +154,8 @@ impl AddressClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::netlink::{create_network_client, FakeNetlinkClient};
+    use crate::network::fake::FakeNetlinkClient;
+    use crate::network::wrapper::create_network_client;
 
     #[test]
     fn test_address_message_handler_success() {
