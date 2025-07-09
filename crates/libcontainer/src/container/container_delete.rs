@@ -89,13 +89,16 @@ impl Container {
                         libcgroups::common::CgroupConfig {
                             cgroup_path: config.cgroup_path.to_owned(),
                             systemd_cgroup: self.systemd(),
+                            rootless_container: self.rootless(),
                             container_name: self.id().to_string(),
                         },
                     )?;
-                    cmanager.remove().map_err(|err| {
+                    if let Some(cmanager) = cmanager {
+                        cmanager.remove().map_err(|err| {
                         tracing::error!(cgroup_path = ?config.cgroup_path, "failed to remove cgroup due to: {err:?}");
                         err
                     })?;
+                    }
 
                     if let Some(hooks) = config.hooks.as_ref() {
                         hooks::run_hooks(hooks.poststop().as_ref(), Some(self), None).map_err(
