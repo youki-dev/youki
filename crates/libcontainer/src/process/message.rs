@@ -2,6 +2,8 @@ use core::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::network::serialize::SerializableAddress;
+
 /// Used as a wrapper for messages to be sent between child and parent processes
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Message {
@@ -11,6 +13,7 @@ pub enum Message {
     MappingWritten,
     SeccompNotify,
     SeccompNotifyDone,
+    MoveNetworkDevice(Vec<SerializableAddress>),
     ExecFailed(String),
     OtherError(String),
 }
@@ -22,6 +25,7 @@ impl fmt::Display for Message {
             Message::InitReady => write!(f, "InitReady"),
             Message::WriteMapping => write!(f, "WriteMapping"),
             Message::MappingWritten => write!(f, "MappingWritten"),
+            Message::MoveNetworkDevice(addr) => write!(f, "MoveNetworkDevice({:?})", addr),
             Message::SeccompNotify => write!(f, "SeccompNotify"),
             Message::SeccompNotifyDone => write!(f, "SeccompNotifyDone"),
             Message::ExecFailed(s) => write!(f, "ExecFailed({})", s),
