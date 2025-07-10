@@ -8,7 +8,7 @@ on:
 
 jobs:
   podman-tests:
-    runs-on: oracle-vm-8cpu-32gb-x86-64
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Setup Rust toolchain and cache
