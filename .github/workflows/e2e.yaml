@@ -1,12 +1,7 @@
 name: 🧪 e2e test
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   youki-build:

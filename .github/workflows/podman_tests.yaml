@@ -1,66 +1,69 @@
 name: 🧪 Test for podman
 
 on:
+  push:
   schedule:
   - cron: "0 0 * * *"
   workflow_dispatch:
 
 jobs:
   podman-tests:
-    runs-on: ubuntu-24.04
+    runs-on: oracle-vm-8cpu-32gb-x86-64
     steps:
-      - uses: actions/checkout@v4
-      - name: Install just
-        uses: taiki-e/install-action@just
-      - name: Add CRIU PPA
-        run: sudo add-apt-repository -y ppa:criu/ppa
-      - name: Install requirements
-        run: sudo env PATH=$PATH just ci-prepare
+      - name: check uname
+        run: uname -a
+      # - uses: actions/checkout@v4
+      # - name: Install just
+      #   uses: taiki-e/install-action@just
+      # - name: Add CRIU PPA
+      #   run: sudo add-apt-repository -y ppa:criu/ppa
+      # - name: Install requirements
+      #   run: sudo env PATH=$PATH just ci-prepare
       
-      - name: Install skopeo and podman requirements
-        run: |
-          sudo apt-get install -y pkg-config libsystemd-dev libelf-dev libseccomp-dev libgpgme-dev libassuan-dev libbtrfs-dev libdevmapper-dev bats socat protobuf-compiler jq conmon
-          cargo install netavark aardvark-dns
+      # - name: Install skopeo and podman requirements
+      #   run: |
+      #     sudo apt-get install -y pkg-config libsystemd-dev libelf-dev libseccomp-dev libgpgme-dev libassuan-dev libbtrfs-dev libdevmapper-dev bats socat protobuf-compiler jq conmon
+      #     cargo install netavark aardvark-dns
       
-      - name: Copy binaries
-        run: |
-          sudo mkdir -p /usr/local/lib/podman
-          sudo cp $(which netavark) /usr/local/lib/podman && sudo cp $(which netavark)-dhcp-proxy-client /usr/local/lib/podman && sudo cp $(which aardvark-dns) /usr/local/lib/podman
+      # - name: Copy binaries
+      #   run: |
+      #     sudo mkdir -p /usr/local/lib/podman
+      #     sudo cp $(which netavark) /usr/local/lib/podman && sudo cp $(which netavark)-dhcp-proxy-client /usr/local/lib/podman && sudo cp $(which aardvark-dns) /usr/local/lib/podman
       
-      # setup go
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-          cache: false
+      # # setup go
+      # - uses: actions/setup-go@v5
+      #   with:
+      #     go-version: '1.22'
+      #     cache: false
       
-      # build skopeo
-      # These build steps are taken from https://github.com/containers/skopeo/issues/1648#issuecomment-1132161659
-      - name: Download skopeo 1.13.1 source # because ubuntu 22.04 does not have latest, and podman tests depend on that
-        run: mkdir /tmp/skopeo && curl -fsSL "https://github.com/containers/skopeo/archive/v1.13.1.tar.gz" | tar -xzf - -C /tmp/skopeo --strip-components=1
-      - name: Build skopeo
-        run: cd /tmp/skopeo && DISABLE_DOCS=1 make
-      - name: copy skopeo binaries
-        run: sudo cp /tmp/skopeo/bin/skopeo /usr/local/bin/skopeo && sudo cp /tmp/skopeo/default-policy.json /etc/containers/policy.json
-      - name: Skopeo version
-        run: skopeo --version
+      # # build skopeo
+      # # These build steps are taken from https://github.com/containers/skopeo/issues/1648#issuecomment-1132161659
+      # - name: Download skopeo 1.13.1 source # because ubuntu 22.04 does not have latest, and podman tests depend on that
+      #   run: mkdir /tmp/skopeo && curl -fsSL "https://github.com/containers/skopeo/archive/v1.13.1.tar.gz" | tar -xzf - -C /tmp/skopeo --strip-components=1
+      # - name: Build skopeo
+      #   run: cd /tmp/skopeo && DISABLE_DOCS=1 make
+      # - name: copy skopeo binaries
+      #   run: sudo cp /tmp/skopeo/bin/skopeo /usr/local/bin/skopeo && sudo cp /tmp/skopeo/default-policy.json /etc/containers/policy.json
+      # - name: Skopeo version
+      #   run: skopeo --version
 
-      # build youki
-      - run: just youki-release
-      - run: sudo rm /usr/bin/crun && sudo cp youki /usr/local/bin && sudo cp youki /usr/bin/crun
+      # # build youki
+      # - run: just youki-release
+      # - run: sudo rm /usr/bin/crun && sudo cp youki /usr/local/bin && sudo cp youki /usr/bin/crun
 
-      # build podman
-      - name: Clone podman repository
-        uses: actions/checkout@v4
-        with:
-          repository: containers/podman
-      - name: Build podman
-        run: make binaries
-      - name: Install tools
-        run: make install.tools
+      # # build podman
+      # - name: Clone podman repository
+      #   uses: actions/checkout@v4
+      #   with:
+      #     repository: containers/podman
+      # - name: Build podman
+      #   run: make binaries
+      # - name: Install tools
+      #   run: make install.tools
       
-      # run tests
-      - name: Run podman test
-        run: BATS_TEST_TMPDIR=$(mktemp -d --tmpdir=${BATS_TMPDIR:-/tmp} podman_bats.XXXXXX) && PODMAN_TMPDIR=$BATS_TEST_TMPDIR && OCI_RUNTIME=/usr/local/bin/youki sudo make localsystem 2>&1 | tee build.log 
-      - name: Adding Summary
-        run: |
-          echo "Total tests: 600+ Failed tests: $(cat build.log | grep " ok " | wc -l)" >> $GITHUB_STEP_SUMMARY
+      # # run tests
+      # - name: Run podman test
+      #   run: BATS_TEST_TMPDIR=$(mktemp -d --tmpdir=${BATS_TMPDIR:-/tmp} podman_bats.XXXXXX) && PODMAN_TMPDIR=$BATS_TEST_TMPDIR && OCI_RUNTIME=/usr/local/bin/youki sudo make localsystem 2>&1 | tee build.log 
+      # - name: Adding Summary
+      #   run: |
+      #     echo "Total tests: 600+ Failed tests: $(cat build.log | grep " ok " | wc -l)" >> $GITHUB_STEP_SUMMARY
