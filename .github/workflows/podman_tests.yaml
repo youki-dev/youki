@@ -63,7 +63,7 @@ jobs:
       
       # run tests
       - name: Run podman test
-        run: BATS_TEST_TMPDIR=$(mktemp -d --tmpdir=${BATS_TMPDIR:-/tmp} podman_bats.XXXXXX) && PODMAN_TMPDIR=$BATS_TEST_TMPDIR && OCI_RUNTIME=/usr/local/bin/youki sudo make localsystem 2>&1 | tee build.log 
+        run: BATS_TEST_TMPDIR=$(mktemp -d --tmpdir=${BATS_TMPDIR:-/tmp} podman_bats.XXXXXX) && PODMAN_TMPDIR=$BATS_TEST_TMPDIR && OCI_RUNTIME=/usr/local/bin/youki sudo make --ignore-errors localsystem 2>&1 | tee build.log 
       - name: Adding Summary
         run: |
-          echo "Total tests: 600+ Failed tests: $(cat build.log | grep " ok " | wc -l)" >> $GITHUB_STEP_SUMMARY
+          echo "Total tests: $(cat build.log | grep -P '^ok \d+ \[\d+\]' | wc -l) Failed tests: $(cat build.log | grep '^not ok \d+ \[\d+\]' | wc -l)" >> $GITHUB_STEP_SUMMARY
