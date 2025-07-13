@@ -1,6 +1,11 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+
 use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::Pid;
+use oci_spec::runtime::{Linux, LinuxNamespaceType};
 
+use crate::network::network_device::dev_change_net_namespace;
 use crate::process::args::ContainerArgs;
 use crate::process::fork::{self, CloneCb};
 use crate::process::intel_rdt::setup_intel_rdt;
@@ -27,6 +32,8 @@ pub enum ProcessError {
     #[error("failed seccomp listener")]
     #[cfg(feature = "libseccomp")]
     SeccompListener(#[from] crate::process::seccomp_listener::SeccompListenerError),
+    #[error("failed setup network device")]
+    Network(#[from] crate::network::NetworkError),
     #[error("failed syscall")]
     SyscallOther(#[source] SyscallError),
 }
@@ -119,6 +126,10 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     // process.  The intermediate process should exit after this point.
     let init_pid = main_receiver.wait_for_intermediate_ready()?;
     let mut need_to_clean_up_intel_rdt_subdirectory = false;
+
+    if let Some(linux) = container_args.spec.linux() {
+        setup_network_device(linux, init_pid, &mut main_receiver, &mut init_sender)?;
+    }
 
     if let Some(linux) = container_args.spec.linux() {
         #[cfg(feature = "libseccomp")]
@@ -226,6 +237,62 @@ fn setup_mapping(config: &UserNamespaceConfig, pid: Pid) -> Result<()> {
         tracing::error!("failed to write gid mapping for pid {:?}: {}", pid, err);
         err
     })?;
+    Ok(())
+}
+
+/// setup_network_device sets up and initializes any defined network interface inside the container.
+fn setup_network_device(
+    linux: &Linux,
+    init_pid: Pid,
+    main_receiver: &mut channel::MainReceiver,
+    init_sender: &mut channel::InitSender,
+) -> Result<()> {
+    let mut addrs_map = HashMap::new();
+    // host network pods does not move network devices.
+    if let Some(namespaces) = linux.namespaces() {
+        if !namespaces
+            .iter()
+            .any(|ns| ns.typ() == LinuxNamespaceType::Network)
+        {
+            return Ok(());
+        }
+
+        // get the namespace defined by the config and fall back
+        // to the one created by youki to run the container process.
+        let fallback_ns_path = PathBuf::from(format!("/proc/{}/ns/net", init_pid.as_raw()));
+        let ns_path = namespaces
+            .iter()
+            .find_map(|ns| {
+                if ns.typ() == LinuxNamespaceType::Network {
+                    ns.path().as_deref()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| &fallback_ns_path);
+
+        // If moving any of the network devices fails, we return an error immediately.
+        // The runtime spec requires that the kernel handles moving back any devices
+        // that were successfully moved before the failure occurred.
+        // See: https://github.com/opencontainers/runtime-spec/blob/27cb0027fd92ef81eda1ea3a8153b8337f56d94a/config-linux.md#namespace-lifecycle-and-container-termination
+        if let Some(devices) = linux.net_devices() {
+            main_receiver.wait_for_network_setup_ready()?;
+            for (name, net_dev) in devices {
+                let addrs = dev_change_net_namespace(
+                    name.to_string(),
+                    ns_path.to_string_lossy().to_string(),
+                    net_dev,
+                )
+                .map_err(|err| {
+                    tracing::error!("failed to dev_change_net_namespace: {}", err);
+                    err
+                })?;
+                addrs_map.insert(name.clone(), addrs);
+            }
+            init_sender.move_network_device(addrs_map)?;
+        }
+    }
+
     Ok(())
 }
 

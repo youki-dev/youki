@@ -1,7 +1,10 @@
-use serde::{Serialize, Deserialize};
 use std::net::IpAddr;
-use netlink_packet_route::address::{AddressAttribute, AddressFlags, AddressMessage, AddressHeader, AddressScope};
-use netlink_packet_route::{AddressFamily};
+
+use netlink_packet_route::address::{
+    AddressAttribute, AddressFlags, AddressHeader, AddressMessage, AddressScope,
+};
+use netlink_packet_route::AddressFamily;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableAddress {
@@ -42,13 +45,17 @@ impl From<&SerializableAddress> for AddressMessage {
             attrs.push(AddressAttribute::Address(ip));
         }
         if let Some(flags) = sa.flags {
-            attrs.push(AddressAttribute::Flags(AddressFlags::from_bits_truncate(flags)));
+            attrs.push(AddressAttribute::Flags(AddressFlags::from_bits_truncate(
+                flags,
+            )));
         }
-        let mut header = AddressHeader::default();
-        header.index = sa.index;
-        header.prefix_len = sa.prefix_len;
-        header.family = AddressFamily::from(sa.family);
-        header.scope = AddressScope::from(sa.scope);
+        let header = AddressHeader {
+            index: sa.index,
+            prefix_len: sa.prefix_len,
+            family: AddressFamily::from(sa.family),
+            scope: AddressScope::from(sa.scope),
+            ..Default::default()
+        };
 
         let mut msg = AddressMessage::default();
         msg.header = header;
@@ -60,9 +67,10 @@ impl From<&SerializableAddress> for AddressMessage {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use netlink_packet_route::address::AddressScope;
     use netlink_packet_route::AddressFamily;
+
+    use super::*;
 
     #[test]
     fn test_address_message_to_serializable() {
@@ -73,7 +81,8 @@ mod tests {
         msg.header.scope = AddressScope::Universe;
         let ip = "192.168.1.1".parse().unwrap();
         msg.attributes.push(AddressAttribute::Address(ip));
-        msg.attributes.push(AddressAttribute::Flags(AddressFlags::Permanent));
+        msg.attributes
+            .push(AddressAttribute::Flags(AddressFlags::Permanent));
 
         // AddressMessage -> SerializableAddress
         let serializable = SerializableAddress::from(&msg);
@@ -125,4 +134,3 @@ mod tests {
         assert!(found_flags, "Flags attribute not found");
     }
 }
-

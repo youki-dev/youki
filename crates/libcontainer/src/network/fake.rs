@@ -22,7 +22,6 @@ pub struct FakeNetlinkClient {
     send_calls: Vec<NetlinkMessage<RouteNetlinkMessage>>,
     expected_responses: VecDeque<FakeResponse>,
 }
-
 impl FakeNetlinkClient {
     /// Creates a new FakeNetlinkClient instance.
     pub fn new() -> Self {
@@ -31,7 +30,6 @@ impl FakeNetlinkClient {
             expected_responses: VecDeque::new(),
         }
     }
-
     /// Sets the fake to fail with a specific error message.
     ///
     /// # Arguments
@@ -58,25 +56,21 @@ impl FakeNetlinkClient {
     pub fn get_send_calls(&self) -> &[NetlinkMessage<RouteNetlinkMessage>] {
         &self.send_calls
     }
-
     /// Clears the send calls history.
     pub fn clear_send_calls(&mut self) {
         self.send_calls.clear();
     }
 }
-
 impl Default for FakeNetlinkClient {
     fn default() -> Self {
         Self::new()
     }
 }
-
 impl Client for FakeNetlinkClient {
     fn send(&mut self, req: &NetlinkMessage<RouteNetlinkMessage>) -> Result<()> {
         self.send_calls.push(req.clone());
         Ok(())
     }
-
     fn receive<T, H>(&mut self, handler: H) -> Result<T>
     where
         H: NetlinkMessageHandler<Response = T>,
@@ -116,7 +110,6 @@ impl Client for FakeNetlinkClient {
             )))
         }
     }
-
     fn receive_multiple<T, H>(&mut self, handler: H) -> Result<Vec<T>>
     where
         H: NetlinkMessageHandler<Response = T>,
@@ -161,7 +154,6 @@ impl Client for FakeNetlinkClient {
         self.send(req)?;
         self.receive(handler)
     }
-
     fn send_and_receive_multiple<T, H>(
         &mut self,
         req: &NetlinkMessage<RouteNetlinkMessage>,

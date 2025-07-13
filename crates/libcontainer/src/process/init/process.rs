@@ -9,8 +9,8 @@ use nix::sched::CloneFlags;
 use nix::sys::stat::Mode;
 use nix::unistd::{self, close, dup2, setsid, Gid, Uid};
 use oci_spec::runtime::{
-    IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxSchedulerFlag, LinuxSchedulerPolicy,
-    Scheduler, Spec, User,
+    IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxNetDevice, LinuxSchedulerFlag,
+    LinuxSchedulerPolicy, Scheduler, Spec, User,
 };
 
 use super::context::InitContext;
@@ -18,6 +18,7 @@ use super::error::InitProcessError;
 use super::Result;
 use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
+use crate::network::network_device::setup_network_device;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::channel;
 use crate::rootfs::RootFS;
@@ -275,6 +276,13 @@ pub fn container_init_process(
         tracing::error!(?err, "failed to cleanup extra fds");
         InitProcessError::SyscallOther(err)
     })?;
+
+    if let Some(network_devices) = ctx.linux.net_devices() {
+        setup_net_devices(network_devices, main_sender, init_receiver).map_err(|err| {
+            tracing::error!(?err, "failed to setup net_device");
+            err
+        })?;
+    }
 
     // Without no new privileges, seccomp is a privileged operation. We have to
     // do this before dropping capabilities. Otherwise, we should do it later,
@@ -856,6 +864,28 @@ fn sync_seccomp(
         // it. The fd is now duplicated to the main process and sent to seccomp
         // listener.
         let _ = unistd::close(fd);
+    }
+
+    Ok(())
+}
+
+fn setup_net_devices(
+    net_device: &HashMap<String, LinuxNetDevice>,
+    main_sender: &mut channel::MainSender,
+    init_receiver: &mut channel::InitReceiver,
+) -> Result<()> {
+    main_sender.network_setup_ready()?;
+
+    let addrs_map = init_receiver.wait_for_move_network_device()?;
+    for (name, net_dev) in net_device {
+        if let Some(serialize_addrs) = addrs_map.get(name) {
+            setup_network_device(name.clone(), net_dev, serialize_addrs.clone()).map_err(
+                |err| {
+                    tracing::error!(?err, "failed to setup_network_device");
+                    err
+                },
+            )?;
+        }
     }
 
     Ok(())

@@ -6,11 +6,10 @@ use std::rc::Rc;
 
 use libcgroups::common::CgroupManager;
 use nix::unistd::Pid;
-use oci_spec::runtime::{Linux, LinuxNamespaceType, Spec};
+use oci_spec::runtime::Spec;
 
 use super::{Container, ContainerStatus};
 use crate::error::{CreateContainerError, LibcontainerError, MissingSpecError};
-use crate::network::network_device::dev_change_net_namespace;
 use crate::notify_socket::NotifyListener;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::intel_rdt::delete_resctrl_subdirectory;
@@ -176,8 +175,6 @@ impl ContainerBuilderImpl {
                 },
             )?;
 
-        self.setup_network_device(linux, init_pid)?;
-
         // if file to write the pid to is specified, write pid of the child
         if let Some(pid_file) = &self.pid_file {
             fs::write(pid_file, format!("{init_pid}")).map_err(|err| {
@@ -247,48 +244,6 @@ impl ContainerBuilderImpl {
                 "failed to cleanup container: {}",
                 errors.join(";")
             )));
-        }
-
-        Ok(())
-    }
-
-    /// setup_network_device sets up and initializes any defined network interface inside the container.
-    fn setup_network_device(&self, linux: &Linux, init_pid: Pid) -> Result<(), LibcontainerError> {
-        // host network pods does not move network devices.
-        if let Some(namespaces) = linux.namespaces() {
-            if !namespaces
-                .iter()
-                .any(|ns| ns.typ() == LinuxNamespaceType::Network)
-            {
-                return Ok(());
-            }
-
-            // get the namespace defined by the config and fall back
-            // to the one created by youki to run the container process.
-            let fallback_ns_path = PathBuf::from(format!("/proc/{}/ns/net", init_pid.as_raw()));
-            let ns_path = namespaces
-                .iter()
-                .find_map(|ns| {
-                    if ns.typ() == LinuxNamespaceType::Network {
-                        ns.path().as_deref()
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| &fallback_ns_path);
-            // If moving any of the network devices fails, we return an error immediately.
-            // The runtime spec requires that the kernel handles moving back any devices
-            // that were successfully moved before the failure occurred.
-            // See: https://github.com/opencontainers/runtime-spec/blob/27cb0027fd92ef81eda1ea3a8153b8337f56d94a/config-linux.md#namespace-lifecycle-and-container-termination
-            if let Some(devices) = linux.net_devices() {
-                for (name, net_dev) in devices {
-                    dev_change_net_namespace(
-                        name.to_string(),
-                        ns_path.to_string_lossy().to_string(),
-                        net_dev,
-                    )?;
-                }
-            }
         }
 
         Ok(())

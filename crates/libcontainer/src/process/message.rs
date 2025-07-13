@@ -1,4 +1,5 @@
 use core::fmt;
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -13,7 +14,8 @@ pub enum Message {
     MappingWritten,
     SeccompNotify,
     SeccompNotifyDone,
-    MoveNetworkDevice(Vec<SerializableAddress>),
+    SetupNetworkDeviceReady,
+    MoveNetworkDevice(HashMap<String, Vec<SerializableAddress>>),
     ExecFailed(String),
     OtherError(String),
 }
@@ -25,6 +27,7 @@ impl fmt::Display for Message {
             Message::InitReady => write!(f, "InitReady"),
             Message::WriteMapping => write!(f, "WriteMapping"),
             Message::MappingWritten => write!(f, "MappingWritten"),
+            Message::SetupNetworkDeviceReady => write!(f, "SetupNetworkDeviceReady"),
             Message::MoveNetworkDevice(addr) => write!(f, "MoveNetworkDevice({:?})", addr),
             Message::SeccompNotify => write!(f, "SeccompNotify"),
             Message::SeccompNotifyDone => write!(f, "SeccompNotifyDone"),
