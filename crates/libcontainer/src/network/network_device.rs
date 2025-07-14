@@ -8,7 +8,7 @@ use oci_spec::runtime::LinuxNetDevice;
 use crate::network::address::AddressClient;
 use crate::network::link::LinkClient;
 use crate::network::wrapper::create_network_client;
-use crate::network::{Result, NetworkError};
+use crate::network::{NetworkError, Result};
 
 /// dev_change_netns allows to move a device given by name to a network namespace given by nsPath
 /// and optionally change the device name.
@@ -63,6 +63,10 @@ pub fn dev_change_net_namespace(
     //    affecting the main thread or the rest of the process.
     // 3. When the thread exits, its namespace context is cleaned up, ensuring that namespace changes are tightly scoped
     //    and do not leak outside the intended context.
+    // 4. However, for initial setup operations like adding addresses and bringing links up, we need to execute in the
+    //    main thread because these operations require CAP_NET_ADMIN capability which is typically available in the host
+    //    namespace with root privileges. Without this capability, the operations would fail even if performed in the
+    //    target namespace.
     //
     // This pattern is necessary for correct and safe manipulation of network namespaces in multi-threaded programs.
     let thread_handle = std::thread::spawn({

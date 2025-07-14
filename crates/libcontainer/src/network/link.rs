@@ -167,12 +167,15 @@ impl LinkClient {
 
 #[cfg(test)]
 mod tests {
+    use serial_test::serial;
+
     use super::*;
     use crate::network::fake::FakeNetlinkClient;
     use crate::network::wrapper::{create_network_client, ClientWrapper};
     use crate::network::NetlinkResponse;
 
     #[test]
+    #[serial]
     fn test_link_message_handler_success() {
         let handler = LinkMessageHandler;
         let mut link_msg = LinkMessage::default();
@@ -195,6 +198,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_link_message_handler_errorcode_zero() {
         let handler = LinkMessageHandler;
         let mut error_msg = netlink_packet_core::ErrorMessage::default();
@@ -210,6 +214,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_link_message_handler_error() {
         let handler = LinkMessageHandler;
         let mut error_msg = netlink_packet_core::ErrorMessage::default();
@@ -227,6 +232,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_link_message_handler_done() {
         let handler = LinkMessageHandler;
         let done_payload = NetlinkPayload::Done(netlink_packet_core::DoneMessage::default());
@@ -240,6 +246,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_link_message_handler_unexpected() {
         let handler = LinkMessageHandler;
         let unexpected_payload = NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewAddress(
@@ -251,6 +258,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_link_client_new() {
         let result = LinkClient::new(create_network_client());
 
@@ -258,6 +266,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_link_client_get_by_name_without_response() {
         let fake_client = FakeNetlinkClient::new();
         let mut link_client = LinkClient::new(ClientWrapper::Fake(fake_client)).unwrap();
@@ -268,6 +277,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_link_client_get_by_name_with_response() {
         let mut fake_client = FakeNetlinkClient::new();
 
@@ -292,6 +302,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_link_client_set_up_failure() {
         let mut fake_client = FakeNetlinkClient::new();
         fake_client.set_failure("Set up failed".to_string());
@@ -304,6 +315,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_link_client_set_up_success() {
         let mut fake_client = FakeNetlinkClient::new();
 
@@ -344,6 +356,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_link_client_set_down_failure() {
         let mut fake_client = FakeNetlinkClient::new();
         fake_client.set_failure("Set down failed".to_string());
@@ -356,6 +369,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_link_client_set_down_success() {
         let mut fake_client = FakeNetlinkClient::new();
 
@@ -393,6 +407,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_link_client_set_ns_fd_failure() {
         let mut fake_client = FakeNetlinkClient::new();
         fake_client.set_failure("Set namespace failed".to_string());
@@ -405,6 +420,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_link_client_set_ns_fd_success() {
         let mut fake_client = FakeNetlinkClient::new();
 
