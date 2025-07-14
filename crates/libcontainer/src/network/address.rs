@@ -180,6 +180,18 @@ impl AddressClient {
 
         Ok(message)
     }
+
+    #[cfg(test)]
+    /// Test method to get send calls from the fake client
+    pub fn get_send_calls(
+        &self,
+    ) -> Option<&[netlink_packet_core::NetlinkMessage<RouteNetlinkMessage>]> {
+        if let ClientWrapper::Fake(fake_client) = &self.client {
+            Some(fake_client.get_send_calls())
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -360,8 +372,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify the call was tracked
-        if let ClientWrapper::Fake(fake_client) = &mut addr_client.client {
-            let send_calls = fake_client.get_send_calls();
+        if let Some(send_calls) = addr_client.get_send_calls() {
             assert_eq!(send_calls.len(), 1);
 
             // Verify the message details
@@ -408,8 +419,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify the call was tracked
-        if let ClientWrapper::Fake(fake_client) = &mut addr_client.client {
-            let send_calls = fake_client.get_send_calls();
+        if let Some(send_calls) = addr_client.get_send_calls() {
             assert_eq!(send_calls.len(), 1);
 
             // Verify the message details
@@ -494,8 +504,7 @@ mod tests {
         }
 
         // Verify all calls were tracked
-        if let ClientWrapper::Fake(fake_client) = &mut addr_client.client {
-            let send_calls = fake_client.get_send_calls();
+        if let Some(send_calls) = addr_client.get_send_calls() {
             assert_eq!(send_calls.len(), test_cases_clone.len());
 
             for (i, (index, address, prefix_len)) in test_cases_clone.iter().enumerate() {

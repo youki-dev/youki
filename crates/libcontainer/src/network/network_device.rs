@@ -10,6 +10,67 @@ use crate::network::link::LinkClient;
 use crate::network::wrapper::create_network_client;
 use crate::network::{NetworkError, Result};
 
+/// Core logic for setting up addresses in the new namespace
+/// This function is extracted to make it testable without system calls
+pub fn setup_addresses_in_namespace(
+    addrs: Vec<netlink_packet_route::address::AddressMessage>,
+    new_name: &str,
+    ns_index: u32,
+    addr_client: &mut AddressClient,
+) -> Result<()> {
+    // Re-add the original IP addresses to the interface in the new namespace.
+    // The kernel removes IP addresses when an interface is moved between network namespaces.
+    for addr in addrs {
+        tracing::debug!(
+            "processing address {:?} from network device {}",
+            addr.clone(),
+            new_name
+        );
+        let mut ip_opts = None;
+        let mut flags_opts = None;
+        // Only move IP addresses with global scope because those are not host-specific, auto-configured,
+        // or have limited network scope, making them unsuitable inside the container namespace.
+        // Ref: https://www.ietf.org/rfc/rfc3549.txt
+        if addr.header.scope != AddressScope::Universe {
+            tracing::debug!(
+                "skipping address {:?} from network device {}",
+                addr.clone(),
+                new_name
+            );
+            continue;
+        }
+        for attr in &addr.attributes {
+            match attr {
+                AddressAttribute::Flags(flags) => flags_opts = Some(*flags),
+                AddressAttribute::Address(ip) => ip_opts = Some(*ip),
+                _ => {}
+            }
+        }
+
+        // Only move permanent IP addresses configured by the user, dynamic addresses are excluded because
+        // their validity may rely on the original network namespace's context and they may have limited
+        // lifetimes and are not guaranteed to be available in a new namespace.
+        // Ref: https://www.ietf.org/rfc/rfc3549.txt
+        if let Some(flag) = flags_opts {
+            if !flag.contains(AddressFlags::Permanent) {
+                tracing::debug!(
+                    "skipping address {:?} from network device {}",
+                    addr.clone(),
+                    new_name
+                );
+                continue;
+            }
+        }
+        if let Some(ip) = ip_opts {
+            // Remove the interface attribute of the original address
+            // to avoid issues when the interface is renamed.
+            addr_client.add(ns_index, ip, addr.header.prefix_len)?;
+        }
+    }
+
+    Ok(())
+}
+
 /// dev_change_netns allows to move a device given by name to a network namespace given by nsPath
 /// and optionally change the device name.
 /// The device name will be kept the same if device.Name is None or an empty string.
@@ -83,55 +144,7 @@ pub fn dev_change_net_namespace(
             let ns_link = link_client.get_by_name(&new_name)?;
             let ns_index = ns_link.header.index;
 
-            // Re-add the original IP addresses to the interface in the new namespace.
-            // The kernel removes IP addresses when an interface is moved between network namespaces.
-            for addr in addrs {
-                tracing::debug!(
-                    "processing address {:?} from network device {}",
-                    addr.clone(),
-                    name
-                );
-                let mut ip_opts = None;
-                let mut flags_opts = None;
-                // Only move IP addresses with global scope because those are not host-specific, auto-configured,
-                // or have limited network scope, making them unsuitable inside the container namespace.
-                // Ref: https://www.ietf.org/rfc/rfc3549.txt
-                if addr.header.scope != AddressScope::Universe {
-                    tracing::debug!(
-                        "skipping address {:?} from network device {}",
-                        addr.clone(),
-                        name
-                    );
-                    continue;
-                }
-                for attr in &addr.attributes {
-                    match attr {
-                        AddressAttribute::Flags(flags) => flags_opts = Some(*flags),
-                        AddressAttribute::Address(ip) => ip_opts = Some(*ip),
-                        _ => {}
-                    }
-                }
-
-                // Only move permanent IP addresses configured by the user, dynamic addresses are excluded because
-                // their validity may rely on the original network namespace's context and they may have limited
-                // lifetimes and are not guaranteed to be available in a new namespace.
-                // Ref: https://www.ietf.org/rfc/rfc3549.txt
-                if let Some(flag) = flags_opts {
-                    if !flag.contains(AddressFlags::Permanent) {
-                        tracing::debug!(
-                            "skipping address {:?} from network device {}",
-                            addr.clone(),
-                            name
-                        );
-                        continue;
-                    }
-                }
-                if let Some(ip) = ip_opts {
-                    // Remove the interface attribute of the original address
-                    // to avoid issues when the interface is renamed.
-                    addr_client.add(ns_index, ip, addr.header.prefix_len)?;
-                }
-            }
+            setup_addresses_in_namespace(addrs, &new_name, ns_index, &mut addr_client)?;
 
             link_client.set_up(ns_index)?;
 
@@ -160,4 +173,110 @@ pub fn dev_change_net_namespace(
         })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
+
+    use netlink_packet_route::address::AddressMessage;
+    use netlink_packet_route::RouteNetlinkMessage;
+
+    use super::*;
+    use crate::network::address::AddressClient;
+    use crate::network::fake::FakeNetlinkClient;
+    use crate::network::wrapper::ClientWrapper;
+
+    #[test]
+    fn test_setup_addresses_in_namespace() {
+        let mut fake_client = FakeNetlinkClient::new();
+
+        let mut addr_msg = AddressMessage::default();
+        addr_msg.header.scope = AddressScope::Universe;
+        addr_msg.header.prefix_len = 24;
+        addr_msg
+            .attributes
+            .push(AddressAttribute::Address(IpAddr::V4(Ipv4Addr::new(
+                192, 168, 1, 1,
+            ))));
+        addr_msg
+            .attributes
+            .push(AddressAttribute::Flags(AddressFlags::Permanent));
+
+        let responses = vec![RouteNetlinkMessage::NewAddress(addr_msg.clone())];
+        fake_client.set_expected_responses(responses);
+
+        let mut addr_client = AddressClient::new(ClientWrapper::Fake(fake_client)).unwrap();
+
+        let addrs = vec![addr_msg];
+        let result = setup_addresses_in_namespace(addrs, "eth1", 1, &mut addr_client);
+        assert!(result.is_ok());
+
+        // Verify the call was tracked
+        if let Some(send_calls) = addr_client.get_send_calls() {
+            assert_eq!(send_calls.len(), 1);
+        } else {
+            panic!("Expected Fake client");
+        }
+    }
+
+    #[test]
+    fn test_setup_addresses_in_namespace_skip_non_universe_scope() {
+        let fake_client = FakeNetlinkClient::new();
+
+        let mut addr_msg = AddressMessage::default();
+        addr_msg.header.scope = AddressScope::Host; // Non-universe scope
+        addr_msg.header.prefix_len = 24;
+        addr_msg
+            .attributes
+            .push(AddressAttribute::Address(IpAddr::V4(Ipv4Addr::new(
+                192, 168, 1, 1,
+            ))));
+
+        let mut addr_client = AddressClient::new(ClientWrapper::Fake(fake_client)).unwrap();
+
+        let addrs = vec![addr_msg];
+        let result = setup_addresses_in_namespace(addrs, "eth1", 1, &mut addr_client);
+        assert!(result.is_ok());
+
+        // Verify the call was tracked
+        if let Some(send_calls) = addr_client.get_send_calls() {
+            assert_eq!(send_calls.len(), 0);
+        } else {
+            panic!("Expected Fake client");
+        }
+    }
+
+    #[test]
+    fn test_setup_addresses_in_namespace_skip_non_permanent() {
+        let mut fake_client = FakeNetlinkClient::new();
+
+        let mut addr_msg = AddressMessage::default();
+        addr_msg.header.scope = AddressScope::Universe;
+        addr_msg.header.prefix_len = 24;
+        addr_msg
+            .attributes
+            .push(AddressAttribute::Address(IpAddr::V4(Ipv4Addr::new(
+                192, 168, 1, 1,
+            ))));
+        addr_msg
+            .attributes
+            .push(AddressAttribute::Flags(AddressFlags::empty())); // Non-permanent
+
+        let responses = vec![RouteNetlinkMessage::NewAddress(addr_msg.clone())];
+        fake_client.set_expected_responses(responses);
+
+        let mut addr_client = AddressClient::new(ClientWrapper::Fake(fake_client)).unwrap();
+
+        let addrs = vec![addr_msg];
+        let result = setup_addresses_in_namespace(addrs, "eth1", 1, &mut addr_client);
+        assert!(result.is_ok());
+
+        // Verify the call was tracked
+        if let Some(send_calls) = addr_client.get_send_calls() {
+            assert_eq!(send_calls.len(), 0);
+        } else {
+            panic!("Expected Fake client");
+        }
+    }
 }

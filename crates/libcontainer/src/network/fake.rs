@@ -6,6 +6,7 @@ use netlink_packet_route::RouteNetlinkMessage;
 use super::traits::{Client, NetlinkMessageHandler};
 use super::{NetlinkResponse, NetworkError, Result};
 
+#[derive(Clone)]
 pub enum FakeResponse {
     Success(RouteNetlinkMessage),
     Error(String),
@@ -16,6 +17,7 @@ pub enum FakeResponse {
 /// This fake client allows you to predefine responses for specific requests,
 /// making it easy to test different scenarios without requiring actual
 /// network operations.
+#[derive(Clone)]
 pub struct FakeNetlinkClient {
     send_calls: Vec<NetlinkMessage<RouteNetlinkMessage>>,
     expected_responses: VecDeque<FakeResponse>,
