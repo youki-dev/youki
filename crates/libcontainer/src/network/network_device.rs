@@ -8,9 +8,7 @@ use oci_spec::runtime::LinuxNetDevice;
 use crate::network::address::AddressClient;
 use crate::network::link::LinkClient;
 use crate::network::wrapper::create_network_client;
-use crate::network::NetworkError;
-
-type Result<T> = std::result::Result<T, NetworkError>;
+use crate::network::{Result, NetworkError};
 
 /// dev_change_netns allows to move a device given by name to a network namespace given by nsPath
 /// and optionally change the device name.

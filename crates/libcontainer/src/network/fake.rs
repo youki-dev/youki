@@ -108,6 +108,12 @@ impl Client for FakeNetlinkClient {
                         "Unexpected done message",
                     )))
                 }
+                Ok(NetlinkResponse::None) => {
+                    return Err(NetworkError::IO(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Unexpected none message",
+                    )))
+                }
                 Err(_) => {
                     // If handler doesn't accept this response type, try the next one
                     continue;
@@ -149,6 +155,7 @@ impl Client for FakeNetlinkClient {
                     )))
                 }
                 Ok(NetlinkResponse::Done) => return Ok(responses),
+                Ok(NetlinkResponse::None) => {}
                 Err(_) => {
                     // If handler doesn't accept this response type, try the next one
                     continue;

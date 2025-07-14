@@ -60,6 +60,10 @@ impl Client for NetlinkClient {
                 std::io::ErrorKind::Other,
                 "Unexpected done message",
             ))),
+            NetlinkResponse::None => Err(NetworkError::IO(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Unexpected none message",
+            ))),
         }
     }
 
@@ -92,6 +96,7 @@ impl Client for NetlinkClient {
                         )))
                     }
                     NetlinkResponse::Done => return Ok(responses),
+                    NetlinkResponse::None => {}
                 }
 
                 offset += rx_packet.header.length as usize;

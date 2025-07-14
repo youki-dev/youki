@@ -14,7 +14,27 @@ use crate::network::{NetlinkResponse, NetworkError, Result};
 ///
 /// This handler processes Netlink messages related to network addresses
 /// and converts them into AddressMessage responses.
-pub struct AddressMessageHandler;
+pub struct AddressMessageHandler {
+    target_index: Option<u32>,
+}
+
+impl AddressMessageHandler {
+    pub fn new() -> Self {
+        Self { target_index: None }
+    }
+
+    pub fn with_index(index: u32) -> Self {
+        Self {
+            target_index: Some(index),
+        }
+    }
+}
+
+impl Default for AddressMessageHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl NetlinkMessageHandler for AddressMessageHandler {
     type Response = AddressMessage;
@@ -25,7 +45,15 @@ impl NetlinkMessageHandler for AddressMessageHandler {
     ) -> Result<NetlinkResponse<Self::Response>> {
         match payload {
             NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewAddress(addr)) => {
-                Ok(NetlinkResponse::Success(addr))
+                if let Some(target_index) = self.target_index {
+                    if addr.header.index == target_index {
+                        Ok(NetlinkResponse::Success(addr))
+                    } else {
+                        Ok(NetlinkResponse::None)
+                    }
+                } else {
+                    Ok(NetlinkResponse::Success(addr))
+                }
             }
             NetlinkPayload::Error(e) => match e.code {
                 None => Ok(NetlinkResponse::Success(AddressMessage::default())),
@@ -75,8 +103,9 @@ impl AddressClient {
         req.header.flags = NLM_F_REQUEST | NLM_F_DUMP;
         req.finalize();
 
-        self.client
-            .send_and_receive_multiple(&req, AddressMessageHandler)
+        let handler = AddressMessageHandler::with_index(index);
+
+        self.client.send_and_receive_multiple(&req, handler)
     }
 
     /// Adds a new address to a network interface.
@@ -97,7 +126,9 @@ impl AddressClient {
         req.header.flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_EXCL | NLM_F_CREATE;
         req.finalize();
 
-        self.client.send_and_receive(&req, AddressMessageHandler)?;
+        let handler = AddressMessageHandler::new();
+
+        self.client.send_and_receive(&req, handler)?;
         Ok(())
     }
 
@@ -159,7 +190,7 @@ mod tests {
 
     #[test]
     fn test_address_message_handler_success() {
-        let handler = AddressMessageHandler;
+        let handler = AddressMessageHandler::new();
         let mut addr_msg = AddressMessage::default();
         addr_msg.header.index = 1;
         addr_msg
@@ -184,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_address_message_handler_errorcode_zero() {
-        let handler = AddressMessageHandler;
+        let handler = AddressMessageHandler::new();
         let mut error_msg = netlink_packet_core::ErrorMessage::default();
         error_msg.code = std::num::NonZeroI32::new(0);
         let error_payload = NetlinkPayload::Error(error_msg);
@@ -199,7 +230,7 @@ mod tests {
 
     #[test]
     fn test_address_message_handler_error() {
-        let handler = AddressMessageHandler;
+        let handler = AddressMessageHandler::new();
         let mut error_msg = netlink_packet_core::ErrorMessage::default();
         error_msg.code = std::num::NonZeroI32::new(1);
         let error_payload = NetlinkPayload::Error(error_msg);
@@ -216,7 +247,7 @@ mod tests {
 
     #[test]
     fn test_address_message_handler_done() {
-        let handler = AddressMessageHandler;
+        let handler = AddressMessageHandler::new();
         let done_payload = NetlinkPayload::Done(netlink_packet_core::DoneMessage::default());
         let result = handler.handle_payload(done_payload);
 
@@ -229,7 +260,7 @@ mod tests {
 
     #[test]
     fn test_address_message_handler_unexpected() {
-        let handler = AddressMessageHandler;
+        let handler = AddressMessageHandler::new();
         let unexpected_payload = NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewLink(
             netlink_packet_route::link::LinkMessage::default(),
         ));

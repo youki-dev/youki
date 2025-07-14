@@ -2,6 +2,7 @@ pub mod address;
 mod client;
 mod fake;
 pub mod link;
+pub mod network_device;
 mod traits;
 pub mod wrapper;
 
@@ -26,4 +27,5 @@ pub enum NetlinkResponse<T> {
     Success(T),
     Error(i32),
     Done,
+    None,
 }

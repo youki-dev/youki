@@ -7,7 +7,6 @@ pub mod error;
 pub mod hooks;
 pub mod namespaces;
 pub mod network;
-pub mod network_device;
 pub mod notify_socket;
 pub mod process;
 pub mod rootfs;
