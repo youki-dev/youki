@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.5.5](https://github.com/youki-dev/youki/compare/v0.5.4...v0.5.5) - 2025-07-18
+### 🧪 Test improvements and Misc Fixes
+- Revert "[DNM] ci: temp disable workflows" by @YJDoc2 in https://github.com/youki-dev/youki/pull/3194
+
 ## [v0.5.4](https://github.com/youki-dev/youki/compare/v0.5.3...v0.5.4) - 2025-07-17
 ### 💪 Improvements
 - add support exec-cpu-affinity by @saku3 in https://github.com/youki-dev/youki/pull/3164
