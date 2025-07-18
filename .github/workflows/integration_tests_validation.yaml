@@ -1,6 +1,12 @@
 name: ✔️ Verification of integration
 
 on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
