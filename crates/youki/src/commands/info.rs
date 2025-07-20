@@ -26,10 +26,14 @@ pub fn info(_: Info) -> Result<()> {
     Ok(())
 }
 
-/// print Version of Youki
+/// print Version of Youki in Moby compatible format
 pub fn print_youki() {
-    println!("{:<18}{}", "Version", env!("CARGO_PKG_VERSION"));
-    println!("{:<18}{}", "Commit", env!("VERGEN_GIT_SHA"));
+    println!("youki version: {}", env!("CARGO_PKG_VERSION"));
+    println!(
+        "commit: {}-{}",
+        env!("CARGO_PKG_VERSION"),
+        env!("VERGEN_GIT_SHA")
+    );
 }
 
 /// Print Kernel Release, Version and Architecture
