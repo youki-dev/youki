@@ -59,6 +59,7 @@ pub trait Syscall {
     fn get_gid(&self) -> Gid;
     fn get_euid(&self) -> Uid;
     fn get_egid(&self) -> Gid;
+    fn personality(&self, domain: u64) -> Result<()>;
 }
 
 #[derive(Clone, Copy)]
