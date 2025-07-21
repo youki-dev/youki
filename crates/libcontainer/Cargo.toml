@@ -59,7 +59,7 @@ quickcheck = "1"
 serial_test = "3.1.1"
 tempfile = "3"
 anyhow = "1.0"
-rand = "0.9.1"
+rand = "0.9.2"
 scopeguard = "1"
 
 [package.metadata.cargo-machete]
