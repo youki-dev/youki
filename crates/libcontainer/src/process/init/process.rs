@@ -123,6 +123,13 @@ pub fn container_init_process(
         if let Some(kernel_params) = ctx.linux.sysctl() {
             sysctl(kernel_params)?;
         }
+
+        if let Some(domain) = args.personality {
+            ctx.syscall.personality(domain).map_err(|err| {
+                tracing::error!(?err, "failed to set linux personality ");
+                InitProcessError::SyscallOther(err)
+            })?;
+        }
     }
 
     if let Some(profile) = ctx.process.apparmor_profile() {
