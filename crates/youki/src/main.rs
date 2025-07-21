@@ -144,7 +144,7 @@ fn main() -> Result<()> {
         }
         None => Opts::command()
             .print_help()
-            .map_err(|e| anyhow::anyhow!(":{e}")),
+            .map_err(|e| anyhow::anyhow!("failed to print help: {e}")),
     };
 
     if let Err(ref e) = cmd_result {
