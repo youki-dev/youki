@@ -59,6 +59,8 @@ pub(super) struct ContainerBuilderImpl {
     pub stderr: Option<OwnedFd>,
     // Indicate if the init process should be a sibling of the main process.
     pub as_sibling: bool,
+    // Options for the Linux execution personality
+    pub personality: Option<u64>,
 }
 
 impl ContainerBuilderImpl {
@@ -165,6 +167,7 @@ impl ContainerBuilderImpl {
             stdout: self.stdout.as_ref().map(|x| x.as_raw_fd()),
             stderr: self.stderr.as_ref().map(|x| x.as_raw_fd()),
             as_sibling: self.as_sibling,
+            personality: self.personality,
         };
 
         let (init_pid, need_to_clean_up_intel_rdt_dir) =
