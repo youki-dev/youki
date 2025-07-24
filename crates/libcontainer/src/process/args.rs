@@ -52,6 +52,4 @@ pub struct ContainerArgs {
     pub stderr: Option<RawFd>,
     // Indicate if the init process should be a sibling of the main process.
     pub as_sibling: bool,
-    // A process-level compatibility flag that tweaks kernel behavior.
-    pub personality: Option<u64>,
 }
