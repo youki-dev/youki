@@ -22,7 +22,6 @@ pub struct InitContainerBuilder {
     detached: bool,
     no_pivot: bool,
     as_sibling: bool,
-    personality: Option<u64>,
 }
 
 impl InitContainerBuilder {
@@ -36,7 +35,6 @@ impl InitContainerBuilder {
             detached: true,
             no_pivot: false,
             as_sibling: false,
-            personality: None,
         }
     }
 
@@ -60,11 +58,6 @@ impl InitContainerBuilder {
 
     pub fn with_no_pivot(mut self, no_pivot: bool) -> Self {
         self.no_pivot = no_pivot;
-        self
-    }
-
-    pub fn with_personality(mut self, domain: u64) -> Self {
-        self.personality = Some(domain);
         self
     }
 
@@ -123,7 +116,6 @@ impl InitContainerBuilder {
             stdout: self.base.stdout,
             stderr: self.base.stderr,
             as_sibling: self.as_sibling,
-            personality: self.personality,
         };
 
         builder_impl.create()?;
