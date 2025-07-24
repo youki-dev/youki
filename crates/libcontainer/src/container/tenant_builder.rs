@@ -67,7 +67,6 @@ pub struct TenantContainerBuilder {
     additional_gids: Vec<u32>,
     user: Option<u32>,
     group: Option<u32>,
-    personality: Option<u64>,
 }
 
 /// This is a helper function to get capabilities for tenant container, based on
@@ -163,7 +162,6 @@ impl TenantContainerBuilder {
             additional_gids: vec![],
             user: None,
             group: None,
-            personality: None,
         }
     }
 
@@ -227,11 +225,6 @@ impl TenantContainerBuilder {
         self
     }
 
-    pub fn with_personality(mut self, domain: u64) -> Self {
-        self.personality = Some(domain);
-        self
-    }
-
     /// Joins an existing container
     pub fn build(self) -> Result<Pid, LibcontainerError> {
         let container_dir = self.lookup_container_dir()?;
@@ -278,7 +271,6 @@ impl TenantContainerBuilder {
             stdout: self.base.stdout,
             stderr: self.base.stderr,
             as_sibling: self.as_sibling,
-            personality: self.personality,
         };
 
         let pid = builder_impl.create()?;
