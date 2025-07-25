@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.5.5](https://github.com/youki-dev/youki/compare/v0.5.4...v0.5.5) - 2025-07-25
+### 📖 Documentation improvements
+- Add license scan report and status by @fossabot in https://github.com/youki-dev/youki/pull/3204
+### 🧪 Test improvements and Misc Fixes
+- Revert "[DNM] ci: temp disable workflows" by @YJDoc2 in https://github.com/youki-dev/youki/pull/3194
+- Fixed Minor Spelling Errors by @CheatCodeSam in https://github.com/youki-dev/youki/pull/3205
+### Other Changes
+- (auto merged) chore(deps): bump the patch group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3203
+
 ## [v0.5.4](https://github.com/youki-dev/youki/compare/v0.5.3...v0.5.4) - 2025-07-17
 ### 💪 Improvements
 - add support exec-cpu-affinity by @saku3 in https://github.com/youki-dev/youki/pull/3164
