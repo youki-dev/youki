@@ -126,7 +126,14 @@ pub fn container_init_process(
 
         if let Some(linux) = args.spec.linux() {
             if let Some(personality) = linux.personality() {
+                if let Some(flags) = personality.flags() {
+                    if !flags.is_empty() {
+                        tracing::warn!("ignoring personality flags because personality flag has not supported at this time");
+                    }
+                }
+
                 let domain = match personality.domain() {
+                    // https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/personality.h
                     oci_spec::runtime::LinuxPersonalityDomain::PerLinux => 0x00000,
                     oci_spec::runtime::LinuxPersonalityDomain::PerLinux32 => 0x0008,
                 };
