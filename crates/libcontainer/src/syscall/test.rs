@@ -315,6 +315,10 @@ impl Syscall for TestHelperSyscall {
     fn get_egid(&self) -> Gid {
         self.mock_id.borrow().egid
     }
+
+    fn personality(&self, _: u64) -> Result<()> {
+        todo!()
+    }
 }
 
 impl TestHelperSyscall {
