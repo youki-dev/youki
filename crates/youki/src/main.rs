@@ -142,7 +142,7 @@ fn main() -> Result<()> {
         Some(SubCommand::Completion(completion)) => {
             commands::completion::completion(completion, &mut app)
         }
-        None => Opts::command()
+        None => app
             .print_help()
             .map_err(|e| anyhow::anyhow!("failed to print help: {e}")),
     };
