@@ -9,13 +9,14 @@ use nix::sched::CloneFlags;
 use nix::sys::stat::Mode;
 use nix::unistd::{self, close, dup2, setsid, Gid, Uid};
 use oci_spec::runtime::{
-    IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxSchedulerFlag, LinuxSchedulerPolicy,
-    Scheduler, Spec, User,
+    IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxPersonalityDomain,
+    LinuxSchedulerFlag, LinuxSchedulerPolicy, Scheduler, Spec, User,
 };
 
 use super::context::InitContext;
 use super::error::InitProcessError;
 use super::Result;
+use crate::config::{PER_LINUX, PER_LINUX32};
 use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
 use crate::process::args::{ContainerArgs, ContainerType};
@@ -134,8 +135,8 @@ pub fn container_init_process(
 
                 let domain = match personality.domain() {
                     // https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/personality.h
-                    oci_spec::runtime::LinuxPersonalityDomain::PerLinux => 0x00000,
-                    oci_spec::runtime::LinuxPersonalityDomain::PerLinux32 => 0x0008,
+                    LinuxPersonalityDomain::PerLinux => PER_LINUX,
+                    LinuxPersonalityDomain::PerLinux32 => PER_LINUX32,
                 };
 
                 ctx.syscall.personality(domain).map_err(|err| {

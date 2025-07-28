@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils;
 
+pub const PER_LINUX: u64 = 0x0000;
+pub const PER_LINUX32: u64 = 0x0008;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("failed to save config")]
