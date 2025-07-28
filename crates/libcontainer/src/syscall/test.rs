@@ -316,7 +316,7 @@ impl Syscall for TestHelperSyscall {
         self.mock_id.borrow().egid
     }
 
-    fn personality(&self, _: u64) -> Result<()> {
+    fn personality(&self, _: libc::c_ulong) -> Result<()> {
         todo!()
     }
 }
