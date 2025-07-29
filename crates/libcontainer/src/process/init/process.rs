@@ -124,26 +124,26 @@ pub fn container_init_process(
         if let Some(kernel_params) = ctx.linux.sysctl() {
             sysctl(kernel_params)?;
         }
+    }
 
-        if let Some(linux) = args.spec.linux() {
-            if let Some(personality) = linux.personality() {
-                if let Some(flags) = personality.flags() {
-                    if !flags.is_empty() {
-                        tracing::warn!("ignoring personality flags because personality flag has not supported at this time");
-                    }
+    if let Some(linux) = args.spec.linux() {
+        if let Some(personality) = linux.personality() {
+            if let Some(flags) = personality.flags() {
+                if !flags.is_empty() {
+                    tracing::warn!("ignoring personality flags because personality flag has not supported at this time");
                 }
-
-                let domain = match personality.domain() {
-                    // https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/personality.h
-                    LinuxPersonalityDomain::PerLinux => PER_LINUX,
-                    LinuxPersonalityDomain::PerLinux32 => PER_LINUX32,
-                };
-
-                ctx.syscall.personality(domain).map_err(|err| {
-                    tracing::error!(?err, "failed to set linux personality ");
-                    InitProcessError::SyscallOther(err)
-                })?;
             }
+
+            let domain = match personality.domain() {
+                // https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/personality.h
+                LinuxPersonalityDomain::PerLinux => PER_LINUX,
+                LinuxPersonalityDomain::PerLinux32 => PER_LINUX32,
+            };
+
+            ctx.syscall.personality(domain).map_err(|err| {
+                tracing::error!(?err, "failed to set linux personality ");
+                InitProcessError::SyscallOther(err)
+            })?;
         }
     }
 
