@@ -29,6 +29,7 @@ pub fn exec(args: Exec, root_path: PathBuf) -> Result<i32> {
         .with_user(user)
         .with_group(group)
         .with_capabilities(args.cap)
+        .with_ignore_paused(args.ignore_paused)
         .build()?;
 
     // See https://github.com/containers/youki/pull/1252 for a detailed explanation
