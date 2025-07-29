@@ -22,6 +22,7 @@ use super::builder::ContainerBuilder;
 use super::Container;
 use crate::capabilities::CapabilityExt;
 use crate::container::builder_impl::ContainerBuilderImpl;
+use crate::container::ContainerStatus;
 use crate::error::{ErrInvalidSpec, LibcontainerError, MissingSpecError};
 use crate::notify_socket::NotifySocket;
 use crate::process::args::ContainerType;
@@ -67,6 +68,7 @@ pub struct TenantContainerBuilder {
     additional_gids: Vec<u32>,
     user: Option<u32>,
     group: Option<u32>,
+    ignore_paused: bool,
 }
 
 /// This is a helper function to get capabilities for tenant container, based on
@@ -162,6 +164,7 @@ impl TenantContainerBuilder {
             additional_gids: vec![],
             user: None,
             group: None,
+            ignore_paused: false,
         }
     }
 
@@ -225,10 +228,21 @@ impl TenantContainerBuilder {
         self
     }
 
+    pub fn with_ignore_paused(mut self, ignore_paused: bool) -> Self {
+        self.ignore_paused = ignore_paused;
+        self
+    }
+
     /// Joins an existing container
     pub fn build(self) -> Result<Pid, LibcontainerError> {
         let container_dir = self.lookup_container_dir()?;
         let container = self.load_container_state(container_dir.clone())?;
+
+        if container.status() == ContainerStatus::Paused && !self.ignore_paused {
+            tracing::error!(status = ?container.status(), "cannot exec in a paused container (use --ignore-paused to override)");
+            return Err(LibcontainerError::IncorrectStatus);
+        }
+
         let mut spec = self.load_init_spec(&container)?;
         self.adapt_spec_for_tenant(&mut spec, &container)?;
 
