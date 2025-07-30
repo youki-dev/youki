@@ -238,6 +238,11 @@ impl TenantContainerBuilder {
         let container_dir = self.lookup_container_dir()?;
         let container = self.load_container_state(container_dir.clone())?;
 
+        if container.status() == ContainerStatus::Stopped {
+            tracing::error!(status = ?container.status(), "cannot exec in a stopped container");
+            return Err(LibcontainerError::IncorrectStatus);
+        }
+
         if container.status() == ContainerStatus::Paused && !self.ignore_paused {
             tracing::error!(status = ?container.status(), "cannot exec in a paused container (use --ignore-paused to override)");
             return Err(LibcontainerError::IncorrectStatus);
@@ -436,13 +441,7 @@ impl TenantContainerBuilder {
     }
 
     fn load_container_state(&self, container_dir: PathBuf) -> Result<Container, LibcontainerError> {
-        let container = Container::load(container_dir)?;
-        if !container.can_exec() {
-            tracing::error!(status = ?container.status(), "cannot exec as container");
-            return Err(LibcontainerError::IncorrectStatus);
-        }
-
-        Ok(container)
+        Container::load(container_dir)
     }
 
     fn adapt_spec_for_tenant(
