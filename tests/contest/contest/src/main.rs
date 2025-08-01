@@ -25,6 +25,7 @@ use crate::tests::linux_masked_paths::get_linux_masked_paths_tests;
 use crate::tests::linux_ns_itype::get_ns_itype_tests;
 use crate::tests::mounts_recursive::get_mounts_recursive_test;
 use crate::tests::no_pivot::get_no_pivot_test;
+use crate::tests::personality::get_personality_test;
 use crate::tests::pidfile::get_pidfile_test;
 use crate::tests::process::get_process_test;
 use crate::tests::process_capabilities_fail::get_process_capabilities_fail_test;
@@ -144,6 +145,7 @@ fn main() -> Result<()> {
     let process_capabilities_fail = get_process_capabilities_fail_test();
     let uid_mappings = get_uid_mappings_test();
     let exec_cpu_affinity = get_exec_cpu_affinity_test();
+    let personality = get_personality_test();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -183,7 +185,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(process_capabilities_fail));
     tm.add_test_group(Box::new(uid_mappings));
     tm.add_test_group(Box::new(exec_cpu_affinity));
-
+    tm.add_test_group(Box::new(personality));
     tm.add_test_group(Box::new(io_priority_test));
     tm.add_cleanup(Box::new(cgroups::cleanup_v1));
     tm.add_cleanup(Box::new(cgroups::cleanup_v2));
