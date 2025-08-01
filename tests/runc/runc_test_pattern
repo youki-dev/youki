@@ -1,0 +1,131 @@
+runc exec (cgroup v2, ro cgroupfs, new cgroupns) does not chown cgroup
+runc exec (cgroup v2, rw cgroupfs, inherit cgroupns) does not chown cgroup
+runc exec (cgroup v2, rw cgroupfs, new cgroupns) does chown cgroup
+runc create (no limits + no cgrouppath + no permission) succeeds
+runc create (rootless + no limits + cgrouppath + no permission) fails with permission error
+runc create (rootless + limits + no cgrouppath + no permission) fails with informative error
+runc exec (limits + cgrouppath + permission on the cgroup dir) succeeds
+runc run (cgroup v1 + unified resources should fail)
+runc run (per-device io weight for bfq)
+runc run (cpu.idle)
+runc run (cgroup v2 resources.unified override)
+runc exec (cgroup v1+hybrid joins correct cgroup)
+checkpoint and restore
+checkpoint and restore (bind mount, destination is symlink)
+checkpoint and restore (with --debug)
+checkpoint and restore (cgroupns)
+checkpoint --pre-dump (bad --parent-path)
+checkpoint --pre-dump and restore
+checkpoint --lazy-pages and restore
+checkpoint and restore in external network namespace
+checkpoint and restore with container specific CRIU config
+checkpoint and restore with nested bind mounts
+checkpoint then restore into a different cgroup (via --manage-cgroups-mode ignore)
+checkpoint/restore and exec
+runc create
+runc create --pid-file
+runc create --pid-file with new CWD
+runc create [shared pidns + rootless]
+runc exec --user with no access to cwd
+runc create sets up user before chdir to cwd if needed
+runc create can chdir if runc has access
+runc delete --force
+runc delete --force ignore not exist
+runc delete [host pidns + init gone]
+runc delete --force [host pidns + init gone]
+runc delete --force [paused container]
+runc delete --force in cgroupv1 with subcgroups
+runc delete removes failed systemd unit
+runc run [redundant default /dev/ptmx]
+runc exec vs systemctl daemon-reload
+runc run [devices vs systemd NeedDaemonReload]
+non-empty HOME env is used
+env var override is set only once
+env var override
+runc exec
+runc exec --pid-file
+runc exec --pid-file with new CWD
+runc exec ls -la with --cwd
+runc exec --env
+runc exec --user vs /dev/null ownership
+runc exec --cgroup sub-cgroups [v1]
+runc run [hook's argv is preserved]
+runc run [host mount ns + hooks]
+kill KILL [shared pidns]
+runc run [bind mount]
+runc run [ro tmpfs mount]
+runc run [tmpfs mount with absolute symlink]
+runc run [setgid / + mkdirall]
+runc run [ro /sys/fs/cgroup mounts]
+runc run [rootfsPropagation shared]
+runc run [rbind,rro mount is recursively read-only]
+runc run [rbind,ro,rro mount is recursively read-only too]
+runc run [mount(8)-like behaviour: --bind with no options]
+runc run --no-pivot must not expose bare /proc
+runc pause and resume
+runc pause and resume with nonexist container
+runc run personality for x86_64
+runc create [ --pidfd-socket ]
+runc run [ --pidfd-socket ]
+runc exec [ --pidfd-socket ] [cgroups_v1]
+runc exec [ --pidfd-socket ] [cgroups_v2]
+ps
+ps -f json
+ps after the container stopped
+runc run with RLIMIT_NOFILE(Bigger than system's hard value)
+runc run with RLIMIT_NOFILE(Smaller than system's hard value)
+global --root
+runc run
+runc run [hostname domainname]
+runc run check default home
+runc run [seccomp] (SCMP_ACT_NOTIFY old kernel)
+runc run [seccomp] (SCMP_ACT_NOTIFY noNewPrivileges true)
+runc run [seccomp] (SCMP_ACT_NOTIFY important syscalls noNewPrivileges true)
+runc run [seccomp] (ignore listener path if no notify act)
+runc run [seccomp] (SCMP_ACT_NOTIFY empty listener path and notify act)
+runc run [seccomp] (SCMP_ACT_NOTIFY wrong listener path)
+runc run [seccomp] (SCMP_ACT_NOTIFY wrong abstract listener path)
+runc run [seccomp] (SCMP_ACT_NOTIFY write)
+runc run [seccomp] (SCMP_ACT_NOTIFY startContainer hook)
+runc run [seccomp] (SCMP_ACT_NOTIFY example config)
+runc run [seccomp defaultErrnoRet=ENXIO]
+runc run [seccomp] (SCMP_ACT_KILL)
+runc run (no selinux label)
+runc run (custom selinux label)
+runc run (session keyring security label)
+runc exec (session keyring security label)
+runc run (session keyring security label + userns)
+runc exec (session keyring security label + userns)
+spec generation cwd
+spec generation --bundle
+spec validator
+runc start
+runc run detached
+runc run detached ({u,g}id != 0)
+runc run detached --pid-file
+runc run detached --pid-file with new CWD
+runc run ({u,g}id != 0)
+runc run with rootfs set to .
+runc run --pid-file
+runc run [rootless with host pidns]
+runc run [redundant seccomp rules]
+state (kill + delete)
+state (pause + resume)
+runc run [timens offsets with no timens]
+runc create [terminal=false]
+runc run [terminal=false]
+runc run -d [terminal=false]
+set cpu period with no quota
+set cpu quota with no period
+update cpu period in a pod cgroup with pod limit set
+update cgroup cpu.idle via systemd v252+
+update cgroup v2 resources via unified map
+update cpuset parameters via resources.CPU
+update cpuset parameters via v2 unified map
+update cpuset cpus range via v2 unified map
+update rt period and runtime
+update devices [minimal transition rules]
+update paused container
+userns with simple mount
+userns with bind mount before a cgroupfs mount
+userns join other container userns[selinux enabled]
