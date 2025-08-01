@@ -1,11 +1,25 @@
 {
 	"name": "Youki",
-    "features": {
-        "ghcr.io/devcontainers/features/docker-in-docker:2": {}
-    },
-    "customizations": {
+	"features": {
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {}
+	},
+	"remoteUser": "vscode",
+	"privileged": true,
+	"runArgs": [
+		"--name",
+		"youki-devcontainer"
+	],
+	"build": {
+		"dockerfile": "Dockerfile"
+	},
+	"postCreateCommand": ".devcontainer/setup.sh",
+	"mounts": [
+    "source=cargo-cache,target=/usr/local/cargo/registry,type=volume",
+    "source=command-history,target=/home/vscode/command-history,type=volume"
+  ],
+	"customizations": {
 		"vscode": {
-			"settings": { 
+			"settings": {
 				"lldb.executable": "/usr/bin/lldb",
 				"files.watcherExclude": {
 					"**/target/**": true
@@ -14,7 +28,6 @@
 					"command": "clippy"
 				}
 			},
-			
 			"extensions": [
 				"vadimcn.vscode-lldb",
 				"mutantdino.resourcemonitor",
@@ -23,13 +36,5 @@
 				"fill-labs.dependi"
 			]
 		}
-	},
-	"privileged": true,
-    "runArgs": [
-        "--name",
-        "youki-devcontainer"
-    ],
-    "build": {
-		"dockerfile": "Dockerfile"
 	}
 }
