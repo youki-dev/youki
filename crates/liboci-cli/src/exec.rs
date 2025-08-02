@@ -60,7 +60,7 @@ pub struct Exec {
     pub container_id: String,
 
     /// Command that should be executed in the container
-    #[clap(required = false)]
+    #[clap(required = false, trailing_var_arg = true)]
     pub command: Vec<String>,
 }
 
