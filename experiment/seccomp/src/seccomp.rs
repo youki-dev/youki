@@ -3,6 +3,7 @@ use crate::instruction::{Arch, Instruction, SECCOMP_IOC_MAGIC};
 use anyhow::anyhow;
 use anyhow::Result;
 use core::fmt;
+use derive_builder::Builder;
 use nix::libc::{
     SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_SPEC_ALLOW, SECCOMP_FILTER_FLAG_TSYNC,
 };
@@ -443,14 +444,20 @@ impl InstructionData {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Builder, Debug, Default)]
+#[builder(setter(into))]
 pub struct Rule {
     pub syscall: Vec<String>,
     pub action: u32,
+    #[builder(default)]
     pub check_arg_syscall: Vec<String>,
+    #[builder(default)]
     pub arg_cnt: Option<u8>,
+    #[builder(default)]
     pub args: Option<SyscallArgs>,
+    #[builder(default)]
     pub op: Option<SeccompCompareOp>,
+    #[builder(default)]
     pub is_notify: bool,
 }
 
@@ -791,15 +798,11 @@ mod tests {
 
     #[test]
     fn test_to_instruction_x86() {
-        let rule = Rule::new(
-            vec!["getcwd".parse().unwrap()],
-            SECCOMP_RET_ALLOW,
-            vec![],
-            None,
-            None,
-            None,
-            false,
-        );
+        let rule = RuleBuilder::default()
+            .action(SECCOMP_RET_ALLOW)
+            .syscall(vec!["getcwd".to_string()])
+            .build()
+            .expect("failed to build rule");
         let inst = Rule::to_instruction(&Arch::X86, &rule, 1, true, &"getcwd".to_string());
         assert_eq!(
             inst[0],
@@ -814,15 +817,11 @@ mod tests {
 
     #[test]
     fn test_to_instruction_aarch64() {
-        let rule = Rule::new(
-            vec!["getcwd".parse().unwrap()],
-            SECCOMP_RET_ALLOW,
-            vec![],
-            None,
-            None,
-            None,
-            false,
-        );
+        let rule = RuleBuilder::default()
+            .action(SECCOMP_RET_ALLOW)
+            .syscall(vec!["getcwd".to_string()])
+            .build()
+            .expect("failed to build rule");
         let inst = Rule::to_instruction(&Arch::AArch64, &rule, 1, true, &"getcwd".to_string());
         assert_eq!(
             inst[0],
@@ -847,15 +846,15 @@ mod tests {
             arg4: 0,
             arg5: 0,
         };
-        let rule = Rule::new(
-            syscall_vec.clone(),
-            SECCOMP_RET_ALLOW,
-            syscall_vec.clone(),
-            Some(1),
-            Option::from(personality_args),
-            Option::from(SeccompCompareOp::Equal),
-            false,
-        );
+        let rule = RuleBuilder::default()
+            .syscall(syscall_vec.clone())
+            .action(SECCOMP_RET_ALLOW)
+            .check_arg_syscall(syscall_vec.clone())
+            .arg_cnt(1)
+            .args(Option::from(personality_args))
+            .op(Option::from(SeccompCompareOp::Equal))
+            .build()
+            .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
         let inst = Rule::to_instruction_with_args(&Arch::X86, &rule, &personality.to_string());
 
@@ -908,15 +907,15 @@ mod tests {
             arg4: 0,
             arg5: 0,
         };
-        let rule = Rule::new(
-            syscall_vec.clone(),
-            SECCOMP_RET_ALLOW,
-            syscall_vec.clone(),
-            Some(1),
-            Option::from(personality_args),
-            Option::from(SeccompCompareOp::Equal),
-            false,
-        );
+        let rule = RuleBuilder::default()
+            .syscall(syscall_vec.clone())
+            .action(SECCOMP_RET_ALLOW)
+            .check_arg_syscall(syscall_vec.clone())
+            .arg_cnt(1)
+            .args(Option::from(personality_args))
+            .op(Option::from(SeccompCompareOp::Equal))
+            .build()
+            .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
         let inst = Rule::to_instruction_with_args(&Arch::AArch64, &rule, &personality.to_string());
 
@@ -968,15 +967,15 @@ mod tests {
             arg4: 0,
             arg5: 0,
         };
-        let rule = Rule::new(
-            syscall_vec.clone(),
-            SECCOMP_RET_ALLOW,
-            syscall_vec.clone(),
-            Some(1),
-            Option::from(args),
-            Option::from(SeccompCompareOp::NotEqual),
-            false,
-        );
+        let rule = RuleBuilder::default()
+            .syscall(syscall_vec.clone())
+            .action(SECCOMP_RET_ALLOW)
+            .check_arg_syscall(syscall_vec.clone())
+            .arg_cnt(1)
+            .args(Option::from(args))
+            .op(Option::from(SeccompCompareOp::NotEqual))
+            .build()
+            .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
         let inst = Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string());
 
@@ -1018,15 +1017,15 @@ mod tests {
             arg4: 0,
             arg5: 0,
         };
-        let rule = Rule::new(
-            syscall_vec.clone(),
-            SECCOMP_RET_ALLOW,
-            syscall_vec.clone(),
-            Some(1),
-            Option::from(args),
-            Option::from(SeccompCompareOp::NotEqual),
-            false,
-        );
+        let rule = RuleBuilder::default()
+            .syscall(syscall_vec.clone())
+            .action(SECCOMP_RET_ALLOW)
+            .check_arg_syscall(syscall_vec.clone())
+            .arg_cnt(1)
+            .args(Option::from(args))
+            .op(Option::from(SeccompCompareOp::NotEqual))
+            .build()
+            .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
         let inst =
             Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string());
@@ -1069,15 +1068,15 @@ mod tests {
             arg4: 0,
             arg5: 0,
         };
-        let rule = Rule::new(
-            syscall_vec.clone(),
-            SECCOMP_RET_ALLOW,
-            syscall_vec.clone(),
-            Some(1),
-            Option::from(args),
-            Option::from(SeccompCompareOp::LessThan),
-            false,
-        );
+        let rule = RuleBuilder::default()
+            .syscall(syscall_vec.clone())
+            .action(SECCOMP_RET_ALLOW)
+            .check_arg_syscall(syscall_vec.clone())
+            .arg_cnt(1)
+            .args(Option::from(args))
+            .op(Option::from(SeccompCompareOp::LessThan))
+            .build()
+            .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
         let inst = Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string());
 
@@ -1123,15 +1122,15 @@ mod tests {
             arg4: 0,
             arg5: 0,
         };
-        let rule = Rule::new(
-            syscall_vec.clone(),
-            SECCOMP_RET_ALLOW,
-            syscall_vec.clone(),
-            Some(1),
-            Option::from(args),
-            Option::from(SeccompCompareOp::LessThan),
-            false,
-        );
+        let rule = RuleBuilder::default()
+            .syscall(syscall_vec.clone())
+            .action(SECCOMP_RET_ALLOW)
+            .check_arg_syscall(syscall_vec.clone())
+            .arg_cnt(1)
+            .args(Option::from(args))
+            .op(Option::from(SeccompCompareOp::LessThan))
+            .build()
+            .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
         let inst =
             Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string());
@@ -1178,15 +1177,15 @@ mod tests {
             arg4: 0,
             arg5: 0,
         };
-        let rule = Rule::new(
-            syscall_vec.clone(),
-            SECCOMP_RET_ALLOW,
-            syscall_vec.clone(),
-            Some(1),
-            Option::from(args),
-            Option::from(SeccompCompareOp::LessOrEqual),
-            false,
-        );
+        let rule = RuleBuilder::default()
+            .syscall(syscall_vec.clone())
+            .action(SECCOMP_RET_ALLOW)
+            .check_arg_syscall(syscall_vec.clone())
+            .arg_cnt(1)
+            .args(Option::from(args))
+            .op(Option::from(SeccompCompareOp::LessOrEqual))
+            .build()
+            .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
         let inst = Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string());
 
@@ -1232,15 +1231,15 @@ mod tests {
             arg4: 0,
             arg5: 0,
         };
-        let rule = Rule::new(
-            syscall_vec.clone(),
-            SECCOMP_RET_ALLOW,
-            syscall_vec.clone(),
-            Some(1),
-            Option::from(args),
-            Option::from(SeccompCompareOp::LessOrEqual),
-            false,
-        );
+        let rule = RuleBuilder::default()
+            .syscall(syscall_vec.clone())
+            .action(SECCOMP_RET_ALLOW)
+            .check_arg_syscall(syscall_vec.clone())
+            .arg_cnt(1)
+            .args(Option::from(args))
+            .op(Option::from(SeccompCompareOp::LessOrEqual))
+            .build()
+            .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
         let inst =
             Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string());
@@ -1287,15 +1286,15 @@ mod tests {
             arg4: 0,
             arg5: 0,
         };
-        let rule = Rule::new(
-            syscall_vec.clone(),
-            SECCOMP_RET_ALLOW,
-            syscall_vec.clone(),
-            Some(1),
-            Option::from(args),
-            Option::from(SeccompCompareOp::GreaterOrEqual),
-            false,
-        );
+        let rule = RuleBuilder::default()
+            .syscall(syscall_vec.clone())
+            .action(SECCOMP_RET_ALLOW)
+            .check_arg_syscall(syscall_vec.clone())
+            .arg_cnt(1)
+            .args(Option::from(args))
+            .op(Option::from(SeccompCompareOp::GreaterOrEqual))
+            .build()
+            .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
         let inst = Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string());
 
@@ -1341,15 +1340,15 @@ mod tests {
             arg4: 0,
             arg5: 0,
         };
-        let rule = Rule::new(
-            syscall_vec.clone(),
-            SECCOMP_RET_ALLOW,
-            syscall_vec.clone(),
-            Some(1),
-            Option::from(args),
-            Option::from(SeccompCompareOp::GreaterOrEqual),
-            false,
-        );
+        let rule = RuleBuilder::default()
+            .syscall(syscall_vec.clone())
+            .action(SECCOMP_RET_ALLOW)
+            .check_arg_syscall(syscall_vec.clone())
+            .arg_cnt(1)
+            .args(Option::from(args))
+            .op(Option::from(SeccompCompareOp::GreaterOrEqual))
+            .build()
+            .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
         let inst =
             Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string());
@@ -1396,15 +1395,15 @@ mod tests {
             arg4: 0,
             arg5: 0,
         };
-        let rule = Rule::new(
-            syscall_vec.clone(),
-            SECCOMP_RET_ALLOW,
-            syscall_vec.clone(),
-            Some(1),
-            Option::from(args),
-            Option::from(SeccompCompareOp::GreaterThan),
-            false,
-        );
+        let rule = RuleBuilder::default()
+            .syscall(syscall_vec.clone())
+            .action(SECCOMP_RET_ALLOW)
+            .check_arg_syscall(syscall_vec.clone())
+            .arg_cnt(1)
+            .args(Option::from(args))
+            .op(Option::from(SeccompCompareOp::GreaterThan))
+            .build()
+            .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
         let inst = Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string());
 
@@ -1450,15 +1449,15 @@ mod tests {
             arg4: 0,
             arg5: 0,
         };
-        let rule = Rule::new(
-            syscall_vec.clone(),
-            SECCOMP_RET_ALLOW,
-            syscall_vec.clone(),
-            Some(1),
-            Option::from(args),
-            Option::from(SeccompCompareOp::GreaterThan),
-            false,
-        );
+        let rule = RuleBuilder::default()
+            .syscall(syscall_vec.clone())
+            .action(SECCOMP_RET_ALLOW)
+            .check_arg_syscall(syscall_vec.clone())
+            .arg_cnt(1)
+            .args(Option::from(args))
+            .op(Option::from(SeccompCompareOp::GreaterThan))
+            .build()
+            .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
         let inst =
             Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string());
@@ -1505,15 +1504,15 @@ mod tests {
             arg4: 0,
             arg5: 0,
         };
-        let rule = Rule::new(
-            syscall_vec.clone(),
-            SECCOMP_RET_ALLOW,
-            syscall_vec.clone(),
-            Some(1),
-            Option::from(args),
-            Option::from(SeccompCompareOp::MaskedEqual),
-            false,
-        );
+        let rule = RuleBuilder::default()
+            .syscall(syscall_vec.clone())
+            .action(SECCOMP_RET_ALLOW)
+            .check_arg_syscall(syscall_vec.clone())
+            .arg_cnt(1)
+            .args(Option::from(args))
+            .op(Option::from(SeccompCompareOp::MaskedEqual))
+            .build()
+            .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
         let inst = Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string());
 
@@ -1560,15 +1559,15 @@ mod tests {
             arg4: 0,
             arg5: 0,
         };
-        let rule = Rule::new(
-            syscall_vec.clone(),
-            SECCOMP_RET_ALLOW,
-            syscall_vec.clone(),
-            Some(1),
-            Option::from(args),
-            Option::from(SeccompCompareOp::MaskedEqual),
-            false,
-        );
+        let rule = RuleBuilder::default()
+            .syscall(syscall_vec.clone())
+            .action(SECCOMP_RET_ALLOW)
+            .check_arg_syscall(syscall_vec.clone())
+            .arg_cnt(1)
+            .args(Option::from(args))
+            .op(Option::from(SeccompCompareOp::MaskedEqual))
+            .build()
+            .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
         let inst =
             Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string());

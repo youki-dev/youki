@@ -453,6 +453,7 @@ name = "seccomp"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "derive_builder",
  "nix 0.27.1",
  "oci-spec",
  "prctl",

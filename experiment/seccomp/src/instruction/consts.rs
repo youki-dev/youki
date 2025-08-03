@@ -56,7 +56,7 @@ pub const X32_SYSCALL_BIT: u32 = 0x4000_0000;
 
 // Comparison operators
 // See libseccomp/include/seccomp.h.in
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum SeccompCompareOp {
     NotEqual = 1,
     LessThan,
@@ -107,9 +107,7 @@ pub const fn seccomp_data_arg_size() -> u8 {
 /// A `Result` containing the offset as `u8` if the index is valid, or an error message if the index is out of range.
 pub const fn seccomp_data_args_offset(index: u8) -> Result<u8, &'static str> {
     match index {
-        0..=5 => {
-            Ok((offset_of!(SeccompData, args) as u8) + (index * 8))
-        }
+        0..=5 => Ok((offset_of!(SeccompData, args) as u8) + (index * 8)),
         _ => Err("Index out of range. Valid indices are 0–5."),
     }
 }
