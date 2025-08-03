@@ -37,8 +37,8 @@ fn create_spec(domain: LinuxPersonalityDomain) -> Result<Spec> {
         .context("failed to create spec")
 }
 
-fn personality_for_linux32() -> TestResult {
-    let spec = test_result!(create_spec(LinuxPersonalityDomain::PerLinux32));
+fn personality_for_linux(domain: LinuxPersonalityDomain, expect: &str) -> TestResult {
+    let spec = test_result!(create_spec(domain));
 
     test_outside_container(&spec, &|data| {
         test_result!(check_container_created(&data));
@@ -51,10 +51,9 @@ fn personality_for_linux32() -> TestResult {
             return TestResult::Failed(anyhow!("container start failed"));
         }
 
-        let (stdout, _) =
-            exec_container(id, dir, &["--", "uname", "-m"], None).expect("exec failed");
+        let (stdout, _) = exec_container(id, dir, &["uname", "-m"], None).expect("exec failed");
 
-        if !stdout.contains("i686") {
+        if !stdout.contains(expect) {
             return TestResult::Failed(anyhow!("unexpected personality: {}", stdout));
         }
 
@@ -62,29 +61,12 @@ fn personality_for_linux32() -> TestResult {
     })
 }
 
+fn personality_for_linux32() -> TestResult {
+    personality_for_linux(LinuxPersonalityDomain::PerLinux32, "i686")
+}
+
 fn personality_for_linux64() -> TestResult {
-    let spec = test_result!(create_spec(LinuxPersonalityDomain::PerLinux));
-
-    test_outside_container(&spec, &|data| {
-        test_result!(check_container_created(&data));
-
-        let id = &data.id;
-        let dir = &data.bundle;
-
-        let start_result = start_container(id, dir).unwrap().wait().unwrap();
-        if !start_result.success() {
-            return TestResult::Failed(anyhow!("container start failed"));
-        }
-
-        let (stdout, _) =
-            exec_container(id, dir, &["--", "uname", "-m"], None).expect("exec failed");
-
-        if !stdout.contains("x86_64") {
-            return TestResult::Failed(anyhow!("unexpected personality: {}", stdout));
-        }
-
-        TestResult::Passed
-    })
+    personality_for_linux(LinuxPersonalityDomain::PerLinux, "x86_64")
 }
 
 pub fn get_personality_test() -> TestGroup {
