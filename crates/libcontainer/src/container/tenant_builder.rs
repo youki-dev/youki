@@ -69,6 +69,7 @@ pub struct TenantContainerBuilder {
     user: Option<u32>,
     group: Option<u32>,
     ignore_paused: bool,
+    sub_cgroup: Option<String>,
 }
 
 /// This is a helper function to get capabilities for tenant container, based on
@@ -165,6 +166,7 @@ impl TenantContainerBuilder {
             user: None,
             group: None,
             ignore_paused: false,
+            sub_cgroup: None,
         }
     }
 
@@ -233,6 +235,11 @@ impl TenantContainerBuilder {
         self
     }
 
+    pub fn with_sub_cgroup(mut self, sub_cgroup: Option<String>) -> Self {
+        self.sub_cgroup = sub_cgroup;
+        self
+    }
+
     /// Joins an existing container
     pub fn build(self) -> Result<Pid, LibcontainerError> {
         let container_dir = self.lookup_container_dir()?;
@@ -290,6 +297,7 @@ impl TenantContainerBuilder {
             stdout: self.base.stdout,
             stderr: self.base.stderr,
             as_sibling: self.as_sibling,
+            sub_cgroup_path: self.sub_cgroup,
         };
 
         let pid = builder_impl.create()?;

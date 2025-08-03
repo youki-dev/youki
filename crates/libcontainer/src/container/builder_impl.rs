@@ -59,6 +59,7 @@ pub(super) struct ContainerBuilderImpl {
     pub stderr: Option<OwnedFd>,
     // Indicate if the init process should be a sibling of the main process.
     pub as_sibling: bool,
+    pub sub_cgroup_path: Option<String>,
 }
 
 impl ContainerBuilderImpl {
@@ -85,9 +86,21 @@ impl ContainerBuilderImpl {
 
     fn run_container(&mut self) -> Result<Pid, LibcontainerError> {
         let linux = self.spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
-        let cgroups_path = utils::get_cgroup_path(linux.cgroups_path(), &self.container_id);
+        let base_cgroups_path = utils::get_cgroup_path(linux.cgroups_path(), &self.container_id);
+        let mut final_cgroups_path = base_cgroups_path;
+
+        if let Some(sub_cgroup_path) = &self.sub_cgroup_path {
+            let potential_path = final_cgroups_path.join(sub_cgroup_path);
+            if !potential_path.starts_with(&final_cgroups_path) {
+                return Err(LibcontainerError::OtherCgroup(
+                    "invalid sub cgroup path".to_string(),
+                ));
+            }
+            final_cgroups_path = potential_path;
+        }
+
         let cgroup_config = libcgroups::common::CgroupConfig {
-            cgroup_path: cgroups_path,
+            cgroup_path: final_cgroups_path,
             systemd_cgroup: self.use_systemd || self.user_ns_config.is_some(),
             container_name: self.container_id.to_owned(),
         };

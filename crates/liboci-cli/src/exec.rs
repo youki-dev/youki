@@ -53,7 +53,7 @@ pub struct Exec {
     pub ignore_paused: bool,
     /// Execute a process in a sub-cgroup
     #[clap(long)]
-    pub cgroup: Option<Vec<String>>,
+    pub cgroup: Option<String>,
     /// Identifier of the container
     #[clap(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
     pub container_id: String,
