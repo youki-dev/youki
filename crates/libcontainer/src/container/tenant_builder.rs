@@ -70,6 +70,7 @@ pub struct TenantContainerBuilder {
     group: Option<u32>,
     ignore_paused: bool,
     sub_cgroup: Option<String>,
+    process_label: Option<String>,
 }
 
 /// This is a helper function to get capabilities for tenant container, based on
@@ -167,6 +168,7 @@ impl TenantContainerBuilder {
             group: None,
             ignore_paused: false,
             sub_cgroup: None,
+            process_label: None,
         }
     }
 
@@ -240,6 +242,11 @@ impl TenantContainerBuilder {
         self
     }
 
+    pub fn with_process_label(mut self, process_label: Option<String>) -> Self {
+        self.process_label = process_label;
+        self
+    }
+
     /// Joins an existing container
     pub fn build(self) -> Result<Pid, LibcontainerError> {
         let container_dir = self.lookup_container_dir()?;
@@ -298,6 +305,7 @@ impl TenantContainerBuilder {
             stderr: self.base.stderr,
             as_sibling: self.as_sibling,
             sub_cgroup_path: self.sub_cgroup,
+            process_label: self.process_label,
         };
 
         let pid = builder_impl.create()?;
