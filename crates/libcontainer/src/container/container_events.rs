@@ -27,7 +27,7 @@ impl Container {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn events(&mut self, interval: u32, stats: bool) -> Result<(), LibcontainerError> {
+    pub fn events(&mut self, interval: Duration, stats: bool) -> Result<(), LibcontainerError> {
         self.refresh_status()?;
         if !self.state.status.eq(&ContainerStatus::Running) {
             tracing::error!(id = ?self.id(), status = ?self.state.status, "container is not running");
@@ -56,7 +56,7 @@ impl Container {
                     serde_json::to_string_pretty(&stats)
                         .map_err(LibcontainerError::OtherSerialization)?
                 );
-                thread::sleep(Duration::from_secs(interval as u64));
+                thread::sleep(interval);
             },
         }
 
