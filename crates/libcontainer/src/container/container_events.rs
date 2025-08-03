@@ -12,6 +12,7 @@ impl Container {
     /// # Example
     ///
     /// ```no_run
+    /// use std::time::Duration;
     /// use libcontainer::container::builder::ContainerBuilder;
     /// use libcontainer::syscall::syscall::SyscallType;
     ///
