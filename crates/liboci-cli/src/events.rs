@@ -1,5 +1,6 @@
-use clap::Parser;
 use std::time::Duration;
+
+use clap::Parser;
 
 fn parse_interval(s: &str) -> Result<Duration, String> {
     let s = s.trim();
