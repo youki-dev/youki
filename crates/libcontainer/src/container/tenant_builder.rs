@@ -71,6 +71,7 @@ pub struct TenantContainerBuilder {
     ignore_paused: bool,
     sub_cgroup: Option<String>,
     process_label: Option<String>,
+    apparmor: Option<String>,
 }
 
 /// This is a helper function to get capabilities for tenant container, based on
@@ -169,6 +170,7 @@ impl TenantContainerBuilder {
             ignore_paused: false,
             sub_cgroup: None,
             process_label: None,
+            apparmor: None,
         }
     }
 
@@ -244,6 +246,11 @@ impl TenantContainerBuilder {
 
     pub fn with_process_label(mut self, process_label: Option<String>) -> Self {
         self.process_label = process_label;
+        self
+    }
+
+    pub fn with_apparmor(mut self, apparmor: Option<String>) -> Self {
+        self.apparmor = apparmor;
         self
     }
 
@@ -486,6 +493,10 @@ impl TenantContainerBuilder {
                 process_builder = process_builder.no_new_privileges(no_new_priv);
             }
 
+            if let Some(ref apparmor) = self.apparmor {
+                process_builder = process_builder.apparmor_profile(apparmor)
+            }
+
             let capabilities = get_capabilities(&self.capabilities, spec)?;
             process_builder = process_builder.capabilities(capabilities);
 
@@ -522,6 +533,7 @@ impl TenantContainerBuilder {
         if let Some(ref cgroup_path) = spec_linux.cgroups_path() {
             linux_builder = linux_builder.cgroups_path(cgroup_path.clone());
         }
+
         let linux = linux_builder.build()?;
         spec.set_process(Some(process)).set_linux(Some(linux));
 
