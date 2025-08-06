@@ -27,6 +27,7 @@ pub fn info(_: Info) -> Result<()> {
 }
 
 /// print Version of Youki in Moby compatible format
+/// https://github.com/moby/moby/blob/65cc84abc522a564699bb171ca54ea1857256d10/daemon/info_unix.go#L280
 pub fn print_youki() {
     println!("youki version: {}", env!("CARGO_PKG_VERSION"));
     println!(
