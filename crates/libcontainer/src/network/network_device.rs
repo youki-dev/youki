@@ -62,6 +62,9 @@ pub fn dev_change_net_namespace(
     Ok(serialize_addrs)
 }
 
+/// setup_network_device sets up a network device in a new namespace.
+/// It moves the device to the new namespace and adds the IP addresses to the device.
+/// It also sets the device up.
 pub fn setup_network_device(
     name: String,
     net_dev: &LinuxNetDevice,

@@ -6,6 +6,8 @@ use netlink_packet_route::address::{
 use netlink_packet_route::AddressFamily;
 use serde::{Deserialize, Serialize};
 
+/// SerializableAddress is a struct that represents an address message that can be serialized and deserialized.
+/// It is used to send address messages between the main process and the intermediate process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableAddress {
     pub index: u32,

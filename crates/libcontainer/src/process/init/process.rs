@@ -277,6 +277,9 @@ pub fn container_init_process(
         InitProcessError::SyscallOther(err)
     })?;
 
+    // Setup some operations in the network namespace.
+    // This is done here before dropping capabilities because we need to be able to add IP addresses to the device
+    // and set up the device.
     if let Some(network_devices) = ctx.linux.net_devices() {
         setup_net_devices(network_devices, main_sender, init_receiver).map_err(|err| {
             tracing::error!(?err, "failed to setup net_device");

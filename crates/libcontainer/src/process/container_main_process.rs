@@ -101,10 +101,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     })?;
 
     let (mut inter_sender, inter_receiver) = inter_chan;
-    #[cfg(feature = "libseccomp")]
     let (mut init_sender, init_receiver) = init_chan;
-    #[cfg(not(feature = "libseccomp"))]
-    let (init_sender, init_receiver) = init_chan;
 
     // If creating a container with new user namespace, the intermediate process will ask
     // the main process to set up uid and gid mapping, once the intermediate
