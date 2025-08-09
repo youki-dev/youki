@@ -32,6 +32,8 @@ use syscalls::{syscall_args, SyscallArgs};
 pub enum SeccompError {
     #[error("Failed to apply seccomp rules: {0}")]
     Apply(String),
+    #[error("valid indices are 0–5")]
+    InvalidArgumentSize,
 }
 
 pub struct Seccomp {
@@ -307,8 +309,9 @@ pub struct InstructionData {
     pub rule: Rule,
 }
 
-impl From<InstructionData> for Vec<Instruction> {
-    fn from(inst_data: InstructionData) -> Self {
+impl TryFrom<InstructionData> for Vec<Instruction> {
+    type Error = SeccompError;
+    fn try_from(inst_data: InstructionData) -> Result<Self, SeccompError> {
         let mut bpf_prog = vec![];
         let mut jump_num = inst_data.rule.syscall.len();
         if jump_num <= 255 {
@@ -319,7 +322,7 @@ impl From<InstructionData> for Vec<Instruction> {
                     jump_num,
                     false,
                     syscall,
-                ));
+                )?);
                 jump_num -= 1;
             }
         } else {
@@ -332,7 +335,7 @@ impl From<InstructionData> for Vec<Instruction> {
                         1,
                         true,
                         syscall,
-                    ));
+                    )?);
                     bpf_prog.append(&mut vec![Instruction::stmt(
                         BPF_RET | BPF_K,
                         inst_data.rule.action,
@@ -345,7 +348,7 @@ impl From<InstructionData> for Vec<Instruction> {
                         cnt_ff,
                         false,
                         syscall,
-                    ));
+                    )?);
                     jump_num -= 1;
                 }
                 cnt_ff -= 1;
@@ -362,7 +365,7 @@ impl From<InstructionData> for Vec<Instruction> {
             BPF_RET | BPF_K,
             inst_data.rule.action,
         )]);
-        all_bpf_prog
+        Ok(all_bpf_prog)
     }
 }
 
@@ -501,9 +504,13 @@ impl Rule {
         ret
     }
 
-    fn to_instruction_with_args(arch: &Arch, rule: &Rule, syscall: &String) -> Vec<Instruction> {
+    fn to_instruction_with_args(
+        arch: &Arch,
+        rule: &Rule,
+        syscall: &String,
+    ) -> Result<Vec<Instruction>, SeccompError> {
         let mut bpf_prog = vec![];
-        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
+        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap())?;
         match rule.op.as_ref().unwrap() {
             SeccompCompareOp::NotEqual => {
                 // if system call number is not match, skip args check jf 4 to default action
@@ -516,7 +523,7 @@ impl Rule {
                 // uppper 32bit check of args
                 bpf_prog.append(&mut vec![Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
-                    (offset.unwrap() + 4).into(),
+                    (offset + 4).into(),
                 )]);
                 bpf_prog.append(&mut vec![Instruction::jump(
                     BPF_JMP | BPF_JEQ | BPF_K,
@@ -527,7 +534,7 @@ impl Rule {
                 // lower 32bit check of args
                 bpf_prog.append(&mut vec![Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
-                    offset.unwrap().into(),
+                    offset.into(),
                 )]);
                 bpf_prog.append(&mut vec![Instruction::jump(
                     BPF_JMP | BPF_JEQ | BPF_K,
@@ -547,7 +554,7 @@ impl Rule {
                 // uppper 32bit check of args
                 bpf_prog.append(&mut vec![Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
-                    (offset.unwrap() + 4).into(),
+                    (offset + 4).into(),
                 )]);
                 bpf_prog.append(&mut vec![Instruction::jump(
                     BPF_JMP | BPF_JGE | BPF_K,
@@ -564,7 +571,7 @@ impl Rule {
                 // lower 32bit check of args
                 bpf_prog.append(&mut vec![Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
-                    offset.unwrap().into(),
+                    offset.into(),
                 )]);
                 bpf_prog.append(&mut vec![Instruction::jump(
                     BPF_JMP | BPF_JGE | BPF_K,
@@ -583,7 +590,7 @@ impl Rule {
                 // uppper 32bit check of args
                 bpf_prog.append(&mut vec![Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
-                    (offset.unwrap() + 4).into(),
+                    (offset + 4).into(),
                 )]);
                 bpf_prog.append(&mut vec![Instruction::jump(
                     BPF_JMP | BPF_JGE | BPF_K,
@@ -600,7 +607,7 @@ impl Rule {
                 // lower 32bit check of args
                 bpf_prog.append(&mut vec![Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
-                    offset.unwrap().into(),
+                    offset.into(),
                 )]);
                 bpf_prog.append(&mut vec![Instruction::jump(
                     BPF_JMP | BPF_JGT | BPF_K,
@@ -620,7 +627,7 @@ impl Rule {
                 // uppper 32bit check of args
                 bpf_prog.append(&mut vec![Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
-                    (offset.unwrap() + 4).into(),
+                    (offset + 4).into(),
                 )]);
                 bpf_prog.append(&mut vec![Instruction::jump(
                     BPF_JMP | BPF_JEQ | BPF_K,
@@ -631,7 +638,7 @@ impl Rule {
                 // lower 32bit check of args
                 bpf_prog.append(&mut vec![Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
-                    offset.unwrap().into(),
+                    offset.into(),
                 )]);
                 bpf_prog.append(&mut vec![Instruction::jump(
                     BPF_JMP | BPF_JEQ | BPF_K,
@@ -651,7 +658,7 @@ impl Rule {
                 // uppper 32bit check of args
                 bpf_prog.append(&mut vec![Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
-                    (offset.unwrap() + 4).into(),
+                    (offset + 4).into(),
                 )]);
                 bpf_prog.append(&mut vec![Instruction::jump(
                     BPF_JMP | BPF_JGT | BPF_K,
@@ -668,7 +675,7 @@ impl Rule {
                 // lower 32bit check of args
                 bpf_prog.append(&mut vec![Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
-                    offset.unwrap().into(),
+                    offset.into(),
                 )]);
                 bpf_prog.append(&mut vec![Instruction::jump(
                     BPF_JMP | BPF_JGE | BPF_K,
@@ -688,7 +695,7 @@ impl Rule {
                 // uppper 32bit check of args
                 bpf_prog.append(&mut vec![Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
-                    (offset.unwrap() + 4).into(),
+                    (offset + 4).into(),
                 )]);
                 bpf_prog.append(&mut vec![Instruction::jump(
                     BPF_JMP | BPF_JGT | BPF_K,
@@ -705,7 +712,7 @@ impl Rule {
                 // lower 32bit check of args
                 bpf_prog.append(&mut vec![Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
-                    offset.unwrap().into(),
+                    offset.into(),
                 )]);
                 bpf_prog.append(&mut vec![Instruction::jump(
                     BPF_JMP | BPF_JGE | BPF_K,
@@ -726,7 +733,7 @@ impl Rule {
                 // uppper 32bit check of args
                 bpf_prog.append(&mut vec![Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
-                    (offset.unwrap() + 4).into(),
+                    (offset + 4).into(),
                 )]);
                 bpf_prog.append(&mut vec![Instruction::jump(
                     BPF_JMP | BPF_JSET | BPF_K,
@@ -738,7 +745,7 @@ impl Rule {
                 // lower 32bit check of
                 bpf_prog.append(&mut vec![Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
-                    offset.unwrap().into(),
+                    offset.into(),
                 )]);
                 bpf_prog.append(&mut vec![Instruction::jump(
                     BPF_JMP | BPF_JSET | BPF_K,
@@ -748,7 +755,7 @@ impl Rule {
                 )]);
             }
         }
-        bpf_prog
+        Ok(bpf_prog)
     }
 
     pub fn to_instruction(
@@ -757,10 +764,10 @@ impl Rule {
         jump_num: usize,
         zero_jump: bool,
         syscall: &String,
-    ) -> Vec<Instruction> {
+    ) -> Result<Vec<Instruction>, SeccompError> {
         let mut bpf_prog = vec![];
         if rule.arg_cnt.is_some() && rule.check_arg_syscall.contains(syscall) {
-            bpf_prog.append(&mut Rule::to_instruction_with_args(arch, rule, syscall));
+            bpf_prog.append(&mut Rule::to_instruction_with_args(arch, rule, syscall)?);
         } else if zero_jump {
             bpf_prog.append(&mut vec![Instruction::jump(
                 BPF_JMP | BPF_JEQ | BPF_K,
@@ -776,7 +783,7 @@ impl Rule {
                 get_syscall_number(arch, syscall).unwrap() as c_uint,
             )]);
         }
-        bpf_prog
+        Ok(bpf_prog)
     }
 }
 
@@ -803,7 +810,7 @@ mod tests {
             .syscall(vec!["getcwd".to_string()])
             .build()
             .expect("failed to build rule");
-        let inst = Rule::to_instruction(&Arch::X86, &rule, 1, true, &"getcwd".to_string());
+        let inst = Rule::to_instruction(&Arch::X86, &rule, 1, true, &"getcwd".to_string()).unwrap();
         assert_eq!(
             inst[0],
             Instruction::jump(
@@ -822,7 +829,8 @@ mod tests {
             .syscall(vec!["getcwd".to_string()])
             .build()
             .expect("failed to build rule");
-        let inst = Rule::to_instruction(&Arch::AArch64, &rule, 1, true, &"getcwd".to_string());
+        let inst =
+            Rule::to_instruction(&Arch::AArch64, &rule, 1, true, &"getcwd".to_string()).unwrap();
         assert_eq!(
             inst[0],
             Instruction::jump(
@@ -855,8 +863,9 @@ mod tests {
             .op(Option::from(SeccompCompareOp::Equal))
             .build()
             .expect("failed to build rule");
-        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
-        let inst = Rule::to_instruction_with_args(&Arch::X86, &rule, &personality.to_string());
+        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
+        let inst =
+            Rule::to_instruction_with_args(&Arch::X86, &rule, &personality.to_string()).unwrap();
 
         assert_eq!(
             inst[0],
@@ -869,7 +878,7 @@ mod tests {
         );
         assert_eq!(
             inst[1],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())
         );
         assert_eq!(
             inst[2],
@@ -882,7 +891,7 @@ mod tests {
         );
         assert_eq!(
             inst[3],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())
         );
         assert_eq!(
             inst[4],
@@ -916,8 +925,9 @@ mod tests {
             .op(Option::from(SeccompCompareOp::Equal))
             .build()
             .expect("failed to build rule");
-        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
-        let inst = Rule::to_instruction_with_args(&Arch::AArch64, &rule, &personality.to_string());
+        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
+        let inst = Rule::to_instruction_with_args(&Arch::AArch64, &rule, &personality.to_string())
+            .unwrap();
 
         assert_eq!(
             inst[0],
@@ -930,7 +940,7 @@ mod tests {
         );
         assert_eq!(
             inst[1],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())
         );
         assert_eq!(
             inst[2],
@@ -943,7 +953,7 @@ mod tests {
         );
         assert_eq!(
             inst[3],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())
         );
         assert_eq!(
             inst[4],
@@ -976,8 +986,9 @@ mod tests {
             .op(Option::from(SeccompCompareOp::NotEqual))
             .build()
             .expect("failed to build rule");
-        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
-        let inst = Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string());
+        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
+        let inst =
+            Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string()).unwrap();
 
         assert_eq!(
             inst[0],
@@ -990,7 +1001,7 @@ mod tests {
         );
         assert_eq!(
             inst[1],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())
         );
         assert_eq!(
             inst[2],
@@ -998,7 +1009,7 @@ mod tests {
         );
         assert_eq!(
             inst[3],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())
         );
         assert_eq!(
             inst[4],
@@ -1026,9 +1037,10 @@ mod tests {
             .op(Option::from(SeccompCompareOp::NotEqual))
             .build()
             .expect("failed to build rule");
-        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
+        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
         let inst =
-            Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string());
+            Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string())
+                .unwrap();
 
         assert_eq!(
             inst[0],
@@ -1041,7 +1053,7 @@ mod tests {
         );
         assert_eq!(
             inst[1],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())
         );
         assert_eq!(
             inst[2],
@@ -1049,7 +1061,7 @@ mod tests {
         );
         assert_eq!(
             inst[3],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())
         );
         assert_eq!(
             inst[4],
@@ -1077,8 +1089,9 @@ mod tests {
             .op(Option::from(SeccompCompareOp::LessThan))
             .build()
             .expect("failed to build rule");
-        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
-        let inst = Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string());
+        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
+        let inst =
+            Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string()).unwrap();
 
         assert_eq!(
             inst[0],
@@ -1091,7 +1104,7 @@ mod tests {
         );
         assert_eq!(
             inst[1],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())
         );
         assert_eq!(
             inst[2],
@@ -1103,7 +1116,7 @@ mod tests {
         );
         assert_eq!(
             inst[4],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())
         );
         assert_eq!(
             inst[5],
@@ -1131,9 +1144,10 @@ mod tests {
             .op(Option::from(SeccompCompareOp::LessThan))
             .build()
             .expect("failed to build rule");
-        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
+        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
         let inst =
-            Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string());
+            Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string())
+                .unwrap();
 
         assert_eq!(
             inst[0],
@@ -1146,7 +1160,7 @@ mod tests {
         );
         assert_eq!(
             inst[1],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())
         );
         assert_eq!(
             inst[2],
@@ -1158,7 +1172,7 @@ mod tests {
         );
         assert_eq!(
             inst[4],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())
         );
         assert_eq!(
             inst[5],
@@ -1186,8 +1200,9 @@ mod tests {
             .op(Option::from(SeccompCompareOp::LessOrEqual))
             .build()
             .expect("failed to build rule");
-        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
-        let inst = Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string());
+        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
+        let inst =
+            Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string()).unwrap();
 
         assert_eq!(
             inst[0],
@@ -1200,7 +1215,7 @@ mod tests {
         );
         assert_eq!(
             inst[1],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())
         );
         assert_eq!(
             inst[2],
@@ -1212,7 +1227,7 @@ mod tests {
         );
         assert_eq!(
             inst[4],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())
         );
         assert_eq!(
             inst[5],
@@ -1240,9 +1255,10 @@ mod tests {
             .op(Option::from(SeccompCompareOp::LessOrEqual))
             .build()
             .expect("failed to build rule");
-        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
+        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
         let inst =
-            Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string());
+            Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string())
+                .unwrap();
 
         assert_eq!(
             inst[0],
@@ -1255,7 +1271,7 @@ mod tests {
         );
         assert_eq!(
             inst[1],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())
         );
         assert_eq!(
             inst[2],
@@ -1267,7 +1283,7 @@ mod tests {
         );
         assert_eq!(
             inst[4],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())
         );
         assert_eq!(
             inst[5],
@@ -1295,8 +1311,9 @@ mod tests {
             .op(Option::from(SeccompCompareOp::GreaterOrEqual))
             .build()
             .expect("failed to build rule");
-        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
-        let inst = Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string());
+        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
+        let inst =
+            Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string()).unwrap();
 
         assert_eq!(
             inst[0],
@@ -1309,7 +1326,7 @@ mod tests {
         );
         assert_eq!(
             inst[1],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())
         );
         assert_eq!(
             inst[2],
@@ -1321,7 +1338,7 @@ mod tests {
         );
         assert_eq!(
             inst[4],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())
         );
         assert_eq!(
             inst[5],
@@ -1349,9 +1366,10 @@ mod tests {
             .op(Option::from(SeccompCompareOp::GreaterOrEqual))
             .build()
             .expect("failed to build rule");
-        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
+        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
         let inst =
-            Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string());
+            Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string())
+                .unwrap();
 
         assert_eq!(
             inst[0],
@@ -1364,7 +1382,7 @@ mod tests {
         );
         assert_eq!(
             inst[1],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())
         );
         assert_eq!(
             inst[2],
@@ -1376,7 +1394,7 @@ mod tests {
         );
         assert_eq!(
             inst[4],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())
         );
         assert_eq!(
             inst[5],
@@ -1404,8 +1422,9 @@ mod tests {
             .op(Option::from(SeccompCompareOp::GreaterThan))
             .build()
             .expect("failed to build rule");
-        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
-        let inst = Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string());
+        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
+        let inst =
+            Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string()).unwrap();
 
         assert_eq!(
             inst[0],
@@ -1418,7 +1437,7 @@ mod tests {
         );
         assert_eq!(
             inst[1],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())
         );
         assert_eq!(
             inst[2],
@@ -1430,7 +1449,7 @@ mod tests {
         );
         assert_eq!(
             inst[4],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())
         );
         assert_eq!(
             inst[5],
@@ -1458,9 +1477,10 @@ mod tests {
             .op(Option::from(SeccompCompareOp::GreaterThan))
             .build()
             .expect("failed to build rule");
-        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
+        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
         let inst =
-            Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string());
+            Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string())
+                .unwrap();
 
         assert_eq!(
             inst[0],
@@ -1473,7 +1493,7 @@ mod tests {
         );
         assert_eq!(
             inst[1],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())
         );
         assert_eq!(
             inst[2],
@@ -1485,7 +1505,7 @@ mod tests {
         );
         assert_eq!(
             inst[4],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())
         );
         assert_eq!(
             inst[5],
@@ -1513,8 +1533,9 @@ mod tests {
             .op(Option::from(SeccompCompareOp::MaskedEqual))
             .build()
             .expect("failed to build rule");
-        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
-        let inst = Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string());
+        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
+        let inst =
+            Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string()).unwrap();
 
         assert_eq!(
             inst[0],
@@ -1527,7 +1548,7 @@ mod tests {
         );
         assert_eq!(
             inst[1],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())
         );
         assert_eq!(
             inst[2],
@@ -1540,7 +1561,7 @@ mod tests {
         );
         assert_eq!(
             inst[3],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())
         );
         assert_eq!(
             inst[4],
@@ -1568,9 +1589,10 @@ mod tests {
             .op(Option::from(SeccompCompareOp::MaskedEqual))
             .build()
             .expect("failed to build rule");
-        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap());
+        let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
         let inst =
-            Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string());
+            Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string())
+                .unwrap();
 
         assert_eq!(
             inst[0],
@@ -1583,7 +1605,7 @@ mod tests {
         );
         assert_eq!(
             inst[1],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset.unwrap() + 4).into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, (offset + 4).into())
         );
         assert_eq!(
             inst[2],
@@ -1596,7 +1618,7 @@ mod tests {
         );
         assert_eq!(
             inst[3],
-            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.unwrap().into())
+            Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into())
         );
         assert_eq!(
             inst[4],

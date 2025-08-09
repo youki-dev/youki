@@ -1,3 +1,4 @@
+use crate::seccomp::SeccompError;
 use std::{mem::offset_of, os::raw::c_int};
 
 // BPF Instruction classes.
@@ -96,19 +97,10 @@ pub const fn seccomp_data_arg_size() -> u8 {
     8
 }
 
-/// Returns the offset of the `args` field in `SeccompData` for the given index.
-///
-/// # Arguments
-///
-/// * `index` - The index of the argument (0–5).
-///
-/// # Returns
-///
-/// A `Result` containing the offset as `u8` if the index is valid, or an error message if the index is out of range.
-pub const fn seccomp_data_args_offset(index: u8) -> Result<u8, &'static str> {
+pub const fn seccomp_data_args_offset(index: u8) -> Result<u8, SeccompError> {
     match index {
         0..=5 => Ok((offset_of!(SeccompData, args) as u8) + (index * 8)),
-        _ => Err("Index out of range. Valid indices are 0–5."),
+        _ => Err(SeccompError::InvalidArgumentSize),
     }
 }
 

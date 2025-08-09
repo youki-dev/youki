@@ -126,8 +126,7 @@ pub fn generate_seccomp_instruction(file_path: &str) -> anyhow::Result<()> {
         if !inst_data.flags.is_empty() {
             seccomp.set_flags(inst_data.flags.clone());
         }
-        seccomp.filters = Vec::from(inst_data);
-
+        seccomp.filters = Vec::try_from(inst_data)?;
         println!("--- test case {}---", cnt);
         for filter in &seccomp.filters {
             println!(

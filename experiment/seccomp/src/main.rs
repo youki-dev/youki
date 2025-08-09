@@ -141,7 +141,7 @@ async fn sub() -> Result<()> {
     if !inst_data.flags.is_empty() {
         seccomp.set_flags(inst_data.flags.clone());
     }
-    seccomp.filters = Vec::from(inst_data);
+    seccomp.filters = Vec::try_from(inst_data)?;
 
     for filter in &seccomp.filters {
         println!(
