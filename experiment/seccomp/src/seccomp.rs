@@ -316,7 +316,7 @@ impl TryFrom<InstructionData> for Vec<Instruction> {
         let mut jump_num = inst_data.rule.syscall.len();
         if jump_num <= 255 {
             for syscall in &inst_data.rule.syscall {
-                bpf_prog.append(&mut Rule::to_instruction(
+                bpf_prog.append(&mut Rule::build_instruction(
                     &inst_data.arc,
                     &inst_data.rule,
                     jump_num,
@@ -329,7 +329,7 @@ impl TryFrom<InstructionData> for Vec<Instruction> {
             let mut cnt_ff = 254;
             for syscall in &inst_data.rule.syscall {
                 if cnt_ff == 0 {
-                    bpf_prog.append(&mut Rule::to_instruction(
+                    bpf_prog.append(&mut Rule::build_instruction(
                         &inst_data.arc,
                         &inst_data.rule,
                         1,
@@ -342,7 +342,7 @@ impl TryFrom<InstructionData> for Vec<Instruction> {
                     )]);
                     cnt_ff = jump_num;
                 } else {
-                    bpf_prog.append(&mut Rule::to_instruction(
+                    bpf_prog.append(&mut Rule::build_instruction(
                         &inst_data.arc,
                         &inst_data.rule,
                         cnt_ff,
@@ -504,7 +504,7 @@ impl Rule {
         ret
     }
 
-    fn to_instruction_with_args(
+    fn build_instruction_with_args(
         arch: &Arch,
         rule: &Rule,
         syscall: &String,
@@ -758,7 +758,7 @@ impl Rule {
         Ok(bpf_prog)
     }
 
-    pub fn to_instruction(
+    pub fn build_instruction(
         arch: &Arch,
         rule: &Rule,
         jump_num: usize,
@@ -767,7 +767,7 @@ impl Rule {
     ) -> Result<Vec<Instruction>, SeccompError> {
         let mut bpf_prog = vec![];
         if rule.arg_cnt.is_some() && rule.check_arg_syscall.contains(syscall) {
-            bpf_prog.append(&mut Rule::to_instruction_with_args(arch, rule, syscall)?);
+            bpf_prog.append(&mut Rule::build_instruction_with_args(arch, rule, syscall)?);
         } else if zero_jump {
             bpf_prog.append(&mut vec![Instruction::jump(
                 BPF_JMP | BPF_JEQ | BPF_K,
@@ -804,13 +804,13 @@ mod tests {
     }
 
     #[test]
-    fn test_to_instruction_x86() {
+    fn test_build_instruction_x86() {
         let rule = RuleBuilder::default()
             .action(SECCOMP_RET_ALLOW)
             .syscall(vec!["getcwd".to_string()])
             .build()
             .expect("failed to build rule");
-        let inst = Rule::to_instruction(&Arch::X86, &rule, 1, true, &"getcwd".to_string()).unwrap();
+        let inst = Rule::build_instruction(&Arch::X86, &rule, 1, true, &"getcwd".to_string()).unwrap();
         assert_eq!(
             inst[0],
             Instruction::jump(
@@ -823,14 +823,14 @@ mod tests {
     }
 
     #[test]
-    fn test_to_instruction_aarch64() {
+    fn test_build_instruction_aarch64() {
         let rule = RuleBuilder::default()
             .action(SECCOMP_RET_ALLOW)
             .syscall(vec!["getcwd".to_string()])
             .build()
             .expect("failed to build rule");
         let inst =
-            Rule::to_instruction(&Arch::AArch64, &rule, 1, true, &"getcwd".to_string()).unwrap();
+            Rule::build_instruction(&Arch::AArch64, &rule, 1, true, &"getcwd".to_string()).unwrap();
         assert_eq!(
             inst[0],
             Instruction::jump(
@@ -843,7 +843,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_instruction_with_args_x86_euqal() {
+    fn test_build_instruction_with_args_x86_euqal() {
         let personality = "personality";
         let syscall_vec = vec![personality.to_string()];
         let personality_args: SyscallArgs = SyscallArgs {
@@ -865,7 +865,7 @@ mod tests {
             .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
         let inst =
-            Rule::to_instruction_with_args(&Arch::X86, &rule, &personality.to_string()).unwrap();
+            Rule::build_instruction_with_args(&Arch::X86, &rule, &personality.to_string()).unwrap();
 
         assert_eq!(
             inst[0],
@@ -905,7 +905,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_instruction_with_args_aarch64_equal() {
+    fn test_build_instruction_with_args_aarch64_equal() {
         let personality = "personality";
         let syscall_vec = vec![personality.to_string()];
         let personality_args: SyscallArgs = SyscallArgs {
@@ -926,7 +926,7 @@ mod tests {
             .build()
             .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
-        let inst = Rule::to_instruction_with_args(&Arch::AArch64, &rule, &personality.to_string())
+        let inst = Rule::build_instruction_with_args(&Arch::AArch64, &rule, &personality.to_string())
             .unwrap();
 
         assert_eq!(
@@ -967,7 +967,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_instruction_with_args_x86_not_equal() {
+    fn test_build_instruction_with_args_x86_not_equal() {
         let syscall_vec = vec!["personality".to_string()];
         let args = SyscallArgs {
             arg0: 8,
@@ -988,7 +988,7 @@ mod tests {
             .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
         let inst =
-            Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string()).unwrap();
+            Rule::build_instruction_with_args(&Arch::X86, &rule, &"personality".to_string()).unwrap();
 
         assert_eq!(
             inst[0],
@@ -1018,7 +1018,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_instruction_with_args_aarch64_not_equal() {
+    fn test_build_instruction_with_args_aarch64_not_equal() {
         let syscall_vec = vec!["personality".to_string()];
         let args = SyscallArgs {
             arg0: 8,
@@ -1039,7 +1039,7 @@ mod tests {
             .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
         let inst =
-            Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string())
+            Rule::build_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string())
                 .unwrap();
 
         assert_eq!(
@@ -1070,7 +1070,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_instruction_with_args_x86_less_than() {
+    fn test_build_instruction_with_args_x86_less_than() {
         let syscall_vec = vec!["personality".to_string()];
         let args = SyscallArgs {
             arg0: 8,
@@ -1091,7 +1091,7 @@ mod tests {
             .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
         let inst =
-            Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string()).unwrap();
+            Rule::build_instruction_with_args(&Arch::X86, &rule, &"personality".to_string()).unwrap();
 
         assert_eq!(
             inst[0],
@@ -1125,7 +1125,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_instruction_with_args_aarch64_less_than() {
+    fn test_build_instruction_with_args_aarch64_less_than() {
         let syscall_vec = vec!["personality".to_string()];
         let args = SyscallArgs {
             arg0: 8,
@@ -1146,7 +1146,7 @@ mod tests {
             .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
         let inst =
-            Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string())
+            Rule::build_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string())
                 .unwrap();
 
         assert_eq!(
@@ -1181,7 +1181,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_instruction_with_args_x86_less_or_equal() {
+    fn test_build_instruction_with_args_x86_less_or_equal() {
         let syscall_vec = vec!["personality".to_string()];
         let args = SyscallArgs {
             arg0: 8,
@@ -1202,7 +1202,7 @@ mod tests {
             .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
         let inst =
-            Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string()).unwrap();
+            Rule::build_instruction_with_args(&Arch::X86, &rule, &"personality".to_string()).unwrap();
 
         assert_eq!(
             inst[0],
@@ -1236,7 +1236,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_instruction_with_args_aarch64_less_or_equal() {
+    fn test_build_instruction_with_args_aarch64_less_or_equal() {
         let syscall_vec = vec!["personality".to_string()];
         let args = SyscallArgs {
             arg0: 8,
@@ -1257,7 +1257,7 @@ mod tests {
             .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
         let inst =
-            Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string())
+            Rule::build_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string())
                 .unwrap();
 
         assert_eq!(
@@ -1292,7 +1292,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_instruction_with_args_x86_greater_or_equal() {
+    fn test_build_instruction_with_args_x86_greater_or_equal() {
         let syscall_vec = vec!["personality".to_string()];
         let args = SyscallArgs {
             arg0: 8,
@@ -1313,7 +1313,7 @@ mod tests {
             .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
         let inst =
-            Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string()).unwrap();
+            Rule::build_instruction_with_args(&Arch::X86, &rule, &"personality".to_string()).unwrap();
 
         assert_eq!(
             inst[0],
@@ -1347,7 +1347,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_instruction_with_args_aarch64_greater_or_equal() {
+    fn test_build_instruction_with_args_aarch64_greater_or_equal() {
         let syscall_vec = vec!["personality".to_string()];
         let args = SyscallArgs {
             arg0: 8,
@@ -1368,7 +1368,7 @@ mod tests {
             .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
         let inst =
-            Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string())
+            Rule::build_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string())
                 .unwrap();
 
         assert_eq!(
@@ -1403,7 +1403,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_instruction_with_args_x86_greater_than() {
+    fn test_build_instruction_with_args_x86_greater_than() {
         let syscall_vec = vec!["personality".to_string()];
         let args = SyscallArgs {
             arg0: 8,
@@ -1424,7 +1424,7 @@ mod tests {
             .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
         let inst =
-            Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string()).unwrap();
+            Rule::build_instruction_with_args(&Arch::X86, &rule, &"personality".to_string()).unwrap();
 
         assert_eq!(
             inst[0],
@@ -1458,7 +1458,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_instruction_with_args_aarch64_greater_than() {
+    fn test_build_instruction_with_args_aarch64_greater_than() {
         let syscall_vec = vec!["personality".to_string()];
         let args = SyscallArgs {
             arg0: 8,
@@ -1479,7 +1479,7 @@ mod tests {
             .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
         let inst =
-            Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string())
+            Rule::build_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string())
                 .unwrap();
 
         assert_eq!(
@@ -1514,7 +1514,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_instruction_with_args_x86_masked_equal() {
+    fn test_build_instruction_with_args_x86_masked_equal() {
         let syscall_vec = vec!["personality".to_string()];
         let args = SyscallArgs {
             arg0: 8,
@@ -1535,7 +1535,7 @@ mod tests {
             .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
         let inst =
-            Rule::to_instruction_with_args(&Arch::X86, &rule, &"personality".to_string()).unwrap();
+            Rule::build_instruction_with_args(&Arch::X86, &rule, &"personality".to_string()).unwrap();
 
         assert_eq!(
             inst[0],
@@ -1570,7 +1570,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_instruction_with_args_aarch64_masked_equal() {
+    fn test_build_instruction_with_args_aarch64_masked_equal() {
         let syscall_vec = vec!["personality".to_string()];
         let args = SyscallArgs {
             arg0: 8,
@@ -1591,7 +1591,7 @@ mod tests {
             .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
         let inst =
-            Rule::to_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string())
+            Rule::build_instruction_with_args(&Arch::AArch64, &rule, &"personality".to_string())
                 .unwrap();
 
         assert_eq!(
