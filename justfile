@@ -26,6 +26,10 @@ runtimetest:
 contest:
     {{ cwd }}/scripts/build.sh -o {{ cwd }} -r -c contest
 
+# install youki to /usr/local/sbin
+install:
+    install -D -m 0755 {{ cwd }}/youki "${PREFIX-/usr/local/sbin}/youki"
+
 # Tests
 
 # run integration tests
