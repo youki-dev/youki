@@ -9,7 +9,7 @@ fn parse_interval(s: &str) -> Result<Duration, String> {
     }
 
     let (num, unit) = s
-        .trim_end_matches(|c: char| c.is_ascii_alphabetic() == false)
+        .trim_end_matches(|c: char| !c.is_ascii_alphabetic())
         .chars()
         .partition::<String, _>(|c| c.is_ascii_digit());
 
