@@ -250,26 +250,18 @@ fn move_network_devices_to_container(
 ) -> Result<()> {
     if let Some(namespaces) = linux.namespaces() {
         // network devices are not moved for containers running in the host network.
-        if !namespaces
+        let net_ns = match namespaces
             .iter()
-            .any(|ns| ns.typ() == LinuxNamespaceType::Network)
+            .find(|ns| ns.typ() == LinuxNamespaceType::Network)
         {
-            return Ok(());
-        }
+            Some(ns) => ns,
+            None => return Ok(()),
+        };
 
         // the container init process has already joined the provided net namespace,
         // so we can use the process's net ns path directly.
         let default_ns_path = PathBuf::from(format!("/proc/{}/ns/net", init_pid.as_raw()));
-        let ns_path = namespaces
-            .iter()
-            .find_map(|ns| {
-                if ns.typ() == LinuxNamespaceType::Network {
-                    ns.path().as_deref()
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| &default_ns_path);
+        let ns_path = net_ns.path().as_deref().unwrap_or(&default_ns_path);
 
         // If moving any of the network devices fails, we return an error immediately.
         // The runtime spec requires that the kernel handles moving back any devices
@@ -281,7 +273,7 @@ fn move_network_devices_to_container(
                 .iter()
                 .map(|(name, net_dev)| {
                     let addrs =
-                        dev_change_net_namespace(name, &ns_path, net_dev).map_err(|err| {
+                        dev_change_net_namespace(name, ns_path, net_dev).map_err(|err| {
                             tracing::error!("failed to dev_change_net_namespace: {}", err);
                             err
                         })?;
