@@ -38,7 +38,7 @@ pub fn dev_change_net_namespace(
         .filter(|d| !d.is_empty())
         .map_or(name, |d| d);
 
-    let link = link_client.get_by_name(&name)?;
+    let link = link_client.get_by_name(name)?;
 
     let index = link.header.index;
 
@@ -51,7 +51,7 @@ pub fn dev_change_net_namespace(
     let addrs = addr_client.get_by_index(index)?;
 
     link_client
-        .set_ns_fd(index, &new_name, netns_file.as_raw_fd())
+        .set_ns_fd(index, new_name, netns_file.as_raw_fd())
         .map_err(|err| {
             tracing::error!(?err, "failed to set_ns_fd");
             err
@@ -61,32 +61,6 @@ pub fn dev_change_net_namespace(
         addrs.iter().map(SerializableAddress::from).collect();
 
     Ok(serialize_addrs)
-}
-
-/// setup_network_device sets up a network device in a new namespace.
-/// It moves the device to the new namespace and adds the IP addresses to the device.
-/// It also sets the device up.
-pub fn setup_network_device(
-    name: &str,
-    net_dev: &LinuxNetDevice,
-    serialize_addrs: Vec<SerializableAddress>,
-) -> Result<()> {
-    let mut link_client = LinkClient::new(create_network_client())?;
-    let mut addr_client = AddressClient::new(create_network_client())?;
-
-    let new_name = net_dev
-        .name()
-        .as_ref()
-        .filter(|d| !d.is_empty())
-        .map_or(name, |d| d);
-
-    let ns_link = link_client.get_by_name(&new_name)?;
-    let ns_index = ns_link.header.index;
-
-    setup_addresses_in_namespace(serialize_addrs, &new_name, ns_index, &mut addr_client)?;
-
-    link_client.set_up(ns_index)?;
-    Ok(())
 }
 
 /// Core logic for setting up addresses in the new namespace

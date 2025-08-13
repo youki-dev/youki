@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::Pid;
-use oci_spec::runtime::{Linux, LinuxNamespace, LinuxNamespaceType};
+use oci_spec::runtime::{Linux, LinuxNamespaceType};
 
 use crate::network::network_device::dev_change_net_namespace;
 use crate::network::serialize::SerializableAddress;
@@ -126,7 +126,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     let mut need_to_clean_up_intel_rdt_subdirectory = false;
 
     if let Some(linux) = container_args.spec.linux() {
-        setup_network_device(linux, init_pid, &mut main_receiver, &mut init_sender)?;
+        move_network_devices_to_container(linux, init_pid, &mut main_receiver, &mut init_sender)?;
     }
 
     if let Some(linux) = container_args.spec.linux() {
@@ -238,15 +238,18 @@ fn setup_mapping(config: &UserNamespaceConfig, pid: Pid) -> Result<()> {
     Ok(())
 }
 
-/// setup_network_device sets up and initializes any defined network interface inside the container.
-fn setup_network_device(
+/// Moves configured network devices from the host to the container's network namespace.
+/// This function waits for the init process to join its namespace, then transfers each
+/// configured device while preserving network addresses. Returns early if the container
+/// runs in the host network namespace.
+fn move_network_devices_to_container(
     linux: &Linux,
     init_pid: Pid,
     main_receiver: &mut channel::MainReceiver,
     init_sender: &mut channel::InitSender,
 ) -> Result<()> {
-    // host network pods does not move network devices.
     if let Some(namespaces) = linux.namespaces() {
+        // network devices are not moved for containers running in the host network.
         if !namespaces
             .iter()
             .any(|ns| ns.typ() == LinuxNamespaceType::Network)
@@ -254,9 +257,9 @@ fn setup_network_device(
             return Ok(());
         }
 
-        // get the namespace defined by the config and fall back
-        // to the one created by youki to run the container process.
-        let fallback_ns_path = PathBuf::from(format!("/proc/{}/ns/net", init_pid.as_raw()));
+        // the container init process has already joined the provided net namespace,
+        // so we can use the process's net ns path directly.
+        let default_ns_path = PathBuf::from(format!("/proc/{}/ns/net", init_pid.as_raw()));
         let ns_path = namespaces
             .iter()
             .find_map(|ns| {
@@ -266,7 +269,7 @@ fn setup_network_device(
                     None
                 }
             })
-            .unwrap_or_else(|| &fallback_ns_path);
+            .unwrap_or_else(|| &default_ns_path);
 
         // If moving any of the network devices fails, we return an error immediately.
         // The runtime spec requires that the kernel handles moving back any devices
@@ -278,7 +281,7 @@ fn setup_network_device(
                 .iter()
                 .map(|(name, net_dev)| {
                     let addrs =
-                        dev_change_net_namespace(name, ns_path, net_dev).map_err(|err| {
+                        dev_change_net_namespace(name, &ns_path, net_dev).map_err(|err| {
                             tracing::error!("failed to dev_change_net_namespace: {}", err);
                             err
                         })?;

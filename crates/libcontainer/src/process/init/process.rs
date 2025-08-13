@@ -18,7 +18,10 @@ use super::error::InitProcessError;
 use super::Result;
 use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
-use crate::network::network_device::setup_network_device;
+use crate::network::address::AddressClient;
+use crate::network::link::LinkClient;
+use crate::network::network_device::setup_addresses_in_namespace;
+use crate::network::wrapper::create_network_client;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::channel;
 use crate::rootfs::RootFS;
@@ -281,10 +284,12 @@ pub fn container_init_process(
     // This is done here before dropping capabilities because we need to be able to add IP addresses to the device
     // and set up the device.
     if let Some(network_devices) = ctx.linux.net_devices() {
-        setup_net_devices(network_devices, main_sender, init_receiver).map_err(|err| {
-            tracing::error!(?err, "failed to setup net_device");
-            err
-        })?;
+        configure_container_network_devices(network_devices, main_sender, init_receiver).map_err(
+            |err| {
+                tracing::error!(?err, "failed to setup net_device");
+                err
+            },
+        )?;
     }
 
     // Without no new privileges, seccomp is a privileged operation. We have to
@@ -872,7 +877,7 @@ fn sync_seccomp(
     Ok(())
 }
 
-fn setup_net_devices(
+fn configure_container_network_devices(
     net_device: &HashMap<String, LinuxNetDevice>,
     main_sender: &mut channel::MainSender,
     init_receiver: &mut channel::InitReceiver,
@@ -882,8 +887,45 @@ fn setup_net_devices(
     let addrs_map = init_receiver.wait_for_move_network_device()?;
     for (name, net_dev) in net_device {
         if let Some(serialize_addrs) = addrs_map.get(name) {
-            setup_network_device(name, net_dev, serialize_addrs.clone()).map_err(|err| {
-                tracing::error!(?err, "failed to setup_network_device");
+            // Get the device's final name (use configured name if provided, otherwise use original name)
+            let new_name = net_dev
+                .name()
+                .as_ref()
+                .filter(|d| !d.is_empty())
+                .map_or(name.as_str(), |d| d);
+
+            // Create network clients
+            let mut link_client = LinkClient::new(create_network_client()).map_err(|err| {
+                tracing::error!(?err, "failed to create link client");
+                err
+            })?;
+            let mut addr_client = AddressClient::new(create_network_client()).map_err(|err| {
+                tracing::error!(?err, "failed to create address client");
+                err
+            })?;
+
+            // Get the device index
+            let ns_link = link_client.get_by_name(new_name).map_err(|err| {
+                tracing::error!(?err, "failed to get device by name: {}", new_name);
+                err
+            })?;
+            let ns_index = ns_link.header.index;
+
+            // Assign IP addresses to the device
+            setup_addresses_in_namespace(
+                serialize_addrs.clone(),
+                new_name,
+                ns_index,
+                &mut addr_client,
+            )
+            .map_err(|err| {
+                tracing::error!(?err, "failed to setup addresses for device: {}", new_name);
+                err
+            })?;
+
+            // Bring the device up
+            link_client.set_up(ns_index).map_err(|err| {
+                tracing::error!(?err, "failed to bring up device: {}", new_name);
                 err
             })?;
         }
