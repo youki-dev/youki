@@ -343,13 +343,14 @@ pub fn validate_spec_for_net_devices(
         return Ok(());
     }
 
-    if linux
-        .namespaces()
-        .as_ref()
-        .unwrap()
-        .iter()
-        .all(|ns| ns.typ() != LinuxNamespaceType::Network)
-    {
+    let has_net_namespace = match linux.namespaces() {
+        Some(namespaces) => namespaces
+            .iter()
+            .any(|ns| ns.typ() == LinuxNamespaceType::Network),
+        None => false,
+    };
+    
+    if !has_net_namespace {
         return Err(NetDevicesError::NoNetNamespace);
     }
 
@@ -361,11 +362,11 @@ pub fn validate_spec_for_net_devices(
     if let Some(devices) = linux.net_devices() {
         for (name, net_dev) in devices {
             if !dev_valid_name(name) {
-                return Err(NetDevicesError::InvalidDeviceName(name.to_string()));
+                return Err(NetDevicesError::InvalidDeviceName(name.into()));
             }
             if let Some(dev_name) = net_dev.name() {
                 if !dev_valid_name(dev_name) {
-                    return Err(NetDevicesError::InvalidDeviceName(dev_name.to_string()));
+                    return Err(NetDevicesError::InvalidDeviceName(dev_name.into()));
                 }
             }
         }
@@ -440,8 +441,8 @@ mod tests {
 
     #[test]
     fn test_parse_env() -> Result<()> {
-        let key = "key".to_string();
-        let value = "value".to_string();
+        let key = "key".into();
+        let value = "value".into();
         let env_input = vec![format!("{key}={value}")];
         let env_output = parse_env(&env_input);
         assert_eq!(
@@ -579,9 +580,9 @@ mod tests {
             .into_iter()
             .map(|(key, val)| {
                 (
-                    key.to_string(),
+                    key.into(),
                     LinuxNetDevice::default()
-                        .set_name(Some(val.to_string()))
+                        .set_name(Some(val.into()))
                         .clone(),
                 )
             })

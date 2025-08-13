@@ -882,7 +882,7 @@ fn setup_net_devices(
     let addrs_map = init_receiver.wait_for_move_network_device()?;
     for (name, net_dev) in net_device {
         if let Some(serialize_addrs) = addrs_map.get(name) {
-            setup_network_device(name.clone(), net_dev, serialize_addrs.clone()).map_err(
+            setup_network_device(name, net_dev, serialize_addrs.clone()).map_err(
                 |err| {
                     tracing::error!(?err, "failed to setup_network_device");
                     err

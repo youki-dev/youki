@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::os::fd::AsRawFd;
+use std::path::Path;
 
 use netlink_packet_route::address::{AddressAttribute, AddressFlags, AddressMessage, AddressScope};
 use oci_spec::runtime::LinuxNetDevice;
@@ -16,14 +17,14 @@ use crate::network::serialize::SerializableAddress;
 /// This function ensures that the move and rename operations occur atomically.
 /// It preserves existing interface attributes, including IP addresses.
 pub fn dev_change_net_namespace(
-    name: String,
-    netns_path: String,
+    name: &str,
+    netns_path: &Path,
     device: &LinuxNetDevice,
 ) -> Result<Vec<SerializableAddress>> {
     tracing::debug!(
         "attaching network device {} to network namespace {}",
         name,
-        netns_path
+        netns_path.display()
     );
 
     let mut link_client = LinkClient::new(create_network_client())?;
@@ -35,7 +36,7 @@ pub fn dev_change_net_namespace(
         .name()
         .as_ref()
         .filter(|d| !d.is_empty())
-        .map_or(name.clone(), |d| d.to_string());
+        .map_or(name, |d| d);
 
     let link = link_client.get_by_name(&name)?;
 
@@ -66,7 +67,7 @@ pub fn dev_change_net_namespace(
 /// It moves the device to the new namespace and adds the IP addresses to the device.
 /// It also sets the device up.
 pub fn setup_network_device(
-    name: String,
+    name: &str,
     net_dev: &LinuxNetDevice,
     serialize_addrs: Vec<SerializableAddress>,
 ) -> Result<()> {
@@ -77,7 +78,7 @@ pub fn setup_network_device(
         .name()
         .as_ref()
         .filter(|d| !d.is_empty())
-        .map_or(name.clone(), |d| d.to_string());
+        .map_or(name, |d| d);
 
     let ns_link = link_client.get_by_name(&new_name)?;
     let ns_index = ns_link.header.index;

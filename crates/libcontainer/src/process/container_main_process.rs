@@ -276,8 +276,8 @@ fn setup_network_device(
             main_receiver.wait_for_network_setup_ready()?;
             for (name, net_dev) in devices {
                 let addrs = dev_change_net_namespace(
-                    name.to_string(),
-                    ns_path.to_string_lossy().to_string(),
+                    name,
+                    ns_path,
                     net_dev,
                 )
                 .map_err(|err| {
