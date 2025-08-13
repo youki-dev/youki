@@ -349,7 +349,7 @@ pub fn validate_spec_for_net_devices(
             .any(|ns| ns.typ() == LinuxNamespaceType::Network),
         None => false,
     };
-    
+
     if !has_net_namespace {
         return Err(NetDevicesError::NoNetNamespace);
     }
@@ -360,7 +360,7 @@ pub fn validate_spec_for_net_devices(
     }
 
     if let Some(devices) = linux.net_devices() {
-        for (name, net_dev) in devices {
+        devices.iter().try_for_each(|(name, net_dev)| {
             if !dev_valid_name(name) {
                 return Err(NetDevicesError::InvalidDeviceName(name.into()));
             }
@@ -369,7 +369,8 @@ pub fn validate_spec_for_net_devices(
                     return Err(NetDevicesError::InvalidDeviceName(dev_name.into()));
                 }
             }
-        }
+            Ok(())
+        })?;
     }
 
     Ok(())
@@ -581,9 +582,7 @@ mod tests {
             .map(|(key, val)| {
                 (
                     key.into(),
-                    LinuxNetDevice::default()
-                        .set_name(Some(val.into()))
-                        .clone(),
+                    LinuxNetDevice::default().set_name(Some(val.into())).clone(),
                 )
             })
             .collect();

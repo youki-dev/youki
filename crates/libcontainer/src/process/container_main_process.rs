@@ -3,9 +3,10 @@ use std::path::PathBuf;
 
 use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::Pid;
-use oci_spec::runtime::{Linux, LinuxNamespaceType};
+use oci_spec::runtime::{Linux, LinuxNamespace, LinuxNamespaceType};
 
 use crate::network::network_device::dev_change_net_namespace;
+use crate::network::serialize::SerializableAddress;
 use crate::process::args::ContainerArgs;
 use crate::process::fork::{self, CloneCb};
 use crate::process::intel_rdt::setup_intel_rdt;
@@ -244,7 +245,6 @@ fn setup_network_device(
     main_receiver: &mut channel::MainReceiver,
     init_sender: &mut channel::InitSender,
 ) -> Result<()> {
-    let mut addrs_map = HashMap::new();
     // host network pods does not move network devices.
     if let Some(namespaces) = linux.namespaces() {
         if !namespaces
@@ -274,18 +274,17 @@ fn setup_network_device(
         // See: https://github.com/opencontainers/runtime-spec/blob/27cb0027fd92ef81eda1ea3a8153b8337f56d94a/config-linux.md#namespace-lifecycle-and-container-termination
         if let Some(devices) = linux.net_devices() {
             main_receiver.wait_for_network_setup_ready()?;
-            for (name, net_dev) in devices {
-                let addrs = dev_change_net_namespace(
-                    name,
-                    ns_path,
-                    net_dev,
-                )
-                .map_err(|err| {
-                    tracing::error!("failed to dev_change_net_namespace: {}", err);
-                    err
-                })?;
-                addrs_map.insert(name.clone(), addrs);
-            }
+            let addrs_map = devices
+                .iter()
+                .map(|(name, net_dev)| {
+                    let addrs =
+                        dev_change_net_namespace(name, ns_path, net_dev).map_err(|err| {
+                            tracing::error!("failed to dev_change_net_namespace: {}", err);
+                            err
+                        })?;
+                    Ok((name.clone(), addrs))
+                })
+                .collect::<Result<HashMap<String, Vec<SerializableAddress>>>>()?;
             init_sender.move_network_device(addrs_map)?;
         }
     }
