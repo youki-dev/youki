@@ -1,10 +1,10 @@
-use anyhow::{anyhow, Context, Ok, Result};
+use anyhow::{Context, Ok, Result};
 use oci_spec::runtime::{ProcessBuilder, Spec, SpecBuilder, UserBuilder};
 use rand::Rng;
-use test_framework::{test_result, Test, TestGroup, TestResult};
+use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
 
-use crate::utils::test_inside_container;
 use crate::utils::test_utils::CreateOptions;
+use crate::utils::{is_runtime_runc, test_inside_container};
 
 // Generates a Vec<u32> with a random number of elements (between 5 and 15),
 // where each element is a random u32 value between 0 and 65535.
@@ -54,23 +54,22 @@ fn process_user_test_duplicate_gids() -> TestResult {
     let duplicate = gids[0];
     gids.push(duplicate);
     let spec = test_result!(create_spec(gids));
-    match test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(())) {
-        TestResult::Passed => TestResult::Failed(anyhow!(
-            "expected test with duplicate gids to fail, but it passed instead"
-        )),
-        _ => TestResult::Passed,
-    }
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 pub fn get_process_user_test() -> TestGroup {
     let mut process_user_test_group = TestGroup::new("process_user");
 
-    let test1 = Test::new(
+    let test1 = ConditionalTest::new(
         "process_user_unique_gids_test",
+        Box::new(|| true),
         Box::new(process_user_test_unique_gids),
     );
-    let test2 = Test::new(
+    // In runc 1.1, duplicates are removed, but in 1.3, duplicates are handled as-is.
+    // The current CI for Youki uses runc 1.1, so this will be skipped.
+    let test2 = ConditionalTest::new(
         "process_user_duplicate_gids_test",
+        Box::new(|| !is_runtime_runc()),
         Box::new(process_user_test_duplicate_gids),
     );
     process_user_test_group.add(vec![Box::new(test1), Box::new(test2)]);

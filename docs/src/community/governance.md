@@ -22,7 +22,9 @@ Maintainers consist of the following roles:
 
 ## Addition and promotion of Maintainers
 
-A contributor who have made significant contributions in quality and in quantity can be directly invited as a Committer.
+A contributor who has successfully merged 10 or more pull requests to the project has the qualification to become a Reviewer.
+At least 5 of these pull requests must be code-related.
+Contributors who meet this qualification can self-nominate by creating a GitHub issue.
 A proposal to add or promote a Maintainer must be approved by 2/3 of the Committers who vote within 7 days.
 Voting needs a minimum of 2 approvals. The proposer can vote too. Votes from the same company will be counted as one vote.
 A proposal should be made via a GitHub pull request to the file containing the list of Maintainer defined above.

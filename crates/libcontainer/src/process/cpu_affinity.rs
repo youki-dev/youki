@@ -1,5 +1,6 @@
 use nix::sched::{sched_getaffinity, sched_setaffinity, CpuSet};
 use nix::unistd::Pid;
+use tracing::{enabled, Level};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CPUAffinityError {
@@ -76,11 +77,17 @@ pub fn set_cpuset_affinity_from_string(pid: Pid, cpuset_str: &str) -> Result<()>
     sched_setaffinity(pid, &to_cpuset(cpuset_str)?).map_err(CPUAffinityError::SetAffinity)
 }
 
+// Logs a compact CPU affinity bitmask similar to runc's nsexec.c (see: https://github.com/opencontainers/runc/blob/main/libcontainer/nsenter/nsexec.c#L676).
+// This helps in debugging which CPUs the current process is allowed to run on.
+// Only logs when DEBUG level is enabled.
 pub fn log_cpu_affinity() -> Result<()> {
+    if !enabled!(Level::DEBUG) {
+        return Ok(());
+    }
     let cpuset = sched_getaffinity(Pid::this()).map_err(CPUAffinityError::GetAffinity)?;
     let mask = (0..usize::BITS as usize)
         .filter(|&i| cpuset.is_set(i).unwrap_or(false))
-        .fold(0, |mask, i| mask | (1 << i));
+        .fold(0usize, |mask, i| mask | (1usize << i));
     tracing::debug!("affinity: 0x{:x}", mask);
     Ok(())
 }

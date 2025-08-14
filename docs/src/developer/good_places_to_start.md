@@ -2,7 +2,7 @@
 
 First of all, welcome to youki! Hope you have fun while developing and contributing :)
 
-This lists some of the known places that are long-running and would be useful for beginners. But as the things under development can change any time, the best place to check are the issues on the [GitHub repo](https://github.com/containers/youki/issues). You can find issues with labels `good fist issue` or `help wanted` and start working on them.
+This lists some of the known places that are long-running and would be useful for beginners. But as the things under development can change any time, the best place to check are the issues on the [GitHub repo](https://github.com/containers/youki/issues). You can find issues with labels `good first issue` or `help wanted` and start working on them.
 
 You can also search for `TODO` or `FIXME` comments in the source, and try working on them, but not all of them are easy places to start, and some of them can be particularly tricky to fix.
 
