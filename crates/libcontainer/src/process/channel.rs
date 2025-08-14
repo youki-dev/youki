@@ -1,8 +1,10 @@
+use std::collections::HashMap;
 use std::os::unix::prelude::{AsRawFd, RawFd};
 
 use nix::unistd::Pid;
 
 use crate::channel::{channel, Receiver, Sender};
+use crate::network::serialize::SerializableAddress;
 use crate::process::message::Message;
 
 #[derive(Debug, thiserror::Error)]
@@ -61,6 +63,13 @@ impl MainSender {
     pub fn seccomp_notify_request(&mut self, fd: RawFd) -> Result<(), ChannelError> {
         self.sender
             .send_fds(Message::SeccompNotify, &[fd.as_raw_fd()])?;
+
+        Ok(())
+    }
+
+    pub fn network_setup_ready(&mut self) -> Result<(), ChannelError> {
+        tracing::debug!("notify network setup ready");
+        self.sender.send(Message::SetupNetworkDeviceReady)?;
 
         Ok(())
     }
@@ -164,6 +173,23 @@ impl MainReceiver {
             }
             msg => Err(ChannelError::UnexpectedMessage {
                 expected: Message::SeccompNotify,
+                received: msg,
+            }),
+        }
+    }
+
+    pub fn wait_for_network_setup_ready(&mut self) -> Result<(), ChannelError> {
+        let msg = self
+            .receiver
+            .recv()
+            .map_err(|err| ChannelError::ReceiveError {
+                msg: "waiting for init ready".to_string(),
+                source: err,
+            })?;
+        match msg {
+            Message::SetupNetworkDeviceReady => Ok(()),
+            msg => Err(ChannelError::UnexpectedMessage {
+                expected: Message::SetupNetworkDeviceReady,
                 received: msg,
             }),
         }
@@ -273,6 +299,15 @@ impl InitSender {
         Ok(())
     }
 
+    pub fn move_network_device(
+        &mut self,
+        addrs: HashMap<String, Vec<SerializableAddress>>,
+    ) -> Result<(), ChannelError> {
+        self.sender.send(Message::MoveNetworkDevice(addrs))?;
+
+        Ok(())
+    }
+
     pub fn close(&self) -> Result<(), ChannelError> {
         self.sender.close()?;
 
@@ -298,6 +333,25 @@ impl InitReceiver {
             Message::SeccompNotifyDone => Ok(()),
             msg => Err(ChannelError::UnexpectedMessage {
                 expected: Message::SeccompNotifyDone,
+                received: msg,
+            }),
+        }
+    }
+
+    pub fn wait_for_move_network_device(
+        &mut self,
+    ) -> Result<HashMap<String, Vec<SerializableAddress>>, ChannelError> {
+        let msg = self
+            .receiver
+            .recv()
+            .map_err(|err| ChannelError::ReceiveError {
+                msg: "waiting for mapping request".to_string(),
+                source: err,
+            })?;
+        match msg {
+            Message::MoveNetworkDevice(addr) => Ok(addr),
+            msg => Err(ChannelError::UnexpectedMessage {
+                expected: Message::WriteMapping,
                 received: msg,
             }),
         }
@@ -453,6 +507,80 @@ mod tests {
             }
             unistd::ForkResult::Child => {
                 receiver.close()?;
+                std::process::exit(0);
+            }
+        };
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_move_network_device_message() -> Result<()> {
+        use crate::network::serialize::SerializableAddress;
+
+        let device_name = "dummy".to_string();
+        let ip = "10.0.0.1".parse().unwrap();
+        let addr = SerializableAddress {
+            index: 1,
+            prefix_len: 24,
+            family: 2,
+            scope: 0,
+            address: Some(ip),
+            flags: Some(0x10),
+        };
+        let mut addrs = HashMap::new();
+        addrs.insert(device_name.clone(), vec![addr.clone()]);
+
+        let (sender, receiver) = &mut init_channel()?;
+
+        match unsafe { unistd::fork()? } {
+            unistd::ForkResult::Parent { child } => {
+                sender.move_network_device(addrs)?;
+                sender.close().context("failed to close sender")?;
+                let status = wait::waitpid(child, None)?;
+                if let nix::sys::wait::WaitStatus::Exited(_, code) = status {
+                    assert_eq!(code, 0, "Child process failed assertions");
+                } else {
+                    panic!("Child did not exit normally: {:?}", status);
+                }
+            }
+            unistd::ForkResult::Child => {
+                let received_addrs = receiver.wait_for_move_network_device()?;
+                receiver.close()?;
+                if let Some(received_addr) = received_addrs.get(&device_name) {
+                    if !(received_addr[0].index == addr.index
+                        && received_addr[0].address == addr.address)
+                    {
+                        eprintln!("assertion failed in child");
+                        std::process::exit(1);
+                    }
+                } else {
+                    eprintln!("assertion failed in child");
+                    std::process::exit(1);
+                }
+                std::process::exit(0);
+            }
+        };
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_network_setup_ready() -> Result<()> {
+        let (sender, receiver) = &mut main_channel()?;
+        match unsafe { unistd::fork()? } {
+            unistd::ForkResult::Parent { child } => {
+                wait::waitpid(child, None)?;
+                receiver.wait_for_network_setup_ready()?;
+                receiver.close()?;
+            }
+            unistd::ForkResult::Child => {
+                sender
+                    .network_setup_ready()
+                    .with_context(|| "Failed to send network setup ready")?;
+                sender.close()?;
                 std::process::exit(0);
             }
         };
