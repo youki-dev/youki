@@ -3,7 +3,7 @@ use oci_spec::runtime::{
     LinuxBuilder, LinuxPersonalityBuilder, LinuxPersonalityDomain, ProcessBuilder, Spec,
     SpecBuilder,
 };
-use test_framework::{test_result, Test, TestGroup, TestResult};
+use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
 
 use crate::utils::is_runtime_runc;
 use crate::utils::test_utils::{
@@ -39,15 +39,6 @@ fn create_spec(domain: LinuxPersonalityDomain) -> Result<Spec> {
 }
 
 fn personality_for_linux(domain: LinuxPersonalityDomain, expect: &str) -> TestResult {
-    if is_runtime_runc() {
-        // FIXME:
-        // Linux personality was introduced in runc v1.2.0.
-        // The runc version currently used in our CI is v1.1.11.
-        // As a result, the runc integration test (verification of integration) is failing.
-        // Please use the is_runtime_runc function to skip the test when the runtime is runc.
-        return TestResult::Passed;
-    }
-
     let spec = test_result!(create_spec(domain));
 
     test_outside_container(&spec, &|data| {
@@ -79,14 +70,24 @@ fn personality_for_linux64() -> TestResult {
     personality_for_linux(LinuxPersonalityDomain::PerLinux, "x86_64")
 }
 
+// FIXME:
+// Linux personality was introduced in runc v1.2.0.
+// The runc version currently used in our CI is v1.1.11.
+// As a result, the runc integration test (verification of integration) is failing.
 pub fn get_personality_test() -> TestGroup {
     let mut test_group = TestGroup::new("personality");
-    let personality_for_linux32 =
-        Test::new("personality_for_linux32", Box::new(personality_for_linux32));
+    let personality_for_linux32 = ConditionalTest::new(
+        "personality_for_linux32",
+        Box::new(|| !is_runtime_runc()),
+        Box::new(personality_for_linux32),
+    );
     test_group.add(vec![Box::new(personality_for_linux32)]);
 
-    let personality_for_linux64 =
-        Test::new("personality_for_linux64", Box::new(personality_for_linux64));
+    let personality_for_linux64 = ConditionalTest::new(
+        "personality_for_linux64",
+        Box::new(|| !is_runtime_runc()),
+        Box::new(personality_for_linux64),
+    );
     test_group.add(vec![Box::new(personality_for_linux64)]);
 
     test_group
