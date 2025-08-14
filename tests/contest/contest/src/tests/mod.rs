@@ -22,6 +22,7 @@ pub mod process_oom_score_adj;
 pub mod process_rlimits;
 pub mod process_rlimits_fail;
 pub mod process_user;
+pub mod prohibit_symlink;
 pub mod readonly_paths;
 pub mod root_readonly_true;
 pub mod rootfs_propagation;
