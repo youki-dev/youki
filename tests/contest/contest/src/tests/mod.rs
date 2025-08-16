@@ -15,6 +15,7 @@ pub mod linux_masked_paths;
 pub mod linux_ns_itype;
 pub mod mounts_recursive;
 pub mod no_pivot;
+pub mod personality;
 pub mod pidfile;
 pub mod process;
 pub mod process_capabilities_fail;
