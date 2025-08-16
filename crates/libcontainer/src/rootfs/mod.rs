@@ -9,6 +9,8 @@ pub mod device;
 pub use device::Device;
 
 pub(super) mod mount;
+pub use mount::Mount;
+
 pub(super) mod symlink;
 
 pub mod utils;

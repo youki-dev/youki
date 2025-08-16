@@ -1,5 +1,21 @@
 # Changelog
 
+## [v0.5.5](https://github.com/youki-dev/youki/compare/v0.5.4...v0.5.5) - 2025-08-14
+### 💪 Improvements
+- fix(3198): fix difference in how commands are passed after exec and ps by @tommady in https://github.com/youki-dev/youki/pull/3201
+### 📖 Documentation improvements
+- Add license scan report and status by @fossabot in https://github.com/youki-dev/youki/pull/3204
+### 🧪 Test improvements and Misc Fixes
+- Revert "[DNM] ci: temp disable workflows" by @YJDoc2 in https://github.com/youki-dev/youki/pull/3194
+- Fixed Minor Spelling Errors by @CheatCodeSam in https://github.com/youki-dev/youki/pull/3205
+- chore(justfile):add install recipe by @saku3 in https://github.com/youki-dev/youki/pull/3213
+### Other Changes
+- (auto merged) chore(deps): bump the patch group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3203
+- (auto merged) chore(deps): bump serde_json from 1.0.141 to 1.0.142 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3212
+- (auto merged) chore(deps): bump the patch group with 3 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3217
+- (auto merged) chore(deps): bump oci-spec from 0.8.1 to 0.8.2 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3219
+- chore(deps): bump libbpf-sys from 1.5.2+v1.5.1 to 1.6.1+v1.6.1 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3218
+
 ## [v0.5.4](https://github.com/youki-dev/youki/compare/v0.5.3...v0.5.4) - 2025-07-17
 ### 💪 Improvements
 - add support exec-cpu-affinity by @saku3 in https://github.com/youki-dev/youki/pull/3164
