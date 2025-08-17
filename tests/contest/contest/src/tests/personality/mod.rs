@@ -74,6 +74,7 @@ fn personality_for_linux64() -> TestResult {
 // Linux personality was introduced in runc v1.2.0.
 // The runc version currently used in our CI is v1.1.11.
 // As a result, the runc integration test (verification of integration) is failing.
+// Remove the is_runtime_runc condition when the CI version of runc is updated.
 pub fn get_personality_test() -> TestGroup {
     let mut test_group = TestGroup::new("personality");
     let personality_for_linux32 = ConditionalTest::new(
