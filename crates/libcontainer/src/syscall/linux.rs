@@ -746,8 +746,8 @@ impl Syscall for LinuxSyscall {
 
     fn personality(&self, domain: libc::c_ulong) -> Result<()> {
         match unsafe { libc::personality(domain) } {
-            0 => Ok(()),
-            _ => Err(SyscallError::IO(std::io::Error::last_os_error())),
+            ret if ret < 0 => Err(SyscallError::IO(std::io::Error::last_os_error())),
+            _ => Ok(()),
         }
     }
 }
