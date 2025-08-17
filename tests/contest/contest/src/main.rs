@@ -33,6 +33,7 @@ use crate::tests::process_oom_score_adj::get_process_oom_score_adj_test;
 use crate::tests::process_rlimits::get_process_rlimits_test;
 use crate::tests::process_rlimits_fail::get_process_rlimits_fail_test;
 use crate::tests::process_user::get_process_user_test;
+use crate::tests::prohibit_symlink::get_prohibit_symlink_test;
 use crate::tests::readonly_paths::get_ro_paths_test;
 use crate::tests::root_readonly_true::get_root_readonly_test;
 use crate::tests::rootfs_propagation::get_rootfs_propagation_test;
@@ -146,6 +147,7 @@ fn main() -> Result<()> {
     let uid_mappings = get_uid_mappings_test();
     let exec_cpu_affinity = get_exec_cpu_affinity_test();
     let personality = get_personality_test();
+    let prohibit_symlink = get_prohibit_symlink_test();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -186,6 +188,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(uid_mappings));
     tm.add_test_group(Box::new(exec_cpu_affinity));
     tm.add_test_group(Box::new(personality));
+    tm.add_test_group(Box::new(prohibit_symlink));
     tm.add_test_group(Box::new(io_priority_test));
     tm.add_cleanup(Box::new(cgroups::cleanup_v1));
     tm.add_cleanup(Box::new(cgroups::cleanup_v2));
