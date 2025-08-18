@@ -11,7 +11,9 @@ edition = "2021"
 build = "build.rs"
 keywords = ["youki", "container"]
 
+# Don't forget to update info command.
 [features]
+default = ["systemd", "v2", "v1", "seccomp"]
 systemd = ["libcgroups/systemd", "libcontainer/systemd", "v2"]
 v2 = ["libcgroups/v2", "libcontainer/v2"]
 v1 = ["libcgroups/v1", "libcontainer/v1"]

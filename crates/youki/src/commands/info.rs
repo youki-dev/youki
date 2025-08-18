@@ -27,9 +27,29 @@ pub fn info(_: Info) -> Result<()> {
 }
 
 /// print Version of Youki
+#[allow(clippy::vec_init_then_push)]
 pub fn print_youki() {
-    println!("{:<18}{}", "Version", env!("CARGO_PKG_VERSION"));
-    println!("{:<18}{}", "Commit", env!("VERGEN_GIT_SHA"));
+    println!("{:<16}", "Build");
+    println!("  {:<16}{}", "Version", env!("CARGO_PKG_VERSION"));
+    println!("  {:<16}{}", "Commit", env!("VERGEN_GIT_SHA"));
+    let mut enabled_features: Vec<&str> = Vec::new();
+    #[cfg(feature = "systemd")]
+    enabled_features.push("systemd");
+    #[cfg(feature = "v1")]
+    enabled_features.push("v1");
+    #[cfg(feature = "v2")]
+    enabled_features.push("v2");
+    #[cfg(feature = "cgroupsv2_devices")]
+    enabled_features.push("cgroupsv2_devices");
+    #[cfg(feature = "seccomp")]
+    enabled_features.push("seccomp");
+    #[cfg(feature = "wasm-wasmer")]
+    enabled_features.push("wasm-wasmer");
+    #[cfg(feature = "wasm-wasmedge")]
+    enabled_features.push("wasm-wasmedge");
+    #[cfg(feature = "wasm-wasmtime")]
+    enabled_features.push("wasm-wasmtime");
+    println!("  {:<16}{}", "Features", enabled_features.join(", "));
 }
 
 /// Print Kernel Release, Version and Architecture
