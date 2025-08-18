@@ -1,3 +1,4 @@
+use parse_duration::parse;
 use std::time::Duration;
 
 use clap::Parser;
@@ -8,21 +9,7 @@ fn parse_interval(s: &str) -> Result<Duration, String> {
         return Ok(Duration::from_secs(secs));
     }
 
-    let (num, unit) = s
-        .trim_end_matches(|c: char| !c.is_ascii_alphabetic())
-        .chars()
-        .partition::<String, _>(|c| c.is_ascii_digit());
-
-    let num = num.parse::<u64>().map_err(|_| "Invalid number")?;
-
-    let dur = match unit.as_str() {
-        "s" => Duration::from_secs(num),
-        "m" => Duration::from_secs(num * 60),
-        "h" => Duration::from_secs(num * 60 * 60),
-        _ => return Err("Unsupported unit. Use s, m, or h.".into()),
-    };
-
-    Ok(dur)
+    parse(s).map_err(|e| e.to_string())
 }
 /// Show resource statistics for the container
 #[derive(Parser, Debug)]
