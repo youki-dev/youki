@@ -30,6 +30,5 @@
 	],
 	"build": {
 		"dockerfile": "Dockerfile"
-	},
-	"postCreateCommand": ".devcontainer/setup.sh"
+	}
 }
