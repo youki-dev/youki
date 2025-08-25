@@ -743,6 +743,13 @@ impl Syscall for LinuxSyscall {
     fn get_egid(&self) -> Gid {
         nix::unistd::getegid()
     }
+
+    fn personality(&self, domain: libc::c_ulong) -> Result<()> {
+        match unsafe { libc::personality(domain) } {
+            ret if ret < 0 => Err(SyscallError::IO(std::io::Error::last_os_error())),
+            _ => Ok(()),
+        }
+    }
 }
 
 #[cfg(test)]
