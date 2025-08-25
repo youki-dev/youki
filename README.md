@@ -263,12 +263,12 @@ git clone git@github.com:containers/youki.git
 cd youki
 
 # If you want to develop in rootless mode, and this is the default mode
-vagrant up
-vagrant ssh
+vagrant up default
+vagrant ssh default
 
 # or if you want to develop in rootful mode
-VAGRANT_VAGRANTFILE=Vagrantfile.root vagrant up
-VAGRANT_VAGRANTFILE=Vagrantfile.root vagrant ssh
+vagrant up rootful
+vagrant ssh rootful
 
 # in virtual machine
 cd youki
