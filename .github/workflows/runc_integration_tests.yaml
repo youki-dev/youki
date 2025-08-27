@@ -1,0 +1,49 @@
+name: 🧪 Runc integration test
+
+on:
+  schedule:
+  - cron: "0 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  runc-integration-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+      - name: install runc and youki  requirements
+        run: |
+          sudo apt update
+          sudo apt -y install libseccomp-dev sshfs uidmap \
+               pkg-config libsystemd-dev build-essential libelf-dev \
+               libclang-dev libssl-dev
+
+      - name: Build youki
+        run: just youki-release
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+
+      - name: Add the permission to run
+        run: chmod +x ./youki
+      - name: Setup Bats and bats libs
+        uses: bats-core/bats-action@3.0.1
+        with:
+          bats-version: 1.9.0
+          support-install: false
+          assert-install: false
+          detik-install: false
+          file-install: false
+      - name: Allow userns for runc
+        # https://github.com/opencontainers/runc/pull/4286
+        run: |
+          sed "s;^profile runc /usr/sbin/;profile runc-test $(pwd)/tests/runc/src/github.com/opencontainers/runc/;" < /etc/apparmor.d/runc | sudo apparmor_parser
+      - name: Runc integration test
+        run: tests/runc/runc_integration_test.sh
