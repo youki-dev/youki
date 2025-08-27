@@ -715,6 +715,30 @@ impl Syscall for LinuxSyscall {
         Ok(())
     }
 
+    fn set_mempolicy(&self, mode: i32, nodemask: &[u64], maxnode: u64) -> Result<()> {
+        // Convert Rust types to libc types
+        let libc_nodemask = if nodemask.is_empty() {
+            std::ptr::null()
+        } else {
+            nodemask.as_ptr() as *const libc::c_ulong
+        };
+        let libc_maxnode = maxnode as libc::c_ulong;
+
+        match unsafe {
+            libc::syscall(
+                libc::SYS_set_mempolicy,
+                mode as libc::c_long,
+                libc_nodemask,
+                libc_maxnode,
+            )
+        } {
+            0 => Ok(()),
+            -1 => Err(nix::Error::last()),
+            _ => Err(nix::Error::UnknownErrno),
+        }?;
+        Ok(())
+    }
+
     fn umount2(&self, target: &Path, flags: MntFlags) -> Result<()> {
         umount2(target, flags)?;
         Ok(())

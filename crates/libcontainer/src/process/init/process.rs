@@ -46,6 +46,8 @@ pub fn container_init_process(
 
     setup_scheduler(ctx.process.scheduler())?;
 
+    setup_memory_policy(ctx.linux.memory_policy(), ctx.syscall.as_ref())?;
+
     // set up tty if specified
     if let Some(csocketfd) = args.console_socket {
         tty::setup_console(csocketfd).map_err(|err| {
@@ -852,6 +854,299 @@ fn setup_scheduler(sc_op: &Option<Scheduler>) -> Result<()> {
     Ok(())
 }
 
+fn setup_memory_policy(
+    memory_policy: &Option<oci_spec::runtime::LinuxMemoryPolicy>,
+    syscall: &dyn Syscall,
+) -> Result<()> {
+    if let Some(policy) = memory_policy {
+        // Memory policy mode constants from Linux UAPI (include/uapi/linux/mempolicy.h)
+        const MPOL_DEFAULT: i32 = 0;
+        const MPOL_PREFERRED: i32 = 1;
+        const MPOL_BIND: i32 = 2;
+        const MPOL_INTERLEAVE: i32 = 3;
+        const MPOL_LOCAL: i32 = 4;
+        const MPOL_PREFERRED_MANY: i32 = 5;
+        const MPOL_WEIGHTED_INTERLEAVE: i32 = 6;
+
+        // Memory policy flag constants from Linux UAPI
+        const MPOL_F_NUMA_BALANCING: u32 = 1 << 13; // 0x2000
+        const MPOL_F_RELATIVE_NODES: u32 = 1 << 14; // 0x4000
+        const MPOL_F_STATIC_NODES: u32 = 1 << 15; // 0x8000
+
+        let base_mode = match policy.mode() {
+            oci_spec::runtime::MemoryPolicyModeType::MpolDefault => MPOL_DEFAULT,
+            oci_spec::runtime::MemoryPolicyModeType::MpolPreferred => MPOL_PREFERRED,
+            oci_spec::runtime::MemoryPolicyModeType::MpolBind => MPOL_BIND,
+            oci_spec::runtime::MemoryPolicyModeType::MpolInterleave => MPOL_INTERLEAVE,
+            oci_spec::runtime::MemoryPolicyModeType::MpolLocal => MPOL_LOCAL,
+            oci_spec::runtime::MemoryPolicyModeType::MpolPreferredMany => MPOL_PREFERRED_MANY,
+            oci_spec::runtime::MemoryPolicyModeType::MpolWeightedInterleave => {
+                MPOL_WEIGHTED_INTERLEAVE
+            }
+        };
+
+        let mut flags_value: u32 = 0;
+        if let Some(flags) = policy.flags() {
+            let mut has_static = false;
+            let mut has_relative = false;
+
+            for flag in flags {
+                match flag {
+                    oci_spec::runtime::MemoryPolicyFlagType::MpolFNumaBalancing => {
+                        // MPOL_F_NUMA_BALANCING is only valid with MPOL_BIND
+                        if base_mode != MPOL_BIND {
+                            return Err(InitProcessError::InvalidMemoryPolicy(
+                                "MPOL_F_NUMA_BALANCING can only be used with MPOL_BIND".to_string(),
+                            ));
+                        }
+                        flags_value |= MPOL_F_NUMA_BALANCING;
+                    }
+                    oci_spec::runtime::MemoryPolicyFlagType::MpolFRelativeNodes => {
+                        has_relative = true;
+                        flags_value |= MPOL_F_RELATIVE_NODES;
+                    }
+                    oci_spec::runtime::MemoryPolicyFlagType::MpolFStaticNodes => {
+                        has_static = true;
+                        flags_value |= MPOL_F_STATIC_NODES;
+                    }
+                }
+            }
+
+            // STATIC_NODES and RELATIVE_NODES are mutually exclusive
+            if has_static && has_relative {
+                return Err(InitProcessError::InvalidMemoryPolicy(
+                    "MPOL_F_STATIC_NODES and MPOL_F_RELATIVE_NODES are mutually exclusive"
+                        .to_string(),
+                ));
+            }
+        }
+
+        // Combine mode and flags
+        let mode_with_flags = base_mode | (flags_value as i32);
+
+        // Handle special cases for MPOL_DEFAULT and MPOL_LOCAL
+        match base_mode {
+            MPOL_DEFAULT => {
+                // MPOL_DEFAULT
+                // For MPOL_DEFAULT, nodes must be empty and no flags allowed
+                if !policy.nodes().trim().is_empty() {
+                    return Err(InitProcessError::InvalidMemoryPolicy(
+                        "MPOL_DEFAULT does not accept node specification".to_string(),
+                    ));
+                }
+                if flags_value != 0 {
+                    return Err(InitProcessError::InvalidMemoryPolicy(
+                        "MPOL_DEFAULT does not accept flags".to_string(),
+                    ));
+                }
+                syscall
+                    .set_mempolicy(mode_with_flags, &[], 0)
+                    .map_err(|err| {
+                        tracing::error!(?err, "failed to set memory policy (MPOL_DEFAULT)");
+                        InitProcessError::SyscallOther(err)
+                    })?;
+            }
+            MPOL_LOCAL => {
+                // MPOL_LOCAL
+                // For MPOL_LOCAL, nodes must be empty and no flags allowed
+                if !policy.nodes().trim().is_empty() {
+                    return Err(InitProcessError::InvalidMemoryPolicy(
+                        "MPOL_LOCAL does not accept node specification".to_string(),
+                    ));
+                }
+                if flags_value != 0 {
+                    return Err(InitProcessError::InvalidMemoryPolicy(
+                        "MPOL_LOCAL does not accept flags".to_string(),
+                    ));
+                }
+                syscall
+                    .set_mempolicy(mode_with_flags, &[], 0)
+                    .map_err(|err| {
+                        tracing::error!(?err, "failed to set memory policy (MPOL_LOCAL)");
+                        InitProcessError::SyscallOther(err)
+                    })?;
+            }
+            MPOL_PREFERRED => {
+                // MPOL_PREFERRED
+                // For MPOL_PREFERRED with empty node string, use empty set (local allocation)
+                if policy.nodes().trim().is_empty() {
+                    // Empty nodemask for PREFERRED with STATIC/RELATIVE flags is invalid
+                    if flags_value & (MPOL_F_RELATIVE_NODES | MPOL_F_STATIC_NODES) != 0 {
+                        return Err(InitProcessError::InvalidMemoryPolicy(
+                            "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
+                        ));
+                    }
+                    syscall
+                        .set_mempolicy(mode_with_flags, &[], 0)
+                        .map_err(|err| {
+                            tracing::error!(
+                                ?err,
+                                "failed to set memory policy (MPOL_PREFERRED with empty nodes)"
+                            );
+                            InitProcessError::SyscallOther(err)
+                        })?;
+                } else {
+                    // Parse nodes and build nodemask
+                    let (nodemask, maxnode) = build_nodemask(policy.nodes())?;
+
+                    // Double-check: if the parsed result is empty (e.g., whitespace-only input),
+                    // treat as empty nodemask
+                    if maxnode == 0 {
+                        if flags_value & (MPOL_F_RELATIVE_NODES | MPOL_F_STATIC_NODES) != 0 {
+                            return Err(InitProcessError::InvalidMemoryPolicy(
+                                "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
+                            ));
+                        }
+                        syscall
+                            .set_mempolicy(mode_with_flags, &[], 0)
+                            .map_err(|err| {
+                                tracing::error!(
+                                    ?err,
+                                    "failed to set memory policy (MPOL_PREFERRED with empty nodes)"
+                                );
+                                InitProcessError::SyscallOther(err)
+                            })?;
+                    } else {
+                        syscall
+                            .set_mempolicy(mode_with_flags, &nodemask, maxnode)
+                            .map_err(|err| {
+                                tracing::error!(
+                                    ?err,
+                                    "failed to set memory policy (MPOL_PREFERRED)"
+                                );
+                                InitProcessError::SyscallOther(err)
+                            })?;
+                    }
+                }
+            }
+            _ => {
+                // For other modes (BIND, INTERLEAVE, PREFERRED_MANY, WEIGHTED_INTERLEAVE),
+                // nodes must not be empty
+                if policy.nodes().trim().is_empty() {
+                    return Err(InitProcessError::InvalidMemoryPolicy(format!(
+                        "Mode {} requires non-empty node specification",
+                        base_mode
+                    )));
+                }
+
+                // Parse nodes and build nodemask
+                let (nodemask, maxnode) = build_nodemask(policy.nodes())?;
+
+                // Double-check: verify the parsed result is not empty
+                if maxnode == 0 {
+                    return Err(InitProcessError::InvalidMemoryPolicy(format!(
+                        "Mode {} requires non-empty node specification (parsed result is empty)",
+                        base_mode
+                    )));
+                }
+                syscall
+                    .set_mempolicy(mode_with_flags, &nodemask, maxnode)
+                    .map_err(|err| {
+                        tracing::error!(?err, "failed to set memory policy");
+                        InitProcessError::SyscallOther(err)
+                    })?;
+            }
+        }
+    }
+    Ok(())
+}
+
+// Build a proper nodemask for set_mempolicy
+fn build_nodemask(nodes: &str) -> Result<(Vec<u64>, u64)> {
+    let node_ids = parse_node_string(nodes)?;
+
+    if node_ids.is_empty() {
+        // Empty nodemask - return NULL equivalent (empty vector)
+        return Ok((Vec::new(), 0));
+    }
+
+    // Find the highest node ID
+    let highest_node = node_ids.iter().max().copied().unwrap_or(0) as usize;
+
+    // Calculate maxnode as highest_node + 1 (number of nodes to consider)
+    let maxnode = (highest_node + 1) as u64;
+
+    // Calculate how many u64 values we need to store the bitmask
+    let u64_bits = 64;
+    let num_u64s = (highest_node / u64_bits) + 1;
+
+    // Build the nodemask array as Vec<u64>
+    let mut nodemask = vec![0u64; num_u64s];
+
+    // Set bits for each node ID
+    for node_id in node_ids {
+        let node_id = node_id as usize;
+        let word_index = node_id / u64_bits;
+        let bit_index = node_id % u64_bits;
+
+        if word_index < nodemask.len() {
+            nodemask[word_index] |= 1u64 << bit_index;
+        }
+    }
+
+    Ok((nodemask, maxnode))
+}
+
+fn parse_node_string(nodes: &str) -> Result<Vec<u32>> {
+    let mut node_ids = Vec::new();
+
+    // Trim whitespace and check for empty string
+    let nodes = nodes.trim();
+    if nodes.is_empty() {
+        return Ok(node_ids);
+    }
+
+    for range in nodes.split(',') {
+        let range = range.trim();
+        if range.is_empty() {
+            continue; // Skip empty entries caused by multiple commas
+        }
+        let range = range.trim();
+        if range.is_empty() {
+            continue;
+        }
+
+        if let Some(dash_pos) = range.find('-') {
+            // Range format: "node1-node2"
+            let start_str = range[..dash_pos].trim();
+            let end_str = range[dash_pos + 1..].trim();
+
+            let start: u32 = start_str.parse().map_err(|_| {
+                InitProcessError::InvalidMemoryPolicy(format!(
+                    "Invalid node range start: {}",
+                    start_str
+                ))
+            })?;
+            let end: u32 = end_str.parse().map_err(|_| {
+                InitProcessError::InvalidMemoryPolicy(format!(
+                    "Invalid node range end: {}",
+                    end_str
+                ))
+            })?;
+
+            if start > end {
+                return Err(InitProcessError::InvalidMemoryPolicy(format!(
+                    "Invalid node range: {}-{}",
+                    start, end
+                )));
+            }
+
+            for node in start..=end {
+                node_ids.push(node);
+            }
+        } else {
+            // Single node
+            let node: u32 = range.parse().map_err(|_| {
+                InitProcessError::InvalidMemoryPolicy(format!("Invalid node: {}", range))
+            })?;
+
+            node_ids.push(node);
+        }
+    }
+
+    Ok(node_ids)
+}
+
 #[cfg(feature = "libseccomp")]
 fn sync_seccomp(
     fd: Option<i32>,
@@ -1191,5 +1486,196 @@ mod tests {
         };
         let set_io_prioritys = test_command.get_io_priority_args();
         assert_eq!(set_io_prioritys[0], want_io_priority);
+    }
+
+    #[test]
+    fn test_parse_node_string() {
+        // Test empty string
+        assert_eq!(parse_node_string("").unwrap(), Vec::<u32>::new());
+
+        // Test single node
+        assert_eq!(parse_node_string("0").unwrap(), vec![0]);
+        assert_eq!(parse_node_string("1").unwrap(), vec![1]);
+        assert_eq!(parse_node_string("2").unwrap(), vec![2]);
+
+        // Test node range
+        assert_eq!(parse_node_string("0-2").unwrap(), vec![0, 1, 2]);
+        assert_eq!(parse_node_string("1-3").unwrap(), vec![1, 2, 3]);
+
+        // Test multiple nodes
+        assert_eq!(parse_node_string("0,2").unwrap(), vec![0, 2]);
+        assert_eq!(parse_node_string("0,1,3").unwrap(), vec![0, 1, 3]);
+
+        // Test combination of ranges and single nodes
+        assert_eq!(parse_node_string("0-1,3").unwrap(), vec![0, 1, 3]);
+        assert_eq!(parse_node_string("0,2-3").unwrap(), vec![0, 2, 3]);
+
+        // Test with spaces
+        assert_eq!(parse_node_string(" 0 , 2 ").unwrap(), vec![0, 2]);
+        assert_eq!(parse_node_string(" 0 - 2 ").unwrap(), vec![0, 1, 2]);
+
+        // Test whitespace-only string
+        assert_eq!(parse_node_string("   ").unwrap(), Vec::<u32>::new());
+        assert_eq!(parse_node_string(" , , ").unwrap(), Vec::<u32>::new());
+
+        // Test error cases
+        assert!(parse_node_string("2-1").is_err()); // Invalid range
+        assert!(parse_node_string("abc").is_err()); // Invalid format
+        assert!(parse_node_string("0-abc").is_err()); // Invalid range end
+    }
+
+    #[test]
+    fn test_setup_memory_policy() {
+        use oci_spec::runtime::{LinuxMemoryPolicyBuilder, MemoryPolicyModeType};
+
+        let syscall = create_syscall();
+
+        // Test with None (no memory policy)
+        assert!(setup_memory_policy(&None, syscall.as_ref()).is_ok());
+
+        // Test with basic memory policy
+        let policy = LinuxMemoryPolicyBuilder::default()
+            .mode(MemoryPolicyModeType::MpolBind)
+            .nodes("0,1".to_string())
+            .build()
+            .unwrap();
+
+        assert!(setup_memory_policy(&Some(policy), syscall.as_ref()).is_ok());
+
+        let got_args = syscall
+            .as_any()
+            .downcast_ref::<TestHelperSyscall>()
+            .unwrap()
+            .get_mempolicy_args();
+
+        assert_eq!(got_args.len(), 1);
+        assert_eq!(got_args[0].mode, 2); // MPOL_BIND (corrected value)
+        assert_eq!(got_args[0].nodemask.len(), 1); // One c_ulong needed
+        assert_eq!(got_args[0].nodemask[0], 3); // 2^0 + 2^1 = 1 + 2 = 3
+        assert_eq!(got_args[0].maxnode, 2); // highest node ID (1) + 1 = 2
+
+        // Test with flags
+        let policy_with_flags = LinuxMemoryPolicyBuilder::default()
+            .mode(MemoryPolicyModeType::MpolBind)
+            .nodes("0".to_string())
+            .flags(vec![
+                oci_spec::runtime::MemoryPolicyFlagType::MpolFStaticNodes,
+            ])
+            .build()
+            .unwrap();
+
+        assert!(setup_memory_policy(&Some(policy_with_flags), syscall.as_ref()).is_ok());
+
+        let got_args_with_flags = syscall
+            .as_any()
+            .downcast_ref::<TestHelperSyscall>()
+            .unwrap()
+            .get_mempolicy_args();
+
+        assert_eq!(got_args_with_flags.len(), 2);
+        // Second call should have mode with flags OR'ed in
+        // MPOL_BIND (2) | MPOL_F_STATIC_NODES (0x8000)
+        assert_eq!(got_args_with_flags[1].mode, 2 | (1 << 15));
+        assert_eq!(got_args_with_flags[1].nodemask.len(), 1);
+        assert_eq!(got_args_with_flags[1].nodemask[0], 1); // 2^0 = 1
+        assert_eq!(got_args_with_flags[1].maxnode, 1); // highest node ID (0) + 1 = 1
+
+        // Test invalid flag combinations
+        let policy_invalid_flags = LinuxMemoryPolicyBuilder::default()
+            .mode(MemoryPolicyModeType::MpolBind)
+            .nodes("0".to_string())
+            .flags(vec![
+                oci_spec::runtime::MemoryPolicyFlagType::MpolFStaticNodes,
+                oci_spec::runtime::MemoryPolicyFlagType::MpolFRelativeNodes,
+            ])
+            .build()
+            .unwrap();
+
+        assert!(setup_memory_policy(&Some(policy_invalid_flags), syscall.as_ref()).is_err());
+
+        // Test MPOL_F_NUMA_BALANCING with non-BIND mode
+        let policy_invalid_numa_balancing = LinuxMemoryPolicyBuilder::default()
+            .mode(MemoryPolicyModeType::MpolInterleave)
+            .nodes("0".to_string())
+            .flags(vec![
+                oci_spec::runtime::MemoryPolicyFlagType::MpolFNumaBalancing,
+            ])
+            .build()
+            .unwrap();
+
+        assert!(
+            setup_memory_policy(&Some(policy_invalid_numa_balancing), syscall.as_ref()).is_err()
+        );
+
+        // Test MPOL_DEFAULT with nodes (should fail)
+        let policy_default_with_nodes = LinuxMemoryPolicyBuilder::default()
+            .mode(MemoryPolicyModeType::MpolDefault)
+            .nodes("0".to_string())
+            .build()
+            .unwrap();
+
+        assert!(setup_memory_policy(&Some(policy_default_with_nodes), syscall.as_ref()).is_err());
+
+        // Test MPOL_DEFAULT with flags (should fail)
+        let policy_default_with_flags = LinuxMemoryPolicyBuilder::default()
+            .mode(MemoryPolicyModeType::MpolDefault)
+            .flags(vec![
+                oci_spec::runtime::MemoryPolicyFlagType::MpolFStaticNodes,
+            ])
+            .build()
+            .unwrap();
+
+        assert!(setup_memory_policy(&Some(policy_default_with_flags), syscall.as_ref()).is_err());
+
+        // Test MPOL_LOCAL with nodes (should fail)
+        let policy_local_with_nodes = LinuxMemoryPolicyBuilder::default()
+            .mode(MemoryPolicyModeType::MpolLocal)
+            .nodes("0".to_string())
+            .build()
+            .unwrap();
+
+        assert!(setup_memory_policy(&Some(policy_local_with_nodes), syscall.as_ref()).is_err());
+
+        // Test MPOL_BIND with empty nodes (should fail)
+        let policy_bind_empty = LinuxMemoryPolicyBuilder::default()
+            .mode(MemoryPolicyModeType::MpolBind)
+            .nodes("".to_string())
+            .build()
+            .unwrap();
+
+        assert!(setup_memory_policy(&Some(policy_bind_empty), syscall.as_ref()).is_err());
+
+        // Test MPOL_BIND with whitespace-only nodes (should fail)
+        let policy_bind_whitespace = LinuxMemoryPolicyBuilder::default()
+            .mode(MemoryPolicyModeType::MpolBind)
+            .nodes("   ".to_string())
+            .build()
+            .unwrap();
+
+        assert!(setup_memory_policy(&Some(policy_bind_whitespace), syscall.as_ref()).is_err());
+
+        // Test MPOL_PREFERRED with empty nodes and STATIC_NODES flag (should fail)
+        let policy_preferred_empty_with_flags = LinuxMemoryPolicyBuilder::default()
+            .mode(MemoryPolicyModeType::MpolPreferred)
+            .nodes("".to_string())
+            .flags(vec![
+                oci_spec::runtime::MemoryPolicyFlagType::MpolFStaticNodes,
+            ])
+            .build()
+            .unwrap();
+
+        assert!(
+            setup_memory_policy(&Some(policy_preferred_empty_with_flags), syscall.as_ref())
+                .is_err()
+        );
+
+        // Test MPOL_BIND with empty nodes (should fail)
+        let policy_bind_empty = LinuxMemoryPolicyBuilder::default()
+            .mode(MemoryPolicyModeType::MpolBind)
+            .nodes("".to_string())
+            .build()
+            .unwrap();
+
+        assert!(setup_memory_policy(&Some(policy_bind_empty), syscall.as_ref()).is_err());
     }
 }

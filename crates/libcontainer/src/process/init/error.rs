@@ -61,6 +61,8 @@ pub enum InitProcessError {
     IoPriorityClass(String),
     #[error("call exec sched_setattr error: {0}")]
     SchedSetattr(String),
+    #[error("invalid memory policy: {0}")]
+    InvalidMemoryPolicy(String),
     #[error("failed to verify if current working directory is safe")]
     InvalidCwd(#[source] nix::Error),
     #[error("missing linux section in spec")]
