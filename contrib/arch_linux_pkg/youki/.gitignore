@@ -1,0 +1,5 @@
+pkg
+src
+target
+v*.tar.gz
+youki-*.pkg.tar.zst
