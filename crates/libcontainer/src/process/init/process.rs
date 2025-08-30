@@ -9,13 +9,14 @@ use nix::sched::CloneFlags;
 use nix::sys::stat::Mode;
 use nix::unistd::{self, close, dup2, setsid, Gid, Uid};
 use oci_spec::runtime::{
-    IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxSchedulerFlag, LinuxSchedulerPolicy,
-    Scheduler, Spec, User,
+    IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxPersonalityDomain,
+    LinuxSchedulerFlag, LinuxSchedulerPolicy, Scheduler, Spec, User,
 };
 
 use super::context::InitContext;
 use super::error::InitProcessError;
 use super::Result;
+use crate::config::{PER_LINUX, PER_LINUX32};
 use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
 use crate::process::args::{ContainerArgs, ContainerType};
@@ -123,6 +124,25 @@ pub fn container_init_process(
         if let Some(kernel_params) = ctx.linux.sysctl() {
             sysctl(kernel_params)?;
         }
+    }
+
+    if let Some(personality) = ctx.linux.personality() {
+        if let Some(flags) = personality.flags() {
+            if !flags.is_empty() {
+                tracing::warn!("ignoring personality flags because personality flag has not supported at this time");
+            }
+        }
+
+        let domain = match personality.domain() {
+            // https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/personality.h
+            LinuxPersonalityDomain::PerLinux => PER_LINUX,
+            LinuxPersonalityDomain::PerLinux32 => PER_LINUX32,
+        };
+
+        ctx.syscall.personality(domain).map_err(|err| {
+            tracing::error!(?err, "failed to set linux personality ");
+            InitProcessError::SyscallOther(err)
+        })?;
     }
 
     if let Some(profile) = ctx.process.apparmor_profile() {

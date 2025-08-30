@@ -28,7 +28,7 @@ tracing-subscriber = { version = "0.3.20", features = ["json", "env-filter"] }
 regex = "1"
 
 [dependencies.clap]
-version = "4.1.6"
+version = "4.5.13"
 default-features = false
 features = ["std", "suggestions", "derive", "cargo", "help", "usage", "error-context"]
 
