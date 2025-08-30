@@ -200,6 +200,7 @@ version-up version:
     #!/usr/bin/bash
     set -ex
     git grep -l "^version = .* # MARK: Version" | xargs sed -i 's/version = "[0-9]\.[0-9]\.[0-9]" # MARK: Version/version = "{{version}}" # MARK: Version/g'
+    git grep -l "^pkgver=.* # MARK: Version" | xargs sed -i 's/pkgver=[0-9]\.[0-9]\.[0-9] # MARK: Version/pkgver={{version}} # MARK: Version/g'
     git grep -l "} # MARK: Version" | grep -v justfile | xargs sed -i 's/version = "[0-9]\.[0-9]\.[0-9]" } # MARK: Version/version = "{{version}}" } # MARK: Version/g'
     {{ cwd }}/scripts/release_tag.sh {{version}}
     NEXT_VERSION=$(echo {{version}} | awk -F. -v OFS=. '{$NF += 1 ; print}')

@@ -1,0 +1,23 @@
+pkgname=youki
+pkgver=0.5.5 # MARK: Version
+pkgrel=1
+arch=('x86_64')
+pkgdesc="A container runtime written in Rust"
+url="https://youki.io"
+license=('Apache-2.0')
+replaces=('youki-bin')
+depends=('libseccomp' 'gcc-libs')
+makedepends=('just' 'pkgconf' 'systemd-libs' 'base-devel' 'elfutils' 'libseccomp' 'clang' 'openssl')
+source=("https://github.com/youki-dev/youki/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('edeca55ff9e9d10a7f9b56a81ec2aae51beecd8d2874091009392483812d09a3') 
+
+build() {
+  cd "youki-$pkgver"
+  just build
+}
+
+package() {
+  cd "youki-$pkgver"
+  install -Dm755 "youki" -t "$pkgdir/usr/bin"
+  install -Dm644 "LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
+}
