@@ -929,10 +929,12 @@ fn setup_memory_policy(
             MPOL_DEFAULT => {
                 // MPOL_DEFAULT
                 // For MPOL_DEFAULT, nodes must be empty and no flags allowed
-                if !policy.nodes().trim().is_empty() {
-                    return Err(InitProcessError::InvalidMemoryPolicy(
-                        "MPOL_DEFAULT does not accept node specification".to_string(),
-                    ));
+                if let Some(nodes) = policy.nodes() {
+                    if !nodes.trim().is_empty() {
+                        return Err(InitProcessError::InvalidMemoryPolicy(
+                            "MPOL_DEFAULT does not accept node specification".to_string(),
+                        ));
+                    }
                 }
                 if flags_value != 0 {
                     return Err(InitProcessError::InvalidMemoryPolicy(
@@ -949,10 +951,12 @@ fn setup_memory_policy(
             MPOL_LOCAL => {
                 // MPOL_LOCAL
                 // For MPOL_LOCAL, nodes must be empty and no flags allowed
-                if !policy.nodes().trim().is_empty() {
-                    return Err(InitProcessError::InvalidMemoryPolicy(
-                        "MPOL_LOCAL does not accept node specification".to_string(),
-                    ));
+                if let Some(nodes) = policy.nodes() {
+                    if !nodes.trim().is_empty() {
+                        return Err(InitProcessError::InvalidMemoryPolicy(
+                            "MPOL_LOCAL does not accept node specification".to_string(),
+                        ));
+                    }
                 }
                 if flags_value != 0 {
                     return Err(InitProcessError::InvalidMemoryPolicy(
@@ -968,30 +972,10 @@ fn setup_memory_policy(
             }
             MPOL_PREFERRED => {
                 // MPOL_PREFERRED
-                // For MPOL_PREFERRED with empty node string, use empty set (local allocation)
-                if policy.nodes().trim().is_empty() {
-                    // Empty nodemask for PREFERRED with STATIC/RELATIVE flags is invalid
-                    if flags_value & (MPOL_F_RELATIVE_NODES | MPOL_F_STATIC_NODES) != 0 {
-                        return Err(InitProcessError::InvalidMemoryPolicy(
-                            "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
-                        ));
-                    }
-                    syscall
-                        .set_mempolicy(mode_with_flags, &[], 0)
-                        .map_err(|err| {
-                            tracing::error!(
-                                ?err,
-                                "failed to set memory policy (MPOL_PREFERRED with empty nodes)"
-                            );
-                            InitProcessError::SyscallOther(err)
-                        })?;
-                } else {
-                    // Parse nodes and build nodemask
-                    let (nodemask, maxnode) = build_nodemask(policy.nodes())?;
-
-                    // Double-check: if the parsed result is empty (e.g., whitespace-only input),
-                    // treat as empty nodemask
-                    if maxnode == 0 {
+                // For MPOL_PREFERRED with empty/no node string, use empty set (local allocation)
+                match policy.nodes() {
+                    None => {
+                        // Empty nodemask for PREFERRED with STATIC/RELATIVE flags is invalid
                         if flags_value & (MPOL_F_RELATIVE_NODES | MPOL_F_STATIC_NODES) != 0 {
                             return Err(InitProcessError::InvalidMemoryPolicy(
                                 "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
@@ -1006,45 +990,94 @@ fn setup_memory_policy(
                                 );
                                 InitProcessError::SyscallOther(err)
                             })?;
-                    } else {
+                    }
+                    Some(nodes) if nodes.trim().is_empty() => {
+                        // Empty nodemask for PREFERRED with STATIC/RELATIVE flags is invalid
+                        if flags_value & (MPOL_F_RELATIVE_NODES | MPOL_F_STATIC_NODES) != 0 {
+                            return Err(InitProcessError::InvalidMemoryPolicy(
+                                "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
+                            ));
+                        }
                         syscall
-                            .set_mempolicy(mode_with_flags, &nodemask, maxnode)
+                            .set_mempolicy(mode_with_flags, &[], 0)
                             .map_err(|err| {
                                 tracing::error!(
                                     ?err,
-                                    "failed to set memory policy (MPOL_PREFERRED)"
+                                    "failed to set memory policy (MPOL_PREFERRED with empty nodes)"
                                 );
                                 InitProcessError::SyscallOther(err)
                             })?;
+                    }
+                    Some(nodes) => {
+                        // Parse nodes and build nodemask
+                        let (nodemask, maxnode) = build_nodemask(nodes)?;
+
+                        // Double-check: if the parsed result is empty (e.g., whitespace-only input),
+                        // treat as empty nodemask
+                        if maxnode == 0 {
+                            if flags_value & (MPOL_F_RELATIVE_NODES | MPOL_F_STATIC_NODES) != 0 {
+                                return Err(InitProcessError::InvalidMemoryPolicy(
+                                    "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
+                                ));
+                            }
+                            syscall
+                                .set_mempolicy(mode_with_flags, &[], 0)
+                                .map_err(|err| {
+                                    tracing::error!(
+                                        ?err,
+                                        "failed to set memory policy (MPOL_PREFERRED with empty nodes)"
+                                    );
+                                    InitProcessError::SyscallOther(err)
+                                })?;
+                        } else {
+                            syscall
+                                .set_mempolicy(mode_with_flags, &nodemask, maxnode)
+                                .map_err(|err| {
+                                    tracing::error!(
+                                        ?err,
+                                        "failed to set memory policy (MPOL_PREFERRED)"
+                                    );
+                                    InitProcessError::SyscallOther(err)
+                                })?;
+                        }
                     }
                 }
             }
             _ => {
                 // For other modes (BIND, INTERLEAVE, PREFERRED_MANY, WEIGHTED_INTERLEAVE),
                 // nodes must not be empty
-                if policy.nodes().trim().is_empty() {
-                    return Err(InitProcessError::InvalidMemoryPolicy(format!(
-                        "Mode {} requires non-empty node specification",
-                        base_mode
-                    )));
-                }
+                match policy.nodes() {
+                    None => {
+                        return Err(InitProcessError::InvalidMemoryPolicy(format!(
+                            "Mode {} requires non-empty node specification",
+                            base_mode
+                        )));
+                    }
+                    Some(nodes) if nodes.trim().is_empty() => {
+                        return Err(InitProcessError::InvalidMemoryPolicy(format!(
+                            "Mode {} requires non-empty node specification",
+                            base_mode
+                        )));
+                    }
+                    Some(nodes) => {
+                        // Parse nodes and build nodemask
+                        let (nodemask, maxnode) = build_nodemask(nodes)?;
 
-                // Parse nodes and build nodemask
-                let (nodemask, maxnode) = build_nodemask(policy.nodes())?;
-
-                // Double-check: verify the parsed result is not empty
-                if maxnode == 0 {
-                    return Err(InitProcessError::InvalidMemoryPolicy(format!(
-                        "Mode {} requires non-empty node specification (parsed result is empty)",
-                        base_mode
-                    )));
+                        // Double-check: verify the parsed result is not empty
+                        if maxnode == 0 {
+                            return Err(InitProcessError::InvalidMemoryPolicy(format!(
+                                "Mode {} requires non-empty node specification (parsed result is empty)",
+                                base_mode
+                            )));
+                        }
+                        syscall
+                            .set_mempolicy(mode_with_flags, &nodemask, maxnode)
+                            .map_err(|err| {
+                                tracing::error!(?err, "failed to set memory policy");
+                                InitProcessError::SyscallOther(err)
+                            })?;
+                    }
                 }
-                syscall
-                    .set_mempolicy(mode_with_flags, &nodemask, maxnode)
-                    .map_err(|err| {
-                        tracing::error!(?err, "failed to set memory policy");
-                        InitProcessError::SyscallOther(err)
-                    })?;
             }
         }
     }
