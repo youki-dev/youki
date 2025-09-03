@@ -5,7 +5,7 @@ use std::env;
 use std::path::PathBuf;
 
 use oci_spec::runtime::IOPriorityClass::{IoprioClassBe, IoprioClassIdle, IoprioClassRt};
-use oci_spec::runtime::Spec;
+use oci_spec::runtime::{MemoryPolicyModeType, Spec};
 
 const SPEC_PATH: &str = "/config.json";
 
@@ -44,6 +44,33 @@ fn main() {
         "io_priority_class_rt" => tests::test_io_priority_class(&spec, IoprioClassRt),
         "io_priority_class_be" => tests::test_io_priority_class(&spec, IoprioClassBe),
         "io_priority_class_idle" => tests::test_io_priority_class(&spec, IoprioClassIdle),
+        "memory_policy_default" => {
+            tests::validate_memory_policy(&spec, Some(MemoryPolicyModeType::MpolDefault))
+        }
+        "memory_policy_interleave" => {
+            tests::validate_memory_policy(&spec, Some(MemoryPolicyModeType::MpolInterleave))
+        }
+        "memory_policy_bind_static" => {
+            tests::validate_memory_policy(&spec, Some(MemoryPolicyModeType::MpolBind))
+        }
+        "memory_policy_preferred_relative" => {
+            tests::validate_memory_policy(&spec, Some(MemoryPolicyModeType::MpolPreferred))
+        }
+        "memory_policy_preferred_empty" => {
+            tests::validate_memory_policy(&spec, Some(MemoryPolicyModeType::MpolPreferred))
+        }
+        "memory_policy_local" => {
+            tests::validate_memory_policy(&spec, Some(MemoryPolicyModeType::MpolLocal))
+        }
+        "memory_policy_bind_numa_balancing" => {
+            tests::validate_memory_policy(&spec, Some(MemoryPolicyModeType::MpolBind))
+        }
+        "memory_policy_nodes_range" => {
+            tests::validate_memory_policy(&spec, Some(MemoryPolicyModeType::MpolInterleave))
+        }
+        "memory_policy_nodes_list" => {
+            tests::validate_memory_policy(&spec, Some(MemoryPolicyModeType::MpolInterleave))
+        }
         "devices" => tests::validate_devices(&spec),
         "root_readonly" => tests::test_validate_root_readonly(&spec),
         "process" => tests::validate_process(&spec),

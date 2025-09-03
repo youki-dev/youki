@@ -16,8 +16,8 @@ use nix::sys::utsname;
 use nix::unistd::{Gid, Uid, getcwd, getgid, getgroups, getuid};
 use oci_spec::runtime::IOPriorityClass::{self, IoprioClassBe, IoprioClassIdle, IoprioClassRt};
 use oci_spec::runtime::{
-    LinuxDevice, LinuxDeviceType, LinuxIdMapping, LinuxSchedulerPolicy, PosixRlimit,
-    PosixRlimitType, Spec,
+    LinuxDevice, LinuxDeviceType, LinuxIdMapping, LinuxSchedulerPolicy, MemoryPolicyModeType,
+    PosixRlimit, PosixRlimitType, Spec,
 };
 use tempfile::Builder;
 
@@ -558,6 +558,136 @@ pub fn test_io_priority_class(spec: &Spec, io_priority_class: IOPriorityClass) {
     };
     if priority != expected_priority {
         eprintln!("error ioprio_get expected priority {expected_priority:?}, got {priority}")
+    }
+}
+
+pub fn validate_memory_policy(spec: &Spec, expected_mode: Option<MemoryPolicyModeType>) {
+    let linux = spec.linux().as_ref().unwrap();
+    let memory_policy = linux.memory_policy();
+
+    // Verify the spec contains the expected mode (None means "spec presence doesn't matter")
+    if let (Some(expected), Some(policy)) = (expected_mode, memory_policy.as_ref()) {
+        if policy.mode() != expected {
+            eprintln!(
+                "memory policy mode mismatch: expected {:?}, got {:?}",
+                expected,
+                policy.mode()
+            );
+            return;
+        }
+    }
+    if let (Some(_expected), None) = (expected_mode, memory_policy.as_ref()) {
+        // Expected mode but not found in spec is an error
+        eprintln!("memory policy expected but not found in spec");
+        return;
+    }
+    // expected_mode == None: allow spec to have policy or not
+
+    // Read and parse /proc/self/numa_maps to verify the policy is applied
+    let numa_maps_content = match fs::read_to_string("/proc/self/numa_maps") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("failed to read /proc/self/numa_maps: {}", e);
+            return;
+        }
+    };
+
+    let first_line = match numa_maps_content.lines().next() {
+        Some(l) if !l.is_empty() => l,
+        _ => {
+            eprintln!("first line of /proc/self/numa_maps is empty");
+            return;
+        }
+    };
+
+    // Extract the policy part (usually the second field)
+    let parts: Vec<&str> = first_line.split_whitespace().collect();
+    if parts.len() < 2 {
+        eprintln!("unexpected format in /proc/self/numa_maps: {}", first_line);
+        return;
+    }
+
+    let policy_field = parts[1];
+
+    // Get auxiliary info from spec (nodes/flags)
+    let (nodes_is_empty, has_static_flag, has_relative_flag) = if let Some(p) = memory_policy {
+        let nodes_is_empty = p.nodes().as_ref().is_none_or(|n| n.trim().is_empty());
+        let mut has_static = false;
+        let mut has_relative = false;
+        if let Some(flags) = p.flags() {
+            for f in flags {
+                use oci_spec::runtime::MemoryPolicyFlagType::*;
+                match f {
+                    MpolFStaticNodes => has_static = true,
+                    MpolFRelativeNodes => has_relative = true,
+                    _ => {}
+                }
+            }
+        }
+        (nodes_is_empty, has_static, has_relative)
+    } else {
+        (true, false, false)
+    };
+
+    // Verify the policy matches expected mode
+    match expected_mode {
+        Some(MemoryPolicyModeType::MpolDefault) => {
+            if !policy_field.contains("default") {
+                eprintln!("expected default policy, but found: {}", policy_field);
+            }
+        }
+        Some(MemoryPolicyModeType::MpolInterleave) => {
+            if !policy_field.contains("interleave") {
+                eprintln!("expected interleave policy, but found: {}", policy_field);
+            }
+        }
+        Some(MemoryPolicyModeType::MpolBind) => {
+            if !policy_field.contains("bind") {
+                eprintln!("expected bind policy, but found: {}", policy_field);
+            }
+            // Optional: check flag display
+            if has_static_flag && !policy_field.contains("static") {
+                eprintln!("expected bind static, but found: {}", policy_field);
+            }
+        }
+        Some(MemoryPolicyModeType::MpolPreferred) => {
+            // If nodes is empty, it becomes local allocation
+            if nodes_is_empty {
+                if !policy_field.contains("local") {
+                    eprintln!(
+                        "expected preferred(empty)->local, but found: {}",
+                        policy_field
+                    );
+                }
+            } else {
+                if !policy_field.contains("prefer") {
+                    eprintln!("expected preferred policy, but found: {}", policy_field);
+                }
+                // Optional: check relative flag
+                if has_relative_flag && !policy_field.contains("relative") {
+                    eprintln!("expected preferred relative, but found: {}", policy_field);
+                }
+            }
+        }
+        Some(MemoryPolicyModeType::MpolLocal) => {
+            // Fixed: MPOL_LOCAL shows as "local" not "default"
+            if !policy_field.contains("local") {
+                eprintln!("expected local policy, but found: {}", policy_field);
+            }
+        }
+        Some(_) => {
+            // For newer policy types that might not be easily verifiable
+            println!("memory policy {} applied (non-strict check)", policy_field);
+        }
+        None => {
+            // No specific policy expected - allow default/local behavior
+            if !(policy_field.contains("default") || policy_field.contains("local")) {
+                eprintln!(
+                    "expected default/local with no expected policy, got: {}",
+                    policy_field
+                );
+            }
+        }
     }
 }
 
