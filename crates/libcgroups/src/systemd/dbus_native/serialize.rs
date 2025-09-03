@@ -25,14 +25,22 @@ pub trait DbusSerialize: std::fmt::Debug {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Variant {
+    // D-Bus data type
+    // s
     String(String),
+    // b
     Bool(bool),
+    // t
     U64(u64),
+    // au
     ArrayU32(Vec<u32>),
+    // at
     ArrayU64(Vec<u64>),
+    // a(st)
+    Struct(Vec<Structure<u64>>),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Structure<T: DbusSerialize> {
     key: String,
     val: T,
@@ -445,6 +453,15 @@ impl DbusSerialize for Variant {
                 buf.extend_from_slice(sub_type.as_bytes());
                 buf.push(0);
                 v.serialize(buf);
+            }
+            Self::Struct(s) => {
+                let sub_type = <Vec<Structure<u64>>>::get_signature();
+                println!("{:?},{:?}", sub_type, s);
+                let signature_length = sub_type.len() as u8;
+                buf.push(signature_length);
+                buf.extend_from_slice(sub_type.as_bytes());
+                buf.push(0);
+                s.serialize(buf);
             }
         }
     }
