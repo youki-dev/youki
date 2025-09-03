@@ -24,6 +24,7 @@ use crate::common::{
 };
 use crate::stats::Stats;
 use crate::systemd::dbus_native::serialize::Variant;
+use crate::systemd::io::Io;
 use crate::systemd::unified::Unified;
 use crate::v2::manager::{Manager as FsManager, V2ManagerError};
 
@@ -167,6 +168,8 @@ pub enum SystemdManagerError {
     Cpu(#[from] super::cpu::SystemdCpuError),
     #[error("in cpuset controller: {0}")]
     CpuSet(#[from] super::cpuset::SystemdCpuSetError),
+    #[error("in io controller: {0}")]
+    Io(#[from] super::io::SystemdIoError),
     #[error("in memory controller: {0}")]
     Memory(#[from] super::memory::SystemdMemoryError),
     #[error("in pids controller: {0}")]
@@ -429,6 +432,10 @@ impl CgroupManager for Manager {
                 ControllerType::Memory => {
                     Memory::apply(controller_opt, systemd_version, &mut properties)?;
                 }
+                ControllerType::Io => {
+                    println!("{:?}", controller_opt);
+                    Io::apply(controller_opt, systemd_version, &mut properties)?;
+                }
                 _ => {}
             };
         }
@@ -438,7 +445,6 @@ impl CgroupManager for Manager {
 
         if !properties.is_empty() {
             self.ensure_controllers_attached()?;
-
             self.client
                 .set_unit_properties(&self.unit_name, &properties)?;
         }
