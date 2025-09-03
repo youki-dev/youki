@@ -562,26 +562,29 @@ pub fn test_io_priority_class(spec: &Spec, io_priority_class: IOPriorityClass) {
 }
 
 pub fn validate_memory_policy(spec: &Spec, expected_mode: Option<MemoryPolicyModeType>) {
+    if expected_mode.is_none() {
+        return;
+    }
+
     let linux = spec.linux().as_ref().unwrap();
     let memory_policy = linux.memory_policy();
 
-    // Verify the spec contains the expected mode (None means "spec presence doesn't matter")
-    if let (Some(expected), Some(policy)) = (expected_mode, memory_policy.as_ref()) {
-        if policy.mode() != expected {
-            eprintln!(
-                "memory policy mode mismatch: expected {:?}, got {:?}",
-                expected,
-                policy.mode()
-            );
-            return;
-        }
-    }
-    if let (Some(_expected), None) = (expected_mode, memory_policy.as_ref()) {
-        // Expected mode but not found in spec is an error
+    let expected = expected_mode.unwrap();
+
+    if memory_policy.is_none() {
         eprintln!("memory policy expected but not found in spec");
         return;
     }
-    // expected_mode == None: allow spec to have policy or not
+
+    let policy = memory_policy.as_ref().unwrap();
+    if policy.mode() != expected {
+        eprintln!(
+            "memory policy mode mismatch: expected {:?}, got {:?}",
+            expected,
+            policy.mode()
+        );
+        return;
+    }
 
     // Read and parse /proc/self/numa_maps to verify the policy is applied
     let numa_maps_content = match fs::read_to_string("/proc/self/numa_maps") {
