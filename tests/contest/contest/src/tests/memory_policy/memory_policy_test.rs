@@ -6,7 +6,7 @@ use oci_spec::runtime::{
     ProcessBuilder, Spec, SpecBuilder,
 };
 use serde_json::json;
-use test_framework::{Test, TestGroup, TestResult};
+use test_framework::{ConditionalTest, Test, TestGroup, TestResult};
 
 use crate::utils::test_inside_container;
 use crate::utils::test_utils::CreateOptions;
@@ -48,10 +48,6 @@ fn spec_with_runtimetest(
 }
 
 fn interleave_without_flags() -> TestResult {
-    if !has_multi_numa_nodes() {
-        eprintln!("skipped: host has no multi NUMA nodes");
-        return TestResult::Passed;
-    }
     let spec = match spec_with_runtimetest(
         "memory_policy_interleave",
         Some((MemoryPolicyModeType::MpolInterleave, "0", vec![])),
@@ -64,10 +60,6 @@ fn interleave_without_flags() -> TestResult {
 }
 
 fn bind_static() -> TestResult {
-    if !has_multi_numa_nodes() {
-        eprintln!("skipped: host has no multi NUMA nodes");
-        return TestResult::Passed;
-    }
     let spec = match spec_with_runtimetest(
         "memory_policy_bind_static",
         Some((
@@ -84,10 +76,6 @@ fn bind_static() -> TestResult {
 }
 
 fn preferred_relative() -> TestResult {
-    if !has_multi_numa_nodes() {
-        eprintln!("skipped: host has no multi NUMA nodes");
-        return TestResult::Passed;
-    }
     let spec = match spec_with_runtimetest(
         "memory_policy_preferred_relative",
         Some((
@@ -104,7 +92,7 @@ fn preferred_relative() -> TestResult {
 }
 
 fn empty_memory_policy() -> TestResult {
-    let spec = match spec_with_runtimetest("memory_policy_default", None) {
+    let spec = match spec_with_runtimetest("memory_policy_empty", None) {
         Ok(s) => s,
         Err(e) => return TestResult::Failed(e),
     };
@@ -123,7 +111,7 @@ fn default_with_missing_nodes_ok() -> TestResult {
 }
 
 fn invalid_mode_string() -> TestResult {
-    let spec = match spec_with_runtimetest("memory_policy_default", None) {
+    let spec = match spec_with_runtimetest("memory_policy_empty", None) {
         Ok(s) => s,
         Err(e) => return TestResult::Failed(e),
     };
@@ -139,17 +127,17 @@ fn invalid_mode_string() -> TestResult {
         fs::write(&cfg_path, serde_json::to_vec_pretty(&v)?)?;
         Ok(())
     });
-
     match res {
+        TestResult::Failed(_) => TestResult::Passed,
         TestResult::Passed => TestResult::Failed(anyhow!(
             "expected error for invalid memory policy mode, found none"
         )),
-        _ => TestResult::Passed,
+        TestResult::Skipped => TestResult::Skipped,
     }
 }
 
 fn invalid_flag_string() -> TestResult {
-    let spec = match spec_with_runtimetest("memory_policy_default", None) {
+    let spec = match spec_with_runtimetest("memory_policy_empty", None) {
         Ok(s) => s,
         Err(e) => return TestResult::Failed(e),
     };
@@ -168,15 +156,16 @@ fn invalid_flag_string() -> TestResult {
     });
 
     match res {
+        TestResult::Failed(_) => TestResult::Passed,
         TestResult::Passed => TestResult::Failed(anyhow!(
             "expected error for invalid memory policy flag, found none"
         )),
-        _ => TestResult::Passed,
+        TestResult::Skipped => TestResult::Skipped,
     }
 }
 
 fn missing_mode_but_nodes_present() -> TestResult {
-    let spec = match spec_with_runtimetest("memory_policy_default", None) {
+    let spec = match spec_with_runtimetest("memory_policy_empty", None) {
         Ok(s) => s,
         Err(e) => return TestResult::Failed(e),
     };
@@ -191,15 +180,16 @@ fn missing_mode_but_nodes_present() -> TestResult {
     });
 
     match res {
+        TestResult::Failed(_) => TestResult::Passed,
         TestResult::Passed => {
             TestResult::Failed(anyhow!("expected error for missing mode, found none"))
         }
-        _ => TestResult::Passed,
+        TestResult::Skipped => TestResult::Skipped,
     }
 }
 
 fn syscall_invalid_arguments() -> TestResult {
-    let spec = match spec_with_runtimetest("memory_policy_default", None) {
+    let spec = match spec_with_runtimetest("memory_policy_empty", None) {
         Ok(s) => s,
         Err(e) => return TestResult::Failed(e),
     };
@@ -218,15 +208,16 @@ fn syscall_invalid_arguments() -> TestResult {
     });
 
     match res {
+        TestResult::Failed(_) => TestResult::Passed,
         TestResult::Passed => TestResult::Failed(anyhow!(
             "expected error for invalid set_mempolicy args, found none"
         )),
-        _ => TestResult::Passed,
+        TestResult::Skipped => TestResult::Skipped,
     }
 }
 
 fn bind_way_too_large_node_number() -> TestResult {
-    let spec = match spec_with_runtimetest("memory_policy_default", None) {
+    let spec = match spec_with_runtimetest("memory_policy_empty", None) {
         Ok(s) => s,
         Err(e) => return TestResult::Failed(e),
     };
@@ -245,26 +236,38 @@ fn bind_way_too_large_node_number() -> TestResult {
     });
 
     match res {
+        TestResult::Failed(_) => TestResult::Passed,
         TestResult::Passed => TestResult::Failed(anyhow!(
             "expected error for invalid memory policy node, found none"
         )),
-        _ => TestResult::Passed,
+        TestResult::Skipped => TestResult::Skipped,
     }
 }
 
 pub fn get_linux_memory_policy_tests() -> TestGroup {
     let mut tg = TestGroup::new("memory_policy");
 
+    // NUMA dependent tests use ConditionalTest
     tg.add(vec![
-        Box::new(Test::new(
+        Box::new(ConditionalTest::new(
             "interleave_without_flags",
+            Box::new(has_multi_numa_nodes),
             Box::new(interleave_without_flags),
         )),
-        Box::new(Test::new("bind_static", Box::new(bind_static))),
-        Box::new(Test::new(
+        Box::new(ConditionalTest::new(
+            "bind_static",
+            Box::new(has_multi_numa_nodes),
+            Box::new(bind_static),
+        )),
+        Box::new(ConditionalTest::new(
             "preferred_relative",
+            Box::new(has_multi_numa_nodes),
             Box::new(preferred_relative),
         )),
+    ]);
+
+    // NUMA independent tests use regular Test
+    tg.add(vec![
         Box::new(Test::new(
             "empty_memory_policy",
             Box::new(empty_memory_policy),
