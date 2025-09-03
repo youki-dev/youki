@@ -10,7 +10,7 @@ use nix::sys::stat::Mode;
 use nix::unistd::{self, Gid, Uid, close, dup2, setsid};
 use oci_spec::runtime::{
     IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxPersonalityDomain,
-    LinuxSchedulerFlag, LinuxSchedulerPolicy, Scheduler, Spec, User,
+    LinuxSchedulerFlag, LinuxSchedulerPolicy, MemoryPolicyModeType, Scheduler, Spec, User,
 };
 
 use super::Result;
@@ -874,15 +874,13 @@ fn setup_memory_policy(
         const MPOL_F_STATIC_NODES: u32 = 1 << 15; // 0x8000
 
         let base_mode = match policy.mode() {
-            oci_spec::runtime::MemoryPolicyModeType::MpolDefault => MPOL_DEFAULT,
-            oci_spec::runtime::MemoryPolicyModeType::MpolPreferred => MPOL_PREFERRED,
-            oci_spec::runtime::MemoryPolicyModeType::MpolBind => MPOL_BIND,
-            oci_spec::runtime::MemoryPolicyModeType::MpolInterleave => MPOL_INTERLEAVE,
-            oci_spec::runtime::MemoryPolicyModeType::MpolLocal => MPOL_LOCAL,
-            oci_spec::runtime::MemoryPolicyModeType::MpolPreferredMany => MPOL_PREFERRED_MANY,
-            oci_spec::runtime::MemoryPolicyModeType::MpolWeightedInterleave => {
-                MPOL_WEIGHTED_INTERLEAVE
-            }
+            MemoryPolicyModeType::MpolDefault => MPOL_DEFAULT,
+            MemoryPolicyModeType::MpolPreferred => MPOL_PREFERRED,
+            MemoryPolicyModeType::MpolBind => MPOL_BIND,
+            MemoryPolicyModeType::MpolInterleave => MPOL_INTERLEAVE,
+            MemoryPolicyModeType::MpolLocal => MPOL_LOCAL,
+            MemoryPolicyModeType::MpolPreferredMany => MPOL_PREFERRED_MANY,
+            MemoryPolicyModeType::MpolWeightedInterleave => MPOL_WEIGHTED_INTERLEAVE,
         };
 
         let mut flags_value: u32 = 0;
