@@ -436,7 +436,6 @@ impl CgroupManager for Manager {
                     println!("{:?}", controller_opt);
                     Io::apply(controller_opt, systemd_version, &mut properties)?;
                 }
-                _ => {}
             };
         }
 
