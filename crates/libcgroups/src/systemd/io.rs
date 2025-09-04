@@ -4,10 +4,7 @@ use oci_spec::runtime::LinuxBlockIo;
 use std::fs;
 use std::path::Path;
 
-use crate::systemd::{
-    controller::Controller,
-    dbus_native::serialize::{Structure, Variant},
-};
+use crate::systemd::{controller::Controller,dbus_native::serialize::{Structure, Variant}};
 
 pub struct Io {}
 
