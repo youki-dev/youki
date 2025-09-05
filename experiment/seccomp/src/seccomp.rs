@@ -415,8 +415,9 @@ impl InstructionData {
          */
         if let Some(syscalls) = seccomp.syscalls() {
             for syscall in syscalls {
-                // data.rule = Default::default();
-                data.rule.action = u32::from(syscall.action());
+                if Some(data.rule.action).is_none() {
+                    data.rule.action = u32::from(syscall.action());
+                }
                 data.rule.is_notify = data.rule.action == SECCOMP_RET_USER_NOTIF;
 
                 for name in syscall.names() {
