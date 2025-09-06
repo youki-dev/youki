@@ -25,8 +25,6 @@ impl Controller for Io {
         _: u32,
         properties: &mut HashMap<&str, super::dbus_native::serialize::Variant>,
     ) -> Result<(), Self::Error> {
-        // properties
-        println!("Reached io block");
         if let Some(blkio) = options.resources.block_io() {
             tracing::debug!("applying blkio resource restrictions");
             Self::apply(blkio, properties)?;
@@ -34,7 +32,6 @@ impl Controller for Io {
         Ok(())
     }
 }
-// TODO add comments where ever required
 impl Io {
     fn apply(
         blkio: &LinuxBlockIo,
@@ -75,7 +72,6 @@ impl Io {
             let mut limits = Vec::new();
             for d in devices {
                 let rate = d.rate();
-                // TODO handle none
                 if let Some(dev) = dev_path_from_major_minor(d.major(), d.minor()) {
                     limits.push(Structure::new(dev, rate));
                 } else {
