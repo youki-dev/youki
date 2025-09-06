@@ -456,7 +456,6 @@ impl DbusSerialize for Variant {
             }
             Self::Struct(s) => {
                 let sub_type = <Vec<Structure<u64>>>::get_signature();
-                println!("{:?},{:?}", sub_type, s);
                 let signature_length = sub_type.len() as u8;
                 buf.push(signature_length);
                 buf.extend_from_slice(sub_type.as_bytes());
