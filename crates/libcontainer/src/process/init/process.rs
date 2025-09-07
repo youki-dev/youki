@@ -1094,12 +1094,12 @@ fn build_nodemask(nodes: &str) -> Result<(Vec<u64>, u64)> {
     // Find the highest node ID
     let highest_node = node_ids.iter().max().copied().unwrap_or(0) as usize;
 
-    // Calculate maxnode as highest_node + 1 (number of nodes to consider)
-    let maxnode = (highest_node + 1) as u64;
-
     // Calculate how many u64 values we need to store the bitmask
     let u64_bits = 64;
     let num_u64s = (highest_node / u64_bits) + 1;
+
+    // Calculate maxnode
+    let maxnode = (num_u64s * u64_bits) as u64;
 
     // Build the nodemask array as Vec<u64>
     let mut nodemask = vec![0u64; num_u64s];
