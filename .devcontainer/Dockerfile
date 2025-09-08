@@ -47,4 +47,8 @@ curl https://sh.rustup.rs -sSf | sh -s -- -y
 rustup install nightly
 rustup component add rustfmt
 rustup component add clippy 
+
+# Install mdbook
+VERSION=$(curl -sSfL https://api.github.com/repos/rust-lang/mdBook/releases/latest | jq -r .tag_name)
+curl -sSfL https://github.com/rust-lang/mdBook/releases/download/$VERSION/mdbook-$VERSION-$(uname -m)-unknown-linux-musl.tar.gz | tar -xzvC /usr/bin/ mdbook
 EOF

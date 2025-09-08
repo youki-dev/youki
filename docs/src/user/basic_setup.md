@@ -6,6 +6,41 @@ Youki currently only supports Linux Platform, and to use it on other platform yo
 
 Also note that Youki currently only supports and expects systemd as init system, and would not work on other systems. There is currently work on-going to put systemd dependent features behind a feature flag, but till then you will need a systemd enabled system to work with Youki.
 
+## Quick install
+
+Install the latest Youki binary from the GitHub release as root:
+
+<!--youki release begin-->
+```console
+VERSION=$(curl -sSfL https://api.github.com/repos/youki-dev/youki/releases/latest | jq -r .tag_name | sed 's/^v//')
+curl -sSfL https://github.com/containers/youki/releases/download/v$VERSION/youki-$VERSION-$(uname -m)-musl.tar.gz | tar -xzvC /usr/bin/ youki
+```
+<!--youki release end-->
+
+To install another version, browse the tags at https://github.com/youki-dev/youki/tags.
+
+---
+
+## Runtime requirements
+
+The static binary (musl) builds of youki have no additional runtime requirements. Otherwise you need to install the runtime requirements using your distribution's package manager:
+
+#### Debian, Ubuntu and related distributions
+```console
+$ sudo apt-get install libseccomp2
+```
+
+#### Fedora, CentOS, RHEL and related distributions
+```console
+$ sudo dnf install libseccomp
+```
+
+## Running youki
+
+You can use Youki by itself to start and run containers, but it can be a little tedious, as it is a low-level container runtime. You can use a High-level container runtime, with its runtime set to Youki, so that it will be easier to use. Both of these are explained in the [Basic Usage](./basic_usage.md). For using it along with an high-level runtime, you will to install one such as Docker or Podman. This documentation uses Docker in its examples, which can be installed from [here](https://docs.docker.com/engine/install).
+
+---
+
 ## Build Requirements
 
 As Youki is written in Rust, you will need to install and setup Rust toolchain to compile it. The instructions for that can be found on Rust's official site [here](https://www.rust-lang.org/tools/install).
@@ -57,39 +92,7 @@ $ sudo dnf install          \
       openssl-devel
 ```
 
-## Runtime requirements
-
-The static binary (musl) builds of youki have no additional runtime requirements. Otherwise you need to install the runtime requirements using your distribution's package manager:
-
-#### Debian, Ubuntu and related distributions
-```console
-$ sudo apt-get install libseccomp2
-```
-
-#### Fedora, CentOS, RHEL and related distributions
-```console
-$ sudo dnf install libseccomp
-```
-
-## Running youki
-
-You can use Youki by itself to start and run containers, but it can be a little tedious, as it is a low-level container runtime. You can use a High-level container runtime, with its runtime set to Youki, so that it will be easier to use. Both of these are explained in the [Basic Usage](./basic_usage.md). For using it along with an high-level runtime, you will to install one such as Docker or Podman. This documentation uses Docker in its examples, which can be installed from [here](https://docs.docker.com/engine/install).
-
----
-
-## Quick install
-
-Install from the GitHub release as root:
-
-<!--youki release begin-->
-```console
-# curl -sSfL https://github.com/containers/youki/releases/download/v0.5.5/youki-0.5.5-$(uname -m)-musl.tar.gz | tar -xzvC /usr/bin/ youki
-```
-<!--youki release end-->
-
 ## Getting the source
-
-Currently Youki can only be installed from the source code itself, so you will need to clone the Youki GitHub repository to get the source code for using it as a runtime. If you are using any crates of Youki as dependency you need to do this step, as Cargo will automatically clone the repository for you.
 
 To clone the repository, run
 
