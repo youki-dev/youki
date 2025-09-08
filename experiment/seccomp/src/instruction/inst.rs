@@ -33,7 +33,7 @@ impl Instruction {
         jump_false: c_uchar,
         multiuse_field: c_uint,
     ) -> Self {
-        Self::new(code, jump_true, jump_false, multiuse_field)
+        Self::new(BPF_JMP | code, jump_true, jump_false, multiuse_field)
     }
 
     pub fn stmt(code: c_ushort, k: c_uint) -> Self {
@@ -58,7 +58,7 @@ mod tests {
             }
         );
         assert_eq!(
-            Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 10, 2, 5),
+            Instruction::jump(BPF_JEQ | BPF_K, 10, 2, 5),
             Instruction {
                 code: 0x15,
                 offset_jump_true: 10,
