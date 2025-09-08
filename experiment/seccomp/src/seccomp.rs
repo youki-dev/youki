@@ -424,6 +424,9 @@ impl InstructionData {
                     data.rule.syscall.append(&mut vec![name.to_string()]);
                     match syscall.args() {
                         Some(args) => {
+                            if syscall.args().iter().len() > 6 {
+                                return Err(anyhow!(SeccompError::InvalidArgumentSize));
+                            }
                             data.rule
                                 .check_arg_syscall
                                 .append(&mut vec![name.to_string()]);
