@@ -1,5 +1,5 @@
-use std::os::raw::{c_uchar, c_uint, c_ushort};
 use crate::instruction::BPF_JMP;
+use std::os::raw::{c_uchar, c_uint, c_ushort};
 
 // https://docs.kernel.org/networking/filter.html#structure
 // <linux/filter.h>: sock_filter

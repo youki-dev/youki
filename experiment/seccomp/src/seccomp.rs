@@ -490,28 +490,25 @@ impl Rule {
     }
 
     fn jump_cnt(rule: &Rule, jump_num: usize) -> c_uchar {
-        let mut ret: c_uchar = 0;
         if rule.arg_cnt.is_none() {
-            ret = jump_num as c_uchar
+            jump_num as c_uchar
         } else {
             match rule.op.as_ref().unwrap() {
                 SeccompCompareOp::Equal
                 | SeccompCompareOp::NotEqual
-                | SeccompCompareOp::MaskedEqual => ret = (jump_num + 4) as c_uchar,
+                | SeccompCompareOp::MaskedEqual => (jump_num + 4) as c_uchar,
                 SeccompCompareOp::GreaterThan
                 | SeccompCompareOp::GreaterOrEqual
                 | SeccompCompareOp::LessThan
-                | SeccompCompareOp::LessOrEqual => ret = (jump_num + 5) as c_uchar,
-                _ => {}
+                | SeccompCompareOp::LessOrEqual => (jump_num + 5) as c_uchar,
             }
         }
-        ret
     }
 
     fn build_instruction_with_args(
         arch: &Arch,
         rule: &Rule,
-        syscall: &String,
+        syscall: &str,
     ) -> Result<Vec<Instruction>, SeccompError> {
         let mut bpf_prog = vec![];
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap())?;

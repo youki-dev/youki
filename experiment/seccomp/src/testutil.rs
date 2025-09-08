@@ -9,6 +9,7 @@ use std::io;
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct ArchMap {
     architecture: String,
     sub_architectures: Option<Vec<String>>,
@@ -23,6 +24,7 @@ pub struct Argument {
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 pub struct Includes {
     caps: Option<Vec<String>>,
     arches: Option<Vec<String>>,
@@ -30,12 +32,14 @@ pub struct Includes {
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 pub struct Excludes {
     caps: Option<Vec<String>>,
     arches: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 pub struct Syscall {
     names: Vec<String>,
     action: String,
@@ -81,6 +85,7 @@ pub fn convert_action(action_str: &str) -> Option<LinuxSeccompAction> {
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct SeccompData {
     default_action: String,
     default_errno_ret: i32,
@@ -97,22 +102,22 @@ pub fn read_seccomp_testdata(file_path: &str) -> Result<SeccompData, io::Error> 
 pub fn generate_seccomp_instruction(file_path: &str) -> anyhow::Result<()> {
     let seccomp = read_seccomp_testdata(file_path)?;
     let mut cnt = 0;
+    #[allow(clippy::explicit_counter_loop)]
     for syscall in seccomp.syscalls {
         let action = convert_action(&syscall.action).unwrap();
 
-        let build_syscall: LinuxSyscall;
-        if syscall.args.is_some() {
-            build_syscall = LinuxSyscallBuilder::default()
+        let build_syscall: LinuxSyscall = if syscall.args.is_some() {
+            LinuxSyscallBuilder::default()
                 .names(syscall.names)
                 .action(action)
                 .args(convert_argument(syscall.args.unwrap()).unwrap())
-                .build()?;
+                .build()?
         } else {
-            build_syscall = LinuxSyscallBuilder::default()
+            LinuxSyscallBuilder::default()
                 .names(syscall.names)
                 .action(action)
-                .build()?;
-        }
+                .build()?
+        };
 
         let spec_seccomp = LinuxSeccompBuilder::default()
             .architectures(vec![OciSpecArch::ScmpArchX86_64])

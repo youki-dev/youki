@@ -26,6 +26,7 @@ use seccomp::seccomp::InstructionData;
 use seccomp::testutil::*;
 use syscall_numbers::x86_64;
 
+#[allow(dead_code)]
 fn send_fd<F: AsRawFd>(sock: OwnedFd, fd: &F) -> nix::Result<()> {
     let fd = fd.as_raw_fd();
     let cmsgs = [ControlMessage::ScmRights(slice::from_ref(&fd))];
@@ -36,6 +37,7 @@ fn send_fd<F: AsRawFd>(sock: OwnedFd, fd: &F) -> nix::Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn recv_fd<F: FromRawFd>(sock: RawFd) -> nix::Result<Option<F>> {
     let mut iov_buf = [];
     let mut iov = [IoSliceMut::new(&mut iov_buf)];
@@ -51,6 +53,7 @@ fn recv_fd<F: FromRawFd>(sock: RawFd) -> nix::Result<Option<F>> {
     }
 }
 
+#[allow(dead_code)]
 async fn handle_notifications(notify_fd: NotifyFd) -> nix::Result<()> {
     loop {
         println!("Waiting on next");
@@ -65,6 +68,7 @@ async fn handle_notifications(notify_fd: NotifyFd) -> nix::Result<()> {
     }
 }
 
+#[allow(dead_code)]
 async fn handle_signal(pid: nix::unistd::Pid) -> Result<()> {
     let status = wait::waitpid(pid, None)?;
     match status {
@@ -84,16 +88,14 @@ async fn handle_signal(pid: nix::unistd::Pid) -> Result<()> {
 }
 
 fn main() -> Result<()> {
-    match generate_seccomp_instruction("tests/default_x86_64.json") {
-        Err(e) => {
-            eprintln!("Something wrong : {}", e);
-        }
-        _ => {}
+    if let Err(e) = generate_seccomp_instruction("tests/default_x86_64.json") {
+        eprintln!("Something wrong : {}", e);
     }
     Ok(())
 }
 
 #[tokio::main]
+#[allow(dead_code)]
 async fn sub() -> Result<()> {
     let (sock_for_child, sock_for_parent) = socket::socketpair(
         socket::AddressFamily::Unix,
