@@ -1,4 +1,5 @@
 use std::os::raw::{c_uchar, c_uint, c_ushort};
+use crate::instruction::BPF_JMP;
 
 // https://docs.kernel.org/networking/filter.html#structure
 // <linux/filter.h>: sock_filter
@@ -60,9 +61,9 @@ mod tests {
             Instruction::jump(BPF_JMP | BPF_JEQ | BPF_K, 10, 2, 5),
             Instruction {
                 code: 0x15,
-                offset_jump_true: 2,
-                offset_jump_false: 5,
-                multiuse_field: 10,
+                offset_jump_true: 10,
+                offset_jump_false: 2,
+                multiuse_field: 5,
             }
         );
     }
