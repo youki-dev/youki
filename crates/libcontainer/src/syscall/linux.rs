@@ -21,7 +21,8 @@ use nix::unistd::{chown, chroot, close, fchdir, pivot_root, sethostname, Gid, Ui
 use oci_spec::runtime::PosixRlimit;
 
 use super::{Result, Syscall, SyscallError};
-use crate::{capabilities, config::PersonalityDomain, utils};
+use crate::config::PersonalityDomain;
+use crate::{capabilities, utils};
 
 // Flags used in mount_setattr(2).
 // see https://man7.org/linux/man-pages/man2/mount_setattr.2.html.
