@@ -31,6 +31,11 @@ apt-get install -y \
   podman \
   bpftrace
 
+# Since systemd is not running inside the Dev Container,
+# but the default events_logger for podman is set to journald, container startup fails.
+# Therefore, change it to file.
+sudo sed -i 's/^# events_logger = "journald"/events_logger = "file"/' /usr/share/containers/containers.conf
+
 curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/bin
 
 curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"

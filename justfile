@@ -75,12 +75,12 @@ test-dind:
 
 # run containerd integration tests
 containerd-test: youki-dev
-    VAGRANT_VAGRANTFILE=Vagrantfile.containerd2youki vagrant up
-    VAGRANT_VAGRANTFILE=Vagrantfile.containerd2youki vagrant provision --provision-with test
+    vagrant up containerd2youki
+    vagrant provision containerd2youki --provision-with test
 
 # run containerd integration tests
 clean-containerd-test:
-    VAGRANT_VAGRANTFILE=Vagrantfile.containerd2youki vagrant destroy
+    vagrant destroy containerd2youki
 
 [private]
 kind-cluster: bin-kind

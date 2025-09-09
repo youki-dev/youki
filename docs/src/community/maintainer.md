@@ -8,3 +8,4 @@
 | Eric Fang       | Committer | [@yihuaf](https://github.com/yihuaf)               | Independent        |
 | Sascha Grunert  | Committer | [@saschagrunert](https://github.com/saschagrunert) | Red Hat            |
 | Jorge Prendes   | Committer | [@jprendes](https://github.com/jprendes)           | Microsoft          |
+| Yusuke Sakurai  | Reviewer  | [@saku3](https://github.com/saku3)                 | 3-shake            |
