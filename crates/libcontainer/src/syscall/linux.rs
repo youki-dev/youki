@@ -21,7 +21,7 @@ use nix::unistd::{chown, chroot, close, fchdir, pivot_root, sethostname, Gid, Ui
 use oci_spec::runtime::PosixRlimit;
 
 use super::{Result, Syscall, SyscallError};
-use crate::{capabilities, utils};
+use crate::{capabilities, config::PersonalityDomain, utils};
 
 // Flags used in mount_setattr(2).
 // see https://man7.org/linux/man-pages/man2/mount_setattr.2.html.
@@ -744,11 +744,11 @@ impl Syscall for LinuxSyscall {
         nix::unistd::getegid()
     }
 
-    fn personality(&self, domain: libc::c_ulong) -> Result<()> {
-        match unsafe { libc::personality(domain) } {
-            ret if ret < 0 => Err(SyscallError::IO(std::io::Error::last_os_error())),
-            _ => Ok(()),
-        }
+    fn personality(&self, domain: PersonalityDomain) -> Result<()> {
+        let domain = nix::sys::personality::Persona::from_bits_retain(domain as i32);
+        nix::sys::personality::set(domain)
+            .map(|_| ())
+            .map_err(|e| e.into())
     }
 }
 

@@ -12,6 +12,7 @@ use nix::sys::stat::{Mode, SFlag};
 use nix::unistd::{Gid, Uid};
 use oci_spec::runtime::PosixRlimit;
 
+use super::super::config::PersonalityDomain;
 use super::{linux, Result, Syscall};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -316,7 +317,7 @@ impl Syscall for TestHelperSyscall {
         self.mock_id.borrow().egid
     }
 
-    fn personality(&self, _: libc::c_ulong) -> Result<()> {
+    fn personality(&self, _: PersonalityDomain) -> Result<()> {
         todo!()
     }
 }

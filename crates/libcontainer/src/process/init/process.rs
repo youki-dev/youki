@@ -16,7 +16,7 @@ use oci_spec::runtime::{
 use super::context::InitContext;
 use super::error::InitProcessError;
 use super::Result;
-use crate::config::{PER_LINUX, PER_LINUX32};
+use crate::config::PersonalityDomain;
 use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
 use crate::process::args::{ContainerArgs, ContainerType};
@@ -129,14 +129,17 @@ pub fn container_init_process(
     if let Some(personality) = ctx.linux.personality() {
         if let Some(flags) = personality.flags() {
             if !flags.is_empty() {
-                tracing::warn!("ignoring personality flags because personality flag has not supported at this time");
+                tracing::error!("personality flag has not supported at this time");
+                return Err(InitProcessError::Other(
+                    "personality flag has not supported at this time".to_string(),
+                ));
             }
         }
 
         let domain = match personality.domain() {
-            // https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/personality.h
-            LinuxPersonalityDomain::PerLinux => PER_LINUX,
-            LinuxPersonalityDomain::PerLinux32 => PER_LINUX32,
+            // https://github.com/opencontainers/runtime-spec/blob/main/config-linux.md#personality
+            LinuxPersonalityDomain::PerLinux => PersonalityDomain::Linux,
+            LinuxPersonalityDomain::PerLinux32 => PersonalityDomain::Linux32,
         };
 
         ctx.syscall.personality(domain).map_err(|err| {

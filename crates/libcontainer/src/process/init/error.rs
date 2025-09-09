@@ -67,4 +67,6 @@ pub enum InitProcessError {
     NoLinux,
     #[error("missing process section in spec")]
     NoProcess,
+    #[error("{0}")]
+    Other(String),
 }
