@@ -6,7 +6,8 @@ Please make sure that you update this documentation along with newly added featu
 
 Currently this documentation is hosted at [https://youki-dev.github.io/youki/](https://youki-dev.github.io/youki/), using GitHub pages. GitHub CI actions are used to automatically check if any files are changed in /docs on each push / PR merge to main branch, and if there are any changes, the mdbook is build and deployed to gh-pages. We use [https://github.com/peaceiris/actions-mdbook](https://github.com/peaceiris/actions-mdbook) to build and then [https://github.com/peaceiris/actions-gh-pages](https://github.com/peaceiris/actions-gh-pages) GitHub action to deploy the mdbook.
 
-When testing locally you can manually test the changes by running `mdbook serve` in the docs directory (after installing mdbook), which will temporarily serve the mdbook at `localhost:3000` by default. You can check the mdbook documentation for more information.
+When testing locally you can manually test the changes by running `mdbook serve` in the docs directory (after installing mdbook), which will temporarily serve the mdbook at `localhost:3000` by default. You can check the mdbook documentation for more information.  
+(If you are running inside a Dev Container, use `mdbook serve -n 0.0.0.0` instead)
 
 If you want to test it using gh-pages on your own fork, you can use following steps in the docs directory.
 
