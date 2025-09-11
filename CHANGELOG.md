@@ -1,5 +1,26 @@
 # Changelog
 
+## [v0.5.6](https://github.com/youki-dev/youki/compare/v0.5.5...v0.5.6) - 2025-09-11
+### 💪 Improvements
+- fix(3197): fix youki version command Part of Enhancing Compatibility with runc by @tommady in https://github.com/youki-dev/youki/pull/3200
+### 📖 Documentation improvements
+- added saku3 as reviewers by @saku3 in https://github.com/youki-dev/youki/pull/3228
+- Changed the events_logger in the Dev Container to file by @bells17 in https://github.com/youki-dev/youki/pull/3221
+### 🧪 Test improvements and Misc Fixes
+- Update Vagrantfile to support the ARM architecture by @bells17 in https://github.com/youki-dev/youki/pull/3222
+- setup runc integration test by @saku3 in https://github.com/youki-dev/youki/pull/3182
+- update runc ci to 1.3.1 by @saku3 in https://github.com/youki-dev/youki/pull/3237
+- Add mdbook binary to devcontainer by @bells17 in https://github.com/youki-dev/youki/pull/3240
+### Other Changes
+- (auto merged) chore(deps): bump thiserror from 2.0.14 to 2.0.15 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3223
+- (auto merged) chore(deps): bump serde_json from 1.0.142 to 1.0.143 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3225
+- (auto merged) chore(deps): bump thiserror from 2.0.15 to 2.0.16 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3226
+- chore(deps): bump tempfile from 3.20.0 to 3.21.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3224
+- (auto merged) chore(deps): bump regex from 1.11.1 to 1.11.2 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3229
+- (auto merged) chore(deps): bump tracing-subscriber from 0.3.19 to 0.3.20 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3231
+- (auto merged) chore(deps): bump chrono from 0.4.41 to 0.4.42 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3239
+- (auto merged) chore(deps): bump errno from 0.3.13 to 0.3.14 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3241
+
 ## [v0.5.5](https://github.com/youki-dev/youki/compare/v0.5.4...v0.5.5) - 2025-08-14
 ### 💪 Improvements
 - fix(3198): fix difference in how commands are passed after exec and ps by @tommady in https://github.com/youki-dev/youki/pull/3201
