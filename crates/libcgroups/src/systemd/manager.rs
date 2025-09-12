@@ -394,7 +394,6 @@ impl CgroupManager for Manager {
                     Memory::apply(controller_opt, systemd_version, &mut properties)?;
                 }
                 ControllerType::Io => {
-                    println!("{:?}", controller_opt);
                     Io::apply(controller_opt, systemd_version, &mut properties)?;
                 }
             };
