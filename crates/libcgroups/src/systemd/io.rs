@@ -210,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_ignores_zero_rates() {
+    fn test_io_apply() {
         let st = stat("/dev/null").expect("stat /dev/null");
         let maj = major(st.st_rdev) as i64;
         let min = minor(st.st_rdev) as i64;
@@ -227,6 +227,9 @@ mod tests {
 
         let mut props: HashMap<&str, Variant> = HashMap::new();
         Io::apply(&blkio, &mut props).expect("apply blkio with zero rate");
-        println!("{:?}", props)
+        assert_eq!(props.len(),1);
+        assert!(props.contains_key(IO_READ_BANDWIDTH_MAX));
+        let dbus_struct = props.get(IO_READ_BANDWIDTH_MAX).unwrap();
+        assert!(matches!(dbus_struct,Variant::Struct(_)))
     }
 }
