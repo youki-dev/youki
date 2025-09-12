@@ -5,6 +5,7 @@ pub mod controller_type;
 mod cpu;
 mod cpuset;
 mod dbus_native;
+mod io;
 pub mod manager;
 mod memory;
 mod pids;
