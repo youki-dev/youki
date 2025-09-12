@@ -1,11 +1,11 @@
 use std::collections::HashMap;
-
-use oci_spec::runtime::LinuxBlockIo;
 use std::fs;
 use std::path::Path;
 
-use crate::systemd::{controller::Controller,dbus_native::serialize::{Structure, Variant}};
+use oci_spec::runtime::LinuxBlockIo;
 
+use crate::systemd::controller::Controller;
+use crate::systemd::dbus_native::serialize::{Structure, Variant};
 pub struct Io {}
 
 pub const IO_READ_BANDWIDTH_MAX: &str = "IOReadBandwidthMax";
@@ -123,9 +123,10 @@ fn dev_path_from_major_minor(major: i64, minor: i64) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use nix::sys::stat::{major, minor, stat};
     use oci_spec::runtime::{LinuxBlockIoBuilder, LinuxThrottleDeviceBuilder};
+
+    use super::*;
 
     #[test]
     fn dev_path_from_char_device_null() {
