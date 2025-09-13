@@ -1,3 +1,4 @@
+mod cgroup_test;
 mod ignore_paused_test;
 mod preserve_fds_test;
 
@@ -34,9 +35,12 @@ pub fn get_exec_test() -> TestGroup {
         Box::new(ignore_paused_test::ignore_paused_test),
     );
 
+    let cgroup_test = Test::new("cgroup_test", Box::new(cgroup_test::cgroup_test));
+
     test_group.add(vec![
         Box::new(preserve_fds_test),
         Box::new(ignore_paused_test),
+        Box::new(cgroup_test),
     ]);
 
     test_group

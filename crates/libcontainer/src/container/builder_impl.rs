@@ -95,13 +95,30 @@ impl ContainerBuilderImpl {
         let mut final_cgroups_path = base_cgroups_path;
 
         if let Some(sub_cgroup_path) = &self.sub_cgroup_path {
-            let potential_path = final_cgroups_path.join(sub_cgroup_path);
-            if !potential_path.starts_with(&final_cgroups_path) {
-                return Err(LibcontainerError::OtherCgroup(
-                    "invalid sub cgroup path".to_string(),
-                ));
+            if sub_cgroup_path != "/" {
+                let potential_path = final_cgroups_path.join(sub_cgroup_path);
+                let normalized =
+                    potential_path
+                        .components()
+                        .fold(PathBuf::new(), |mut acc, comp| {
+                            match comp {
+                                std::path::Component::ParentDir => {
+                                    acc.pop();
+                                }
+                                std::path::Component::CurDir => { /* skip */ }
+                                other => acc.push(other),
+                            }
+                            acc
+                        });
+
+                if !normalized.starts_with(&final_cgroups_path) {
+                    return Err(LibcontainerError::OtherCgroup(format!(
+                        "{} is not a sub cgroup path",
+                        sub_cgroup_path
+                    )));
+                }
+                final_cgroups_path = potential_path;
             }
-            final_cgroups_path = potential_path;
         }
 
         let cgroup_config = libcgroups::common::CgroupConfig {
