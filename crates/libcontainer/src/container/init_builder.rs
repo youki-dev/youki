@@ -64,6 +64,9 @@ impl InitContainerBuilder {
     /// Creates a new container
     pub fn build(self) -> Result<Container, LibcontainerError> {
         let spec = self.load_spec()?;
+
+        let spec = self.base.executor.pre_exec(spec)?;
+
         let container_dir = self.create_container_dir()?;
 
         let mut container = self.create_container_state(&container_dir)?;
