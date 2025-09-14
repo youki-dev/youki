@@ -3,7 +3,7 @@ use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use tracing::Level;
 use tracing_subscriber::prelude::*;
 

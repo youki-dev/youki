@@ -13,11 +13,11 @@ use std::{fs, mem, ptr};
 use caps::{CapSet, CapsHashSet};
 use libc::{c_char, setdomainname, uid_t};
 use nix::fcntl;
-use nix::fcntl::{open, OFlag};
-use nix::mount::{mount, umount2, MntFlags, MsFlags};
-use nix::sched::{unshare, CloneFlags};
-use nix::sys::stat::{mknod, Mode, SFlag};
-use nix::unistd::{chown, chroot, close, fchdir, pivot_root, sethostname, Gid, Uid};
+use nix::fcntl::{OFlag, open};
+use nix::mount::{MntFlags, MsFlags, mount, umount2};
+use nix::sched::{CloneFlags, unshare};
+use nix::sys::stat::{Mode, SFlag, mknod};
+use nix::unistd::{Gid, Uid, chown, chroot, close, fchdir, pivot_root, sethostname};
 use oci_spec::runtime::PosixRlimit;
 
 use super::{Result, Syscall, SyscallError};
@@ -297,12 +297,12 @@ impl LinuxSyscall {
     where
         T: From<&'a OsStr>,
     {
-        T::from(OsStr::from_bytes(CStr::from_ptr(p).to_bytes()))
+        unsafe { T::from(OsStr::from_bytes(CStr::from_ptr(p).to_bytes())) }
     }
 
     /// Reads data from the `c_passwd` and returns it as a `User`.
     unsafe fn passwd_to_user(passwd: libc::passwd) -> Arc<OsStr> {
-        let name: Arc<OsStr> = Self::from_raw_buf(passwd.pw_name);
+        let name: Arc<OsStr> = unsafe { Self::from_raw_buf(passwd.pw_name) };
         name
     }
 
@@ -373,9 +373,8 @@ impl Syscall for LinuxSyscall {
             OFlag::O_DIRECTORY | OFlag::O_RDONLY | OFlag::O_CLOEXEC,
             Mode::empty(),
         )
-        .map_err(|errno| {
+        .inspect_err(|errno| {
             tracing::error!(?errno, ?path, "failed to open the new root for pivot root");
-            errno
         })?;
 
         // make the given path as the root directory for the container
@@ -386,9 +385,8 @@ impl Syscall for LinuxSyscall {
         // this path. This is done, as otherwise, we will need to create a separate temporary directory under the new root path
         // so we can move the original root there, and then unmount that. This way saves the creation of the temporary
         // directory to put original root directory.
-        pivot_root(path, path).map_err(|errno| {
+        pivot_root(path, path).inspect_err(|errno| {
             tracing::error!(?errno, ?path, "failed to pivot root to");
-            errno
         })?;
 
         // Make the original root directory rslave to avoid propagating unmount event to the host mount namespace.
@@ -400,28 +398,24 @@ impl Syscall for LinuxSyscall {
             MsFlags::MS_SLAVE | MsFlags::MS_REC,
             None::<&str>,
         )
-        .map_err(|errno| {
+        .inspect_err(|errno| {
             tracing::error!(?errno, "failed to make original root directory rslave");
-            errno
         })?;
 
         // Unmount the original root directory which was stacked on top of new root directory
         // MNT_DETACH makes the mount point unavailable to new accesses, but waits till the original mount point
         // to be free of activity to actually unmount
         // see https://man7.org/linux/man-pages/man2/umount2.2.html for more information
-        umount2("/", MntFlags::MNT_DETACH).map_err(|errno| {
+        umount2("/", MntFlags::MNT_DETACH).inspect_err(|errno| {
             tracing::error!(?errno, "failed to unmount old root directory");
-            errno
         })?;
         // Change directory to the new root
-        fchdir(newroot).map_err(|errno| {
+        fchdir(newroot).inspect_err(|errno| {
             tracing::error!(?errno, ?newroot, "failed to change directory to new root");
-            errno
         })?;
 
-        close(newroot).map_err(|errno| {
+        close(newroot).inspect_err(|errno| {
             tracing::error!(?errno, ?newroot, "failed to close new root directory");
-            errno
         })?;
 
         Ok(())
@@ -753,7 +747,7 @@ mod tests {
     use std::os::unix::prelude::AsRawFd;
     use std::str::FromStr;
 
-    use anyhow::{bail, Context, Result};
+    use anyhow::{Context, Result, bail};
     use nix::{fcntl, sys, unistd};
     use serial_test::serial;
 

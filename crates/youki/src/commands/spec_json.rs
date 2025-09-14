@@ -36,16 +36,20 @@ pub fn get_rootless(syscall: &dyn Syscall) -> Result<Spec> {
 
     let linux = LinuxBuilder::default()
         .namespaces(namespaces)
-        .uid_mappings(vec![LinuxIdMappingBuilder::default()
-            .host_id(uid)
-            .container_id(0_u32)
-            .size(1_u32)
-            .build()?])
-        .gid_mappings(vec![LinuxIdMappingBuilder::default()
-            .host_id(gid)
-            .container_id(0_u32)
-            .size(1_u32)
-            .build()?])
+        .uid_mappings(vec![
+            LinuxIdMappingBuilder::default()
+                .host_id(uid)
+                .container_id(0_u32)
+                .size(1_u32)
+                .build()?,
+        ])
+        .gid_mappings(vec![
+            LinuxIdMappingBuilder::default()
+                .host_id(gid)
+                .container_id(0_u32)
+                .size(1_u32)
+                .build()?,
+        ])
         .build()?;
 
     // Prepare the mounts

@@ -81,11 +81,11 @@ pub trait Executor: CloneBoxExecutor {
     fn setup_envs(&self, envs: HashMap<String, String>) -> Result<(), ExecutorSetEnvsError> {
         // The default implementation resets the process env based on the OCI spec.
         // First, clear all host's envs.
-        env::vars().for_each(|(key, _value)| env::remove_var(key));
+        env::vars().for_each(|(key, _value)| unsafe { env::remove_var(key) });
 
         // Next, set envs based on the spec
         envs.iter()
-            .for_each(|(key, value)| env::set_var(key, value));
+            .for_each(|(key, value)| unsafe { env::set_var(key, value) });
 
         Ok(())
     }

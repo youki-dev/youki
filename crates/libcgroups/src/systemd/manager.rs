@@ -5,11 +5,11 @@ use std::fs::{self};
 use std::path::Component::RootDir;
 use std::path::{Path, PathBuf};
 
-use nix::unistd::Pid;
 use nix::NixPath;
+use nix::unistd::Pid;
 
 use super::controller::Controller;
-use super::controller_type::{ControllerType, CONTROLLER_TYPES};
+use super::controller_type::{CONTROLLER_TYPES, ControllerType};
 use super::cpu::Cpu;
 use super::cpuset::CpuSet;
 use super::dbus_native::client::SystemdClient;

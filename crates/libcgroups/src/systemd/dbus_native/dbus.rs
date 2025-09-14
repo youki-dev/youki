@@ -500,7 +500,7 @@ mod tests {
     use nix::unistd::getuid;
 
     use super::super::utils::Result;
-    use super::{uid_to_hex_str, DbusConnection, SystemdClientError};
+    use super::{DbusConnection, SystemdClientError, uid_to_hex_str};
 
     #[test]
     fn test_uid_to_hex_str() {

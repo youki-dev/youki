@@ -1,18 +1,18 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use libcgroups::common::{self, CgroupSetup, DEFAULT_CGROUP_ROOT};
 use libcgroups::v2::controller_type::ControllerType;
 use libcontainer::utils::PathBufExt;
 use oci_spec::runtime::{LinuxCpuBuilder, Spec};
-use test_framework::{assert_result_eq, test_result, ConditionalTest, TestGroup, TestResult};
+use test_framework::{ConditionalTest, TestGroup, TestResult, assert_result_eq, test_result};
 use tracing::debug;
 
 use super::create_spec;
 use crate::tests::cgroups::attach_controller;
 use crate::utils::test_outside_container;
-use crate::utils::test_utils::{check_container_created, CGROUP_ROOT};
+use crate::utils::test_utils::{CGROUP_ROOT, check_container_created};
 
 const DEFAULT_PERIOD: u64 = 100_000;
 const CPU: &str = "cpu";
@@ -29,10 +29,12 @@ const CGROUP_CPU_IDLE: &str = "cpu.idle";
 /// Tests if a cpu idle value is successfully set
 fn test_cpu_idle_set() -> TestResult {
     let idle: i64 = 1;
-    let cpu = test_result!(LinuxCpuBuilder::default()
-        .idle(idle)
-        .build()
-        .context("build cpu spec"));
+    let cpu = test_result!(
+        LinuxCpuBuilder::default()
+            .idle(idle)
+            .build()
+            .context("build cpu spec")
+    );
 
     let spec = test_result!(create_spec("test_cpu_idle_set", cpu));
     test_outside_container(&spec, &|data| {
@@ -59,10 +61,12 @@ fn test_cpu_idle_default() -> TestResult {
 fn test_cpu_weight_valid_set() -> TestResult {
     let cpu_weight = 22_000u64;
     let converted_cpu_weight = 840u64;
-    let cpu = test_result!(LinuxCpuBuilder::default()
-        .shares(cpu_weight)
-        .build()
-        .context("build cpu spec"));
+    let cpu = test_result!(
+        LinuxCpuBuilder::default()
+            .shares(cpu_weight)
+            .build()
+            .context("build cpu spec")
+    );
 
     let spec = test_result!(create_spec("test_cpu_weight_valid_set", cpu));
     test_outside_container(&spec, &|data| {
@@ -79,10 +83,12 @@ fn test_cpu_weight_valid_set() -> TestResult {
 fn test_cpu_weight_zero_ignored() -> TestResult {
     let cpu_weight = 0u64;
     let default_cpu_weight = 100;
-    let cpu = test_result!(LinuxCpuBuilder::default()
-        .shares(cpu_weight)
-        .build()
-        .context("build cpu spec"));
+    let cpu = test_result!(
+        LinuxCpuBuilder::default()
+            .shares(cpu_weight)
+            .build()
+            .context("build cpu spec")
+    );
 
     let spec = test_result!(create_spec("test_cpu_weight_zero_ignored", cpu));
     test_outside_container(&spec, &|data| {
@@ -100,10 +106,12 @@ fn test_cpu_weight_zero_ignored() -> TestResult {
 /// Modern kernels enforce this range strictly and reject out-of-range values
 fn test_cpu_weight_too_high_maximum_set() -> TestResult {
     let cpu_weight = 500_000u64;
-    let cpu = test_result!(LinuxCpuBuilder::default()
-        .shares(cpu_weight)
-        .build()
-        .context("build cpu spec"));
+    let cpu = test_result!(
+        LinuxCpuBuilder::default()
+            .shares(cpu_weight)
+            .build()
+            .context("build cpu spec")
+    );
 
     let spec = test_result!(create_spec("test_cpu_weight_too_high_maximum_set", cpu));
     // We accept both behaviors: either container creation fails due to
@@ -124,10 +132,12 @@ fn test_cpu_weight_too_high_maximum_set() -> TestResult {
 /// Tests if a valid cpu quota (x > 0) is set successfully
 fn test_cpu_quota_valid_set() -> TestResult {
     let cpu_quota = 250_000;
-    let cpu = test_result!(LinuxCpuBuilder::default()
-        .quota(cpu_quota)
-        .build()
-        .context("build cpu spec"));
+    let cpu = test_result!(
+        LinuxCpuBuilder::default()
+            .quota(cpu_quota)
+            .build()
+            .context("build cpu spec")
+    );
 
     let spec = test_result!(create_spec("test_cpu_quota_valid_set", cpu));
     test_outside_container(&spec, &|data| {
@@ -144,10 +154,12 @@ fn test_cpu_quota_valid_set() -> TestResult {
 /// Tests if the cpu quota is the default value (max) if a cpu quota of zero has been specified
 fn test_cpu_quota_zero_default_set() -> TestResult {
     let cpu_quota = 0;
-    let cpu = test_result!(LinuxCpuBuilder::default()
-        .quota(cpu_quota)
-        .build()
-        .context("build cpu spec"));
+    let cpu = test_result!(
+        LinuxCpuBuilder::default()
+            .quota(cpu_quota)
+            .build()
+            .context("build cpu spec")
+    );
 
     let spec = test_result!(create_spec("test_cpu_quota_zero_default_set", cpu));
     test_outside_container(&spec, &|data| {
@@ -164,10 +176,12 @@ fn test_cpu_quota_zero_default_set() -> TestResult {
 /// Tests if the cpu quota is the default value (max) if a negative cpu quota has been specified
 fn test_cpu_quota_negative_default_set() -> TestResult {
     let cpu_quota = -9999;
-    let cpu = test_result!(LinuxCpuBuilder::default()
-        .quota(cpu_quota)
-        .build()
-        .context("build cpu spec"));
+    let cpu = test_result!(
+        LinuxCpuBuilder::default()
+            .quota(cpu_quota)
+            .build()
+            .context("build cpu spec")
+    );
 
     let spec = test_result!(create_spec(
         "test_cpu_quota_negative_value_default_set",
@@ -192,10 +206,12 @@ fn test_cpu_quota_negative_default_set() -> TestResult {
 /// we must use format "max $PERIOD"
 fn test_cpu_period_valid_set() -> TestResult {
     let expected_period = 250_000;
-    let cpu = test_result!(LinuxCpuBuilder::default()
-        .period(expected_period)
-        .build()
-        .context("build cpu spec"));
+    let cpu = test_result!(
+        LinuxCpuBuilder::default()
+            .period(expected_period)
+            .build()
+            .context("build cpu spec")
+    );
 
     let spec = test_result!(create_spec("test_cpu_period_valid_set", cpu));
     // Set period with "max $PERIOD" format as required by kernel docs
@@ -255,11 +271,13 @@ fn test_cpu_quota_period_unspecified_unchanged() -> TestResult {
 fn test_cpu_period_and_quota_valid_set() -> TestResult {
     let expected_quota = 250_000;
     let expected_period = 250_000;
-    let cpu = test_result!(LinuxCpuBuilder::default()
-        .quota(expected_quota)
-        .period(expected_period)
-        .build()
-        .context("build cpu spec"));
+    let cpu = test_result!(
+        LinuxCpuBuilder::default()
+            .quota(expected_quota)
+            .period(expected_period)
+            .build()
+            .context("build cpu spec")
+    );
 
     let spec = test_result!(create_spec("test_cpu_period_and_quota_valid_set", cpu));
 

@@ -6,6 +6,6 @@ pub use support::{
     set_config,
 };
 pub use test_utils::{
-    create_container, delete_container, exec_container, get_state, kill_container, start_container,
-    test_inside_container, test_outside_container, CreateOptions, State,
+    CreateOptions, State, create_container, delete_container, exec_container, get_state,
+    kill_container, start_container, test_inside_container, test_outside_container,
 };

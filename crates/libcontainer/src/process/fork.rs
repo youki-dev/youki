@@ -238,8 +238,8 @@ fn clone(cb: CloneCb, flags: u64, exit_signal: Option<u64>) -> Result<Pid, Clone
 
 #[cfg(test)]
 mod test {
-    use anyhow::{bail, Context, Result};
-    use nix::sys::wait::{waitpid, WaitStatus};
+    use anyhow::{Context, Result, bail};
+    use nix::sys::wait::{WaitStatus, waitpid};
     use nix::unistd;
 
     use super::*;
@@ -289,9 +289,9 @@ mod test {
         match unsafe { unistd::fork()? } {
             unistd::ForkResult::Parent { child } => {
                 let sibling_process_pid =
-                    Pid::from_raw(receiver.recv().with_context(|| {
-                        "failed to receive the sibling pid from forked process"
-                    })?);
+                    Pid::from_raw(receiver.recv().with_context(
+                        || "failed to receive the sibling pid from forked process",
+                    )?);
                 receiver.close()?;
                 match waitpid(sibling_process_pid, None).expect("wait pid failed.") {
                     WaitStatus::Exited(p, status) => {

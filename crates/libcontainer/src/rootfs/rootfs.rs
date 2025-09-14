@@ -10,8 +10,8 @@ use super::symlink::Symlink;
 use super::utils::default_devices;
 use super::{Result, RootfsError};
 use crate::error::MissingSpecError;
-use crate::syscall::syscall::create_syscall;
 use crate::syscall::Syscall;
+use crate::syscall::syscall::create_syscall;
 
 /// Holds information about rootfs
 pub struct RootFS {

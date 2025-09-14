@@ -43,7 +43,7 @@ impl Pids {
 #[cfg(test)]
 mod tests {
 
-    use anyhow::{anyhow, Context, Result};
+    use anyhow::{Context, Result, anyhow};
     use oci_spec::runtime::{LinuxPidsBuilder, LinuxResources, LinuxResourcesBuilder};
 
     use super::super::dbus_native::serialize::DbusSerialize;

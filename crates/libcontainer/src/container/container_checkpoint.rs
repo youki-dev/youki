@@ -62,7 +62,9 @@ impl Container {
                         // For v1 it is necessary to list all cgroup mounts as external mounts
                         Legacy | Hybrid => {
                             #[cfg(not(feature = "v1"))]
-                            panic!("libcontainer can't run in a Legacy or Hybrid cgroup setup without the v1 feature");
+                            panic!(
+                                "libcontainer can't run in a Legacy or Hybrid cgroup setup without the v1 feature"
+                            );
                             #[cfg(feature = "v1")]
                             for mp in libcgroups::v1::util::list_subsystem_mount_points().map_err(
                                 |err| {

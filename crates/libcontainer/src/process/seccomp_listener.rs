@@ -150,10 +150,12 @@ mod tests {
             sync_seccomp(
                 &LinuxSeccompBuilder::default()
                     .listener_path(socket_path_seccomp_th)
-                    .syscalls(vec![LinuxSyscallBuilder::default()
-                        .action(LinuxSeccompAction::ScmpActNotify)
-                        .build()
-                        .unwrap()])
+                    .syscalls(vec![
+                        LinuxSyscallBuilder::default()
+                            .action(LinuxSeccompAction::ScmpActNotify)
+                            .build()
+                            .unwrap(),
+                    ])
                     .build()
                     .unwrap(),
                 &state,

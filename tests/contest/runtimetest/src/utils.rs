@@ -1,11 +1,11 @@
 use std::fs;
-use std::fs::{metadata, symlink_metadata, OpenOptions};
+use std::fs::{OpenOptions, metadata, symlink_metadata};
 use std::io::Read;
 use std::os::unix::prelude::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use nix::sys::stat::{stat, SFlag};
+use nix::sys::stat::{SFlag, stat};
 
 // It means the file or directory is readable
 type Readable = bool;

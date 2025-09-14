@@ -7,7 +7,7 @@ use oci_spec::runtime::{Linux, LinuxIdMapping, LinuxNamespace, LinuxNamespaceTyp
 
 use crate::error::MissingSpecError;
 use crate::namespaces::{NamespaceError, Namespaces};
-use crate::syscall::syscall::{create_syscall, Syscall};
+use crate::syscall::syscall::{Syscall, create_syscall};
 use crate::utils;
 // Wrap the uid/gid path function into a struct for dependency injection. This
 // allows us to mock the id mapping logic in unit tests by using a different
@@ -101,13 +101,9 @@ pub enum ValidateSpecError {
     GidNotMapped(u32),
     #[error("failed to parse ID")]
     ParseID(#[source] std::num::ParseIntError),
-    #[error(
-        "mount options require mapping valid uid inside the container with new user namespace"
-    )]
+    #[error("mount options require mapping valid uid inside the container with new user namespace")]
     MountGidMapping(u32),
-    #[error(
-        "mount options require mapping valid gid inside the container with new user namespace"
-    )]
+    #[error("mount options require mapping valid gid inside the container with new user namespace")]
     MountUidMapping(u32),
     #[error(transparent)]
     Namespaces(#[from] NamespaceError),
@@ -297,7 +293,10 @@ fn validate_spec_for_new_user_ns(
             (true, false) => {
                 for gid in additional_gids {
                     if !is_id_mapped(*gid, gid_mappings) {
-                        tracing::error!(?gid,"gid is specified as supplementary group, but is not mapped in the user namespace");
+                        tracing::error!(
+                            ?gid,
+                            "gid is specified as supplementary group, but is not mapped in the user namespace"
+                        );
                         return Err(ValidateSpecError::GidNotMapped(*gid));
                     }
                 }
@@ -472,16 +471,20 @@ mod tests {
         let userns = LinuxNamespaceBuilder::default()
             .typ(LinuxNamespaceType::User)
             .build()?;
-        let uid_mappings = vec![LinuxIdMappingBuilder::default()
-            .host_id(gen_u32())
-            .container_id(0_u32)
-            .size(10_u32)
-            .build()?];
-        let gid_mappings = vec![LinuxIdMappingBuilder::default()
-            .host_id(gen_u32())
-            .container_id(0_u32)
-            .size(10_u32)
-            .build()?];
+        let uid_mappings = vec![
+            LinuxIdMappingBuilder::default()
+                .host_id(gen_u32())
+                .container_id(0_u32)
+                .size(10_u32)
+                .build()?,
+        ];
+        let gid_mappings = vec![
+            LinuxIdMappingBuilder::default()
+                .host_id(gen_u32())
+                .container_id(0_u32)
+                .size(10_u32)
+                .build()?,
+        ];
         let linux = LinuxBuilder::default()
             .namespaces(vec![userns])
             .uid_mappings(uid_mappings)
@@ -498,70 +501,82 @@ mod tests {
         let userns = LinuxNamespaceBuilder::default()
             .typ(LinuxNamespaceType::User)
             .build()?;
-        let uid_mappings = vec![LinuxIdMappingBuilder::default()
-            .host_id(gen_u32())
-            .container_id(0_u32)
-            .size(10_u32)
-            .build()?];
-        let gid_mappings = vec![LinuxIdMappingBuilder::default()
-            .host_id(gen_u32())
-            .container_id(0_u32)
-            .size(10_u32)
-            .build()?];
+        let uid_mappings = vec![
+            LinuxIdMappingBuilder::default()
+                .host_id(gen_u32())
+                .container_id(0_u32)
+                .size(10_u32)
+                .build()?,
+        ];
+        let gid_mappings = vec![
+            LinuxIdMappingBuilder::default()
+                .host_id(gen_u32())
+                .container_id(0_u32)
+                .size(10_u32)
+                .build()?,
+        ];
 
         let linux_uid_empty = LinuxBuilder::default()
             .namespaces(vec![userns.clone()])
             .uid_mappings(vec![])
             .gid_mappings(gid_mappings.clone())
             .build()?;
-        assert!(validate_spec_for_new_user_ns(
-            &SpecBuilder::default()
-                .linux(linux_uid_empty)
-                .build()
-                .unwrap(),
-            &*syscall
-        )
-        .is_err());
+        assert!(
+            validate_spec_for_new_user_ns(
+                &SpecBuilder::default()
+                    .linux(linux_uid_empty)
+                    .build()
+                    .unwrap(),
+                &*syscall
+            )
+            .is_err()
+        );
 
         let linux_gid_empty = LinuxBuilder::default()
             .namespaces(vec![userns.clone()])
             .uid_mappings(uid_mappings.clone())
             .gid_mappings(vec![])
             .build()?;
-        assert!(validate_spec_for_new_user_ns(
-            &SpecBuilder::default()
-                .linux(linux_gid_empty)
-                .build()
-                .unwrap(),
-            &*syscall
-        )
-        .is_err());
+        assert!(
+            validate_spec_for_new_user_ns(
+                &SpecBuilder::default()
+                    .linux(linux_gid_empty)
+                    .build()
+                    .unwrap(),
+                &*syscall
+            )
+            .is_err()
+        );
 
         let linux_uid_none = LinuxBuilder::default()
             .namespaces(vec![userns.clone()])
             .gid_mappings(gid_mappings)
             .build()?;
-        assert!(validate_spec_for_new_user_ns(
-            &SpecBuilder::default()
-                .linux(linux_uid_none)
-                .build()
-                .unwrap(),
-            &*syscall
-        )
-        .is_err());
+        assert!(
+            validate_spec_for_new_user_ns(
+                &SpecBuilder::default()
+                    .linux(linux_uid_none)
+                    .build()
+                    .unwrap(),
+                &*syscall
+            )
+            .is_err()
+        );
 
         let linux_gid_none = LinuxBuilder::default()
             .namespaces(vec![userns])
             .uid_mappings(uid_mappings)
             .build()?;
-        assert!(validate_spec_for_new_user_ns(
-            &SpecBuilder::default()
-                .linux(linux_gid_none)
-                .build()
-                .unwrap(),
-            &*syscall
-        )
-        .is_err());
+        assert!(
+            validate_spec_for_new_user_ns(
+                &SpecBuilder::default()
+                    .linux(linux_gid_none)
+                    .build()
+                    .unwrap(),
+                &*syscall
+            )
+            .is_err()
+        );
 
         Ok(())
     }
@@ -576,16 +591,20 @@ mod tests {
         let host_gid = gen_u32();
         let container_id = 0_u32;
         let size = 10_u32;
-        let uid_mappings = vec![LinuxIdMappingBuilder::default()
-            .host_id(host_uid)
-            .container_id(container_id)
-            .size(size)
-            .build()?];
-        let gid_mappings = vec![LinuxIdMappingBuilder::default()
-            .host_id(host_gid)
-            .container_id(container_id)
-            .size(size)
-            .build()?];
+        let uid_mappings = vec![
+            LinuxIdMappingBuilder::default()
+                .host_id(host_uid)
+                .container_id(container_id)
+                .size(size)
+                .build()?,
+        ];
+        let gid_mappings = vec![
+            LinuxIdMappingBuilder::default()
+                .host_id(host_gid)
+                .container_id(container_id)
+                .size(size)
+                .build()?,
+        ];
         let linux = LinuxBuilder::default()
             .namespaces(vec![userns])
             .uid_mappings(uid_mappings)
@@ -621,16 +640,20 @@ mod tests {
         let host_gid = gen_u32();
         let container_id = 0_u32;
         let size = 10_u32;
-        let uid_mappings = vec![LinuxIdMappingBuilder::default()
-            .host_id(host_uid)
-            .container_id(container_id)
-            .size(size)
-            .build()?];
-        let gid_mappings = vec![LinuxIdMappingBuilder::default()
-            .host_id(host_gid)
-            .container_id(container_id)
-            .size(size)
-            .build()?];
+        let uid_mappings = vec![
+            LinuxIdMappingBuilder::default()
+                .host_id(host_uid)
+                .container_id(container_id)
+                .size(size)
+                .build()?,
+        ];
+        let gid_mappings = vec![
+            LinuxIdMappingBuilder::default()
+                .host_id(host_gid)
+                .container_id(container_id)
+                .size(size)
+                .build()?,
+        ];
         let linux = LinuxBuilder::default()
             .namespaces(vec![userns])
             .uid_mappings(uid_mappings)

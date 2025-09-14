@@ -7,15 +7,15 @@ use nc;
 use nix::mount::{MntFlags, MsFlags};
 use nix::sched::CloneFlags;
 use nix::sys::stat::Mode;
-use nix::unistd::{self, close, dup2, setsid, Gid, Uid};
+use nix::unistd::{self, Gid, Uid, close, dup2, setsid};
 use oci_spec::runtime::{
     IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxSchedulerFlag, LinuxSchedulerPolicy,
     Scheduler, Spec, User,
 };
 
+use super::Result;
 use super::context::InitContext;
 use super::error::InitProcessError;
-use super::Result;
 use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
 use crate::process::args::{ContainerArgs, ContainerType};
@@ -1116,12 +1116,14 @@ mod tests {
             Err(SyscallError::Nix(nix::errno::Errno::ENOTDIR))
         });
 
-        assert!(masked_path(
-            Path::new("/proc/self"),
-            &Some("default".to_string()),
-            syscall.as_ref()
-        )
-        .is_ok());
+        assert!(
+            masked_path(
+                Path::new("/proc/self"),
+                &Some("default".to_string()),
+                syscall.as_ref()
+            )
+            .is_ok()
+        );
 
         let got = mocks.get_mount_args();
         let want = MountArgs {
