@@ -227,9 +227,9 @@ mod tests {
 
         let mut props: HashMap<&str, Variant> = HashMap::new();
         Io::apply(&blkio, &mut props).expect("apply blkio with zero rate");
-        assert_eq!(props.len(),1);
+        assert_eq!(props.len(), 1);
         assert!(props.contains_key(IO_READ_BANDWIDTH_MAX));
         let dbus_struct = props.get(IO_READ_BANDWIDTH_MAX).unwrap();
-        assert!(matches!(dbus_struct,Variant::Struct(_)))
+        assert!(matches!(dbus_struct, Variant::Struct(_)))
     }
 }
