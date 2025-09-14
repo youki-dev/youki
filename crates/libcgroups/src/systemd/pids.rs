@@ -50,7 +50,7 @@ mod tests {
     use super::*;
     use crate::recast;
 
-    fn setup(resources: &LinuxResources) -> (ControllerOpt, HashMap<&str, Variant>) {
+    fn setup(resources: &LinuxResources) -> (ControllerOpt<'_>, HashMap<&str, Variant>) {
         let properties = HashMap::new();
         let options = ControllerOpt {
             resources,

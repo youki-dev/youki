@@ -48,7 +48,7 @@ fn get_path_from_spec(spec: &Spec) -> Option<String> {
     env.iter()
         .find(|e| e.starts_with("PATH"))
         .iter()
-        .last()
+        .next_back()
         .map(|s| s.to_string())
 }
 

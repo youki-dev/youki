@@ -157,10 +157,7 @@ pub fn test_outside_container(
     let options = CreateOptions::default();
     let create_result = create_container(&id_str, &bundle, &options).unwrap().wait();
     let (out, err) = get_state(&id_str, &bundle).unwrap();
-    let state: Option<State> = match serde_json::from_str(&out) {
-        Ok(v) => Some(v),
-        Err(_) => None,
-    };
+    let state: Option<State> = serde_json::from_str(&out).ok();
     let data = ContainerData {
         id: id.to_string(),
         state,

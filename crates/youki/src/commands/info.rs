@@ -103,7 +103,7 @@ fn find_parameter<'a>(content: &'a str, param_name: &str) -> Option<&'a str> {
     content
         .lines()
         .find(|l| l.starts_with(param_name))
-        .and_then(|l| l.split_terminator('=').last())
+        .and_then(|l| l.split_terminator('=').next_back())
 }
 
 /// Print Hardware information of system

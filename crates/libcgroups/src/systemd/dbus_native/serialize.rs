@@ -482,11 +482,11 @@ impl DbusSerialize for Variant {
         } else if signature == u64_signature {
             Ok(Self::U64(u64::deserialize(buf, counter)?))
         } else {
-            return Err(DbusError::IncompleteImplementation(format!(
+            Err(DbusError::IncompleteImplementation(format!(
                 "unsupported value signature {}",
                 signature
             ))
-            .into());
+            .into())
         }
     }
 }

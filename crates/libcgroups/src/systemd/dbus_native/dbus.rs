@@ -356,11 +356,11 @@ impl DbusConnection {
     }
 
     /// Create a proxy for given destination and path
-    pub fn proxy(&self, destination: &str, path: &str) -> Proxy {
+    pub fn proxy(&self, destination: &str, path: &str) -> Proxy<'_> {
         Proxy::new(self, destination, path)
     }
 
-    fn create_proxy(&self) -> Proxy {
+    fn create_proxy(&self) -> Proxy<'_> {
         self.proxy("org.freedesktop.systemd1", "/org/freedesktop/systemd1")
     }
 }

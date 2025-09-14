@@ -49,10 +49,7 @@ fn get_container_pid(project_path: &Path, id: &str) -> Result<i32, TestResult> {
         }
     };
 
-    Ok(match state.pid {
-        Some(p) => p,
-        _ => -1,
-    })
+    Ok(state.pid.unwrap_or(-1))
 }
 
 // CRIU requires a minimal network setup in the network namespace

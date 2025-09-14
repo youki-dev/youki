@@ -350,10 +350,7 @@ impl LinuxSyscall {
                 // Convert the file name from string into i32. Since we are looking
                 // at /proc/<pid>/fd, anything that's not a number (i32) can be
                 // ignored. We are only interested in opened fds.
-                match file_name.parse() {
-                    Ok(fd) => Some(fd),
-                    Err(_) => None,
-                }
+                file_name.parse().ok()
             })
             .collect();
 
@@ -770,7 +767,7 @@ mod tests {
         let fd = file.as_raw_fd();
         let open_fds = LinuxSyscall::get_open_fds()?;
 
-        if !open_fds.iter().any(|&v| v == fd) {
+        if !open_fds.contains(&fd) {
             bail!("failed to find the opened dev null fds: {:?}", open_fds);
         }
 
@@ -780,7 +777,7 @@ mod tests {
         // The stdio fds should also be contained in the list of opened fds.
         if ![0, 1, 2]
             .iter()
-            .all(|&stdio_fd| open_fds.iter().any(|&open_fd| open_fd == stdio_fd))
+            .all(|&stdio_fd| open_fds.contains(&stdio_fd))
         {
             bail!("failed to find the stdio fds: {:?}", open_fds);
         }

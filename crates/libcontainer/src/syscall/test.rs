@@ -129,11 +129,11 @@ impl MockCalls {
         Ok(())
     }
 
-    fn fetch(&self, name: ArgName) -> Ref<Mock> {
+    fn fetch(&self, name: ArgName) -> Ref<'_, Mock> {
         self.args.get(&name).unwrap().borrow()
     }
 
-    fn fetch_mut(&self, name: ArgName) -> RefMut<Mock> {
+    fn fetch_mut(&self, name: ArgName) -> RefMut<'_, Mock> {
         self.args.get(&name).unwrap().borrow_mut()
     }
 }
