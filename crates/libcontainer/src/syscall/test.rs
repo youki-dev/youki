@@ -12,7 +12,7 @@ use nix::sys::stat::{Mode, SFlag};
 use nix::unistd::{Gid, Uid};
 use oci_spec::runtime::PosixRlimit;
 
-use super::{linux, Result, Syscall};
+use super::{Result, Syscall, linux};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct MountArgs {
@@ -129,11 +129,11 @@ impl MockCalls {
         Ok(())
     }
 
-    fn fetch(&self, name: ArgName) -> Ref<Mock> {
+    fn fetch(&self, name: ArgName) -> Ref<'_, Mock> {
         self.args.get(&name).unwrap().borrow()
     }
 
-    fn fetch_mut(&self, name: ArgName) -> RefMut<Mock> {
+    fn fetch_mut(&self, name: ArgName) -> RefMut<'_, Mock> {
         self.args.get(&name).unwrap().borrow_mut()
     }
 }

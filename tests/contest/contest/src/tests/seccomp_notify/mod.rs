@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use oci_spec::runtime::{
     Arch, LinuxBuilder, LinuxSeccompAction, LinuxSeccompBuilder, LinuxSyscallBuilder, SpecBuilder,
 };
@@ -41,11 +41,13 @@ fn test_seccomp_notify() -> Result<()> {
                         .architectures(vec![Arch::ScmpArchX86_64])
                         .listener_path(&seccomp_listener_path)
                         .listener_metadata(seccomp_meta)
-                        .syscalls(vec![LinuxSyscallBuilder::default()
-                            .names(vec![String::from("getcwd")])
-                            .action(LinuxSeccompAction::ScmpActNotify)
-                            .build()
-                            .unwrap()])
+                        .syscalls(vec![
+                            LinuxSyscallBuilder::default()
+                                .names(vec![String::from("getcwd")])
+                                .action(LinuxSeccompAction::ScmpActNotify)
+                                .build()
+                                .unwrap(),
+                        ])
                         .build()
                         .unwrap(),
                 )

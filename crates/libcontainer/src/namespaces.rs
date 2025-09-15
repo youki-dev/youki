@@ -14,8 +14,8 @@ use nix::sys::stat;
 use nix::{fcntl, unistd};
 use oci_spec::runtime::{LinuxNamespace, LinuxNamespaceType};
 
-use crate::syscall::syscall::create_syscall;
 use crate::syscall::Syscall;
+use crate::syscall::syscall::create_syscall;
 
 type Result<T> = std::result::Result<T, NamespaceError>;
 
@@ -103,21 +103,18 @@ impl Namespaces {
         tracing::debug!("unshare or setns: {:?}", namespace);
         match namespace.path() {
             Some(path) => {
-                let fd = fcntl::open(path, fcntl::OFlag::empty(), stat::Mode::empty()).map_err(
-                    |err| {
+                let fd = fcntl::open(path, fcntl::OFlag::empty(), stat::Mode::empty())
+                    .inspect_err(|err| {
                         tracing::error!(?err, ?namespace, "failed to open namespace file");
-                        err
-                    },
-                )?;
+                    })?;
                 self.command
                     .set_ns(fd, get_clone_flag(namespace.typ())?)
                     .map_err(|err| {
                         tracing::error!(?err, ?namespace, "failed to set namespace");
                         err
                     })?;
-                unistd::close(fd).map_err(|err| {
+                unistd::close(fd).inspect_err(|err| {
                     tracing::error!(?err, ?namespace, "failed to close namespace file");
-                    err
                 })?;
             }
             None => {
@@ -180,9 +177,11 @@ mod tests {
         let namespaces = Namespaces::try_from(Some(&sample_linux_namespaces))
             .expect("create namespace struct should be good");
         let test_command: &TestHelperSyscall = namespaces.command.as_any().downcast_ref().unwrap();
-        assert!(namespaces
-            .apply_namespaces(|ns_type| { ns_type != CloneFlags::CLONE_NEWIPC })
-            .is_ok());
+        assert!(
+            namespaces
+                .apply_namespaces(|ns_type| { ns_type != CloneFlags::CLONE_NEWIPC })
+                .is_ok()
+        );
 
         let mut setns_args: Vec<_> = test_command
             .get_setns_args()

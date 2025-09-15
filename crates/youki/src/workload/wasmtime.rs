@@ -1,7 +1,7 @@
 use libcontainer::oci_spec::runtime::Spec;
-use libcontainer::workload::{Executor, ExecutorError, ExecutorValidationError, EMPTY};
-use wasi_common::sync::{add_to_linker, WasiCtxBuilder};
+use libcontainer::workload::{EMPTY, Executor, ExecutorError, ExecutorValidationError};
 use wasi_common::I32Exit;
+use wasi_common::sync::{WasiCtxBuilder, add_to_linker};
 use wasmtime::{Engine, Linker, Module, Store};
 
 const EXECUTOR_NAME: &str = "wasmtime";

@@ -1,4 +1,4 @@
-use std::fs::{canonicalize, create_dir_all, OpenOptions};
+use std::fs::{OpenOptions, canonicalize, create_dir_all};
 use std::io::ErrorKind;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::AsRawFd;
@@ -11,13 +11,13 @@ use std::{fs, mem};
 use libcgroups::common::CgroupSetup::{Hybrid, Legacy, Unified};
 #[cfg(feature = "v1")]
 use libcgroups::common::DEFAULT_CGROUP_ROOT;
+use nix::NixPath;
 use nix::dir::Dir;
 use nix::errno::Errno;
 use nix::fcntl::OFlag;
 use nix::mount::MsFlags;
 use nix::sys::stat::Mode;
-use nix::sys::statfs::{statfs, PROC_SUPER_MAGIC};
-use nix::NixPath;
+use nix::sys::statfs::{PROC_SUPER_MAGIC, statfs};
 use oci_spec::runtime::{Mount as SpecMount, MountBuilder as SpecMountBuilder};
 use procfs::process::{MountInfo, MountOptFields, Process};
 use safe_path;
@@ -25,10 +25,10 @@ use safe_path;
 #[cfg(feature = "v1")]
 use super::symlink::Symlink;
 use super::symlink::SymlinkError;
-use super::utils::{parse_mount, MountOptionConfig};
+use super::utils::{MountOptionConfig, parse_mount};
 use crate::syscall::syscall::create_syscall;
-use crate::syscall::{linux, Syscall, SyscallError};
-use crate::utils::{retry, PathBufExt};
+use crate::syscall::{Syscall, SyscallError, linux};
+use crate::utils::{PathBufExt, retry};
 
 const MAX_EBUSY_MOUNT_ATTEMPTS: u32 = 3;
 // runc has a retry interval of 100ms. We are following this.
@@ -103,7 +103,9 @@ impl Mount {
                 match cgroup_setup {
                     Legacy | Hybrid => {
                         #[cfg(not(feature = "v1"))]
-                        panic!("libcontainer can't run in a Legacy or Hybrid cgroup setup without the v1 feature");
+                        panic!(
+                            "libcontainer can't run in a Legacy or Hybrid cgroup setup without the v1 feature"
+                        );
                         #[cfg(feature = "v1")]
                         self.mount_cgroup_v1(mount, options).map_err(|err| {
                             tracing::error!("failed to mount cgroup v1: {}", err);
@@ -112,7 +114,9 @@ impl Mount {
                     }
                     Unified => {
                         #[cfg(not(feature = "v2"))]
-                        panic!("libcontainer can't run in a Unified cgroup setup without the v2 feature");
+                        panic!(
+                            "libcontainer can't run in a Unified cgroup setup without the v2 feature"
+                        );
                         #[cfg(feature = "v2")]
                         self.mount_cgroup_v2(mount, options, &mount_option_config)
                             .map_err(|err| {
@@ -591,9 +595,8 @@ impl Mount {
 
             src
         } else {
-            create_dir_all(dest).map_err(|err| {
+            create_dir_all(dest).inspect_err(|_err| {
                 tracing::error!("failed to create device: {:?}", dest);
-                err
             })?;
 
             PathBuf::from(source)
@@ -855,14 +858,15 @@ mod tests {
                 .build()?;
             let mount_option_config = parse_mount(mount)?;
 
-            assert!(m
-                .mount_into_container(
+            assert!(
+                m.mount_into_container(
                     mount,
                     tmp_dir.path(),
                     &mount_option_config,
                     Some("defaults")
                 )
-                .is_ok());
+                .is_ok()
+            );
 
             let want = vec![MountArgs {
                 source: Some(PathBuf::from("devpts")),
@@ -897,9 +901,10 @@ mod tests {
                 .write(true)
                 .open(tmp_dir.path().join("null"))?;
 
-            assert!(m
-                .mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
-                .is_ok());
+            assert!(
+                m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
+                    .is_ok()
+            );
 
             let want = vec![
                 MountArgs {
@@ -946,9 +951,10 @@ mod tests {
             });
             syscall.set_ret_err_times(ArgName::Mount, 1);
 
-            assert!(m
-                .mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
-                .is_ok());
+            assert!(
+                m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
+                    .is_ok()
+            );
             assert_eq!(syscall.get_mount_args().len(), 1);
         }
         {
@@ -970,9 +976,10 @@ mod tests {
             });
             syscall.set_ret_err_times(ArgName::Mount, 2);
 
-            assert!(m
-                .mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
-                .is_err());
+            assert!(
+                m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
+                    .is_err()
+            );
             assert_eq!(syscall.get_mount_args().len(), 0);
         }
         {
@@ -994,9 +1001,10 @@ mod tests {
             });
             syscall.set_ret_err_times(ArgName::Mount, MAX_EBUSY_MOUNT_ATTEMPTS as usize - 1);
 
-            assert!(m
-                .mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
-                .is_ok());
+            assert!(
+                m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
+                    .is_ok()
+            );
             assert_eq!(syscall.get_mount_args().len(), 1);
         }
         {
@@ -1018,9 +1026,10 @@ mod tests {
             });
             syscall.set_ret_err_times(ArgName::Mount, MAX_EBUSY_MOUNT_ATTEMPTS as usize);
 
-            assert!(m
-                .mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
-                .is_err());
+            assert!(
+                m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
+                    .is_err()
+            );
             assert_eq!(syscall.get_mount_args().len(), 0);
         }
 

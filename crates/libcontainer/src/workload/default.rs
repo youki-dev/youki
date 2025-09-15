@@ -210,7 +210,7 @@ mod tests {
 
         // Restore original environment variables
         original_envs.iter().for_each(|(key, value)| {
-            env::set_var(key, value);
+            unsafe { env::set_var(key, value) };
         });
     }
 }

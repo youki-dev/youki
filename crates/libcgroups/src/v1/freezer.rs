@@ -134,7 +134,7 @@ mod tests {
     use oci_spec::runtime::LinuxResourcesBuilder;
 
     use super::*;
-    use crate::common::{FreezerState, CGROUP_PROCS};
+    use crate::common::{CGROUP_PROCS, FreezerState};
     use crate::test::set_fixture;
 
     #[test]

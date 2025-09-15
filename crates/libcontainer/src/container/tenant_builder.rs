@@ -10,7 +10,7 @@ use std::str::FromStr;
 
 use caps::Capability;
 use nix::fcntl::OFlag;
-use nix::unistd::{pipe2, read, Pid};
+use nix::unistd::{Pid, pipe2, read};
 use oci_spec::runtime::{
     Capabilities as SpecCapabilities, Capability as SpecCapability, LinuxBuilder,
     LinuxCapabilities, LinuxCapabilitiesBuilder, LinuxNamespace, LinuxNamespaceBuilder,
@@ -18,8 +18,8 @@ use oci_spec::runtime::{
 };
 use procfs::process::Namespace;
 
-use super::builder::ContainerBuilder;
 use super::Container;
+use super::builder::ContainerBuilder;
 use crate::capabilities::CapabilityExt;
 use crate::container::builder_impl::ContainerBuilderImpl;
 use crate::error::{ErrInvalidSpec, LibcontainerError, MissingSpecError};
@@ -48,7 +48,7 @@ fn get_path_from_spec(spec: &Spec) -> Option<String> {
     env.iter()
         .find(|e| e.starts_with("PATH"))
         .iter()
-        .last()
+        .next_back()
         .map(|s| s.to_string())
 }
 
@@ -348,7 +348,12 @@ impl TenantContainerBuilder {
                 match iop_class_res {
                     Ok(iop_class) => {
                         if !(0..=7).contains(&priority) {
-                            tracing::error!(?priority, "io priority '{}' not between 0 and 7 (inclusive), class '{}' not in (IO_PRIO_CLASS_RT,IO_PRIO_CLASS_BE,IO_PRIO_CLASS_IDLE)",priority, iop_class);
+                            tracing::error!(
+                                ?priority,
+                                "io priority '{}' not between 0 and 7 (inclusive), class '{}' not in (IO_PRIO_CLASS_RT,IO_PRIO_CLASS_BE,IO_PRIO_CLASS_IDLE)",
+                                priority,
+                                iop_class
+                            );
                             Err(ErrInvalidSpec::IoPriority)?;
                         }
                     }
@@ -380,7 +385,10 @@ impl TenantContainerBuilder {
                         && (*policy != LinuxSchedulerPolicy::SchedFifo
                             && *policy != LinuxSchedulerPolicy::SchedRr)
                     {
-                        tracing::error!(?policy,"scheduler.priority can only be specified for SchedFIFO or SchedRR policy");
+                        tracing::error!(
+                            ?policy,
+                            "scheduler.priority can only be specified for SchedFIFO or SchedRR policy"
+                        );
                         Err(ErrInvalidSpec::Scheduler)?;
                     }
                 }
@@ -490,7 +498,7 @@ impl TenantContainerBuilder {
         let spec_linux = spec.linux().as_ref().unwrap();
         let mut linux_builder = LinuxBuilder::default().namespaces(ns);
 
-        if let Some(ref cgroup_path) = spec_linux.cgroups_path() {
+        if let Some(cgroup_path) = spec_linux.cgroups_path() {
             linux_builder = linux_builder.cgroups_path(cgroup_path.clone());
         }
         let linux = linux_builder.build()?;
@@ -629,7 +637,7 @@ mod test {
         Capabilities, Capability as SpecCap, LinuxCapabilities, ProcessBuilder, Spec, SpecBuilder,
     };
 
-    use super::{get_capabilities, LibcontainerError};
+    use super::{LibcontainerError, get_capabilities};
     use crate::capabilities::CapabilityExt;
 
     fn get_spec(caps: LinuxCapabilities) -> Spec {

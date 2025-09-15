@@ -157,7 +157,7 @@ impl Cpu {
     fn create_period_only_value(
         cpu_max_file: &Path,
         period: u64,
-    ) -> Result<Option<Cow<str>>, V2CpuControllerError> {
+    ) -> Result<Option<Cow<'_, str>>, V2CpuControllerError> {
         let old_cpu_max = common::read_cgroup_file(cpu_max_file)?;
         if let Some(old_quota) = old_cpu_max.split_whitespace().next() {
             return Ok(Some(format!("{old_quota} {period}").into()));

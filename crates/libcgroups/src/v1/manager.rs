@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use nix::unistd::Pid;
-use procfs::process::Process;
 use procfs::ProcError;
+use procfs::process::Process;
 
 use super::blkio::{Blkio, V1BlkioStatsError};
 use super::controller::Controller;
@@ -22,10 +22,10 @@ use super::network_priority::NetworkPriority;
 use super::perf_event::PerfEvent;
 use super::pids::Pids;
 use super::util::V1MountPointError;
-use super::{util, ControllerType as CtrlType};
+use super::{ControllerType as CtrlType, util};
 use crate::common::{
-    self, AnyCgroupManager, CgroupManager, ControllerOpt, FreezerState, JoinSafelyError,
-    PathBufExt, WrapIoResult, WrappedIoError, CGROUP_PROCS,
+    self, AnyCgroupManager, CGROUP_PROCS, CgroupManager, ControllerOpt, FreezerState,
+    JoinSafelyError, PathBufExt, WrapIoResult, WrappedIoError,
 };
 use crate::stats::{PidStatsError, Stats, StatsProvider};
 

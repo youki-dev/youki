@@ -3,7 +3,7 @@ use oci_spec::runtime::{
     Capability, LinuxBuilder, LinuxCapabilitiesBuilder, LinuxSeccompBuilder, ProcessBuilder,
     RootBuilder, Spec, SpecBuilder,
 };
-use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
+use test_framework::{ConditionalTest, TestGroup, TestResult, test_result};
 
 use crate::utils::test_utils::CreateOptions;
 use crate::utils::{is_runtime_runc, test_inside_container};
