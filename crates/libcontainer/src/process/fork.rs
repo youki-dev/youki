@@ -288,10 +288,11 @@ mod test {
 
         match unsafe { unistd::fork()? } {
             unistd::ForkResult::Parent { child } => {
-                let sibling_process_pid =
-                    Pid::from_raw(receiver.recv().with_context(
-                        || "failed to receive the sibling pid from forked process",
-                    )?);
+                let sibling_process_pid = Pid::from_raw(
+                    receiver
+                        .recv()
+                        .context("failed to receive the sibling pid from forked process")?,
+                );
                 receiver.close()?;
                 match waitpid(sibling_process_pid, None).expect("wait pid failed.") {
                     WaitStatus::Exited(p, status) => {
