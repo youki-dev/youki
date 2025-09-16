@@ -26,6 +26,9 @@ pub enum MemoryPolicyError {
 
 type Result<T> = std::result::Result<T, MemoryPolicyError>;
 
+/// Configure the memory policy for the process using set_mempolicy(2).
+///
+/// See: https://man7.org/linux/man-pages/man2/set_mempolicy.2.html
 pub fn setup_memory_policy(
     memory_policy: &Option<oci_spec::runtime::LinuxMemoryPolicy>,
     syscall: &dyn Syscall,
