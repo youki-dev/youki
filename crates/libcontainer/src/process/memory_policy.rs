@@ -61,11 +61,10 @@ pub fn setup_memory_policy(
         MemoryPolicyModeType::MpolWeightedInterleave => MPOL_WEIGHTED_INTERLEAVE,
     };
 
-    let mut flags_value: u32 = 0;
+    let mut has_static = false;
+    let mut has_relative = false;
     if let Some(flags) = policy.flags() {
-        let mut has_static = false;
-        let mut has_relative = false;
-        for flag in flags {
+        for flag in flags.iter() {
             match flag {
                 MemoryPolicyFlagType::MpolFNumaBalancing => {
                     if base_mode != MPOL_BIND {
@@ -73,15 +72,12 @@ pub fn setup_memory_policy(
                             "MPOL_F_NUMA_BALANCING can only be used with MPOL_BIND".to_string(),
                         ));
                     }
-                    flags_value |= MPOL_F_NUMA_BALANCING;
                 }
                 MemoryPolicyFlagType::MpolFRelativeNodes => {
                     has_relative = true;
-                    flags_value |= MPOL_F_RELATIVE_NODES;
                 }
                 MemoryPolicyFlagType::MpolFStaticNodes => {
                     has_static = true;
-                    flags_value |= MPOL_F_STATIC_NODES;
                 }
             }
         }
@@ -89,6 +85,23 @@ pub fn setup_memory_policy(
             return Err(MemoryPolicyError::MutuallyExclusiveFlags(
                 "MPOL_F_STATIC_NODES and MPOL_F_RELATIVE_NODES are mutually exclusive".to_string(),
             ));
+        }
+    }
+
+    let mut flags_value: u32 = 0;
+    if let Some(flags) = policy.flags() {
+        for flag in flags {
+            match flag {
+                MemoryPolicyFlagType::MpolFNumaBalancing => {
+                    flags_value |= MPOL_F_NUMA_BALANCING;
+                }
+                MemoryPolicyFlagType::MpolFRelativeNodes => {
+                    flags_value |= MPOL_F_RELATIVE_NODES;
+                }
+                MemoryPolicyFlagType::MpolFStaticNodes => {
+                    flags_value |= MPOL_F_STATIC_NODES;
+                }
+            }
         }
     }
 
