@@ -47,7 +47,6 @@ fn main() {
         "memory_policy_default" => {
             tests::validate_memory_policy(&spec, Some(MemoryPolicyModeType::MpolDefault))
         }
-        "memory_policy_empty" => tests::validate_memory_policy(&spec, None),
         "memory_policy_interleave" => {
             tests::validate_memory_policy(&spec, Some(MemoryPolicyModeType::MpolInterleave))
         }
