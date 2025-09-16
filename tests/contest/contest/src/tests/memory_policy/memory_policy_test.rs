@@ -6,20 +6,10 @@ use oci_spec::runtime::{
     ProcessBuilder, Spec, SpecBuilder,
 };
 use serde_json::json;
-use test_framework::{ConditionalTest, Test, TestGroup, TestResult};
+use test_framework::{Test, TestGroup, TestResult};
 
 use crate::utils::test_inside_container;
 use crate::utils::test_utils::CreateOptions;
-
-fn has_multi_numa_nodes() -> bool {
-    match fs::read_to_string("/sys/devices/system/node/online") {
-        Ok(s) => {
-            let s = s.trim();
-            s.contains('-') || s.contains(',') || s != "0"
-        }
-        Err(_) => false,
-    }
-}
 
 fn spec_with_runtimetest(
     args_token: &str,
@@ -247,26 +237,18 @@ fn bind_way_too_large_node_number() -> TestResult {
 pub fn get_linux_memory_policy_tests() -> TestGroup {
     let mut tg = TestGroup::new("memory_policy");
 
-    // NUMA dependent tests use ConditionalTest
     tg.add(vec![
-        Box::new(ConditionalTest::new(
+        Box::new(Test::new(
             "interleave_without_flags",
-            Box::new(has_multi_numa_nodes),
             Box::new(interleave_without_flags),
         )),
-        Box::new(ConditionalTest::new(
-            "bind_static",
-            Box::new(has_multi_numa_nodes),
-            Box::new(bind_static),
-        )),
-        Box::new(ConditionalTest::new(
+        Box::new(Test::new("bind_static", Box::new(bind_static))),
+        Box::new(Test::new(
             "preferred_relative",
-            Box::new(has_multi_numa_nodes),
             Box::new(preferred_relative),
         )),
     ]);
 
-    // NUMA independent tests use regular Test
     tg.add(vec![
         Box::new(Test::new(
             "empty_memory_policy",
