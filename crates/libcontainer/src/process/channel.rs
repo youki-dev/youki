@@ -2,7 +2,7 @@ use std::os::unix::prelude::{AsRawFd, RawFd};
 
 use nix::unistd::Pid;
 
-use crate::channel::{channel, Receiver, Sender};
+use crate::channel::{Receiver, Sender, channel};
 use crate::process::message::Message;
 
 #[derive(Debug, thiserror::Error)]

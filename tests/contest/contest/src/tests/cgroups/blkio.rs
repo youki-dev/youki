@@ -1,15 +1,15 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use oci_spec::runtime::{
     LinuxBlockIo, LinuxBlockIoBuilder, LinuxBuilder, LinuxResourcesBuilder,
     LinuxThrottleDeviceBuilder, LinuxWeightDeviceBuilder, Spec, SpecBuilder,
 };
-use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
+use test_framework::{ConditionalTest, TestGroup, TestResult, test_result};
 
 use crate::utils::test_outside_container;
-use crate::utils::test_utils::{check_container_created, CGROUP_ROOT};
+use crate::utils::test_utils::{CGROUP_ROOT, check_container_created};
 
 // -----> README
 // for this test to work for all parameters, the kernel needs to be compiled with CFQ IO schedular
@@ -425,12 +425,12 @@ fn validate_block_io(cgroup_name: &str, spec: &Spec) -> Result<()> {
                     found = true;
                     if device.rate != spec_device.rate() {
                         bail!(
-                        "blkio throttle read iops rate is set incorrectly for device {}:{}, expected {}, found {}",
-                        spec_major,
-                        spec_minor,
-                        spec_device.rate(),
-                        device.rate
-                    );
+                            "blkio throttle read iops rate is set incorrectly for device {}:{}, expected {}, found {}",
+                            spec_major,
+                            spec_minor,
+                            spec_device.rate(),
+                            device.rate
+                        );
                     }
                     break;
                 }
@@ -453,12 +453,12 @@ fn validate_block_io(cgroup_name: &str, spec: &Spec) -> Result<()> {
                     found = true;
                     if device.rate != spec_device.rate() {
                         bail!(
-                        "blkio throttle write iops rate is set incorrectly for device {}:{}, expected {}, found {}",
-                        spec_major,
-                        spec_minor,
-                        spec_device.rate(),
-                        device.rate
-                    );
+                            "blkio throttle write iops rate is set incorrectly for device {}:{}, expected {}, found {}",
+                            spec_major,
+                            spec_minor,
+                            spec_device.rate(),
+                            device.rate
+                        );
                     }
                     break;
                 }
@@ -507,33 +507,41 @@ fn test_blkio(test_name: &str, rate: u64, empty: bool) -> TestResult {
     }
     if supports_throttle_bps() {
         block_io_builder = block_io_builder
-            .throttle_read_bps_device(vec![LinuxThrottleDeviceBuilder::default()
-                .major(major)
-                .minor(minor)
-                .rate(rate)
-                .build()
-                .unwrap()])
-            .throttle_write_bps_device(vec![LinuxThrottleDeviceBuilder::default()
-                .major(major)
-                .minor(minor)
-                .rate(rate)
-                .build()
-                .unwrap()])
+            .throttle_read_bps_device(vec![
+                LinuxThrottleDeviceBuilder::default()
+                    .major(major)
+                    .minor(minor)
+                    .rate(rate)
+                    .build()
+                    .unwrap(),
+            ])
+            .throttle_write_bps_device(vec![
+                LinuxThrottleDeviceBuilder::default()
+                    .major(major)
+                    .minor(minor)
+                    .rate(rate)
+                    .build()
+                    .unwrap(),
+            ])
     }
     if supports_throttle_iops() {
         block_io_builder = block_io_builder
-            .throttle_read_iops_device(vec![LinuxThrottleDeviceBuilder::default()
-                .major(major)
-                .minor(minor)
-                .rate(rate)
-                .build()
-                .unwrap()])
-            .throttle_write_iops_device(vec![LinuxThrottleDeviceBuilder::default()
-                .major(major)
-                .minor(minor)
-                .rate(rate)
-                .build()
-                .unwrap()]);
+            .throttle_read_iops_device(vec![
+                LinuxThrottleDeviceBuilder::default()
+                    .major(major)
+                    .minor(minor)
+                    .rate(rate)
+                    .build()
+                    .unwrap(),
+            ])
+            .throttle_write_iops_device(vec![
+                LinuxThrottleDeviceBuilder::default()
+                    .major(major)
+                    .minor(minor)
+                    .rate(rate)
+                    .build()
+                    .unwrap(),
+            ]);
     }
     let spec = create_spec(
         test_name,

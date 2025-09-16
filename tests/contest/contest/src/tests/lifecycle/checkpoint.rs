@@ -26,7 +26,7 @@ fn get_container_pid(project_path: &Path, id: &str) -> Result<i32, TestResult> {
             return Err(TestResult::Failed(anyhow!(
                 "error getting container state {}",
                 e
-            )))
+            )));
         }
     };
     let stdout = match String::from_utf8(res_state.stdout) {
@@ -35,7 +35,7 @@ fn get_container_pid(project_path: &Path, id: &str) -> Result<i32, TestResult> {
             return Err(TestResult::Failed(anyhow!(
                 "failed to parse container stdout {}",
                 e
-            )))
+            )));
         }
     };
     let state: State = match serde_json::from_str(&stdout) {
@@ -45,14 +45,11 @@ fn get_container_pid(project_path: &Path, id: &str) -> Result<i32, TestResult> {
                 "error in parsing state of container: stdout : {}, parse error : {}",
                 stdout,
                 e
-            )))
+            )));
         }
     };
 
-    Ok(match state.pid {
-        Some(p) => p,
-        _ => -1,
-    })
+    Ok(state.pid.unwrap_or(-1))
 }
 
 // CRIU requires a minimal network setup in the network namespace
@@ -95,7 +92,7 @@ fn checkpoint(
             return TestResult::Failed(anyhow::anyhow!(
                 "failed creating temporary directory {:?}",
                 e
-            ))
+            ));
         }
     };
     let checkpoint_dir = temp_dir.as_ref().join("checkpoint");

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use libcontainer::process::intel_rdt::find_resctrl_mount_point;
 use oci_spec::runtime::{LinuxBuilder, LinuxIntelRdt, Spec, SpecBuilder};
-use test_framework::{test_result, TestResult};
+use test_framework::{TestResult, test_result};
 
 use crate::utils::test_outside_container;
 use crate::utils::test_utils::check_container_created;

@@ -4,7 +4,7 @@ use libcontainer::oci_spec::runtime::Spec;
 use libcontainer::workload::{Executor, ExecutorError, ExecutorValidationError};
 use wasmedge_sdk::error::{CoreError, CoreExecutionError, WasmEdgeError};
 use wasmedge_sdk::wasi::WasiModule;
-use wasmedge_sdk::{params, Module, Store, Vm};
+use wasmedge_sdk::{Module, Store, Vm, params};
 
 const EXECUTOR_NAME: &str = "wasmedge";
 

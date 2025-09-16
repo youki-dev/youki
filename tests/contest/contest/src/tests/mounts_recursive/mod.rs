@@ -8,12 +8,12 @@ use std::str::FromStr;
 
 use anyhow::Context;
 use nix::libc;
-use nix::mount::{mount, umount, MsFlags};
+use nix::mount::{MsFlags, mount, umount};
 use nix::sys::stat::Mode;
-use nix::unistd::{chown, Uid};
+use nix::unistd::{Uid, chown};
 use oci_spec::runtime::{
-    get_default_mounts, Capability, LinuxBuilder, LinuxCapabilitiesBuilder, Mount, ProcessBuilder,
-    Spec, SpecBuilder,
+    Capability, LinuxBuilder, LinuxCapabilitiesBuilder, Mount, ProcessBuilder, Spec, SpecBuilder,
+    get_default_mounts,
 };
 use test_framework::{Test, TestGroup, TestResult};
 

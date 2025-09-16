@@ -1,8 +1,8 @@
 use std::fs::remove_file;
 use std::path::Path;
 
-use crate::syscall::syscall::create_syscall;
 use crate::syscall::Syscall;
+use crate::syscall::syscall::create_syscall;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SymlinkError {
@@ -116,7 +116,7 @@ mod tests {
 
     #[cfg(feature = "v1")]
     use anyhow::{Context, Result};
-    use nix::fcntl::{open, OFlag};
+    use nix::fcntl::{OFlag, open};
     use nix::sys::stat::Mode;
 
     use super::*;

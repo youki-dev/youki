@@ -2,7 +2,7 @@ use std::io;
 
 use anyhow::Result;
 use clap::{Command, Parser};
-use clap_complete::{generate, Shell};
+use clap_complete::{Shell, generate};
 
 #[derive(Debug, Parser)]
 /// Generate scripts for shell completion

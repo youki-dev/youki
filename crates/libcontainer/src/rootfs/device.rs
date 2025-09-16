@@ -1,14 +1,14 @@
 use std::path::{Path, PathBuf};
 
-use nix::fcntl::{open, OFlag};
+use nix::fcntl::{OFlag, open};
 use nix::mount::MsFlags;
-use nix::sys::stat::{umask, Mode};
-use nix::unistd::{close, Gid, Uid};
+use nix::sys::stat::{Mode, umask};
+use nix::unistd::{Gid, Uid, close};
 use oci_spec::runtime::LinuxDevice;
 
 use super::utils::to_sflag;
-use crate::syscall::syscall::create_syscall;
 use crate::syscall::Syscall;
+use crate::syscall::syscall::create_syscall;
 use crate::utils::PathBufExt;
 
 #[derive(Debug, thiserror::Error)]
@@ -88,9 +88,8 @@ impl Device {
             OFlag::O_RDWR | OFlag::O_CREAT,
             Mode::from_bits_truncate(0o644),
         )
-        .map_err(|err| {
+        .inspect_err(|err| {
             tracing::error!("failed to open bind dev {:?}: {}", full_container_path, err);
-            err
         })?;
         close(fd)?;
         self.syscall
@@ -209,15 +208,17 @@ mod tests {
     fn test_bind_dev() -> Result<()> {
         let tmp_dir = tempfile::tempdir()?;
         let device = Device::new_with_syscall(Box::<TestHelperSyscall>::default());
-        assert!(device
-            .bind_dev(
-                tmp_dir.path(),
-                &LinuxDeviceBuilder::default()
-                    .path(PathBuf::from("/null"))
-                    .build()
-                    .unwrap(),
-            )
-            .is_ok());
+        assert!(
+            device
+                .bind_dev(
+                    tmp_dir.path(),
+                    &LinuxDeviceBuilder::default()
+                        .path(PathBuf::from("/null"))
+                        .build()
+                        .unwrap(),
+                )
+                .is_ok()
+        );
 
         let want = MountArgs {
             source: Some(PathBuf::from("/null")),
@@ -240,21 +241,23 @@ mod tests {
     fn test_mknod_dev() -> Result<()> {
         let tmp_dir = tempfile::tempdir()?;
         let device = Device::new_with_syscall(Box::<TestHelperSyscall>::default());
-        assert!(device
-            .mknod_dev(
-                tmp_dir.path(),
-                &LinuxDeviceBuilder::default()
-                    .path(PathBuf::from("/null"))
-                    .major(1)
-                    .minor(3)
-                    .typ(LinuxDeviceType::C)
-                    .file_mode(0o644u32)
-                    .uid(1000u32)
-                    .gid(1000u32)
-                    .build()
-                    .unwrap(),
-            )
-            .is_ok());
+        assert!(
+            device
+                .mknod_dev(
+                    tmp_dir.path(),
+                    &LinuxDeviceBuilder::default()
+                        .path(PathBuf::from("/null"))
+                        .major(1)
+                        .minor(3)
+                        .typ(LinuxDeviceType::C)
+                        .file_mode(0o644u32)
+                        .uid(1000u32)
+                        .gid(1000u32)
+                        .build()
+                        .unwrap(),
+                )
+                .is_ok()
+        );
 
         let want_mknod = MknodArgs {
             path: tmp_dir.path().join("null"),
@@ -291,20 +294,24 @@ mod tests {
         let tmp_dir = tempfile::tempdir()?;
         let device = Device::new_with_syscall(Box::<TestHelperSyscall>::default());
 
-        let devices = vec![LinuxDeviceBuilder::default()
-            .path(PathBuf::from("/dev/null"))
-            .major(1)
-            .minor(3)
-            .typ(LinuxDeviceType::C)
-            .file_mode(0o644u32)
-            .uid(1000u32)
-            .gid(1000u32)
-            .build()
-            .unwrap()];
+        let devices = vec![
+            LinuxDeviceBuilder::default()
+                .path(PathBuf::from("/dev/null"))
+                .major(1)
+                .minor(3)
+                .typ(LinuxDeviceType::C)
+                .file_mode(0o644u32)
+                .uid(1000u32)
+                .gid(1000u32)
+                .build()
+                .unwrap(),
+        ];
 
-        assert!(device
-            .create_devices(tmp_dir.path(), &devices, true)
-            .is_ok());
+        assert!(
+            device
+                .create_devices(tmp_dir.path(), &devices, true)
+                .is_ok()
+        );
 
         let want = MountArgs {
             source: Some(PathBuf::from("/dev/null")),
@@ -321,9 +328,11 @@ mod tests {
             .get_mount_args()[0];
         assert_eq!(want, *got);
 
-        assert!(device
-            .create_devices(tmp_dir.path(), &devices, false)
-            .is_ok());
+        assert!(
+            device
+                .create_devices(tmp_dir.path(), &devices, false)
+                .is_ok()
+        );
 
         let want = MknodArgs {
             path: tmp_dir.path().join("dev/null"),

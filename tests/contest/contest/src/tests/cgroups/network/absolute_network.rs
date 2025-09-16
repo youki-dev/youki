@@ -1,12 +1,12 @@
 use std::path::Path;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use oci_spec::runtime::{
     LinuxBuilder, LinuxInterfacePriorityBuilder, LinuxNamespace, LinuxNamespaceType,
     LinuxNetworkBuilder, LinuxResourcesBuilder, Spec, SpecBuilder,
 };
 use pnet_datalink::interfaces;
-use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
+use test_framework::{ConditionalTest, TestGroup, TestResult, test_result};
 
 use super::{check_network_cgroup_paths, validate_network};
 use crate::utils::test_outside_container;
@@ -38,11 +38,13 @@ fn create_spec(
                 .network(
                     LinuxNetworkBuilder::default()
                         .class_id(class_id)
-                        .priorities(vec![LinuxInterfacePriorityBuilder::default()
-                            .name(if_name)
-                            .priority(prio)
-                            .build()
-                            .context("failed to build network interface priority spec")?])
+                        .priorities(vec![
+                            LinuxInterfacePriorityBuilder::default()
+                                .name(if_name)
+                                .priority(prio)
+                                .build()
+                                .context("failed to build network interface priority spec")?,
+                        ])
                         .build()
                         .context("failed to build network spec")?,
                 )
@@ -74,8 +76,10 @@ fn get_network_interfaces() -> Option<(String, String)> {
 fn test_network_cgroups() -> TestResult {
     let cgroup_name = "test_network_cgroups";
 
-    let interfaces = test_result!(get_network_interfaces()
-        .ok_or_else(|| anyhow!("Could not find network interfaces required for test")));
+    let interfaces = test_result!(
+        get_network_interfaces()
+            .ok_or_else(|| anyhow!("Could not find network interfaces required for test"))
+    );
 
     let lo_if_name = &interfaces.0;
     let eth_if_name = &interfaces.1;

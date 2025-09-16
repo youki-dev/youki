@@ -3,7 +3,7 @@ use std::num::ParseIntError;
 
 use super::controller::Controller;
 use super::cpu::{self, convert_shares_to_cgroup2};
-use super::cpuset::{self, to_bitmask, BitmaskError};
+use super::cpuset::{self, BitmaskError, to_bitmask};
 use super::dbus_native::serialize::Variant;
 use super::{memory, pids};
 use crate::common::ControllerOpt;

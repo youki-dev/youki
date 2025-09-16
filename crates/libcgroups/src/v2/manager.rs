@@ -8,7 +8,7 @@ use nix::unistd::Pid;
 
 use super::controller::Controller;
 use super::controller_type::{
-    ControllerType, PseudoControllerType, CONTROLLER_TYPES, PSEUDO_CONTROLLER_TYPES,
+    CONTROLLER_TYPES, ControllerType, PSEUDO_CONTROLLER_TYPES, PseudoControllerType,
 };
 use super::cpu::{Cpu, V2CpuControllerError, V2CpuStatsError};
 use super::cpuset::CpuSet;
@@ -20,10 +20,10 @@ use super::io::{Io, V2IoControllerError, V2IoStatsError};
 use super::memory::{Memory, V2MemoryControllerError, V2MemoryStatsError};
 use super::pids::Pids;
 use super::unified::{Unified, V2UnifiedError};
-use super::util::{self, V2UtilError, CGROUP_SUBTREE_CONTROL};
+use super::util::{self, CGROUP_SUBTREE_CONTROL, V2UtilError};
 use crate::common::{
-    self, AnyCgroupManager, CgroupManager, ControllerOpt, FreezerState, JoinSafelyError,
-    PathBufExt, WrapIoResult, WrappedIoError, CGROUP_PROCS,
+    self, AnyCgroupManager, CGROUP_PROCS, CgroupManager, ControllerOpt, FreezerState,
+    JoinSafelyError, PathBufExt, WrapIoResult, WrappedIoError,
 };
 use crate::stats::{PidStatsError, Stats, StatsProvider};
 

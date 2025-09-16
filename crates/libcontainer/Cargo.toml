@@ -7,8 +7,8 @@ repository = "https://github.com/containers/youki"
 homepage = "https://youki-dev.github.io/youki/"
 readme = "README.md"
 authors = ["youki team"]
-edition = "2021"
-rust-version = "1.63.0"
+edition = "2024"
+rust-version = "1.85.0"
 keywords = ["youki", "container", "cgroups"]
 
 [features]

@@ -1,4 +1,4 @@
-use super::utils::{adjust_padding, align_counter, DbusError, Result};
+use super::utils::{DbusError, Result, adjust_padding, align_counter};
 
 /// This indicates that given type can be serialized as dbus
 /// message body, and has methods needed for that
@@ -482,11 +482,11 @@ impl DbusSerialize for Variant {
         } else if signature == u64_signature {
             Ok(Self::U64(u64::deserialize(buf, counter)?))
         } else {
-            return Err(DbusError::IncompleteImplementation(format!(
+            Err(DbusError::IncompleteImplementation(format!(
                 "unsupported value signature {}",
                 signature
             ))
-            .into());
+            .into())
         }
     }
 }

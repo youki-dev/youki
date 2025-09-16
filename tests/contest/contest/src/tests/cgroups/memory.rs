@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use oci_spec::runtime::{
     LinuxBuilder, LinuxMemoryBuilder, LinuxResourcesBuilder, Spec, SpecBuilder,
 };
-use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
+use test_framework::{ConditionalTest, TestGroup, TestResult, test_result};
 
 use crate::utils::test_outside_container;
 use crate::utils::test_utils::check_container_created;
