@@ -1,3 +1,4 @@
+use oci_spec::runtime::MemoryPolicyFlagType;
 use oci_spec::runtime::MemoryPolicyModeType;
 
 use crate::syscall::{Syscall, SyscallError};
@@ -63,7 +64,7 @@ pub fn setup_memory_policy(
         let mut has_relative = false;
         for flag in flags {
             match flag {
-                oci_spec::runtime::MemoryPolicyFlagType::MpolFNumaBalancing => {
+                MemoryPolicyFlagType::MpolFNumaBalancing => {
                     if base_mode != MPOL_BIND {
                         return Err(MemoryPolicyError::IncompatibleFlagMode(
                             "MPOL_F_NUMA_BALANCING can only be used with MPOL_BIND".to_string(),
@@ -71,11 +72,11 @@ pub fn setup_memory_policy(
                     }
                     flags_value |= MPOL_F_NUMA_BALANCING;
                 }
-                oci_spec::runtime::MemoryPolicyFlagType::MpolFRelativeNodes => {
+                MemoryPolicyFlagType::MpolFRelativeNodes => {
                     has_relative = true;
                     flags_value |= MPOL_F_RELATIVE_NODES;
                 }
-                oci_spec::runtime::MemoryPolicyFlagType::MpolFStaticNodes => {
+                MemoryPolicyFlagType::MpolFStaticNodes => {
                     has_static = true;
                     flags_value |= MPOL_F_STATIC_NODES;
                 }
