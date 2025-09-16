@@ -13,7 +13,6 @@ use nix::unistd::{Gid, Uid};
 use oci_spec::runtime::PosixRlimit;
 
 use super::super::config::PersonalityDomain;
-use super::{linux, Result, Syscall};
 use super::{Result, Syscall, linux};
 
 #[derive(Clone, PartialEq, Eq, Debug)]

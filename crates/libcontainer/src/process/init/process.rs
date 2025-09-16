@@ -17,7 +17,6 @@ use super::Result;
 use super::context::InitContext;
 use super::error::InitProcessError;
 use crate::config::PersonalityDomain;
-
 use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
 use crate::process::args::{ContainerArgs, ContainerType};
