@@ -561,14 +561,14 @@ pub fn test_io_priority_class(spec: &Spec, io_priority_class: IOPriorityClass) {
     }
 }
 
-pub fn validate_memory_policy(spec: &Spec, expected_mode: Option<MemoryPolicyModeType>) {
-    if expected_mode.is_none() {
-        return;
-    }
-
+pub fn validate_memory_policy(spec: &Spec) {
     let linux = spec.linux().as_ref().unwrap();
     let memory_policy = linux.memory_policy();
 
+    let expected_mode = memory_policy.as_ref().map(|p| p.mode());
+    if expected_mode.is_none() {
+        return;
+    }
     let expected = expected_mode.unwrap();
 
     if memory_policy.is_none() {
