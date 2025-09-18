@@ -14,6 +14,7 @@ use nix::sys::stat::{Mode, SFlag};
 use nix::unistd::{Gid, Uid};
 use oci_spec::runtime::PosixRlimit;
 
+use crate::config::PersonalityDomain;
 use crate::syscall::Result;
 use crate::syscall::linux::{LinuxSyscall, MountAttr};
 use crate::syscall::test::TestHelperSyscall;
@@ -59,6 +60,7 @@ pub trait Syscall {
     fn get_gid(&self) -> Gid;
     fn get_euid(&self) -> Uid;
     fn get_egid(&self) -> Gid;
+    fn personality(&self, domain: PersonalityDomain) -> Result<()>;
 }
 
 #[derive(Clone, Copy)]

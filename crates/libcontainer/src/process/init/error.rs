@@ -67,4 +67,6 @@ pub enum InitProcessError {
     NoLinux,
     #[error("missing process section in spec")]
     NoProcess,
+    #[error("personality flag has not supported at this time")]
+    UnsupportedPersonalityFlag,
 }

@@ -501,6 +501,11 @@ impl TenantContainerBuilder {
         if let Some(cgroup_path) = spec_linux.cgroups_path() {
             linux_builder = linux_builder.cgroups_path(cgroup_path.clone());
         }
+
+        if let Some(personality) = spec_linux.personality() {
+            linux_builder = linux_builder.personality(personality.clone());
+        }
+
         let linux = linux_builder.build()?;
         spec.set_process(Some(process)).set_linux(Some(linux));
 

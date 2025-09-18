@@ -21,6 +21,7 @@ use nix::unistd::{Gid, Uid, chown, chroot, close, fchdir, pivot_root, sethostnam
 use oci_spec::runtime::PosixRlimit;
 
 use super::{Result, Syscall, SyscallError};
+use crate::config::PersonalityDomain;
 use crate::{capabilities, utils};
 
 // Flags used in mount_setattr(2).
@@ -733,6 +734,13 @@ impl Syscall for LinuxSyscall {
 
     fn get_egid(&self) -> Gid {
         nix::unistd::getegid()
+    }
+
+    fn personality(&self, domain: PersonalityDomain) -> Result<()> {
+        let domain = nix::sys::personality::Persona::from_bits_retain(domain as i32);
+        nix::sys::personality::set(domain)
+            .map(|_| ())
+            .map_err(|e| e.into())
     }
 }
 
