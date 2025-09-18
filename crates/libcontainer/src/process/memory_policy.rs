@@ -110,37 +110,26 @@ fn validate_memory_policy(
     let mode_with_flags = base_mode | (flags_value as i32);
 
     match base_mode {
-        MPOL_DEFAULT => {
+        MPOL_DEFAULT | MPOL_LOCAL => {
+            let mode_name = if base_mode == MPOL_DEFAULT {
+                "MPOL_DEFAULT"
+            } else {
+                "MPOL_LOCAL"
+            };
+
             if let Some(nodes) = policy.nodes() {
                 if !nodes.trim().is_empty() {
-                    return Err(MemoryPolicyError::InvalidNodes(
-                        "MPOL_DEFAULT does not accept node specification".to_string(),
-                    ));
+                    return Err(MemoryPolicyError::InvalidNodes(format!(
+                        "{} does not accept node specification",
+                        mode_name
+                    )));
                 }
             }
             if flags_value != 0 {
-                return Err(MemoryPolicyError::InvalidFlag(
-                    "MPOL_DEFAULT does not accept flags".to_string(),
-                ));
-            }
-            Ok(Some(ValidatedMemoryPolicy {
-                mode_with_flags,
-                nodemask: Vec::new(),
-                maxnode: 0,
-            }))
-        }
-        MPOL_LOCAL => {
-            if let Some(nodes) = policy.nodes() {
-                if !nodes.trim().is_empty() {
-                    return Err(MemoryPolicyError::InvalidNodes(
-                        "MPOL_LOCAL does not accept node specification".to_string(),
-                    ));
-                }
-            }
-            if flags_value != 0 {
-                return Err(MemoryPolicyError::InvalidFlag(
-                    "MPOL_LOCAL does not accept flags".to_string(),
-                ));
+                return Err(MemoryPolicyError::InvalidFlag(format!(
+                    "{} does not accept flags",
+                    mode_name
+                )));
             }
             Ok(Some(ValidatedMemoryPolicy {
                 mode_with_flags,
