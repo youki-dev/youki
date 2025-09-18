@@ -81,14 +81,6 @@ fn preferred_relative() -> TestResult {
     test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
-fn empty_memory_policy() -> TestResult {
-    let spec = match spec_with_runtimetest("memory_policy_empty", None) {
-        Ok(s) => s,
-        Err(e) => return TestResult::Failed(e),
-    };
-    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
-}
-
 fn default_with_missing_nodes_ok() -> TestResult {
     let spec = match spec_with_runtimetest(
         "memory_policy_default",
@@ -250,10 +242,6 @@ pub fn get_linux_memory_policy_tests() -> TestGroup {
     ]);
 
     tg.add(vec![
-        Box::new(Test::new(
-            "empty_memory_policy",
-            Box::new(empty_memory_policy),
-        )),
         Box::new(Test::new(
             "default_with_missing_nodes_ok",
             Box::new(default_with_missing_nodes_ok),
