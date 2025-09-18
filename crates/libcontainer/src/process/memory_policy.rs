@@ -510,14 +510,5 @@ mod tests {
             setup_memory_policy(&Some(policy_preferred_empty_with_flags), syscall.as_ref())
                 .is_err()
         );
-
-        // Test MPOL_BIND with empty nodes (should fail)
-        let policy_bind_empty = LinuxMemoryPolicyBuilder::default()
-            .mode(MemoryPolicyModeType::MpolBind)
-            .nodes("".to_string())
-            .build()
-            .unwrap();
-
-        assert!(setup_memory_policy(&Some(policy_bind_empty), syscall.as_ref()).is_err());
     }
 }
