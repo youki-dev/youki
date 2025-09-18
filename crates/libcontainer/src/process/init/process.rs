@@ -130,9 +130,7 @@ pub fn container_init_process(
         if let Some(flags) = personality.flags() {
             if !flags.is_empty() {
                 tracing::error!("personality flag has not supported at this time");
-                return Err(InitProcessError::Other(
-                    "personality flag has not supported at this time".to_string(),
-                ));
+                return Err(InitProcessError::UnsupportedPersonalityFlag);
             }
         }
 
