@@ -37,7 +37,7 @@ pub enum Variant {
     // at
     ArrayU64(Vec<u64>),
     // a(st)
-    Struct(Vec<Structure<u64>>),
+    ArrayStructU64(Vec<Structure<u64>>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
