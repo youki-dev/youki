@@ -394,7 +394,7 @@ mod tests {
         assert_eq!(got_args[0].mode, 2); // MPOL_BIND (corrected value)
         assert_eq!(got_args[0].nodemask.len(), 1); // One c_ulong needed
         assert_eq!(got_args[0].nodemask[0], 3); // 2^0 + 2^1 = 1 + 2 = 3
-        assert_eq!(got_args[0].maxnode, 2); // highest node ID (1) + 1 = 2
+        assert_eq!(got_args[0].maxnode, 64); // (num_u64s * u64_bits) = (1 * 64) = 64
 
         // Test with flags
         let policy_with_flags = LinuxMemoryPolicyBuilder::default()
@@ -420,7 +420,7 @@ mod tests {
         assert_eq!(got_args_with_flags[1].mode, 2 | (1 << 15));
         assert_eq!(got_args_with_flags[1].nodemask.len(), 1);
         assert_eq!(got_args_with_flags[1].nodemask[0], 1); // 2^0 = 1
-        assert_eq!(got_args_with_flags[1].maxnode, 1); // highest node ID (0) + 1 = 1
+        assert_eq!(got_args_with_flags[1].maxnode, 64); // (num_u64s * u64_bits) = (1 * 64) = 64
 
         // Test invalid flag combinations
         let policy_invalid_flags = LinuxMemoryPolicyBuilder::default()
