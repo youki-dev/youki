@@ -26,15 +26,17 @@ pub enum MemoryPolicyError {
 
 type Result<T> = std::result::Result<T, MemoryPolicyError>;
 
-/// Configure the memory policy for the process using set_mempolicy(2).
-///
-/// See: https://man7.org/linux/man-pages/man2/set_mempolicy.2.html
-pub fn setup_memory_policy(
+struct ValidatedMemoryPolicy {
+    mode_with_flags: i32,
+    nodemask: Vec<u64>,
+    maxnode: u64,
+}
+
+fn validate_memory_policy(
     memory_policy: &Option<oci_spec::runtime::LinuxMemoryPolicy>,
-    syscall: &dyn Syscall,
-) -> Result<()> {
+) -> Result<Option<ValidatedMemoryPolicy>> {
     let Some(policy) = memory_policy else {
-        return Ok(());
+        return Ok(None);
     };
 
     // Memory policy mode constants from Linux UAPI (include/uapi/linux/mempolicy.h)
@@ -121,13 +123,11 @@ pub fn setup_memory_policy(
                     "MPOL_DEFAULT does not accept flags".to_string(),
                 ));
             }
-            syscall
-                .set_mempolicy(mode_with_flags, &[], 0)
-                .map_err(|err| {
-                    tracing::error!(?err, "failed to set memory policy (MPOL_DEFAULT)");
-                    MemoryPolicyError::Syscall(err)
-                })?;
-            Ok(())
+            Ok(Some(ValidatedMemoryPolicy {
+                mode_with_flags,
+                nodemask: Vec::new(),
+                maxnode: 0,
+            }))
         }
         MPOL_LOCAL => {
             if let Some(nodes) = policy.nodes() {
@@ -142,75 +142,56 @@ pub fn setup_memory_policy(
                     "MPOL_LOCAL does not accept flags".to_string(),
                 ));
             }
-            syscall
-                .set_mempolicy(mode_with_flags, &[], 0)
-                .map_err(|err| {
-                    tracing::error!(?err, "failed to set memory policy (MPOL_LOCAL)");
-                    MemoryPolicyError::Syscall(err)
-                })?;
-            Ok(())
+            Ok(Some(ValidatedMemoryPolicy {
+                mode_with_flags,
+                nodemask: Vec::new(),
+                maxnode: 0,
+            }))
         }
         MPOL_PREFERRED => match policy.nodes() {
             None => {
                 if flags_value & (MPOL_F_RELATIVE_NODES | MPOL_F_STATIC_NODES) != 0 {
                     return Err(MemoryPolicyError::IncompatibleFlagMode(
-                            "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
-                        ));
+                        "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
+                    ));
                 }
-                syscall
-                    .set_mempolicy(mode_with_flags, &[], 0)
-                    .map_err(|err| {
-                        tracing::error!(
-                            ?err,
-                            "failed to set memory policy (MPOL_PREFERRED with empty nodes)"
-                        );
-                        MemoryPolicyError::Syscall(err)
-                    })?;
-                Ok(())
+                Ok(Some(ValidatedMemoryPolicy {
+                    mode_with_flags,
+                    nodemask: Vec::new(),
+                    maxnode: 0,
+                }))
             }
             Some(nodes) if nodes.trim().is_empty() => {
                 if flags_value & (MPOL_F_RELATIVE_NODES | MPOL_F_STATIC_NODES) != 0 {
                     return Err(MemoryPolicyError::IncompatibleFlagMode(
-                            "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
-                        ));
+                        "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
+                    ));
                 }
-                syscall
-                    .set_mempolicy(mode_with_flags, &[], 0)
-                    .map_err(|err| {
-                        tracing::error!(
-                            ?err,
-                            "failed to set memory policy (MPOL_PREFERRED with empty nodes)"
-                        );
-                        MemoryPolicyError::Syscall(err)
-                    })?;
-                Ok(())
+                Ok(Some(ValidatedMemoryPolicy {
+                    mode_with_flags,
+                    nodemask: Vec::new(),
+                    maxnode: 0,
+                }))
             }
             Some(nodes) => {
                 let (nodemask, maxnode) = build_nodemask(nodes)?;
                 if maxnode == 0 {
                     if flags_value & (MPOL_F_RELATIVE_NODES | MPOL_F_STATIC_NODES) != 0 {
                         return Err(MemoryPolicyError::IncompatibleFlagMode(
-                                "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
-                            ));
+                            "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
+                        ));
                     }
-                    syscall
-                        .set_mempolicy(mode_with_flags, &[], 0)
-                        .map_err(|err| {
-                            tracing::error!(
-                                ?err,
-                                "failed to set memory policy (MPOL_PREFERRED with empty nodes)"
-                            );
-                            MemoryPolicyError::Syscall(err)
-                        })?;
-                    return Ok(());
+                    return Ok(Some(ValidatedMemoryPolicy {
+                        mode_with_flags,
+                        nodemask: Vec::new(),
+                        maxnode: 0,
+                    }));
                 }
-                syscall
-                    .set_mempolicy(mode_with_flags, &nodemask, maxnode)
-                    .map_err(|err| {
-                        tracing::error!(?err, "failed to set memory policy (MPOL_PREFERRED)");
-                        MemoryPolicyError::Syscall(err)
-                    })?;
-                Ok(())
+                Ok(Some(ValidatedMemoryPolicy {
+                    mode_with_flags,
+                    nodemask,
+                    maxnode,
+                }))
             }
         },
         _ => {
@@ -236,15 +217,32 @@ pub fn setup_memory_policy(
                     base_mode
                 )));
             }
-            syscall
-                .set_mempolicy(mode_with_flags, &nodemask, maxnode)
-                .map_err(|err| {
-                    tracing::error!(?err, "failed to set memory policy");
-                    MemoryPolicyError::Syscall(err)
-                })?;
-            Ok(())
+            Ok(Some(ValidatedMemoryPolicy {
+                mode_with_flags,
+                nodemask,
+                maxnode,
+            }))
         }
     }
+}
+
+/// Configure the memory policy for the process using set_mempolicy(2).
+///
+/// See: https://man7.org/linux/man-pages/man2/set_mempolicy.2.html
+pub fn setup_memory_policy(
+    memory_policy: &Option<oci_spec::runtime::LinuxMemoryPolicy>,
+    syscall: &dyn Syscall,
+) -> Result<()> {
+    let validated = validate_memory_policy(memory_policy)?;
+    if let Some(valid) = validated {
+        syscall
+            .set_mempolicy(valid.mode_with_flags, &valid.nodemask, valid.maxnode)
+            .map_err(|err| {
+                tracing::error!(?err, "failed to set memory policy");
+                MemoryPolicyError::Syscall(err)
+            })?;
+    }
+    Ok(())
 }
 
 // Build a proper nodemask for set_mempolicy
