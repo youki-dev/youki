@@ -2,7 +2,7 @@ use std::path::Path;
 
 use libcgroups::common;
 use num_cpus;
-use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
+use test_framework::{ConditionalTest, TestGroup, TestResult, test_result};
 
 use super::{create_cpu_spec, create_empty_spec, create_spec};
 use crate::utils::test_outside_container;

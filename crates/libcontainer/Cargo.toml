@@ -7,8 +7,8 @@ repository = "https://github.com/containers/youki"
 homepage = "https://youki-dev.github.io/youki/"
 readme = "README.md"
 authors = ["youki team"]
-edition = "2021"
-rust-version = "1.63.0"
+edition = "2024"
+rust-version = "1.85.0"
 keywords = ["youki", "container", "cgroups"]
 
 [features]
@@ -36,6 +36,7 @@ nix = { version = "0.29.0", features = [
     "dir",
     "term",
     "hostname",
+    "personality",
 ] }
 oci-spec = { version = "0.8.2", features = ["runtime"] }
 once_cell = "1.21.3"

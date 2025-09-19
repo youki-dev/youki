@@ -1,10 +1,10 @@
 use std::fs;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use oci_spec::runtime::{ExecCPUAffinityBuilder, ProcessBuilder, Spec, SpecBuilder};
 use regex::Regex;
-use serde_json::{json, Value};
-use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
+use serde_json::{Value, json};
+use test_framework::{ConditionalTest, TestGroup, TestResult, test_result};
 
 use crate::utils::{exec_container, is_runtime_runc, start_container, test_outside_container};
 

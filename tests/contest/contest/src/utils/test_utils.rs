@@ -7,11 +7,11 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread::sleep;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Context, Result};
-use nix::mount::{umount2, MntFlags};
+use anyhow::{Context, Result, anyhow, bail};
+use nix::mount::{MntFlags, umount2};
 use oci_spec::runtime::{LinuxNamespaceType, Spec};
 use serde::{Deserialize, Serialize};
-use test_framework::{test_result, TestResult};
+use test_framework::{TestResult, test_result};
 
 use super::{generate_uuid, get_runtime_path, get_runtimetest_path, prepare_bundle, set_config};
 
@@ -157,10 +157,7 @@ pub fn test_outside_container(
     let options = CreateOptions::default();
     let create_result = create_container(&id_str, &bundle, &options).unwrap().wait();
     let (out, err) = get_state(&id_str, &bundle).unwrap();
-    let state: Option<State> = match serde_json::from_str(&out) {
-        Ok(v) => Some(v),
-        Err(_) => None,
-    };
+    let state: Option<State> = serde_json::from_str(&out).ok();
     let data = ContainerData {
         id: id.to_string(),
         state,
@@ -175,10 +172,10 @@ pub fn test_outside_container(
     // is no mount namespace in the spec's namespaces, and if there is no mount namespace,
     // we manually unmount the rootfs so tmpdir deletion can succeed and cleanup is done.
     let ns = spec.linux().as_ref().and_then(|l| l.namespaces().clone());
-    if let Some(ns) = ns {
-        if !ns.into_iter().any(|n| n.typ() == LinuxNamespaceType::Mount) {
-            umount2(&bundle.path().join("bundle/rootfs"), MntFlags::MNT_DETACH).unwrap();
-        }
+    if let Some(ns) = ns
+        && !ns.into_iter().any(|n| n.typ() == LinuxNamespaceType::Mount)
+    {
+        umount2(&bundle.path().join("bundle/rootfs"), MntFlags::MNT_DETACH).unwrap();
     }
     kill_container(&id_str, &bundle).unwrap().wait().unwrap();
     delete_container(&id_str, &bundle).unwrap().wait().unwrap();
@@ -275,10 +272,20 @@ pub fn test_inside_container(
 
     let state: State = match serde_json::from_str(&out) {
         Ok(v) => v,
-        Err(e) => return TestResult::Failed(anyhow!("error in parsing state of container after start in test_inside_container : stdout : {}, parse error : {}",out,e)),
+        Err(e) => {
+            return TestResult::Failed(anyhow!(
+                "error in parsing state of container after start in test_inside_container : stdout : {}, parse error : {}",
+                out,
+                e
+            ));
+        }
     };
     if state.status != "stopped" {
-        return TestResult::Failed(anyhow!("error : unexpected container status in test_inside_runtime : expected stopped, got {}, container state : {:?}",state.status,state));
+        return TestResult::Failed(anyhow!(
+            "error : unexpected container status in test_inside_runtime : expected stopped, got {}, container state : {:?}",
+            state.status,
+            state
+        ));
     }
     kill_container(&id_str, &bundle).unwrap().wait().unwrap();
     delete_container(&id_str, &bundle).unwrap().wait().unwrap();

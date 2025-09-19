@@ -273,14 +273,16 @@ mod tests {
 
     #[test]
     fn test_devices_allow_single() {
-        let rules = vec![LinuxDeviceCgroupBuilder::default()
-            .allow(true)
-            .typ(LinuxDeviceType::C)
-            .major(10)
-            .minor(20)
-            .access("r")
-            .build()
-            .unwrap()];
+        let rules = vec![
+            LinuxDeviceCgroupBuilder::default()
+                .allow(true)
+                .typ(LinuxDeviceType::C)
+                .major(10)
+                .minor(20)
+                .access("r")
+                .build()
+                .unwrap(),
+        ];
 
         let prog = build_bpf_program(&Some(rules)).unwrap();
         let ty_list = vec![
@@ -344,11 +346,13 @@ mod tests {
 
     #[test]
     fn test_devices_allow_all() {
-        let rules = vec![LinuxDeviceCgroupBuilder::default()
-            .allow(true)
-            .typ(LinuxDeviceType::A)
-            .build()
-            .unwrap()];
+        let rules = vec![
+            LinuxDeviceCgroupBuilder::default()
+                .allow(true)
+                .typ(LinuxDeviceType::A)
+                .build()
+                .unwrap(),
+        ];
 
         let prog = build_bpf_program(&Some(rules)).unwrap();
         let ty_list = vec![
@@ -377,13 +381,15 @@ mod tests {
 
     #[test]
     fn test_devices_allow_wildcard() {
-        let rules = vec![LinuxDeviceCgroupBuilder::default()
-            .allow(true)
-            .typ(LinuxDeviceType::C)
-            .minor(20)
-            .access("r")
-            .build()
-            .unwrap()];
+        let rules = vec![
+            LinuxDeviceCgroupBuilder::default()
+                .allow(true)
+                .typ(LinuxDeviceType::C)
+                .minor(20)
+                .access("r")
+                .build()
+                .unwrap(),
+        ];
 
         let prog = build_bpf_program(&Some(rules)).unwrap();
         let ty_list = vec![

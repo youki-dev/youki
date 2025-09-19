@@ -1,7 +1,7 @@
 use std::os::fd::FromRawFd;
 
 use libcgroups::common::CgroupManager;
-use nix::unistd::{close, write, Gid, Pid, Uid};
+use nix::unistd::{Gid, Pid, Uid, close, write};
 use oci_spec::runtime::{LinuxNamespace, LinuxNamespaceType, LinuxResources};
 use procfs::process::Process;
 

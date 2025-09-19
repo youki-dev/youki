@@ -13,7 +13,7 @@ use nix::unistd::{Uid, User};
 use oci_spec::runtime::Spec;
 
 use crate::error::LibcontainerError;
-use crate::syscall::syscall::{create_syscall, Syscall};
+use crate::syscall::syscall::{Syscall, create_syscall};
 use crate::user_ns::UserNamespaceConfig;
 
 #[derive(Debug, thiserror::Error)]
@@ -240,9 +240,8 @@ pub fn ensure_procfs(path: &Path) -> Result<(), EnsureProcfsError> {
         tracing::error!(?err, ?path, "failed to open procfs file");
         err
     })?;
-    let fstat_info = statfs::fstatfs(&procfs_fd).map_err(|err| {
+    let fstat_info = statfs::fstatfs(&procfs_fd).inspect_err(|err| {
         tracing::error!(?err, ?path, "failed to fstatfs the procfs");
-        err
     })?;
 
     if fstat_info.filesystem_type() != statfs::PROC_SUPER_MAGIC {
@@ -314,7 +313,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use anyhow::{bail, Result};
+    use anyhow::{Result, bail};
     use serial_test::serial;
 
     use super::*;
@@ -428,7 +427,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_userns_spec_validation() -> Result<(), test_utils::TestError> {
-        use nix::sched::{unshare, CloneFlags};
+        use nix::sched::{CloneFlags, unshare};
         // default rootful spec
         let rootful_spec = Spec::default();
         // as we are not in a user ns, and spec does not have user ns

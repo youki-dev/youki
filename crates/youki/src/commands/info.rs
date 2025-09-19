@@ -103,7 +103,7 @@ fn find_parameter<'a>(content: &'a str, param_name: &str) -> Option<&'a str> {
     content
         .lines()
         .find(|l| l.starts_with(param_name))
-        .and_then(|l| l.split_terminator('=').last())
+        .and_then(|l| l.split_terminator('=').next_back())
 }
 
 /// Print Hardware information of system
@@ -162,29 +162,27 @@ pub fn print_cgroup_v2_controllers() {
     let cgroup_setup = libcgroups::common::get_cgroup_setup();
     let unified = libcgroups::v2::util::get_unified_mount_point();
 
-    if let Ok(cgroup_setup) = cgroup_setup {
-        if let Ok(unified) = &unified {
-            if matches!(cgroup_setup, CgroupSetup::Hybrid | CgroupSetup::Unified) {
-                if let Ok(controllers) = libcgroups::v2::util::get_available_controllers(unified) {
-                    println!("CGroup v2 controllers");
-                    let active_controllers: HashSet<ControllerType> =
-                        controllers.into_iter().collect();
-                    for controller in libcgroups::v2::controller_type::CONTROLLER_TYPES {
-                        let status = if active_controllers.contains(controller) {
-                            "attached"
-                        } else {
-                            "detached"
-                        };
+    if let Ok(cgroup_setup) = cgroup_setup
+        && let Ok(unified) = &unified
+        && matches!(cgroup_setup, CgroupSetup::Hybrid | CgroupSetup::Unified)
+    {
+        if let Ok(controllers) = libcgroups::v2::util::get_available_controllers(unified) {
+            println!("CGroup v2 controllers");
+            let active_controllers: HashSet<ControllerType> = controllers.into_iter().collect();
+            for controller in libcgroups::v2::controller_type::CONTROLLER_TYPES {
+                let status = if active_controllers.contains(controller) {
+                    "attached"
+                } else {
+                    "detached"
+                };
 
-                        println!("  {:<16}{}", controller.to_string(), status);
-                    }
-                }
-
-                if let Some(config) = read_kernel_config() {
-                    let display = FeatureDisplay::with_status("device", "attached", "detached");
-                    print_feature_status(&config, "CONFIG_CGROUP_BPF", display);
-                }
+                println!("  {:<16}{}", controller.to_string(), status);
             }
+        }
+
+        if let Some(config) = read_kernel_config() {
+            let display = FeatureDisplay::with_status("device", "attached", "detached");
+            print_feature_status(&config, "CONFIG_CGROUP_BPF", display);
         }
     }
 }

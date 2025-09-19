@@ -7,7 +7,7 @@ repository = "https://github.com/containers/youki"
 homepage = "https://youki-dev.github.io/youki/"
 readme = "README.md"
 authors = ["youki team"]
-edition = "2021"
+edition = "2024"
 autoexamples = true
 keywords = ["youki", "container", "selinux"]
 

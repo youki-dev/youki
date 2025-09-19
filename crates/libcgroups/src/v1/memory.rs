@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::fs::OpenOptions;
-use std::io::prelude::*;
 use std::io::Write;
+use std::io::prelude::*;
 use std::num::ParseIntError;
 use std::path::{Path, PathBuf};
 
@@ -12,7 +12,7 @@ use oci_spec::runtime::LinuxMemory;
 use super::controller::Controller;
 use crate::common::{self, ControllerOpt, WrapIoResult, WrappedIoError};
 use crate::stats::{
-    self, parse_single_value, MemoryData, MemoryStats, ParseFlatKeyedDataError, StatsProvider,
+    self, MemoryData, MemoryStats, ParseFlatKeyedDataError, StatsProvider, parse_single_value,
 };
 
 const CGROUP_MEMORY_SWAP_LIMIT: &str = "memory.memsw.limit_in_bytes";

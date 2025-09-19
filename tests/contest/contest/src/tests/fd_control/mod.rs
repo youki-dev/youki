@@ -1,11 +1,11 @@
 use std::fs;
 use std::os::fd::{AsRawFd, RawFd};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use oci_spec::runtime::{ProcessBuilder, Spec, SpecBuilder};
-use test_framework::{test_result, ConditionalTest, Test, TestGroup, TestResult};
+use test_framework::{ConditionalTest, Test, TestGroup, TestResult, test_result};
 
-use crate::utils::{is_runtime_runc, test_inside_container, CreateOptions};
+use crate::utils::{CreateOptions, is_runtime_runc, test_inside_container};
 
 fn create_spec() -> Result<Spec> {
     SpecBuilder::default()

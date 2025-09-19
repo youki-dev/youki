@@ -160,7 +160,7 @@ fn combine_l3_cache_and_mem_bw_schemas(
     mem_bw_schema: &Option<String>,
 ) -> Option<String> {
     match (l3_cache_schema, mem_bw_schema) {
-        (Some(ref real_l3_cache_schema), Some(ref real_mem_bw_schema)) => {
+        (Some(real_l3_cache_schema), Some(real_mem_bw_schema)) => {
             // Combine the results. Filter out "MB:"-lines from l3_cache_schema
             let mut output: Vec<&str> = vec![];
 
@@ -368,9 +368,8 @@ pub fn setup_intel_rdt(
     intel_rdt: &LinuxIntelRdt,
 ) -> Result<bool> {
     // Find mounted resctrl filesystem, error out if it can't be found.
-    let path = find_resctrl_mount_point().map_err(|err| {
+    let path = find_resctrl_mount_point().inspect_err(|_err| {
         tracing::error!("failed to find a mounted resctrl file system");
-        err
     })?;
     let clos_id_set = intel_rdt.clos_id().is_some();
     let only_clos_id_set =
@@ -382,9 +381,8 @@ pub fn setup_intel_rdt(
     };
 
     let created_dir = write_container_pid_to_resctrl_tasks(&path, id, *init_pid, only_clos_id_set)
-        .map_err(|err| {
+        .inspect_err(|_err| {
             tracing::error!("failed to write container pid to resctrl tasks file");
-            err
         })?;
     write_resctrl_schemata(
         &path,
@@ -394,9 +392,8 @@ pub fn setup_intel_rdt(
         clos_id_set,
         created_dir,
     )
-    .map_err(|err| {
+    .inspect_err(|_err| {
         tracing::error!("failed to write schemata to resctrl schemata file");
-        err
     })?;
 
     // If closID is not set and the runtime has created the sub-directory,

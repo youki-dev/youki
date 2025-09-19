@@ -176,8 +176,10 @@ impl InitContainerBuilder {
                     LibcontainerError::OtherIO(err)
                 })?;
                 if !apparmor_is_enabled {
-                    tracing::error!(?profile,
-                        "apparmor profile exists in the spec, but apparmor is not activated on this system");
+                    tracing::error!(
+                        ?profile,
+                        "apparmor profile exists in the spec, but apparmor is not activated on this system"
+                    );
                     Err(ErrInvalidSpec::AppArmorNotEnabled)?;
                 }
             }
@@ -188,7 +190,12 @@ impl InitContainerBuilder {
                 match iop_class_res {
                     Ok(iop_class) => {
                         if !(0..=7).contains(&priority) {
-                            tracing::error!(?priority, "io priority '{}' not between 0 and 7 (inclusive), class '{}' not in (IO_PRIO_CLASS_RT,IO_PRIO_CLASS_BE,IO_PRIO_CLASS_IDLE)",priority, iop_class);
+                            tracing::error!(
+                                ?priority,
+                                "io priority '{}' not between 0 and 7 (inclusive), class '{}' not in (IO_PRIO_CLASS_RT,IO_PRIO_CLASS_BE,IO_PRIO_CLASS_IDLE)",
+                                priority,
+                                iop_class
+                            );
                             Err(ErrInvalidSpec::IoPriority)?;
                         }
                     }

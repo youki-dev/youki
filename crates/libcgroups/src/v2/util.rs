@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use procfs::process::Process;
 use procfs::ProcError;
+use procfs::process::Process;
 
 use super::controller_type::ControllerType;
 use crate::common::{self, WrappedIoError};
