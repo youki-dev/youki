@@ -2,9 +2,9 @@ use std::fs;
 use std::os::fd::AsRawFd;
 
 use anyhow::anyhow;
-use nix::fcntl::{fcntl, FcntlArg, FdFlag};
+use nix::fcntl::{FcntlArg, FdFlag, fcntl};
 use nix::unistd::dup2;
-use test_framework::{test_result, TestResult};
+use test_framework::{TestResult, test_result};
 
 use crate::utils::test_utils::{
     check_container_created, exec_container, start_container, test_outside_container,

@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use test_framework::{test_result, TestResult};
+use test_framework::{TestResult, test_result};
 
 use crate::utils::test_utils::{
     check_container_created, exec_container, start_container, test_outside_container,
