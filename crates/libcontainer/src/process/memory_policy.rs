@@ -28,7 +28,7 @@ type Result<T> = std::result::Result<T, MemoryPolicyError>;
 
 struct ValidatedMemoryPolicy {
     mode_with_flags: i32,
-    nodemask: Vec<u64>,
+    nodemask: Vec<libc::c_ulong>,
     maxnode: u64,
 }
 
@@ -235,7 +235,7 @@ pub fn setup_memory_policy(
 }
 
 // Build a proper nodemask for set_mempolicy
-fn build_nodemask(nodes: &str) -> Result<(Vec<u64>, u64)> {
+fn build_nodemask(nodes: &str) -> Result<(Vec<libc::c_ulong>, u64)> {
     let node_ids = parse_node_string(nodes)?;
 
     if node_ids.is_empty() {
@@ -246,24 +246,24 @@ fn build_nodemask(nodes: &str) -> Result<(Vec<u64>, u64)> {
     // Find the highest node ID
     let highest_node = node_ids.iter().max().copied().unwrap_or(0) as usize;
 
-    // Calculate how many u64 values we need to store the bitmask
-    let u64_bits = 64;
-    let num_u64s = (highest_node / u64_bits) + 1;
+    // Calculate how many c_ulong values we need to store the bitmask
+    let bits_per_ulong = std::mem::size_of::<libc::c_ulong>() * 8;
+    let num_ulongs = (highest_node / bits_per_ulong) + 1;
 
-    // Calculate maxnode
-    let maxnode = (num_u64s * u64_bits) as u64;
+    // Calculate maxnode = number of bits provided in nodemask
+    let maxnode = (num_ulongs * bits_per_ulong) as u64;
 
-    // Build the nodemask array as Vec<u64>
-    let mut nodemask = vec![0u64; num_u64s];
+    // Build the nodemask array as Vec<c_ulong>
+    let mut nodemask = vec![0 as libc::c_ulong; num_ulongs];
 
     // Set bits for each node ID
     for node_id in node_ids {
         let node_id = node_id as usize;
-        let word_index = node_id / u64_bits;
-        let bit_index = node_id % u64_bits;
+        let word_index = node_id / bits_per_ulong;
+        let bit_index = node_id % bits_per_ulong;
 
         if word_index < nodemask.len() {
-            nodemask[word_index] |= 1u64 << bit_index;
+            nodemask[word_index] |= (1 as libc::c_ulong) << bit_index;
         }
     }
 

@@ -715,12 +715,12 @@ impl Syscall for LinuxSyscall {
         Ok(())
     }
 
-    fn set_mempolicy(&self, mode: i32, nodemask: &[u64], maxnode: u64) -> Result<()> {
+    fn set_mempolicy(&self, mode: i32, nodemask: &[libc::c_ulong], maxnode: u64) -> Result<()> {
         // Convert Rust types to libc types
         let libc_nodemask = if nodemask.is_empty() {
             std::ptr::null()
         } else {
-            nodemask.as_ptr() as *const libc::c_ulong
+            nodemask.as_ptr()
         };
         let libc_maxnode = maxnode as libc::c_ulong;
 

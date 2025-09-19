@@ -300,16 +300,12 @@ impl Syscall for TestHelperSyscall {
         )
     }
 
-    fn set_mempolicy(&self, mode: i32, nodemask: &[u64], maxnode: u64) -> Result<()> {
-        // Convert &[u64] to Vec<libc::c_ulong> for testing storage
-        let nodemask_vec: Vec<libc::c_ulong> =
-            nodemask.iter().map(|&val| val as libc::c_ulong).collect();
-
+    fn set_mempolicy(&self, mode: i32, nodemask: &[libc::c_ulong], maxnode: u64) -> Result<()> {
         self.mocks.act(
             ArgName::MemPolicy,
             Box::new(MemPolicyArgs {
                 mode,
-                nodemask: nodemask_vec,
+                nodemask: nodemask.to_vec(),
                 maxnode,
             }),
         )
