@@ -39,7 +39,7 @@ fn spec_with_runtimetest(
 
 fn interleave_without_flags() -> TestResult {
     let spec = match spec_with_runtimetest(
-        "memory_policy_interleave",
+        "memory_policy",
         Some((MemoryPolicyModeType::MpolInterleave, "0", vec![])),
     ) {
         Ok(s) => s,
@@ -51,7 +51,7 @@ fn interleave_without_flags() -> TestResult {
 
 fn bind_static() -> TestResult {
     let spec = match spec_with_runtimetest(
-        "memory_policy_bind_static",
+        "memory_policy",
         Some((
             MemoryPolicyModeType::MpolBind,
             "0",
@@ -67,7 +67,7 @@ fn bind_static() -> TestResult {
 
 fn preferred_relative() -> TestResult {
     let spec = match spec_with_runtimetest(
-        "memory_policy_preferred_relative",
+        "memory_policy",
         Some((
             MemoryPolicyModeType::MpolPreferred,
             "0",
@@ -83,7 +83,7 @@ fn preferred_relative() -> TestResult {
 
 fn default_with_missing_nodes_ok() -> TestResult {
     let spec = match spec_with_runtimetest(
-        "memory_policy_default",
+        "memory_policy",
         Some((MemoryPolicyModeType::MpolDefault, "", vec![])),
     ) {
         Ok(s) => s,
@@ -93,7 +93,7 @@ fn default_with_missing_nodes_ok() -> TestResult {
 }
 
 fn invalid_mode_string() -> TestResult {
-    let spec = match spec_with_runtimetest("memory_policy_empty", None) {
+    let spec = match spec_with_runtimetest("memory_policy", None) {
         Ok(s) => s,
         Err(e) => return TestResult::Failed(e),
     };
@@ -119,7 +119,7 @@ fn invalid_mode_string() -> TestResult {
 }
 
 fn invalid_flag_string() -> TestResult {
-    let spec = match spec_with_runtimetest("memory_policy_empty", None) {
+    let spec = match spec_with_runtimetest("memory_policy", None) {
         Ok(s) => s,
         Err(e) => return TestResult::Failed(e),
     };
@@ -147,7 +147,7 @@ fn invalid_flag_string() -> TestResult {
 }
 
 fn missing_mode_but_nodes_present() -> TestResult {
-    let spec = match spec_with_runtimetest("memory_policy_empty", None) {
+    let spec = match spec_with_runtimetest("memory_policy", None) {
         Ok(s) => s,
         Err(e) => return TestResult::Failed(e),
     };
@@ -171,7 +171,7 @@ fn missing_mode_but_nodes_present() -> TestResult {
 }
 
 fn syscall_invalid_arguments() -> TestResult {
-    let spec = match spec_with_runtimetest("memory_policy_empty", None) {
+    let spec = match spec_with_runtimetest("memory_policy", None) {
         Ok(s) => s,
         Err(e) => return TestResult::Failed(e),
     };
@@ -199,7 +199,7 @@ fn syscall_invalid_arguments() -> TestResult {
 }
 
 fn bind_way_too_large_node_number() -> TestResult {
-    let spec = match spec_with_runtimetest("memory_policy_empty", None) {
+    let spec = match spec_with_runtimetest("memory_policy", None) {
         Ok(s) => s,
         Err(e) => return TestResult::Failed(e),
     };
