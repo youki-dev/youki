@@ -1,11 +1,11 @@
 use std::fs;
-use std::fs::{metadata, symlink_metadata, OpenOptions};
+use std::fs::{OpenOptions, metadata, symlink_metadata};
 use std::io::Read;
 use std::os::unix::prelude::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use nix::sys::stat::{stat, SFlag};
+use nix::sys::stat::{SFlag, stat};
 
 // It means the file or directory is readable
 type Readable = bool;
@@ -67,13 +67,10 @@ pub fn test_read_access<P: AsRef<Path>>(path: P) -> Result<Readable, std::io::Er
         return test_dir_read_access(path);
     }
 
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        format!(
-            "cannot test read access for {:?}, has mode {mode:x}",
-            path_ref
-        ),
-    ))
+    Err(std::io::Error::other(format!(
+        "cannot test read access for {:?}, has mode {mode:x}",
+        path_ref
+    )))
 }
 
 fn test_file_write_access(path: &str) -> Result<(), std::io::Error> {
@@ -100,10 +97,9 @@ pub fn test_write_access(path: &str) -> Result<(), std::io::Error> {
         return test_dir_write_access(path);
     }
 
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        format!("cannot test write access for {path:?}, has mode {mode:x}"),
-    ))
+    Err(std::io::Error::other(format!(
+        "cannot test write access for {path:?}, has mode {mode:x}"
+    )))
 }
 
 pub fn test_file_executable(path: &str) -> Result<(), std::io::Error> {
@@ -114,10 +110,9 @@ pub fn test_file_executable(path: &str) -> Result<(), std::io::Error> {
         return Ok(());
     }
 
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        format!("{path:?} is directory, so cannot execute"),
-    ))
+    Err(std::io::Error::other(format!(
+        "{path:?} is directory, so cannot execute"
+    )))
 }
 
 pub fn test_dir_update_access_time(path: &str) -> Result<(), std::io::Error> {
@@ -134,10 +129,9 @@ pub fn test_dir_update_access_time(path: &str) -> Result<(), std::io::Error> {
     let rest = metadata.accessed();
     let second_access_time = rest.unwrap();
     if first_access_time == second_access_time {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("cannot update access time for path {path:?}"),
-        ));
+        return Err(std::io::Error::other(format!(
+            "cannot update access time for path {path:?}"
+        )));
     }
     Ok(())
 }
@@ -156,10 +150,9 @@ pub fn test_dir_not_update_access_time(path: &str) -> Result<(), std::io::Error>
     let rest = metadata.accessed();
     let second_access_time = rest.unwrap();
     if first_access_time != second_access_time {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("cannot update access time for path {path:?}"),
-        ));
+        return Err(std::io::Error::other(format!(
+            "cannot update access time for path {path:?}"
+        )));
     }
     Ok(())
 }
@@ -208,13 +201,10 @@ pub fn test_mount_releatime_option(path: &str) -> Result<(), std::io::Error> {
     let two_metadata = fs::metadata(test_file_path.clone())?;
 
     if one_metadata.atime() == two_metadata.atime() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!(
-                "not update access time for file {:?}",
-                test_file_path.to_str()
-            ),
-        ));
+        return Err(std::io::Error::other(format!(
+            "not update access time for file {:?}",
+            test_file_path.to_str()
+        )));
     }
 
     // execute cat command to update access time
@@ -225,10 +215,10 @@ pub fn test_mount_releatime_option(path: &str) -> Result<(), std::io::Error> {
         .expect("execute cat command error");
     let three_metadata = fs::metadata(test_file_path.clone())?;
     if two_metadata.atime() != three_metadata.atime() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("update access time for file {:?}", test_file_path.to_str()),
-        ));
+        return Err(std::io::Error::other(format!(
+            "update access time for file {:?}",
+            test_file_path.to_str()
+        )));
     }
 
     Ok(())
@@ -254,13 +244,10 @@ pub fn test_mount_noreleatime_option(path: &str) -> Result<(), std::io::Error> {
     let two_metadata = fs::metadata(test_file_path.clone())?;
 
     if one_metadata.atime() == two_metadata.atime() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!(
-                "not update access time for file {:?}",
-                test_file_path.to_str()
-            ),
-        ));
+        return Err(std::io::Error::other(format!(
+            "not update access time for file {:?}",
+            test_file_path.to_str()
+        )));
     }
 
     // execute cat command to update access time
@@ -272,10 +259,10 @@ pub fn test_mount_noreleatime_option(path: &str) -> Result<(), std::io::Error> {
     let three_metadata = fs::metadata(test_file_path.clone())?;
 
     if two_metadata.atime() != three_metadata.atime() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("update access time for file {:?}", test_file_path.to_str()),
-        ));
+        return Err(std::io::Error::other(format!(
+            "update access time for file {:?}",
+            test_file_path.to_str()
+        )));
     }
     Ok(())
 }
@@ -301,13 +288,10 @@ pub fn test_mount_rnoatime_option(path: &str) -> Result<(), std::io::Error> {
     let two_metadata = fs::metadata(test_file_path.clone())?;
 
     if one_metadata.atime() != two_metadata.atime() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!(
-                "update access time for file {:?}, expected not update",
-                test_file_path.to_str()
-            ),
-        ));
+        return Err(std::io::Error::other(format!(
+            "update access time for file {:?}, expected not update",
+            test_file_path.to_str()
+        )));
     }
     Ok(())
 }
@@ -329,13 +313,10 @@ pub fn test_mount_rstrictatime_option(path: &str) -> Result<(), std::io::Error> 
     let two_metadata = fs::metadata(test_file_path.clone())?;
 
     if one_metadata.atime() == two_metadata.atime() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!(
-                "not update access time for file {:?}",
-                test_file_path.to_str()
-            ),
-        ));
+        return Err(std::io::Error::other(format!(
+            "not update access time for file {:?}",
+            test_file_path.to_str()
+        )));
     }
 
     // execute cat command to update access time
@@ -347,10 +328,10 @@ pub fn test_mount_rstrictatime_option(path: &str) -> Result<(), std::io::Error> 
     let three_metadata = fs::metadata(test_file_path.clone())?;
 
     if two_metadata.atime() == three_metadata.atime() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("update access time for file {:?}", test_file_path.to_str()),
-        ));
+        return Err(std::io::Error::other(format!(
+            "update access time for file {:?}",
+            test_file_path.to_str()
+        )));
     }
     Ok(())
 }
@@ -360,20 +341,18 @@ pub fn test_mount_rnosymfollow_option(path: &str) -> Result<(), std::io::Error> 
     let metadata = match symlink_metadata(path.clone()) {
         Ok(metadata) => metadata,
         Err(e) => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("get file symlink_metadata err {path:?}, {e}"),
-            ));
+            return Err(std::io::Error::other(format!(
+                "get file symlink_metadata err {path:?}, {e}"
+            )));
         }
     };
     // check symbolic is followed
     if metadata.file_type().is_symlink() && metadata.mode() & 0o777 == 0o777 {
         Ok(())
     } else {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("get file symlink_metadata err {path:?}"),
-        ))
+        Err(std::io::Error::other(format!(
+            "get file symlink_metadata err {path:?}"
+        )))
     }
 }
 
@@ -382,20 +361,18 @@ pub fn test_mount_rsymfollow_option(path: &str) -> Result<(), std::io::Error> {
     let metadata = match symlink_metadata(path.clone()) {
         Ok(metadata) => metadata,
         Err(e) => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("get file symlink_metadata err {path:?}, {e}"),
-            ));
+            return Err(std::io::Error::other(format!(
+                "get file symlink_metadata err {path:?}, {e}"
+            )));
         }
     };
     // check symbolic is followed
     if metadata.file_type().is_symlink() && metadata.mode() & 0o777 == 0o777 {
         Ok(())
     } else {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("get file symlink_metadata err {path:?}"),
-        ))
+        Err(std::io::Error::other(format!(
+            "get file symlink_metadata err {path:?}"
+        )))
     }
 }
 
@@ -405,7 +382,7 @@ pub fn test_mount_rsuid_option(path: &str) -> Result<(), std::io::Error> {
     let metadata = match metadata(path.clone()) {
         Ok(metadata) => metadata,
         Err(e) => {
-            return Err(std::io::Error::new(std::io::ErrorKind::Other, e));
+            return Err(std::io::Error::other(e));
         }
     };
     // check suid and sgid
@@ -415,8 +392,5 @@ pub fn test_mount_rsuid_option(path: &str) -> Result<(), std::io::Error> {
     if suid && sgid {
         return Ok(());
     }
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        format!("rsuid error {path:?}"),
-    ))
+    Err(std::io::Error::other(format!("rsuid error {path:?}")))
 }

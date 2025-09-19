@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use libcgroups::common::CgroupManager;
 use liboci_cli::Ps;
 

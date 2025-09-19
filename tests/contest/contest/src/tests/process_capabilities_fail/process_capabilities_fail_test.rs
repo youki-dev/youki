@@ -2,10 +2,10 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
 
-use anyhow::{anyhow, Context, Ok, Result};
+use anyhow::{Context, Ok, Result, anyhow};
 use oci_spec::runtime::{ProcessBuilder, Spec, SpecBuilder};
 use serde_json::Value;
-use test_framework::{test_result, Test, TestGroup, TestResult};
+use test_framework::{Test, TestGroup, TestResult, test_result};
 
 use crate::utils::test_inside_container;
 use crate::utils::test_utils::CreateOptions;
@@ -38,11 +38,11 @@ fn process_capabilities_fail_test() -> TestResult {
             "/process/capabilities/effective",
         ];
         for path in &capability_paths {
-            if let Some(array) = spec_json.pointer_mut(path) {
-                if let Some(arr) = array.as_array_mut() {
-                    for cap in arr.iter_mut() {
-                        *cap = Value::String("TEST_CAP".to_string());
-                    }
+            if let Some(array) = spec_json.pointer_mut(path)
+                && let Some(arr) = array.as_array_mut()
+            {
+                for cap in arr.iter_mut() {
+                    *cap = Value::String("TEST_CAP".to_string());
                 }
             }
         }

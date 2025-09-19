@@ -4,7 +4,7 @@ pub mod relative_network;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use oci_spec::runtime::Spec;
 
 use crate::utils::test_utils::CGROUP_ROOT;

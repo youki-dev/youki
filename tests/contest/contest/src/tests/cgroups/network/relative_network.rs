@@ -6,7 +6,7 @@ use oci_spec::runtime::{
     SpecBuilder,
 };
 use pnet_datalink::interfaces;
-use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
+use test_framework::{ConditionalTest, TestGroup, TestResult, test_result};
 
 use super::{check_network_cgroup_paths, validate_network};
 use crate::utils::test_outside_container;
@@ -21,11 +21,13 @@ fn create_spec(cgroup_name: &str, class_id: u32, prio: u32, if_name: &str) -> Re
                 .network(
                     LinuxNetworkBuilder::default()
                         .class_id(class_id)
-                        .priorities(vec![LinuxInterfacePriorityBuilder::default()
-                            .name(if_name)
-                            .priority(prio)
-                            .build()
-                            .context("failed to build network interface priority spec")?])
+                        .priorities(vec![
+                            LinuxInterfacePriorityBuilder::default()
+                                .name(if_name)
+                                .priority(prio)
+                                .build()
+                                .context("failed to build network interface priority spec")?,
+                        ])
                         .build()
                         .context("failed to build network spec")?,
                 )

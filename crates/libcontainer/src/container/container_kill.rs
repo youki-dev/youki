@@ -1,4 +1,4 @@
-use libcgroups::common::{get_cgroup_setup, CgroupManager};
+use libcgroups::common::{CgroupManager, get_cgroup_setup};
 use nix::sys::signal::{self};
 
 use super::{Container, ContainerStatus};

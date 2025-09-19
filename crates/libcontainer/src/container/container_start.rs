@@ -4,7 +4,7 @@ use super::{Container, ContainerStatus};
 use crate::config::YoukiConfig;
 use crate::error::LibcontainerError;
 use crate::hooks;
-use crate::notify_socket::{NotifySocket, NOTIFY_FILE};
+use crate::notify_socket::{NOTIFY_FILE, NotifySocket};
 
 impl Container {
     /// Starts a previously created container

@@ -99,7 +99,7 @@ impl Memory {
                 return Err(SystemdMemoryError::SwapValue {
                     swap: swap.unwrap(),
                     limit: limit.map_or("none".to_owned(), |v| v.to_string()),
-                })
+                });
             }
 
             (Some(l), Some(s)) if l < s => Variant::U64((s - l) as u64),

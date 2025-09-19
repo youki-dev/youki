@@ -4,7 +4,7 @@ use anyhow::Result;
 use libcontainer::container::builder::ContainerBuilder;
 use libcontainer::syscall::syscall::SyscallType;
 use liboci_cli::Exec;
-use nix::sys::wait::{waitpid, WaitStatus};
+use nix::sys::wait::{WaitStatus, waitpid};
 
 use crate::workload::executor::default_executor;
 

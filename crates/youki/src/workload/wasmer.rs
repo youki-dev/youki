@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use libcontainer::oci_spec::runtime::Spec;
-use libcontainer::workload::{Executor, ExecutorError, ExecutorValidationError, EMPTY};
+use libcontainer::workload::{EMPTY, Executor, ExecutorError, ExecutorValidationError};
 use wasmer::{Instance, Module, Store};
 use wasmer_wasix::{WasiEnv, WasiError};
 

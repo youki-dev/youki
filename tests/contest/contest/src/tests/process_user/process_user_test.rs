@@ -1,7 +1,7 @@
 use anyhow::{Context, Ok, Result};
 use oci_spec::runtime::{ProcessBuilder, Spec, SpecBuilder, UserBuilder};
 use rand::Rng;
-use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
+use test_framework::{ConditionalTest, TestGroup, TestResult, test_result};
 
 use crate::utils::test_utils::CreateOptions;
 use crate::utils::{is_runtime_runc, test_inside_container};
