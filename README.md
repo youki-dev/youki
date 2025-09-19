@@ -107,7 +107,7 @@ For other platforms, please use the [Vagrantfile](#setting-up-vagrant) that we h
 
 ## Requires
 
-- Rust(See [here](https://www.rust-lang.org/tools/install)), edition 2021
+- Rust(See [here](https://www.rust-lang.org/tools/install)), edition 2024
 - linux kernel ≥ 5.3
 
 ## Dependencies
