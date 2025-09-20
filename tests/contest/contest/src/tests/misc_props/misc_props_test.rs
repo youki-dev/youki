@@ -1,23 +1,20 @@
 use std::fs;
-use std::io::Read;
 use std::path::Path;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use oci_spec::runtime::{ProcessBuilder, Spec, SpecBuilder};
 use serde_json::Value;
 use test_framework::{Test, TestGroup, TestResult};
-use uuid::Uuid;
 
-use crate::tests::utils::test::{test_inside_container, CreateOptions};
-
+use crate::utils::{CreateOptions, test_inside_container};
 
 fn create_spec() -> Result<Spec> {
     let spec = SpecBuilder::default()
         .process(
             ProcessBuilder::default()
-            .args(vec!["/bin/sh".into(), "-c".into(), "true".into()])
-            .build()
-            .context("build process")?,
+                .args(vec!["/bin/sh".into(), "-c".into(), "true".into()])
+                .build()
+                .context("build process")?,
         )
         .build()
         .context("failed to build spec")?;
@@ -42,17 +39,17 @@ fn write_top_level_str(path: &Path, key: &str, value: &str) -> Result<()> {
 }
 
 fn annotations_unknown_key_ignored_test() -> TestResult {
-    let spec = create_spec().unwrap(); 
+    let mut spec = create_spec().unwrap();
 
-    let mut ann = spec.annotations().cloned().unwrap_or_default();
-    ann.insert(format!("org.{}", Uuid::new_v4()), String::new());
+    let mut ann = spec.annotations().clone().unwrap_or_default();
+    ann.insert("org.youki.misc-props.unknown".to_string(), String::new());
     spec.set_annotations(Some(ann));
 
     test_inside_container(&spec, &CreateOptions::default(), &|_rootfs| Ok(()))
 }
 
 fn unknown_top_level_property_ignored_test() -> TestResult {
-    let spec = create_spec().unwrap(); 
+    let spec = create_spec().unwrap();
 
     test_inside_container(&spec, &CreateOptions::default(), &|rootfs| {
         let host_cfg = host_config_path_from_rootfs(rootfs)?;
@@ -61,7 +58,7 @@ fn unknown_top_level_property_ignored_test() -> TestResult {
 }
 
 fn invalid_oci_version_must_error_test() -> TestResult {
-    let spec = create_spec().unwrap(); 
+    let spec = create_spec().unwrap();
 
     let res = test_inside_container(&spec, &CreateOptions::default(), &|rootfs| {
         let host_cfg = host_config_path_from_rootfs(rootfs)?;
@@ -76,7 +73,6 @@ fn invalid_oci_version_must_error_test() -> TestResult {
         other => other,
     }
 }
-
 
 pub fn get_misc_props_test() -> TestGroup {
     let mut misc_props_group = TestGroup::new("set_misc_props");

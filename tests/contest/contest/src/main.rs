@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::Parser;
 use contest::logger;
-use contest::tests::misc_props;
 use test_framework::TestManager;
 use tests::cgroups;
 
