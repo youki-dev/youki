@@ -144,7 +144,7 @@ fn test_devices_cgroups() -> TestResult {
     ];
     let spec = test_result!(create_spec(cgroup_name, linux_devices));
 
-    test_outside_container(spec.clone(), &|data| {
+    test_outside_container(&spec, &|data| {
         test_result!(check_container_created(&data));
         test_result!(validate_linux_devices(cgroup_name, &spec));
         TestResult::Passed
