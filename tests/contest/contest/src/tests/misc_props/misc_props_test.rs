@@ -4,9 +4,9 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow, bail};
 use oci_spec::runtime::{ProcessBuilder, Spec, SpecBuilder};
 use serde_json::Value;
-use test_framework::{Test, TestGroup, TestResult};
+use test_framework::{ConditionalTest, TestGroup, TestResult};
 
-use crate::utils::{CreateOptions, test_inside_container};
+use crate::utils::{CreateOptions, is_runtime_runc, test_inside_container};
 
 fn create_spec() -> Result<Spec> {
     let spec = SpecBuilder::default()
@@ -77,18 +77,21 @@ fn invalid_oci_version_must_error_test() -> TestResult {
 pub fn get_misc_props_test() -> TestGroup {
     let mut misc_props_group = TestGroup::new("set_misc_props");
 
-    let annotations_unknown_key_ignored_test = Test::new(
+    let annotations_unknown_key_ignored_test = ConditionalTest::new(
         "annotations_unknown_key_ignored_test",
+        Box::new(|| true),
         Box::new(annotations_unknown_key_ignored_test),
     );
 
-    let unknown_top_level_property_ignored_test = Test::new(
+    let unknown_top_level_property_ignored_test = ConditionalTest::new(
         "unknown_top_level_property_ignored_test",
+        Box::new(|| true),
         Box::new(unknown_top_level_property_ignored_test),
     );
 
-    let invalid_oci_version_must_error_test = Test::new(
+    let invalid_oci_version_must_error_test = ConditionalTest::new(
         "invalid_oci_version_must_error_test",
+        Box::new(|| !is_runtime_runc()),
         Box::new(invalid_oci_version_must_error_test),
     );
 
