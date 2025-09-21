@@ -486,7 +486,7 @@ impl DbusSerialize for Variant {
         let vec32_signature = <Vec<u32>>::get_signature();
         let vec64_signature = <Vec<u64>>::get_signature();
         let u64_signature = u64::get_signature();
-
+        let vec_struct_u64_signature = <Vec<Structure<u64>>>::get_signature();
         if signature == string_signature {
             Ok(Self::String(String::deserialize(buf, counter)?))
         } else if signature == bool_signature {
@@ -497,6 +497,10 @@ impl DbusSerialize for Variant {
             Ok(Self::ArrayU64(<Vec<u64>>::deserialize(buf, counter)?))
         } else if signature == u64_signature {
             Ok(Self::U64(u64::deserialize(buf, counter)?))
+        } else if signature == vec_struct_u64_signature {
+            Ok(Self::ArrayStructU64(<Vec<Structure<u64>>>::deserialize(
+                buf, counter,
+            )?))
         } else {
             return Err(DbusError::IncompleteImplementation(format!(
                 "unsupported value signature {}",
