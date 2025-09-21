@@ -49,7 +49,7 @@ impl Io {
                 }
             }
             if !limits.is_empty() {
-                properties.insert(IO_READ_BANDWIDTH_MAX, Variant::Struct(limits));
+                properties.insert(IO_READ_BANDWIDTH_MAX, Variant::ArrayStructU64(limits));
             }
         }
 
@@ -64,7 +64,7 @@ impl Io {
                 }
             }
             if !limits.is_empty() {
-                properties.insert(IO_WRITE_BANDWIDTH_MAX, Variant::Struct(limits));
+                properties.insert(IO_WRITE_BANDWIDTH_MAX, Variant::ArrayStructU64(limits));
             }
         }
 
@@ -79,7 +79,7 @@ impl Io {
                 }
             }
             if !limits.is_empty() {
-                properties.insert(IO_READ_IOPS_MAX, Variant::Struct(limits));
+                properties.insert(IO_READ_IOPS_MAX, Variant::ArrayStructU64(limits));
             }
         }
 
@@ -94,7 +94,7 @@ impl Io {
                 }
             }
             if !limits.is_empty() {
-                properties.insert(IO_WRITE_IOPS_MAX, Variant::Struct(limits));
+                properties.insert(IO_WRITE_IOPS_MAX, Variant::ArrayStructU64(limits));
             }
         }
         Ok(())
@@ -181,28 +181,28 @@ mod tests {
 
         assert_eq!(
             props.get(IO_READ_BANDWIDTH_MAX),
-            Some(&Variant::Struct(vec![Structure::new(
+            Some(&Variant::ArrayStructU64(vec![Structure::new(
                 "/dev/null".into(),
                 read_bps
             )]))
         );
         assert_eq!(
             props.get(IO_WRITE_BANDWIDTH_MAX),
-            Some(&Variant::Struct(vec![Structure::new(
+            Some(&Variant::ArrayStructU64(vec![Structure::new(
                 "/dev/null".into(),
                 write_bps
             )]))
         );
         assert_eq!(
             props.get(IO_READ_IOPS_MAX),
-            Some(&Variant::Struct(vec![Structure::new(
+            Some(&Variant::ArrayStructU64(vec![Structure::new(
                 "/dev/null".into(),
                 read_iops
             )]))
         );
         assert_eq!(
             props.get(IO_WRITE_IOPS_MAX),
-            Some(&Variant::Struct(vec![Structure::new(
+            Some(&Variant::ArrayStructU64(vec![Structure::new(
                 "/dev/null".into(),
                 write_iops
             )]))
@@ -230,6 +230,6 @@ mod tests {
         assert_eq!(props.len(), 1);
         assert!(props.contains_key(IO_READ_BANDWIDTH_MAX));
         let dbus_struct = props.get(IO_READ_BANDWIDTH_MAX).unwrap();
-        assert!(matches!(dbus_struct, Variant::Struct(_)))
+        assert!(matches!(dbus_struct, Variant::ArrayStructU64(_)))
     }
 }
