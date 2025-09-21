@@ -241,9 +241,8 @@ pub fn ensure_procfs(path: &Path) -> Result<(), EnsureProcfsError> {
         tracing::error!(?err, ?path, "failed to open procfs file");
         err
     })?;
-    let fstat_info = statfs::fstatfs(&procfs_fd).map_err(|err| {
+    let fstat_info = statfs::fstatfs(&procfs_fd).inspect_err(|err| {
         tracing::error!(?err, ?path, "failed to fstatfs the procfs");
-        err
     })?;
 
     if fstat_info.filesystem_type() != statfs::PROC_SUPER_MAGIC {
@@ -398,7 +397,7 @@ fn dev_valid_name(name: &str) -> bool {
 mod tests {
     use core::panic;
 
-    use anyhow::{bail, Result};
+    use anyhow::{Result, bail};
     use nix::unistd::Gid;
     use oci_spec::runtime::{LinuxBuilder, LinuxNamespaceBuilder, LinuxNetDevice, SpecBuilder};
     use serial_test::serial;
@@ -515,7 +514,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_userns_spec_validation() -> Result<(), test_utils::TestError> {
-        use nix::sched::{unshare, CloneFlags};
+        use nix::sched::{CloneFlags, unshare};
         let syscall = create_syscall();
         // default rootful spec
         let rootful_spec = Spec::default();

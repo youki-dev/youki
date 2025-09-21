@@ -1,16 +1,16 @@
 [package]
 name = "liboci-cli"
-version = "0.5.3" # MARK: Version
+version = "0.5.5" # MARK: Version
 description = "Parse command line arguments for OCI container runtimes"
 license = "Apache-2.0"
 repository = "https://github.com/containers/youki"
 homepage = "https://youki-dev.github.io/youki/"
 readme = "README.md"
 authors = ["youki team"]
-edition = "2021"
+edition = "2024"
 keywords = ["youki", "container", "oci"]
 
 [dependencies.clap]
-version = "4.1.6"
+version = "4.5.13"
 default-features = false
 features = ["std", "suggestions", "derive", "cargo", "help", "usage", "error-context"]

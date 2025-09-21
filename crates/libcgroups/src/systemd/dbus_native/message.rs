@@ -1,4 +1,4 @@
-use super::utils::{adjust_padding, align_counter, DbusError, Result};
+use super::utils::{DbusError, Result, adjust_padding, align_counter};
 
 #[derive(Debug)]
 /// Indicates the endian of message

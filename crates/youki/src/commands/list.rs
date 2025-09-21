@@ -6,8 +6,8 @@ use std::{fs, io};
 
 use anyhow::Result;
 use chrono::{DateTime, Local};
-use libcontainer::container::state::State;
 use libcontainer::container::Container;
+use libcontainer::container::state::State;
 use liboci_cli::List;
 use tabwriter::TabWriter;
 

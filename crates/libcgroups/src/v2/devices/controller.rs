@@ -12,7 +12,7 @@ use oci_spec::runtime::LinuxDeviceCgroup;
 use super::bpf::BpfError;
 use super::program::ProgramError;
 use super::*;
-use crate::common::{default_allow_devices, default_devices, ControllerOpt};
+use crate::common::{ControllerOpt, default_allow_devices, default_devices};
 use crate::v2::controller::Controller;
 
 const LICENSE: &str = "Apache";

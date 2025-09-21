@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::{env, fs, mem};
@@ -7,15 +7,16 @@ use nc;
 use nix::mount::{MntFlags, MsFlags};
 use nix::sched::CloneFlags;
 use nix::sys::stat::Mode;
-use nix::unistd::{self, close, dup2, setsid, Gid, Uid};
+use nix::unistd::{self, Gid, Uid, close, dup2, setsid};
 use oci_spec::runtime::{
-    IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxNetDevice, LinuxSchedulerFlag,
-    LinuxSchedulerPolicy, Scheduler, Spec, User,
+    IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxNetDevice, LinuxPersonalityDomain,
+    LinuxSchedulerFlag, LinuxSchedulerPolicy, Scheduler, Spec, User,
 };
 
+use super::Result;
 use super::context::InitContext;
 use super::error::InitProcessError;
-use super::Result;
+use crate::config::PersonalityDomain;
 use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
 use crate::network::address::AddressClient;
@@ -127,6 +128,26 @@ pub fn container_init_process(
         if let Some(kernel_params) = ctx.linux.sysctl() {
             sysctl(kernel_params)?;
         }
+    }
+
+    if let Some(personality) = ctx.linux.personality() {
+        if let Some(flags) = personality.flags() {
+            if !flags.is_empty() {
+                tracing::error!("personality flag has not supported at this time");
+                return Err(InitProcessError::UnsupportedPersonalityFlag);
+            }
+        }
+
+        let domain = match personality.domain() {
+            // https://github.com/opencontainers/runtime-spec/blob/main/config-linux.md#personality
+            LinuxPersonalityDomain::PerLinux => PersonalityDomain::Linux,
+            LinuxPersonalityDomain::PerLinux32 => PersonalityDomain::Linux32,
+        };
+
+        ctx.syscall.personality(domain).map_err(|err| {
+            tracing::error!(?err, "failed to set linux personality ");
+            InitProcessError::SyscallOther(err)
+        })?;
     }
 
     if let Some(profile) = ctx.process.apparmor_profile() {
@@ -728,9 +749,6 @@ fn set_supplementary_gids(
 
         let gids: Vec<Gid> = additional_gids
             .iter()
-            // this is to remove duplicate ids, so we behave similar to runc
-            .collect::<HashSet<_>>()
-            .into_iter()
             .map(|gid| Gid::from_raw(*gid))
             .collect();
 
@@ -1078,6 +1096,13 @@ mod tests {
                 }),
                 vec![Gid::from_raw(37), Gid::from_raw(38)],
             ),
+            (
+                UserBuilder::default()
+                    .additional_gids(vec![33, 34, 34])
+                    .build()?,
+                None::<UserNamespaceConfig>,
+                vec![Gid::from_raw(33), Gid::from_raw(34), Gid::from_raw(34)],
+            ),
         ];
         for (user, ns_config, want) in tests.into_iter() {
             let syscall = create_syscall();
@@ -1185,12 +1210,14 @@ mod tests {
             Err(SyscallError::Nix(nix::errno::Errno::ENOTDIR))
         });
 
-        assert!(masked_path(
-            Path::new("/proc/self"),
-            &Some("default".to_string()),
-            syscall.as_ref()
-        )
-        .is_ok());
+        assert!(
+            masked_path(
+                Path::new("/proc/self"),
+                &Some("default".to_string()),
+                syscall.as_ref()
+            )
+            .is_ok()
+        );
 
         let got = mocks.get_mount_args();
         let want = MountArgs {

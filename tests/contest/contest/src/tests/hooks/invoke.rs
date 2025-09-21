@@ -5,7 +5,7 @@ use anyhow::anyhow;
 use oci_spec::runtime::{Hook, HookBuilder, HooksBuilder, ProcessBuilder, Spec, SpecBuilder};
 use test_framework::{Test, TestGroup, TestResult};
 
-use crate::utils::test_utils::{start_container, CreateOptions};
+use crate::utils::test_utils::{CreateOptions, start_container};
 use crate::utils::{create_container, delete_container, generate_uuid, prepare_bundle, set_config};
 
 const HOOK_OUTPUT_FILE: &str = "output";
@@ -86,10 +86,12 @@ fn get_test(test_name: &'static str) -> Test {
                 log
             };
             delete_hook_output_file();
-            if log != "pre-start1 called\npre-start2 called\npost-start1 called\npost-start2 called\npost-stop1 called\npost-stop2 called\n" {
+            if log
+                != "pre-start1 called\npre-start2 called\npost-start1 called\npost-start2 called\npost-stop1 called\npost-stop2 called\n"
+            {
                 return TestResult::Failed(anyhow!(
-                        "error : hooks must be called in the listed order, {log:?}"
-                        ));
+                    "error : hooks must be called in the listed order, {log:?}"
+                ));
             }
             TestResult::Passed
         }),

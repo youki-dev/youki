@@ -1,20 +1,23 @@
-use std::fs::{canonicalize, create_dir_all, OpenOptions};
-use std::mem;
+use std::fs::{OpenOptions, canonicalize, create_dir_all};
+use std::io::ErrorKind;
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 #[cfg(feature = "v1")]
 use std::{borrow::Cow, collections::HashMap};
+use std::{fs, mem};
 
 use libcgroups::common::CgroupSetup::{Hybrid, Legacy, Unified};
 #[cfg(feature = "v1")]
 use libcgroups::common::DEFAULT_CGROUP_ROOT;
+use nix::NixPath;
 use nix::dir::Dir;
 use nix::errno::Errno;
 use nix::fcntl::OFlag;
 use nix::mount::MsFlags;
 use nix::sys::stat::Mode;
-use nix::NixPath;
+use nix::sys::statfs::{PROC_SUPER_MAGIC, statfs};
 use oci_spec::runtime::{Mount as SpecMount, MountBuilder as SpecMountBuilder};
 use procfs::process::{MountInfo, MountOptFields, Process};
 use safe_path;
@@ -22,10 +25,10 @@ use safe_path;
 #[cfg(feature = "v1")]
 use super::symlink::Symlink;
 use super::symlink::SymlinkError;
-use super::utils::{parse_mount, MountOptionConfig};
+use super::utils::{MountOptionConfig, parse_mount};
 use crate::syscall::syscall::create_syscall;
-use crate::syscall::{linux, Syscall, SyscallError};
-use crate::utils::{retry, PathBufExt};
+use crate::syscall::{Syscall, SyscallError, linux};
+use crate::utils::{PathBufExt, retry};
 
 const MAX_EBUSY_MOUNT_ATTEMPTS: u32 = 3;
 // runc has a retry interval of 100ms. We are following this.
@@ -100,7 +103,9 @@ impl Mount {
                 match cgroup_setup {
                     Legacy | Hybrid => {
                         #[cfg(not(feature = "v1"))]
-                        panic!("libcontainer can't run in a Legacy or Hybrid cgroup setup without the v1 feature");
+                        panic!(
+                            "libcontainer can't run in a Legacy or Hybrid cgroup setup without the v1 feature"
+                        );
                         #[cfg(feature = "v1")]
                         self.mount_cgroup_v1(mount, options).map_err(|err| {
                             tracing::error!("failed to mount cgroup v1: {}", err);
@@ -109,7 +114,9 @@ impl Mount {
                     }
                     Unified => {
                         #[cfg(not(feature = "v2"))]
-                        panic!("libcontainer can't run in a Unified cgroup setup without the v2 feature");
+                        panic!(
+                            "libcontainer can't run in a Unified cgroup setup without the v2 feature"
+                        );
                         #[cfg(feature = "v2")]
                         self.mount_cgroup_v2(mount, options, &mount_option_config)
                             .map_err(|err| {
@@ -118,6 +125,46 @@ impl Mount {
                             })?
                     }
                 }
+            }
+            // procfs and sysfs are special because we need to ensure they are actually
+            // mounted on a specific path in a container without any funny business.
+            // Ref: https://github.com/opencontainers/runc/security/advisories/GHSA-fh74-hm69-rqjw
+            Some(typ @ ("proc" | "sysfs")) => {
+                let dest_path = options
+                    .root
+                    .join_safely(Path::new(mount.destination()).normalize())
+                    .map_err(|err| {
+                        tracing::error!(
+                            "could not join rootfs path with mount destination {:?}: {}",
+                            mount.destination(),
+                            err
+                        );
+                        MountError::Other(err.into())
+                    })?;
+
+                match fs::symlink_metadata(&dest_path) {
+                    Ok(m) if !m.is_dir() => {
+                        return Err(MountError::Other(
+                            format!("filesystem {} must be mounted on ordinary directory", typ)
+                                .into(),
+                        ));
+                    }
+                    Err(e) if e.kind() != ErrorKind::NotFound => {
+                        return Err(MountError::Other(
+                            format!("symlink_metadata failed for {}: {}", dest_path.display(), e)
+                                .into(),
+                        ));
+                    }
+                    _ => {}
+                }
+
+                self.check_proc_mount(options.root, mount)?;
+
+                self.mount_into_container(mount, options.root, &mount_option_config, options.label)
+                    .map_err(|err| {
+                        tracing::error!("failed to mount {:?}: {}", mount, err);
+                        err
+                    })?;
             }
             _ => {
                 if *mount.destination() == PathBuf::from("/dev") {
@@ -548,9 +595,8 @@ impl Mount {
 
             src
         } else {
-            create_dir_all(dest).map_err(|err| {
+            create_dir_all(dest).inspect_err(|_err| {
                 tracing::error!("failed to create device: {:?}", dest);
-                err
             })?;
 
             PathBuf::from(source)
@@ -630,6 +676,139 @@ impl Mount {
 
         Ok(())
     }
+
+    /// check_proc_mount checks to ensure that the mount destination is not over the top of /proc.
+    /// dest is required to be an abs path and have any symlinks resolved before calling this function.
+    /// # Example  (a valid case where `/proc` is mounted with `proc` type.)
+    ///
+    /// ```
+    /// use std::path::PathBuf;
+    /// use oci_spec::runtime::MountBuilder as SpecMountBuilder;
+    /// use libcontainer::rootfs::Mount;
+    ///
+    /// let mounter = Mount::new();
+    ///
+    /// let rootfs = PathBuf::from("/var/lib/my-runtime/containers/abcd1234/rootfs");
+    /// let destination = PathBuf::from("/proc");
+    /// let source = PathBuf::from("proc");
+    /// let typ = "proc";
+    ///
+    /// let mount = SpecMountBuilder::default()
+    ///     .destination(destination)
+    ///     .typ(typ)
+    ///     .source(source)
+    ///     .build()
+    ///     .expect("failed to build SpecMount");
+    ///
+    /// assert!(mounter.check_proc_mount(rootfs.as_path(), &mount).is_ok());
+    /// ```
+    /// # Example (bind mount to `/proc` that should fail)
+    /// ```
+    /// use std::path::PathBuf;
+    /// use oci_spec::runtime::MountBuilder as SpecMountBuilder;
+    /// use libcontainer::rootfs::Mount;
+    ///
+    /// let mounter = Mount::new();
+    ///
+    /// let rootfs = PathBuf::from("/var/lib/my-runtime/containers/abcd1234/rootfs");
+    /// let destination = PathBuf::from("/proc");
+    /// let source = PathBuf::from("/tmp");
+    /// let typ = "bind";
+    ///
+    /// let mount = SpecMountBuilder::default()
+    ///     .destination(destination)
+    ///     .typ(typ)
+    ///     .source(source)
+    ///     .build()
+    ///     .expect("failed to build SpecMount");
+    ///
+    /// assert!(mounter.check_proc_mount(rootfs.as_path(), &mount).is_err());
+    /// ```
+    pub fn check_proc_mount(&self, rootfs: &Path, mount: &SpecMount) -> Result<()> {
+        const PROC_ROOT_INO: u64 = 1;
+        const VALID_PROC_MOUNTS: &[&str] = &[
+            "/proc/cpuinfo",
+            "/proc/diskstats",
+            "/proc/meminfo",
+            "/proc/stat",
+            "/proc/swaps",
+            "/proc/uptime",
+            "/proc/loadavg",
+            "/proc/slabinfo",
+            "/proc/sys/kernel/ns_last_pid",
+            "/proc/sys/crypto/fips_enabled",
+        ];
+
+        let dest = mount.destination();
+
+        let container_proc_path = rootfs.join("proc");
+        let dest_path = rootfs.join_safely(dest).map_err(|err| {
+            tracing::error!(
+                "could not join rootfs path with mount destination {:?}: {}",
+                dest,
+                err
+            );
+            MountError::Other(err.into())
+        })?;
+
+        // If path is Ok, it means dest_path is under /proc.
+        // - Ok(p) with p.is_empty(): mount target is exactly /proc.
+        //   In this case, check if the mount source is procfs.
+        // - Ok(p) with !p.is_empty(): mount target is under /proc.
+        //   Only allow if it matches a specific whitelist of proc entries.
+        // - Err: not under /proc, so no further checks are needed
+        let path = dest_path.strip_prefix(&container_proc_path);
+
+        match path {
+            Err(_) => Ok(()),
+            Ok(p) if p.as_os_str().is_empty() => {
+                if mount.typ().as_deref() == Some("proc") {
+                    return Ok(());
+                }
+
+                if mount.typ().as_deref() == Some("bind") {
+                    if let Some(source) = mount.source() {
+                        let stat = statfs(source).map_err(MountError::from)?;
+                        if stat.filesystem_type() == PROC_SUPER_MAGIC {
+                            let meta = fs::metadata(source).map_err(MountError::from)?;
+                            // Follow the behavior of runc's checkProcMount function.
+                            if meta.ino() != PROC_ROOT_INO {
+                                tracing::warn!(
+                                    "bind-mount {} (source {:?}) is of type procfs but not the root (inode {}). \
+                                    Future versions may reject this.",
+                                    dest.display(),
+                                    mount.source(),
+                                    meta.ino()
+                                );
+                            }
+                            return Ok(());
+                        }
+                    }
+                }
+
+                Err(MountError::Custom(format!(
+                    "{} cannot be mounted because it is not type proc",
+                    dest.display()
+                )))
+            }
+            Ok(_) => {
+                // Here dest is definitely under /proc. Do not allow those,
+                // except for a few specific entries emulated by lxcfs.
+                let is_allowed = VALID_PROC_MOUNTS.iter().any(|allowed_path| {
+                    let container_allowed_path = rootfs.join(allowed_path.trim_start_matches('/'));
+                    dest_path == container_allowed_path
+                });
+
+                if is_allowed {
+                    Ok(())
+                } else {
+                    Err(MountError::Other(
+                        format!("{} is not a valid mount under /proc", dest.display()).into(),
+                    ))
+                }
+            }
+        }
+    }
 }
 
 /// Find parent mount of rootfs in given mount infos
@@ -652,6 +831,7 @@ pub fn find_parent_mount(
 mod tests {
     #[cfg(feature = "v1")]
     use std::fs;
+    use std::os::unix::fs::symlink;
 
     use anyhow::{Context, Ok, Result};
 
@@ -678,14 +858,15 @@ mod tests {
                 .build()?;
             let mount_option_config = parse_mount(mount)?;
 
-            assert!(m
-                .mount_into_container(
+            assert!(
+                m.mount_into_container(
                     mount,
                     tmp_dir.path(),
                     &mount_option_config,
                     Some("defaults")
                 )
-                .is_ok());
+                .is_ok()
+            );
 
             let want = vec![MountArgs {
                 source: Some(PathBuf::from("devpts")),
@@ -720,9 +901,10 @@ mod tests {
                 .write(true)
                 .open(tmp_dir.path().join("null"))?;
 
-            assert!(m
-                .mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
-                .is_ok());
+            assert!(
+                m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
+                    .is_ok()
+            );
 
             let want = vec![
                 MountArgs {
@@ -769,9 +951,10 @@ mod tests {
             });
             syscall.set_ret_err_times(ArgName::Mount, 1);
 
-            assert!(m
-                .mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
-                .is_ok());
+            assert!(
+                m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
+                    .is_ok()
+            );
             assert_eq!(syscall.get_mount_args().len(), 1);
         }
         {
@@ -793,9 +976,10 @@ mod tests {
             });
             syscall.set_ret_err_times(ArgName::Mount, 2);
 
-            assert!(m
-                .mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
-                .is_err());
+            assert!(
+                m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
+                    .is_err()
+            );
             assert_eq!(syscall.get_mount_args().len(), 0);
         }
         {
@@ -817,9 +1001,10 @@ mod tests {
             });
             syscall.set_ret_err_times(ArgName::Mount, MAX_EBUSY_MOUNT_ATTEMPTS as usize - 1);
 
-            assert!(m
-                .mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
-                .is_ok());
+            assert!(
+                m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
+                    .is_ok()
+            );
             assert_eq!(syscall.get_mount_args().len(), 1);
         }
         {
@@ -841,9 +1026,10 @@ mod tests {
             });
             syscall.set_ret_err_times(ArgName::Mount, MAX_EBUSY_MOUNT_ATTEMPTS as usize);
 
-            assert!(m
-                .mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
-                .is_err());
+            assert!(
+                m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
+                    .is_err()
+            );
             assert_eq!(syscall.get_mount_args().len(), 0);
         }
 
@@ -1166,5 +1352,124 @@ mod tests {
         let mount_infos = vec![];
         let res = find_parent_mount(Path::new("/path/to/rootfs"), mount_infos);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_check_proc_mount_proc_ok() -> Result<()> {
+        let rootfs = tempfile::tempdir()?;
+        let mounter = Mount::new();
+
+        let mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/proc"))
+            .typ("proc".to_string())
+            .source(PathBuf::from("proc"))
+            .build()?;
+
+        assert!(mounter.check_proc_mount(rootfs.path(), &mount).is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn test_check_proc_mount_allowed_subpath() -> Result<()> {
+        let rootfs = tempfile::tempdir()?;
+        let uptime = rootfs.path().join("proc/uptime");
+        std::fs::create_dir_all(uptime.parent().unwrap())?;
+
+        let mounter = Mount::new();
+        let mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/proc/uptime"))
+            .typ("bind".to_string())
+            .source(uptime)
+            .build()?;
+
+        assert!(mounter.check_proc_mount(rootfs.path(), &mount).is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn test_check_proc_mount_denied_subpath() -> Result<()> {
+        let rootfs = tempfile::tempdir()?;
+        let custom = rootfs.path().join("proc/custom");
+        std::fs::create_dir_all(custom.parent().unwrap())?;
+
+        let mounter = Mount::new();
+        let mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/proc/custom"))
+            .typ("bind".to_string())
+            .source(custom)
+            .build()?;
+
+        assert!(mounter.check_proc_mount(rootfs.path(), &mount).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn setup_mount_proc_fails_if_destination_is_symlink() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let rootfs = tmp.path();
+
+        let symlink_path = rootfs.join("symlink");
+        fs::create_dir_all(&symlink_path)?;
+        let proc_path = rootfs.join("proc");
+
+        symlink(&symlink_path, &proc_path)?;
+
+        let mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/proc"))
+            .typ("proc")
+            .source(proc_path)
+            .build()?;
+
+        let options = MountOptions {
+            root: rootfs,
+            label: None,
+            cgroup_ns: true,
+        };
+
+        let m = Mount::new();
+
+        let res = m.setup_mount(&mount, &options);
+
+        // proc destination symlink should be rejected
+        assert!(res.is_err());
+        let err = format!("{:?}", res.err().unwrap());
+        assert!(err.contains("must be mounted on ordinary directory"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn setup_mount_sys_fails_if_destination_is_symlink() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let rootfs = tmp.path();
+
+        let symlink_path = rootfs.join("symlink");
+        fs::create_dir_all(&symlink_path)?;
+        let sys_path = rootfs.join("sys");
+
+        symlink(&symlink_path, &sys_path)?;
+
+        let mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/sys"))
+            .typ("sysfs")
+            .source(sys_path)
+            .build()?;
+
+        let options = MountOptions {
+            root: rootfs,
+            label: None,
+            cgroup_ns: true,
+        };
+
+        let m = Mount::new();
+
+        let res = m.setup_mount(&mount, &options);
+
+        // sys destination symlink should be rejected
+        assert!(res.is_err());
+        let err = format!("{:?}", res.err().unwrap());
+        assert!(err.contains("must be mounted on ordinary directory"));
+
+        Ok(())
     }
 }

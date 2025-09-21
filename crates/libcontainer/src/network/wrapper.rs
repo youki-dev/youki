@@ -1,10 +1,10 @@
 use netlink_packet_core::NetlinkMessage;
 use netlink_packet_route::RouteNetlinkMessage;
 
+use super::Result;
 use super::client::NetlinkClient;
 use super::fake::FakeNetlinkClient;
 use super::traits::{Client, NetlinkMessageHandler};
-use super::Result;
 
 /// Enum wrapper for different client types
 /// The `Client` trait contains generic methods, which makes it impossible to use as a trait object.

@@ -1,9 +1,9 @@
 use std::net::IpAddr;
 
+use netlink_packet_route::AddressFamily;
 use netlink_packet_route::address::{
     AddressAttribute, AddressFlags, AddressHeader, AddressMessage, AddressScope,
 };
-use netlink_packet_route::AddressFamily;
 use serde::{Deserialize, Serialize};
 
 /// SerializableAddress is a struct that represents an address message that can be serialized and deserialized.
@@ -69,8 +69,8 @@ impl From<&SerializableAddress> for AddressMessage {
 
 #[cfg(test)]
 mod tests {
-    use netlink_packet_route::address::AddressScope;
     use netlink_packet_route::AddressFamily;
+    use netlink_packet_route::address::AddressScope;
 
     use super::*;
 

@@ -7,6 +7,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils;
 
+pub enum PersonalityDomain {
+    Linux = 0x0000,
+    Linux32 = 0x0008,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("failed to save config")]

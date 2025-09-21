@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use nix::sys::wait::{waitpid, WaitStatus};
+use nix::sys::wait::{WaitStatus, waitpid};
 use nix::unistd::Pid;
 use oci_spec::runtime::{Linux, LinuxNamespaceType};
 
@@ -292,7 +292,7 @@ mod tests {
     use std::fs;
 
     use anyhow::Result;
-    use nix::sched::{unshare, CloneFlags};
+    use nix::sched::{CloneFlags, unshare};
     use nix::unistd::{self, getgid, getuid};
     use oci_spec::runtime::LinuxIdMappingBuilder;
     use serial_test::serial;

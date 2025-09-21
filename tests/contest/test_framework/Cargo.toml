@@ -1,10 +1,10 @@
 [package]
 name = "test_framework"
 version = "0.0.1"
-edition = "2021"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.98"
+anyhow = "1.0.99"
 crossbeam = "0.8.4"

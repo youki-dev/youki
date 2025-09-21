@@ -1,7 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr};
 
 use netlink_packet_core::{
-    NetlinkMessage, NetlinkPayload, NLM_F_ACK, NLM_F_CREATE, NLM_F_DUMP, NLM_F_EXCL, NLM_F_REQUEST,
+    NLM_F_ACK, NLM_F_CREATE, NLM_F_DUMP, NLM_F_EXCL, NLM_F_REQUEST, NetlinkMessage, NetlinkPayload,
 };
 use netlink_packet_route::address::{AddressAttribute, AddressMessage};
 use netlink_packet_route::{AddressFamily, RouteNetlinkMessage};
@@ -60,10 +60,10 @@ impl NetlinkMessageHandler for AddressMessageHandler {
                 Some(code) => Ok(NetlinkResponse::Error(code.get())),
             },
             NetlinkPayload::Done(_) => Ok(NetlinkResponse::Done),
-            _ => Err(NetworkError::IO(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Unexpected message type: {:?}", payload),
-            ))),
+            _ => Err(NetworkError::IO(std::io::Error::other(format!(
+                "Unexpected message type: {:?}",
+                payload
+            )))),
         }
     }
 }

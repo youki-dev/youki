@@ -5,10 +5,10 @@ use std::path::Path;
 use netlink_packet_route::address::{AddressAttribute, AddressFlags, AddressMessage, AddressScope};
 use oci_spec::runtime::LinuxNetDevice;
 
+use super::Result;
 use super::address::AddressClient;
 use super::link::LinkClient;
 use super::wrapper::create_network_client;
-use super::Result;
 use crate::network::serialize::SerializableAddress;
 
 /// dev_change_netns allows to move a device given by name to a network namespace given by nsPath
@@ -129,8 +129,8 @@ pub fn setup_addresses_in_namespace(
 mod tests {
     use std::net::{IpAddr, Ipv4Addr};
 
-    use netlink_packet_route::address::AddressMessage;
     use netlink_packet_route::RouteNetlinkMessage;
+    use netlink_packet_route::address::AddressMessage;
 
     use super::*;
     use crate::network::address::AddressClient;

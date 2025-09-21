@@ -3,7 +3,7 @@ use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::prelude::RawFd;
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use libcontainer::container::ContainerProcessState;
 use nix::sys::socket::{self, Backlog, UnixAddr};
 use nix::unistd;

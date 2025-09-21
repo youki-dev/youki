@@ -1,10 +1,10 @@
 use std::os::fd::RawFd;
 
 use netlink_packet_core::{
-    NetlinkMessage, NetlinkPayload, NLM_F_ACK, NLM_F_CREATE, NLM_F_EXCL, NLM_F_REQUEST,
+    NLM_F_ACK, NLM_F_CREATE, NLM_F_EXCL, NLM_F_REQUEST, NetlinkMessage, NetlinkPayload,
 };
-use netlink_packet_route::link::{LinkAttribute, LinkFlags, LinkMessage};
 use netlink_packet_route::RouteNetlinkMessage;
+use netlink_packet_route::link::{LinkAttribute, LinkFlags, LinkMessage};
 
 use super::traits::{Client, NetlinkMessageHandler};
 use super::wrapper::ClientWrapper;
@@ -35,10 +35,10 @@ impl NetlinkMessageHandler for LinkMessageHandler {
                 Some(code) => Ok(NetlinkResponse::Error(code.get())),
             },
             NetlinkPayload::Done(_) => Ok(NetlinkResponse::Done),
-            _ => Err(NetworkError::IO(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Unexpected message type: {:?}", payload),
-            ))),
+            _ => Err(NetworkError::IO(std::io::Error::other(format!(
+                "Unexpected message type: {:?}",
+                payload
+            )))),
         }
     }
 }
@@ -170,9 +170,9 @@ mod tests {
     use serial_test::serial;
 
     use super::*;
-    use crate::network::fake::FakeNetlinkClient;
-    use crate::network::wrapper::{create_network_client, ClientWrapper};
     use crate::network::NetlinkResponse;
+    use crate::network::fake::FakeNetlinkClient;
+    use crate::network::wrapper::{ClientWrapper, create_network_client};
 
     #[test]
     #[serial]

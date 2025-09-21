@@ -279,12 +279,14 @@ mod tests {
         let (tmp, throttle) = setup(BLKIO_THROTTLE_READ_BPS);
 
         let blkio = LinuxBlockIoBuilder::default()
-            .throttle_read_bps_device(vec![LinuxThrottleDeviceBuilder::default()
-                .major(8)
-                .minor(0)
-                .rate(102400u64)
-                .build()
-                .unwrap()])
+            .throttle_read_bps_device(vec![
+                LinuxThrottleDeviceBuilder::default()
+                    .major(8)
+                    .minor(0)
+                    .rate(102400u64)
+                    .build()
+                    .unwrap(),
+            ])
             .build()
             .unwrap();
 
@@ -300,12 +302,14 @@ mod tests {
         let (tmp, throttle) = setup(BLKIO_THROTTLE_WRITE_BPS);
 
         let blkio = LinuxBlockIoBuilder::default()
-            .throttle_write_bps_device(vec![LinuxThrottleDeviceBuilder::default()
-                .major(8)
-                .minor(0)
-                .rate(102400u64)
-                .build()
-                .unwrap()])
+            .throttle_write_bps_device(vec![
+                LinuxThrottleDeviceBuilder::default()
+                    .major(8)
+                    .minor(0)
+                    .rate(102400u64)
+                    .build()
+                    .unwrap(),
+            ])
             .build()
             .unwrap();
 
@@ -321,12 +325,14 @@ mod tests {
         let (tmp, throttle) = setup(BLKIO_THROTTLE_READ_IOPS);
 
         let blkio = LinuxBlockIoBuilder::default()
-            .throttle_read_iops_device(vec![LinuxThrottleDeviceBuilder::default()
-                .major(8)
-                .minor(0)
-                .rate(102400u64)
-                .build()
-                .unwrap()])
+            .throttle_read_iops_device(vec![
+                LinuxThrottleDeviceBuilder::default()
+                    .major(8)
+                    .minor(0)
+                    .rate(102400u64)
+                    .build()
+                    .unwrap(),
+            ])
             .build()
             .unwrap();
 
@@ -342,12 +348,14 @@ mod tests {
         let (tmp, throttle) = setup(BLKIO_THROTTLE_WRITE_IOPS);
 
         let blkio = LinuxBlockIoBuilder::default()
-            .throttle_write_iops_device(vec![LinuxThrottleDeviceBuilder::default()
-                .major(8)
-                .minor(0)
-                .rate(102400u64)
-                .build()
-                .unwrap()])
+            .throttle_write_iops_device(vec![
+                LinuxThrottleDeviceBuilder::default()
+                    .major(8)
+                    .minor(0)
+                    .rate(102400u64)
+                    .build()
+                    .unwrap(),
+            ])
             .build()
             .unwrap();
 

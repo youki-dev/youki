@@ -3,6 +3,7 @@
 [![Discord](https://img.shields.io/discord/849943000770412575.svg?logo=discord)](https://discord.gg/zHnyXKSQFD)
 [![GitHub contributors](https://img.shields.io/github/contributors/containers/youki)](https://github.com/containers/youki/graphs/contributors)
 [![Github CI](https://github.com/containers/youki/actions/workflows/basic.yml/badge.svg?branch=main)](https://github.com/containers/youki/actions)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fyouki-dev%2Fyouki.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fyouki-dev%2Fyouki?ref=badge_shield)
 
 <p align="center">
   <img src="docs/youki.png" width="450">
@@ -262,12 +263,12 @@ git clone git@github.com:containers/youki.git
 cd youki
 
 # If you want to develop in rootless mode, and this is the default mode
-vagrant up
-vagrant ssh
+vagrant up default
+vagrant ssh default
 
 # or if you want to develop in rootful mode
-VAGRANT_VAGRANTFILE=Vagrantfile.root vagrant up
-VAGRANT_VAGRANTFILE=Vagrantfile.root vagrant ssh
+vagrant up rootful
+vagrant ssh rootful
 
 # in virtual machine
 cd youki
@@ -293,3 +294,7 @@ Thanks to all the people who already contributed!
 </picture>
 
 The Linux Foundation® (TLF) has registered trademarks and uses trademarks. For a list of TLF trademarks, see [Trademark Usage](https://www.linuxfoundation.org/legal/trademark-usage).
+
+
+## License
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fyouki-dev%2Fyouki.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fyouki-dev%2Fyouki?ref=badge_large)

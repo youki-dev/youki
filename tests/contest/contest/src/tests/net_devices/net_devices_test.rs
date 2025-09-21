@@ -2,14 +2,14 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use oci_spec::runtime::{
     LinuxBuilder, LinuxNamespaceBuilder, LinuxNamespaceType, LinuxNetDevice, LinuxNetDeviceBuilder,
     ProcessBuilder, Spec, SpecBuilder,
 };
-use test_framework::{test_result, Test, TestGroup, TestResult};
+use test_framework::{Test, TestGroup, TestResult, test_result};
 
-use crate::utils::test_utils::{check_container_created, CreateOptions};
+use crate::utils::test_utils::{CreateOptions, check_container_created};
 use crate::utils::{test_inside_container, test_outside_container};
 
 static NETNS_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -82,11 +82,13 @@ fn create_spec_with_netns(net_devices: HashMap<String, LinuxNetDevice>, netns: S
     SpecBuilder::default()
         .linux(
             LinuxBuilder::default()
-                .namespaces(vec![LinuxNamespaceBuilder::default()
-                    .typ(LinuxNamespaceType::Network)
-                    .path(netns)
-                    .build()
-                    .unwrap()])
+                .namespaces(vec![
+                    LinuxNamespaceBuilder::default()
+                        .typ(LinuxNamespaceType::Network)
+                        .path(netns)
+                        .build()
+                        .unwrap(),
+                ])
                 .net_devices(net_devices)
                 .build()
                 .unwrap(),

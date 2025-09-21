@@ -81,31 +81,22 @@ impl Client for FakeNetlinkClient {
                     let payload = NetlinkPayload::InnerMessage(msg);
                     match handler.handle_payload(payload) {
                         Ok(NetlinkResponse::Success(response)) => Ok(response),
-                        Ok(NetlinkResponse::Error(code)) => {
-                            Err(NetworkError::IO(std::io::Error::new(
-                                std::io::ErrorKind::Other,
-                                format!("Netlink error: {}", code),
-                            )))
-                        }
-                        Ok(NetlinkResponse::Done) => Err(NetworkError::IO(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        Ok(NetlinkResponse::Error(code)) => Err(NetworkError::IO(
+                            std::io::Error::other(format!("Netlink error: {}", code)),
+                        )),
+                        Ok(NetlinkResponse::Done) => Err(NetworkError::IO(std::io::Error::other(
                             "Unexpected done message",
                         ))),
-                        Ok(NetlinkResponse::None) => Err(NetworkError::IO(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        Ok(NetlinkResponse::None) => Err(NetworkError::IO(std::io::Error::other(
                             "Unexpected none message",
                         ))),
                         Err(e) => Err(e),
                     }
                 }
-                FakeResponse::Error(msg) => Err(NetworkError::IO(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    msg,
-                ))),
+                FakeResponse::Error(msg) => Err(NetworkError::IO(std::io::Error::other(msg))),
             }
         } else {
-            Err(NetworkError::IO(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            Err(NetworkError::IO(std::io::Error::other(
                 "No fake response set",
             )))
         }
@@ -122,10 +113,10 @@ impl Client for FakeNetlinkClient {
                     match handler.handle_payload(payload) {
                         Ok(NetlinkResponse::Success(response)) => responses.push(response),
                         Ok(NetlinkResponse::Error(code)) => {
-                            return Err(NetworkError::IO(std::io::Error::new(
-                                std::io::ErrorKind::Other,
-                                format!("Netlink error: {}", code),
-                            )))
+                            return Err(NetworkError::IO(std::io::Error::other(format!(
+                                "Netlink error: {}",
+                                code
+                            ))));
                         }
                         Ok(NetlinkResponse::Done) => break,
                         Ok(NetlinkResponse::None) => continue,
@@ -133,10 +124,7 @@ impl Client for FakeNetlinkClient {
                     }
                 }
                 FakeResponse::Error(msg) => {
-                    return Err(NetworkError::IO(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        msg,
-                    )))
+                    return Err(NetworkError::IO(std::io::Error::other(msg)));
                 }
             }
         }

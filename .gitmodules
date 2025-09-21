@@ -2,3 +2,8 @@
 	path = tests/oci-runtime-tests/src/github.com/opencontainers/runtime-tools
 	url = https://github.com/opencontainers/runtime-tools.git
     ignore = dirty
+
+[submodule "tests/runc/src/github.com/opencontainers/runc"]
+	path = tests/runc/src/github.com/opencontainers/runc
+	url = https://github.com/opencontainers/runc.git
+    ignore = dirty

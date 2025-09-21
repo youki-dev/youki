@@ -9,6 +9,6 @@ pub struct Ps {
     #[clap(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
     pub container_id: String,
     /// options will be passed to the ps utility
-    #[clap(last = true)]
+    #[clap(trailing_var_arg = true)]
     pub ps_options: Vec<String>,
 }

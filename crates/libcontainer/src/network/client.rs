@@ -1,7 +1,7 @@
 use netlink_packet_core::NetlinkMessage;
 use netlink_packet_route::RouteNetlinkMessage;
-use netlink_sys::protocols::NETLINK_ROUTE;
 use netlink_sys::Socket;
+use netlink_sys::protocols::NETLINK_ROUTE;
 
 use super::traits::{Client, NetlinkMessageHandler};
 use super::{NetlinkResponse, NetworkError, Result};
@@ -44,24 +44,22 @@ impl Client for NetlinkClient {
         let bytes = &receive_buf[..n_received];
 
         let rx_packet = <NetlinkMessage<RouteNetlinkMessage>>::deserialize(bytes).map_err(|e| {
-            NetworkError::IO(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Deserialization error: {}", e),
-            ))
+            NetworkError::IO(std::io::Error::other(format!(
+                "Deserialization error: {}",
+                e
+            )))
         })?;
 
         match handler.handle_payload(rx_packet.payload)? {
             NetlinkResponse::Success(response) => Ok(response),
-            NetlinkResponse::Error(code) => Err(NetworkError::IO(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Netlink error: {}", code),
-            ))),
-            NetlinkResponse::Done => Err(NetworkError::IO(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            NetlinkResponse::Error(code) => Err(NetworkError::IO(std::io::Error::other(format!(
+                "Netlink error: {}",
+                code
+            )))),
+            NetlinkResponse::Done => Err(NetworkError::IO(std::io::Error::other(
                 "Unexpected done message",
             ))),
-            NetlinkResponse::None => Err(NetworkError::IO(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            NetlinkResponse::None => Err(NetworkError::IO(std::io::Error::other(
                 "Unexpected none message",
             ))),
         }
@@ -79,21 +77,16 @@ impl Client for NetlinkClient {
             let n_received = self.socket.recv(&mut &mut receive_buf[..], 0)?;
             loop {
                 let bytes = &receive_buf[offset..];
-                let rx_packet =
-                    <NetlinkMessage<RouteNetlinkMessage>>::deserialize(bytes).map_err(|e| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("Deserialization error: {}", e),
-                        )
-                    })?;
+                let rx_packet = <NetlinkMessage<RouteNetlinkMessage>>::deserialize(bytes)
+                    .map_err(|e| std::io::Error::other(format!("Deserialization error: {}", e)))?;
 
                 match handler.handle_payload(rx_packet.payload)? {
                     NetlinkResponse::Success(response) => responses.push(response),
                     NetlinkResponse::Error(code) => {
-                        return Err(NetworkError::IO(std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("Netlink error: code={}", code),
-                        )))
+                        return Err(NetworkError::IO(std::io::Error::other(format!(
+                            "Netlink error: code={}",
+                            code
+                        ))));
                     }
                     NetlinkResponse::Done => return Ok(responses),
                     NetlinkResponse::None => {}

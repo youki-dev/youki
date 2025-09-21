@@ -3,7 +3,7 @@ use std::path::Path;
 
 use nix::unistd::Pid;
 
-use crate::common::{self, ControllerOpt, WrapIoResult, WrappedIoError, CGROUP_PROCS};
+use crate::common::{self, CGROUP_PROCS, ControllerOpt, WrapIoResult, WrappedIoError};
 
 pub(super) trait Controller {
     type Error: From<WrappedIoError>;

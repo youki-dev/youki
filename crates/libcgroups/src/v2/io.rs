@@ -6,8 +6,8 @@ use oci_spec::runtime::LinuxBlockIo;
 use super::controller::Controller;
 use crate::common::{self, ControllerOpt, WrappedIoError};
 use crate::stats::{
-    self, psi_stats, BlkioDeviceStat, BlkioStats, ParseDeviceNumberError,
-    ParseNestedKeyedDataError, StatsProvider,
+    self, BlkioDeviceStat, BlkioStats, ParseDeviceNumberError, ParseNestedKeyedDataError,
+    StatsProvider, psi_stats,
 };
 
 const CGROUP_BFQ_IO_WEIGHT: &str = "io.bfq.weight";
@@ -207,12 +207,14 @@ mod test {
         let (tmp, throttle) = setup("io.max");
 
         let blkio = LinuxBlockIoBuilder::default()
-            .throttle_read_bps_device(vec![LinuxThrottleDeviceBuilder::default()
-                .major(8)
-                .minor(0)
-                .rate(102400u64)
-                .build()
-                .unwrap()])
+            .throttle_read_bps_device(vec![
+                LinuxThrottleDeviceBuilder::default()
+                    .major(8)
+                    .minor(0)
+                    .rate(102400u64)
+                    .build()
+                    .unwrap(),
+            ])
             .build()
             .unwrap();
 
@@ -227,12 +229,14 @@ mod test {
         let (tmp, throttle) = setup("io.max");
 
         let blkio = LinuxBlockIoBuilder::default()
-            .throttle_write_bps_device(vec![LinuxThrottleDeviceBuilder::default()
-                .major(8)
-                .minor(0)
-                .rate(102400u64)
-                .build()
-                .unwrap()])
+            .throttle_write_bps_device(vec![
+                LinuxThrottleDeviceBuilder::default()
+                    .major(8)
+                    .minor(0)
+                    .rate(102400u64)
+                    .build()
+                    .unwrap(),
+            ])
             .build()
             .unwrap();
 
@@ -247,12 +251,14 @@ mod test {
         let (tmp, throttle) = setup("io.max");
 
         let blkio = LinuxBlockIoBuilder::default()
-            .throttle_read_iops_device(vec![LinuxThrottleDeviceBuilder::default()
-                .major(8)
-                .minor(0)
-                .rate(102400u64)
-                .build()
-                .unwrap()])
+            .throttle_read_iops_device(vec![
+                LinuxThrottleDeviceBuilder::default()
+                    .major(8)
+                    .minor(0)
+                    .rate(102400u64)
+                    .build()
+                    .unwrap(),
+            ])
             .build()
             .unwrap();
 
@@ -267,12 +273,14 @@ mod test {
         let (tmp, throttle) = setup("io.max");
 
         let blkio = LinuxBlockIoBuilder::default()
-            .throttle_write_iops_device(vec![LinuxThrottleDeviceBuilder::default()
-                .major(8)
-                .minor(0)
-                .rate(102400u64)
-                .build()
-                .unwrap()])
+            .throttle_write_iops_device(vec![
+                LinuxThrottleDeviceBuilder::default()
+                    .major(8)
+                    .minor(0)
+                    .rate(102400u64)
+                    .build()
+                    .unwrap(),
+            ])
             .build()
             .unwrap();
 
@@ -286,13 +294,15 @@ mod test {
     fn test_set_ioweight_device() {
         let (tmp, throttle) = setup(CGROUP_BFQ_IO_WEIGHT);
         let blkio = LinuxBlockIoBuilder::default()
-            .weight_device(vec![LinuxWeightDeviceBuilder::default()
-                .major(8)
-                .minor(0)
-                .weight(80u16)
-                .leaf_weight(0u16)
-                .build()
-                .unwrap()])
+            .weight_device(vec![
+                LinuxWeightDeviceBuilder::default()
+                    .major(8)
+                    .minor(0)
+                    .weight(80u16)
+                    .leaf_weight(0u16)
+                    .build()
+                    .unwrap(),
+            ])
             .build()
             .unwrap();
 
