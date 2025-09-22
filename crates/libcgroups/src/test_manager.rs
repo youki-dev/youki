@@ -43,6 +43,10 @@ impl CgroupManager for TestManager {
         unimplemented!()
     }
 
+    fn get_freezer_state(&self) -> Result<FreezerState, Self::Error> {
+        unimplemented!()
+    }
+
     fn stats(&self) -> Result<Stats, Infallible> {
         unimplemented!()
     }
