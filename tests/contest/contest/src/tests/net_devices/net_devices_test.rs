@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Result, anyhow};
 use oci_spec::runtime::{
@@ -12,45 +11,72 @@ use test_framework::{ConditionalTest, TestGroup, TestResult, test_result};
 use crate::utils::test_utils::{CreateOptions, check_container_created};
 use crate::utils::{is_runtime_runc, test_inside_container, test_outside_container};
 
-static NETNS_COUNTER: AtomicUsize = AtomicUsize::new(0);
-static DEVICE_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
 fn create_unique_netns_name(prefix: &str) -> String {
-    let count = NETNS_COUNTER.fetch_add(1, Ordering::SeqCst);
-    format!("{}-{}", prefix, count)
+    let random_part: u16 = rand::random();
+    format!("{}{}", prefix, random_part)
 }
 
 pub fn create_unique_device_name(prefix: &str) -> String {
-    let count = DEVICE_COUNTER.fetch_add(1, Ordering::SeqCst);
-    format!("{}-{}", prefix, count)
+    let random_part: u16 = rand::random();
+    format!("{}{}", prefix, random_part)
 }
 
 fn create_netns(name: &str) -> Result<()> {
-    std::process::Command::new("ip")
+    let output = std::process::Command::new("ip")
         .args(vec!["netns", "add", name])
         .output()?;
-    Ok(())
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "Failed to create netns: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
 }
 
 fn cleanup_netns(name: &str) -> Result<()> {
-    std::process::Command::new("ip")
+    let output = std::process::Command::new("ip")
         .args(vec!["netns", "del", name])
         .output()?;
-    Ok(())
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "Failed to cleanup netns: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
 }
 
 fn create_dummy_device(name: &str) -> Result<()> {
-    std::process::Command::new("ip")
+    let output = std::process::Command::new("ip")
         .args(vec!["link", "add", name, "type", "dummy"])
         .output()?;
-    Ok(())
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "Failed to create dummy device: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
 }
 
 fn delete_dummy_device(name: &str) -> Result<()> {
-    std::process::Command::new("ip")
+    let output = std::process::Command::new("ip")
         .args(vec!["link", "del", name])
         .output()?;
-    Ok(())
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "Failed to delete dummy device: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
 }
 
 fn check_device_exists(name: &str) -> Result<bool> {
@@ -127,8 +153,8 @@ fn check_net_device() -> TestResult {
 }
 
 fn check_net_device_rename() -> TestResult {
-    let device_name = create_unique_device_name("dummy-rename");
-    let device_name_rename = create_unique_device_name("dummy-renamed");
+    let device_name = create_unique_device_name("rename");
+    let device_name_rename = create_unique_device_name("renamed");
 
     if let Err(e) = create_dummy_device(&device_name) {
         return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
@@ -163,8 +189,8 @@ fn check_net_device_rename() -> TestResult {
 }
 
 fn check_net_devices() -> TestResult {
-    let device_name1 = create_unique_device_name("dummy1");
-    let device_name2 = create_unique_device_name("dummy2");
+    let device_name1 = create_unique_device_name("dummy");
+    let device_name2 = create_unique_device_name("dummy");
 
     if let Err(e) = create_dummy_device(&device_name1) {
         return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
@@ -214,7 +240,7 @@ fn check_net_devices() -> TestResult {
 }
 
 fn check_empty_net_devices() -> TestResult {
-    let device_name = create_unique_device_name("dummy-empty");
+    let device_name = create_unique_device_name("empty");
 
     let mut net_devices = HashMap::new();
     net_devices.insert(device_name.clone(), LinuxNetDevice::default());
@@ -232,8 +258,8 @@ fn check_empty_net_devices() -> TestResult {
 }
 
 fn check_back_device() -> TestResult {
-    let netns_name = create_unique_netns_name("netns-back");
-    let device_name = create_unique_device_name("dummy-back");
+    let netns_name = create_unique_netns_name("back");
+    let device_name = create_unique_device_name("back");
 
     let mut net_devices = HashMap::new();
     net_devices.insert(
@@ -265,11 +291,14 @@ fn check_back_device() -> TestResult {
         TestResult::Passed
     });
     if let TestResult::Failed(_) = test_result {
+        // Clean up on failure
+        let _ = delete_dummy_device(&device_name);
+        let _ = cleanup_netns(&netns_name);
         return test_result;
     }
 
     // Move the device back to the original namespace
-    if let Err(e) = std::process::Command::new("ip")
+    let move_result = std::process::Command::new("ip")
         .args(vec![
             "netns",
             "exec",
@@ -282,17 +311,33 @@ fn check_back_device() -> TestResult {
             "netns",
             "1",
         ])
-        .output()
-    {
+        .output();
+
+    if let Err(e) = move_result {
+        // Try to delete the device from the namespace before cleaning up
+        let _ = std::process::Command::new("ip")
+            .args(vec![
+                "netns",
+                "exec",
+                &netns_name,
+                "ip",
+                "link",
+                "del",
+                &device_name,
+            ])
+            .output();
+        let _ = cleanup_netns(&netns_name);
         return TestResult::Failed(anyhow!("Failed to move device back: {}", e));
     }
 
     // Check that the device exists
     if let Err(e) = check_device_exists(&device_name) {
+        let _ = cleanup_netns(&netns_name);
         return TestResult::Failed(anyhow!("Failed to check device: {}", e));
     }
 
     if let Err(e) = delete_dummy_device(&device_name) {
+        let _ = cleanup_netns(&netns_name);
         return TestResult::Failed(anyhow!("Failed to delete device: {}", e));
     }
 
@@ -304,8 +349,8 @@ fn check_back_device() -> TestResult {
 }
 
 fn check_address() -> TestResult {
-    let netns_name = create_unique_netns_name("netns-address");
-    let device_name = create_unique_device_name("dummy-address");
+    let netns_name = create_unique_netns_name("addr");
+    let device_name = create_unique_device_name("addr");
     const DUMMY_ADDRESS: &str = "244.178.44.111/24";
 
     let mut net_devices = HashMap::new();
@@ -365,6 +410,36 @@ fn check_address() -> TestResult {
         return TestResult::Failed(anyhow!("Address not found in output"));
     }
 
+    // Delete the device from the namespace before deleting the namespace
+    if let Err(e) = std::process::Command::new("ip")
+        .args(vec![
+            "netns",
+            "exec",
+            &netns_name,
+            "ip",
+            "link",
+            "del",
+            &device_name,
+        ])
+        .output()
+    {
+        println!("Warning: Failed to delete device from namespace: {}", e);
+        // Try to move it back to default namespace as fallback
+        let _ = std::process::Command::new("ip")
+            .args(vec![
+                "netns",
+                "exec",
+                &netns_name,
+                "ip",
+                "link",
+                "set",
+                "dev",
+                &device_name,
+                "netns",
+                "1",
+            ])
+            .output();
+    }
     if let Err(e) = cleanup_netns(&netns_name) {
         return TestResult::Failed(anyhow!("Failed to cleanup netns: {}", e));
     }

@@ -2,7 +2,6 @@
 //! Similar to https://github.com/opencontainers/runtime-tools/blob/master/validation/util/test.go
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread::sleep;
@@ -174,36 +173,11 @@ pub fn test_outside_container(
     // we manually unmount the rootfs so tmpdir deletion can succeed and cleanup is done.
     let ns = spec.linux().as_ref().and_then(|l| l.namespaces().clone());
     if let Some(ns) = ns
-        && !ns.into_iter().any(|n| n.typ() == LinuxNamespaceType::Mount)
+        && !ns.iter().any(|n| n.typ() == LinuxNamespaceType::Mount)
     {
-        let rootfs_path = bundle.path().join("bundle/rootfs");
-        eprintln!("Attempting to unmount: {:?}", rootfs_path);
-        if rootfs_path.exists() {
-            match umount2(&rootfs_path, MntFlags::MNT_DETACH) {
-                Ok(_) => eprintln!("Successfully unmounted rootfs"),
-                Err(e) => {
-                    eprintln!("Warning: Failed to unmount rootfs: {:?}", e);
-                    // Check if it's actually mounted
-                    let mount_check =
-                        std::process::Command::new("mount")
-                            .output()
-                            .unwrap_or_else(|_| std::process::Output {
-                                stdout: Vec::new(),
-                                stderr: Vec::new(),
-                                status: std::process::ExitStatus::from_raw(1),
-                            });
-                    let mounts = String::from_utf8_lossy(&mount_check.stdout);
-                    if mounts.contains(&rootfs_path.to_string_lossy().to_string()) {
-                        eprintln!("Path is mounted in system");
-                    } else {
-                        eprintln!("Path is not mounted, skipping unmount");
-                    }
-                }
-            }
-        } else {
-            eprintln!("Warning: rootfs path does not exist: {:?}", rootfs_path);
-        }
+        umount2(&bundle.path().join("bundle/rootfs"), MntFlags::MNT_DETACH).unwrap();
     }
+
     kill_container(&id_str, &bundle).unwrap().wait().unwrap();
     delete_container(&id_str, &bundle).unwrap().wait().unwrap();
     test_result
