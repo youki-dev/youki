@@ -105,22 +105,42 @@ fn create_spec(net_devices: HashMap<String, LinuxNetDevice>) -> Spec {
 }
 
 fn create_spec_with_netns(net_devices: HashMap<String, LinuxNetDevice>, netns: String) -> Spec {
-    SpecBuilder::default()
+    let mut spec = SpecBuilder::default()
         .linux(
             LinuxBuilder::default()
-                .namespaces(vec![
-                    LinuxNamespaceBuilder::default()
-                        .typ(LinuxNamespaceType::Network)
-                        .path(netns)
-                        .build()
-                        .unwrap(),
-                ])
                 .net_devices(net_devices)
                 .build()
                 .unwrap(),
         )
         .build()
-        .unwrap()
+        .unwrap();
+
+    // Get default namespaces and retain all except network
+    let mut namespaces = spec
+        .linux()
+        .as_ref()
+        .and_then(|l| l.namespaces().as_ref())
+        .cloned()
+        .unwrap_or_default();
+
+    // Remove existing network namespace if any
+    namespaces.retain(|ns| ns.typ() != LinuxNamespaceType::Network);
+
+    // Add network namespace with custom path
+    namespaces.push(
+        LinuxNamespaceBuilder::default()
+            .typ(LinuxNamespaceType::Network)
+            .path(netns)
+            .build()
+            .unwrap(),
+    );
+
+    // Update spec with modified namespaces
+    if let Some(linux) = spec.linux_mut() {
+        linux.set_namespaces(Some(namespaces));
+    }
+
+    spec
 }
 
 fn check_net_device() -> TestResult {
