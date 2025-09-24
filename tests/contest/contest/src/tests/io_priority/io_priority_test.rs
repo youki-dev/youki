@@ -2,10 +2,10 @@ use anyhow::{Context, Result};
 use oci_spec::runtime::{
     IOPriorityClass, LinuxIOPriorityBuilder, ProcessBuilder, Spec, SpecBuilder,
 };
-use test_framework::{ConditionalTest, TestGroup, TestResult, test_result};
+use test_framework::{Test, TestGroup, TestResult, test_result};
 
+use crate::utils::test_inside_container;
 use crate::utils::test_utils::CreateOptions;
-use crate::utils::{is_runtime_runc, test_inside_container};
 
 fn create_spec(
     io_priority_class: IOPriorityClass,
@@ -62,19 +62,12 @@ fn io_priority_class_idle_test() -> TestResult {
 
 pub fn get_io_priority_test() -> TestGroup {
     let mut io_priority_group = TestGroup::new("set_io_priority");
-    let io_priority_class_rt = ConditionalTest::new(
-        "io_priority_class_rt",
-        Box::new(|| !is_runtime_runc()),
-        Box::new(io_priority_class_rt_test),
-    );
-    let io_priority_class_be = ConditionalTest::new(
-        "io_priority_class_be",
-        Box::new(|| !is_runtime_runc()),
-        Box::new(io_priority_class_be_test),
-    );
-    let io_priority_class_idle = ConditionalTest::new(
+    let io_priority_class_rt =
+        Test::new("io_priority_class_rt", Box::new(io_priority_class_rt_test));
+    let io_priority_class_be =
+        Test::new("io_priority_class_be", Box::new(io_priority_class_be_test));
+    let io_priority_class_idle = Test::new(
         "io_priority_class_idle",
-        Box::new(|| !is_runtime_runc()),
         Box::new(io_priority_class_idle_test),
     );
 
