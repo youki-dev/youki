@@ -149,33 +149,40 @@ mod tests {
         let write_iops = 444u64;
 
         let blkio = LinuxBlockIoBuilder::default()
-            .throttle_read_bps_device(vec![LinuxThrottleDeviceBuilder::default()
-                .major(maj)
-                .minor(min)
-                .rate(read_bps)
-                .build()
-                .unwrap()])
-            .throttle_write_bps_device(vec![LinuxThrottleDeviceBuilder::default()
-                .major(maj)
-                .minor(min)
-                .rate(write_bps)
-                .build()
-                .unwrap()])
-            .throttle_read_iops_device(vec![LinuxThrottleDeviceBuilder::default()
-                .major(maj)
-                .minor(min)
-                .rate(read_iops)
-                .build()
-                .unwrap()])
-            .throttle_write_iops_device(vec![LinuxThrottleDeviceBuilder::default()
-                .major(maj)
-                .minor(min)
-                .rate(write_iops)
-                .build()
-                .unwrap()])
+            .throttle_read_bps_device(vec![
+                LinuxThrottleDeviceBuilder::default()
+                    .major(maj)
+                    .minor(min)
+                    .rate(read_bps)
+                    .build()
+                    .unwrap(),
+            ])
+            .throttle_write_bps_device(vec![
+                LinuxThrottleDeviceBuilder::default()
+                    .major(maj)
+                    .minor(min)
+                    .rate(write_bps)
+                    .build()
+                    .unwrap(),
+            ])
+            .throttle_read_iops_device(vec![
+                LinuxThrottleDeviceBuilder::default()
+                    .major(maj)
+                    .minor(min)
+                    .rate(read_iops)
+                    .build()
+                    .unwrap(),
+            ])
+            .throttle_write_iops_device(vec![
+                LinuxThrottleDeviceBuilder::default()
+                    .major(maj)
+                    .minor(min)
+                    .rate(write_iops)
+                    .build()
+                    .unwrap(),
+            ])
             .build()
             .unwrap();
-
         let mut props: HashMap<&str, Variant> = HashMap::new();
         Io::apply(&blkio, &mut props).expect("apply blkio to props");
 
@@ -216,12 +223,14 @@ mod tests {
         let min = minor(st.st_rdev) as i64;
         let rate = 000u64;
         let blkio = LinuxBlockIoBuilder::default()
-            .throttle_read_bps_device(vec![LinuxThrottleDeviceBuilder::default()
-                .major(maj)
-                .minor(min)
-                .rate(rate)
-                .build()
-                .unwrap()])
+            .throttle_read_bps_device(vec![
+                LinuxThrottleDeviceBuilder::default()
+                    .major(maj)
+                    .minor(min)
+                    .rate(rate)
+                    .build()
+                    .unwrap(),
+            ])
             .build()
             .unwrap();
 
