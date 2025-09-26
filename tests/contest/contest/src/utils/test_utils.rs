@@ -136,6 +136,24 @@ pub fn start_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
     Ok(res)
 }
 
+pub fn pause_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
+    let res = runtime_command(dir)
+        .arg("pause")
+        .arg(id)
+        .spawn()
+        .context("could not pause container")?;
+    Ok(res)
+}
+
+pub fn resume_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
+    let res = runtime_command(dir)
+        .arg("resume")
+        .arg(id)
+        .spawn()
+        .context("could not pause container")?;
+    Ok(res)
+}
+
 fn runtime_command<P: AsRef<Path>>(dir: P) -> Command {
     let mut command = Command::new(get_runtime_path());
     command
