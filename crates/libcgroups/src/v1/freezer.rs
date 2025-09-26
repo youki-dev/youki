@@ -1,4 +1,5 @@
 use std::fs::OpenOptions;
+use std::fs::read_to_string;
 use std::io::Read;
 use std::path::Path;
 use std::{thread, time};
@@ -7,6 +8,7 @@ use super::controller::Controller;
 use crate::common::{self, ControllerOpt, FreezerState, WrapIoResult, WrappedIoError};
 
 const CGROUP_FREEZER_STATE: &str = "freezer.state";
+const CGROUP_FREEZER_SELF_STATE: &str = "freezer.self_freezing";
 const FREEZER_STATE_THAWED: &str = "THAWED";
 const FREEZER_STATE_FROZEN: &str = "FROZEN";
 const FREEZER_STATE_FREEZING: &str = "FREEZING";
@@ -79,9 +81,15 @@ impl Freezer {
                         if i % 25 == 24 {
                             thread::sleep(time::Duration::from_millis(10));
                         }
-
-                        let r = Self::read_freezer_state(cgroup_root)?;
-                        match r.trim() {
+                        let mut state = String::new();
+                        OpenOptions::new()
+                            .create(false)
+                            .read(true)
+                            .open(cgroup_root.join(CGROUP_FREEZER_STATE))
+                            .wrap_open(cgroup_root)?
+                            .read_to_string(&mut state)
+                            .wrap_read(cgroup_root)?;
+                        match state.trim() {
                             FREEZER_STATE_FREEZING => {
                                 continue;
                             }
@@ -93,7 +101,7 @@ impl Freezer {
                             }
                             _ => {
                                 // should not reach here.
-                                return Err(V1FreezerControllerError::UnexpectedState { state: r });
+                                return Err(V1FreezerControllerError::UnexpectedState { state: state });
                             }
                         }
                     }
@@ -114,17 +122,43 @@ impl Freezer {
         Ok(())
     }
 
-    fn read_freezer_state(cgroup_root: &Path) -> Result<String, WrappedIoError> {
+    pub fn read_freezer_state(cgroup_root: &Path) -> FreezerState {
         let path = cgroup_root.join(CGROUP_FREEZER_STATE);
-        let mut content = String::new();
-        OpenOptions::new()
-            .create(false)
-            .read(true)
-            .open(path)
-            .wrap_open(cgroup_root)?
-            .read_to_string(&mut content)
-            .wrap_read(cgroup_root)?;
-        Ok(content)
+        loop {
+            let state = match read_to_string(&path) {
+                Ok(state) => state,
+                Err(_) => {
+                    return FreezerState::Undefined;
+                }
+            };
+            match state.trim() {
+                FREEZER_STATE_THAWED => return FreezerState::Thawed,
+                FREEZER_STATE_FROZEN => {
+                    // Find out whether the cgroup is frozen directly,
+                    // or indirectly via an ancestor.
+                    let self_state = match read_to_string(path.join(CGROUP_FREEZER_SELF_STATE)) {
+                        Ok(self_state) => self_state,
+                        Err(_) => {
+                            return FreezerState::Frozen;
+                        }
+                    };
+                    return match self_state.as_str() {
+                        "0\n" => FreezerState::Thawed,
+                        "1\n" => FreezerState::Frozen,
+                        _ => FreezerState::Undefined,
+                    };
+                }
+                FREEZER_STATE_FREEZING => {
+                    // Make sure we get a stable freezer state, so retry if the cgroup
+                    // is still undergoing freezing. This should be a temporary delay.
+                    thread::sleep(time::Duration::from_millis(1));
+                    continue;
+                }
+                _ => {
+                    return FreezerState::Undefined;
+                }
+            }
+        }
     }
 }
 
