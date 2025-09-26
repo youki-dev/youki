@@ -116,6 +116,7 @@ fn main() -> Result<()> {
     let cgroup_v1_pids = cgroups::pids::get_test_group();
     let cgroup_v1_cpu = cgroups::cpu::v1::get_test_group();
     let cgroup_v2_cpu = cgroups::cpu::v2::get_test_group();
+    let cgroup_v1_device = cgroups::devices::get_test_group();
     let cgroup_v1_memory = cgroups::memory::get_test_group();
     let cgroup_v1_blkio = cgroups::blkio::get_test_group();
     let cgroup_v1_absolute_network = cgroups::network::absolute_network::get_test_group();
@@ -158,6 +159,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(cgroup_v1_pids));
     tm.add_test_group(Box::new(cgroup_v1_cpu));
     tm.add_test_group(Box::new(cgroup_v2_cpu));
+    tm.add_test_group(Box::new(cgroup_v1_device));
     tm.add_test_group(Box::new(cgroup_v1_memory));
     tm.add_test_group(Box::new(cgroup_v1_absolute_network));
     tm.add_test_group(Box::new(cgroup_v1_blkio));
