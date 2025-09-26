@@ -89,6 +89,11 @@ impl MainSender {
         Ok(())
     }
 
+    pub fn hook_request(&mut self) -> Result<(), ChannelError> {
+        self.sender.send(Message::HookRequest)?;
+        Ok(())
+    }
+
     pub fn close(&self) -> Result<(), ChannelError> {
         self.sender.close()?;
 
@@ -192,6 +197,23 @@ impl MainReceiver {
         }
     }
 
+    pub fn wait_for_hook_request(&mut self) -> Result<(), ChannelError> {
+        let msg = self
+            .receiver
+            .recv()
+            .map_err(|err| ChannelError::ReceiveError {
+                msg: "waiting for hook request".to_string(),
+                source: err,
+            })?;
+        match msg {
+            Message::HookRequest => Ok(()),
+            msg => Err(ChannelError::UnexpectedMessage {
+                expected: Message::HookRequest,
+                received: msg,
+            }),
+        }
+    }
+
     pub fn close(&self) -> Result<(), ChannelError> {
         self.receiver.close()?;
 
@@ -273,6 +295,11 @@ impl InitSender {
         Ok(())
     }
 
+    pub fn hook_done(&mut self) -> Result<(), ChannelError> {
+        self.sender.send(Message::HookDone)?;
+        Ok(())
+    }
+
     pub fn close(&self) -> Result<(), ChannelError> {
         self.sender.close()?;
 
@@ -298,6 +325,23 @@ impl InitReceiver {
             Message::SeccompNotifyDone => Ok(()),
             msg => Err(ChannelError::UnexpectedMessage {
                 expected: Message::SeccompNotifyDone,
+                received: msg,
+            }),
+        }
+    }
+
+    pub fn wait_for_hook_request_done(&mut self) -> Result<(), ChannelError> {
+        let msg = self
+            .receiver
+            .recv()
+            .map_err(|err| ChannelError::ReceiveError {
+                msg: "waiting for hook done".to_string(),
+                source: err,
+            })?;
+        match msg {
+            Message::HookDone => Ok(()),
+            msg => Err(ChannelError::UnexpectedMessage {
+                expected: Message::HookDone,
                 received: msg,
             }),
         }
