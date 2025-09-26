@@ -55,6 +55,7 @@ pub trait Syscall {
         size: libc::size_t,
     ) -> Result<()>;
     fn set_io_priority(&self, class: i64, priority: i64) -> Result<()>;
+    fn set_mempolicy(&self, mode: i32, nodemask: &[libc::c_ulong], maxnode: u64) -> Result<()>;
     fn umount2(&self, target: &Path, flags: MntFlags) -> Result<()>;
     fn get_uid(&self) -> Uid;
     fn get_gid(&self) -> Gid;
