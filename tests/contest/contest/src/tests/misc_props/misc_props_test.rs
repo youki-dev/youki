@@ -89,6 +89,9 @@ pub fn get_misc_props_test() -> TestGroup {
         Box::new(unknown_top_level_property_ignored_test),
     );
 
+    // runc does not perform strict ociVersion validation, 
+    // so this negative test is skipped on runc.
+    // youki does validate spec.version as 1.x.y, so we run this test on youki.
     let invalid_oci_version_must_error_test = ConditionalTest::new(
         "invalid_oci_version_must_error_test",
         Box::new(|| !is_runtime_runc()),
