@@ -599,10 +599,8 @@ fn expected_nodes_from_spec(spec: &Spec) -> Option<Vec<u32>> {
     Some(parse_node_string(nodes))
 }
 
-fn numa_maps_indicates_node0(first_line: &str, policy_field: &str) -> bool {
-    policy_field.contains("bind:0")
-        || policy_field.contains("prefer:0")
-        || first_line.contains("N0=")
+fn numa_maps_indicates_node0(policy_field: &str) -> bool {
+    policy_field.contains("bind:0") || policy_field.contains("prefer:0")
 }
 
 pub fn validate_memory_policy(spec: &Spec) {
@@ -689,7 +687,7 @@ pub fn validate_memory_policy(spec: &Spec) {
                 eprintln!("expected interleave policy, but found: {}", policy_field);
             }
             if expected_nodes.as_ref().is_some_and(|v| v.contains(&0))
-                && !numa_maps_indicates_node0(first_line, policy_field)
+                && !numa_maps_indicates_node0(policy_field)
             {
                 eprintln!(
                     "expected interleave including node0, but got: {}",
@@ -706,7 +704,7 @@ pub fn validate_memory_policy(spec: &Spec) {
                 eprintln!("expected bind static, but found: {}", policy_field);
             }
             if expected_nodes.as_ref().is_some_and(|v| v.contains(&0))
-                && !numa_maps_indicates_node0(first_line, policy_field)
+                && !numa_maps_indicates_node0(policy_field)
             {
                 eprintln!("expected bind including node0, but got: {}", first_line);
             }
@@ -729,7 +727,7 @@ pub fn validate_memory_policy(spec: &Spec) {
                     eprintln!("expected preferred relative, but found: {}", policy_field);
                 }
                 if expected_nodes.as_ref().is_some_and(|v| v.contains(&0))
-                    && !numa_maps_indicates_node0(first_line, policy_field)
+                    && !numa_maps_indicates_node0(policy_field)
                 {
                     eprintln!(
                         "expected interleave including node0, but got: {}",
