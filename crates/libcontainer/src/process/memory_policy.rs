@@ -180,17 +180,26 @@ fn validate_memory_policy(
             }
         },
         _ => {
+            let mode_name = match policy.mode() {
+                MemoryPolicyModeType::MpolDefault => "MPOL_DEFAULT",
+                MemoryPolicyModeType::MpolPreferred => "MPOL_PREFERRED",
+                MemoryPolicyModeType::MpolBind => "MPOL_BIND",
+                MemoryPolicyModeType::MpolInterleave => "MPOL_INTERLEAVE",
+                MemoryPolicyModeType::MpolLocal => "MPOL_LOCAL",
+                MemoryPolicyModeType::MpolPreferredMany => "MPOL_PREFERRED_MANY",
+                MemoryPolicyModeType::MpolWeightedInterleave => "MPOL_WEIGHTED_INTERLEAVE",
+            };
             let nodes = match policy.nodes() {
                 None => {
                     return Err(MemoryPolicyError::InvalidNodes(format!(
                         "Mode {} requires non-empty node specification",
-                        base_mode
+                        mode_name
                     )));
                 }
                 Some(nodes) if nodes.trim().is_empty() => {
                     return Err(MemoryPolicyError::InvalidNodes(format!(
                         "Mode {} requires non-empty node specification",
-                        base_mode
+                        mode_name
                     )));
                 }
                 Some(nodes) => nodes,
@@ -199,7 +208,7 @@ fn validate_memory_policy(
             if maxnode == 0 {
                 return Err(MemoryPolicyError::InvalidNodes(format!(
                     "Mode {} requires non-empty node specification (parsed result is empty)",
-                    base_mode
+                    mode_name
                 )));
             }
             Ok(Some(ValidatedMemoryPolicy {
