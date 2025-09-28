@@ -20,8 +20,7 @@ use crate::config::PersonalityDomain;
 use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
 use crate::process::args::{ContainerArgs, ContainerType};
-use crate::process::channel;
-use crate::process::memory_policy;
+use crate::process::{channel, memory_policy};
 use crate::rootfs::RootFS;
 #[cfg(feature = "libseccomp")]
 use crate::seccomp;
