@@ -366,10 +366,28 @@ pub fn exec_container<P: AsRef<Path>>(
         command.arg("--process").arg(path);
     }
 
-    command.arg(id);
-
     if process_path.is_none() {
-        command.args(args);
+        let mut opts = vec![];
+        let mut cmd = vec![];
+        let mut saw_cmd = false;
+
+        for a in args {
+            let s = a.as_ref();
+            if !s.is_empty() && s.to_string_lossy().starts_with("--") && !saw_cmd {
+                opts.push(s.to_owned());
+            } else {
+                saw_cmd = true;
+                cmd.push(s.to_owned());
+            }
+        }
+
+        command.args(&opts);
+        command.arg(id);
+        if !cmd.is_empty() {
+            command.args(&cmd);
+        }
+    } else {
+        command.arg(id);
     }
 
     let output = command.output().context("failed to run exec")?;

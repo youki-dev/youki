@@ -56,13 +56,8 @@ pub(crate) fn cgroup_test() -> TestResult {
             .expect("exec failed");
 
         // check we can join top-level cgroup (explicit)
-        exec_container(
-            id,
-            dir,
-            &["--cgroup", "/", "cat", "/proc/self/cgroup"],
-            None,
-        )
-        .expect("exec failed");
+        exec_container(id, dir, &["--cgroup=/", "cat", "/proc/self/cgroup"], None)
+            .expect("exec failed");
 
         TestResult::Passed
     })
