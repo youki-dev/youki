@@ -11,9 +11,6 @@ pub enum MemoryPolicyError {
     #[error("Invalid node specification: {0}")]
     InvalidNodes(String),
 
-    #[error("Invalid memory policy mode: {0}")]
-    InvalidMode(String),
-
     #[error("Incompatible flag and mode combination: {0}")]
     IncompatibleFlagMode(String),
 
