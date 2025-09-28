@@ -708,10 +708,7 @@ pub fn validate_memory_policy(spec: &Spec) {
             if expected_nodes.as_ref().is_some_and(|v| v.contains(&0))
                 && !numa_maps_indicates_node0(first_line, policy_field)
             {
-                eprintln!(
-                    "expected interleave including node0, but got: {}",
-                    first_line
-                );
+                eprintln!("expected bind including node0, but got: {}", first_line);
             }
         }
         Some(MemoryPolicyModeType::MpolPreferred) => {
