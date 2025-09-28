@@ -1,5 +1,4 @@
-use oci_spec::runtime::MemoryPolicyFlagType;
-use oci_spec::runtime::MemoryPolicyModeType;
+use oci_spec::runtime::{MemoryPolicyFlagType, MemoryPolicyModeType};
 
 use crate::syscall::{Syscall, SyscallError};
 
