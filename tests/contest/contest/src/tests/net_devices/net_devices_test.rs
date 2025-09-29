@@ -8,7 +8,9 @@ use oci_spec::runtime::{
 };
 use test_framework::{ConditionalTest, TestGroup, TestResult, test_result};
 
-use crate::utils::test_utils::{CreateOptions, check_container_created};
+use crate::utils::test_utils::{
+    CreateOptions, check_container_created, exec_container, start_container,
+};
 use crate::utils::{is_runtime_runc, test_inside_container, test_outside_container};
 
 fn create_unique_netns_name(prefix: &str) -> String {
@@ -22,20 +24,32 @@ pub fn create_unique_device_name(prefix: &str) -> String {
 }
 
 fn create_netns(name: &str) -> Result<()> {
+    // Ensure /run/netns mount propagation is shared before creating netns
+    // This is needed in case previous tests changed mount propagation to private
+    let _ = std::process::Command::new("mount")
+        .args(vec!["--make-shared", "/"])
+        .output();
+
     let output = std::process::Command::new("ip")
         .args(vec!["netns", "add", name])
         .output()?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(anyhow!(
+    if !output.status.success() {
+        return Err(anyhow!(
             "Failed to create netns: {}",
             String::from_utf8_lossy(&output.stderr)
-        ))
+        ));
     }
+
+    Ok(())
 }
 
 fn cleanup_netns(name: &str) -> Result<()> {
+    // Ensure /run/netns mount propagation is shared before deleting netns
+    // This is needed in case previous tests changed mount propagation to private
+    let _ = std::process::Command::new("mount")
+        .args(vec!["--make-shared", "/"])
+        .output();
+
     let output = std::process::Command::new("ip")
         .args(vec!["netns", "del", name])
         .output()?;
@@ -97,6 +111,24 @@ fn create_spec(net_devices: HashMap<String, LinuxNetDevice>) -> Spec {
         .process(
             ProcessBuilder::default()
                 .args(vec!["runtimetest".to_string(), "net_devices".to_string()])
+                .build()
+                .unwrap(),
+        )
+        .build()
+        .unwrap()
+}
+
+fn create_spec_without_runtimetest(net_devices: HashMap<String, LinuxNetDevice>) -> Spec {
+    SpecBuilder::default()
+        .linux(
+            LinuxBuilder::default()
+                .net_devices(net_devices)
+                .build()
+                .unwrap(),
+        )
+        .process(
+            ProcessBuilder::default()
+                .args(vec!["sleep".to_string(), "infinity".to_string()])
                 .build()
                 .unwrap(),
         )
@@ -300,7 +332,7 @@ fn check_back_device() -> TestResult {
 
     let spec = create_spec_with_netns(
         net_devices,
-        Path::new("/var/run/netns")
+        Path::new("/run/netns")
             .join(&netns_name)
             .to_str()
             .unwrap()
@@ -369,7 +401,6 @@ fn check_back_device() -> TestResult {
 }
 
 fn check_address() -> TestResult {
-    let netns_name = create_unique_netns_name("addr");
     let device_name = create_unique_device_name("addr");
     const DUMMY_ADDRESS: &str = "244.178.44.111/24";
 
@@ -381,10 +412,6 @@ fn check_address() -> TestResult {
             .build()
             .unwrap(),
     );
-
-    if let Err(e) = create_netns(&netns_name) {
-        return TestResult::Failed(anyhow!("Failed to create netns: {}", e));
-    }
 
     if let Err(e) = create_dummy_device(&device_name) {
         return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
@@ -398,70 +425,26 @@ fn check_address() -> TestResult {
         return TestResult::Failed(anyhow!("Failed to add address: {}", e));
     }
 
-    let spec = create_spec_with_netns(
-        net_devices,
-        Path::new("/var/run/netns")
-            .join(&netns_name)
-            .to_str()
-            .unwrap()
-            .to_string(),
-    );
+    let spec = create_spec_without_runtimetest(net_devices);
     let test_result = test_outside_container(&spec, &|data| {
-        test_result!(check_container_created(&data));
+        let id = &data.id;
+        let dir = &data.bundle;
+
+        let start_result = start_container(id, dir).unwrap().wait().unwrap();
+        if !start_result.success() {
+            return TestResult::Failed(anyhow!("container start failed"));
+        }
+
+        let (stdout, _) = exec_container(id, dir, &["ip", "addr"], None).expect("exec failed");
+
+        if !stdout.contains(&device_name) || !stdout.contains(DUMMY_ADDRESS) {
+            return TestResult::Failed(anyhow!("unexpected : {}", stdout));
+        }
+
         TestResult::Passed
     });
     if let TestResult::Failed(_) = test_result {
         return test_result;
-    }
-
-    // Check that the address was added
-    let out = match std::process::Command::new("ip")
-        .args(vec!["netns", "exec", &netns_name, "ip", "addr"])
-        .output()
-    {
-        Ok(out) => out,
-        Err(e) => return TestResult::Failed(anyhow!("Failed to check address: {}", e)),
-    };
-    let out = match String::from_utf8(out.stdout) {
-        Ok(out) => out,
-        Err(e) => return TestResult::Failed(anyhow!("Failed to parse output: {}", e)),
-    };
-    if !out.contains(&device_name) || !out.contains(DUMMY_ADDRESS) {
-        return TestResult::Failed(anyhow!("Address not found in output"));
-    }
-
-    // Delete the device from the namespace before deleting the namespace
-    if let Err(e) = std::process::Command::new("ip")
-        .args(vec![
-            "netns",
-            "exec",
-            &netns_name,
-            "ip",
-            "link",
-            "del",
-            &device_name,
-        ])
-        .output()
-    {
-        println!("Warning: Failed to delete device from namespace: {}", e);
-        // Try to move it back to default namespace as fallback
-        let _ = std::process::Command::new("ip")
-            .args(vec![
-                "netns",
-                "exec",
-                &netns_name,
-                "ip",
-                "link",
-                "set",
-                "dev",
-                &device_name,
-                "netns",
-                "1",
-            ])
-            .output();
-    }
-    if let Err(e) = cleanup_netns(&netns_name) {
-        return TestResult::Failed(anyhow!("Failed to cleanup netns: {}", e));
     }
 
     TestResult::Passed
@@ -469,6 +452,7 @@ fn check_address() -> TestResult {
 
 pub fn get_net_devices_test() -> TestGroup {
     let mut test_group = TestGroup::new("net_devices");
+    test_group.set_nonparallel();
     let net_device_test = ConditionalTest::new(
         "net_device",
         Box::new(|| !is_runtime_runc()),
