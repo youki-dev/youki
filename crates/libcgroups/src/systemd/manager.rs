@@ -156,6 +156,9 @@ pub enum SystemdManagerError {
     #[error("in v2 manager: {0}")]
     V2Manager(#[from] V2ManagerError),
 
+    #[error("Timeout waiting for pid {0}")]
+    WaitForProcessInCgroupTimeout(String),
+
     #[error("in cpu controller: {0}")]
     Cpu(#[from] super::cpu::SystemdCpuError),
     #[error("in cpuset controller: {0}")]
@@ -305,6 +308,25 @@ impl Manager {
         Ok(())
     }
 
+    fn wait_for_process_in_cgroup(&self, pid: Pid) -> Result<(), SystemdManagerError> {
+        use std::time::{Duration, Instant};
+        let start = Instant::now();
+        let timeout = Duration::from_secs(5);
+        while start.elapsed() < timeout {
+            // If it fails, it most likely means that the cgroup hasn't been set up yet.
+            if let Ok(pids) = self.fs_manager.get_all_pids() {
+                if pids.contains(&pid) {
+                    tracing::debug!("Process {} successfully added to cgroup", pid);
+                    return Ok(());
+                }
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        Err(SystemdManagerError::WaitForProcessInCgroupTimeout(
+            pid.to_string(),
+        ))
+    }
+
     fn get_available_controllers<P: AsRef<Path>>(
         &self,
         cgroups_path: P,
@@ -365,6 +387,9 @@ impl CgroupManager for Manager {
             &self.destructured_path.parent,
             &self.unit_name,
         )?;
+
+        // There is a chance that the intermediate process ends before systemd gets the dbus message to add it to transit unit.
+        self.wait_for_process_in_cgroup(pid)?;
 
         Ok(())
     }
