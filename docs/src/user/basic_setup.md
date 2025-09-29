@@ -28,7 +28,7 @@ Install from the GitHub release as root:
 
 <!--youki release begin-->
 ```console
-# curl -sSfL https://github.com/youki-dev/youki/releases/download/v0.5.5/youki-0.5.5-$(uname -m)-musl.tar.gz | tar -xzvC /usr/bin/ youki
+$ curl -sSfL https://github.com/youki-dev/youki/releases/download/v0.5.5/youki-0.5.5-$(uname -m)-musl.tar.gz | tar -xzvC /usr/bin/ youki
 ```
 <!--youki release end-->
 
@@ -56,7 +56,7 @@ $ sudo systemctl reload docker
 Once configured, you can run a container using youki like this:
 
 ```console
-docker run --rm --runtime youki hello-world
+$ docker run --rm --runtime youki hello-world
 ```
 
 For more details, see [Basic Usage](./basic_usage.md).
