@@ -39,6 +39,8 @@ static ORDERED_NAMESPACES: &[CloneFlags] = &[
     CloneFlags::CLONE_NEWNET,
     CloneFlags::CLONE_NEWCGROUP,
     CloneFlags::CLONE_NEWNS,
+    // CLONE_NEWTIME
+    CloneFlags::from_bits_retain(128),
 ];
 
 /// Holds information about namespaces
@@ -56,7 +58,7 @@ fn get_clone_flag(namespace_type: LinuxNamespaceType) -> Result<CloneFlags> {
         LinuxNamespaceType::Network => CloneFlags::CLONE_NEWNET,
         LinuxNamespaceType::Cgroup => CloneFlags::CLONE_NEWCGROUP,
         LinuxNamespaceType::Mount => CloneFlags::CLONE_NEWNS,
-        LinuxNamespaceType::Time => return Err(NamespaceError::NotSupported("time".to_string())),
+        LinuxNamespaceType::Time => CloneFlags::from_bits_retain(128),
     };
 
     Ok(flag)
