@@ -20,7 +20,7 @@ use crate::config::PersonalityDomain;
 use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
 use crate::process::args::{ContainerArgs, ContainerType};
-use crate::process::channel;
+use crate::process::{channel, memory_policy};
 use crate::rootfs::RootFS;
 #[cfg(feature = "libseccomp")]
 use crate::seccomp;
@@ -45,6 +45,8 @@ pub fn container_init_process(
     set_io_priority(ctx.syscall.as_ref(), ctx.process.io_priority())?;
 
     setup_scheduler(ctx.process.scheduler())?;
+
+    memory_policy::setup_memory_policy(ctx.linux.memory_policy(), ctx.syscall.as_ref())?;
 
     // set up tty if specified
     if let Some(csocketfd) = args.console_socket {
