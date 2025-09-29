@@ -11,8 +11,7 @@ use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 /// Indicates status of the container
-#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub enum ContainerStatus {
     // The container is being created
     #[default]
@@ -25,6 +24,35 @@ pub enum ContainerStatus {
     Stopped(Option<i32>),
     // The container process has paused
     Paused,
+}
+
+impl Serialize for ContainerStatus {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(format!("{}", self).to_lowercase().as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ContainerStatus {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.to_ascii_lowercase().as_str() {
+            "creating" => Ok(ContainerStatus::Creating),
+            "created" => Ok(ContainerStatus::Created),
+            "running" => Ok(ContainerStatus::Running),
+            "stopped" => Ok(ContainerStatus::Stopped(None)),
+            "paused" => Ok(ContainerStatus::Paused),
+            other => Err(serde::de::Error::custom(format!(
+                "unknown container status: {}",
+                other
+            ))),
+        }
+    }
 }
 
 impl ContainerStatus {
