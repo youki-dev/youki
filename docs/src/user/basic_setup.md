@@ -28,7 +28,7 @@ Install from the GitHub release as root:
 
 <!--youki release begin-->
 ```console
-# curl -sSfL https://github.com/containers/youki/releases/download/v0.5.5/youki-0.5.5-$(uname -m)-musl.tar.gz | tar -xzvC /usr/bin/ youki
+# curl -sSfL https://github.com/youki-dev/youki/releases/download/v0.5.5/youki-0.5.5-$(uname -m)-musl.tar.gz | tar -xzvC /usr/bin/ youki
 ```
 <!--youki release end-->
 
@@ -40,7 +40,7 @@ This documentation uses Docker in its examples, which can be installed from [her
 After installing Docker, configure youki as a Docker runtime as follows:
 
 ```console
-$ cat > /etc/docker/daemon.json <<EOF
+$ sudo cat > /etc/docker/daemon.json <<EOF
 {
   "runtimes": {
     "youki": {
@@ -50,7 +50,7 @@ $ cat > /etc/docker/daemon.json <<EOF
 }
 EOF
 
-$ systemctl reload docker
+$ sudo systemctl reload docker
 ```
 
 Once configured, you can run a container using youki like this:
@@ -63,7 +63,7 @@ For more details, see [Basic Usage](./basic_usage.md).
 
 ---
 
-## Build youki from source
+## Installing youki from source
 
 ### Build Requirements
 
@@ -123,12 +123,12 @@ Currently youki can only be installed from the source code itself, so you will n
 To clone the repository, run
 
 ```console
-$ git clone https://github.com/containers/youki.git
+$ git clone https://github.com/youki-dev/youki.git
 ```
 
 This will create a directory named youki in the directory you ran the command in. This youki directory will be referred to as root directory throughout the documentation.
 
-### Installing the source
+### Build from source
 
 Once you have cloned the source, you can build it with [just](https://github.com/casey/just#installation) :
 
