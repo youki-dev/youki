@@ -325,9 +325,9 @@ impl Manager {
 
             std::thread::sleep(Duration::from_millis(20));
         }
-        return Err(SystemdManagerError::WaitForProcessInCgroupTimeout(
+        Err(SystemdManagerError::WaitForProcessInCgroupTimeout(
             pid.to_string(),
-        ));
+        ))
     }
 
     fn get_available_controllers<P: AsRef<Path>>(
