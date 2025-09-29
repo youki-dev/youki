@@ -164,8 +164,10 @@ impl Container {
                 if let Ok(proc) = Process::new(pid.as_raw()) {
                     use procfs::process::ProcState;
 
+                    let exit_code = proc.stat()?.exit_code;
+
                     match proc.stat()?.state()? {
-                        ProcState::Zombie | ProcState::Dead => ContainerStatus::Stopped,
+                        ProcState::Zombie | ProcState::Dead => ContainerStatus::Stopped(exit_code),
                         _ => match self.status() {
                             ContainerStatus::Creating
                             | ContainerStatus::Created
@@ -174,10 +176,10 @@ impl Container {
                         },
                     }
                 } else {
-                    ContainerStatus::Stopped
+                    ContainerStatus::Stopped(None)
                 }
             }
-            None => ContainerStatus::Stopped,
+            None => ContainerStatus::Stopped(None),
         };
 
         self.set_status(new_status);
@@ -315,7 +317,7 @@ mod tests {
         container_1.save()?;
         let container_2 = Container::load(tmp_dir.path().to_path_buf())?;
         assert_eq!(container_1.state.id, container_2.state.id);
-        assert_eq!(container_2.state.status, ContainerStatus::Stopped);
+        assert_eq!(container_2.state.status, ContainerStatus::Stopped(None));
 
         container_1.state.id = "container_id_1_modified".to_string();
         container_1.save()?;
@@ -359,12 +361,12 @@ mod tests {
 
         // no PID case
         container.refresh_status()?;
-        assert_eq!(container.status(), ContainerStatus::Stopped);
+        assert_eq!(container.status(), ContainerStatus::Stopped(None));
 
         // with PID case but PID not exists
         container.set_pid(-1);
         container.refresh_status()?;
-        assert_eq!(container.status(), ContainerStatus::Stopped);
+        assert_eq!(container.status(), ContainerStatus::Stopped(None));
 
         // with PID case
         container.set_pid(1);

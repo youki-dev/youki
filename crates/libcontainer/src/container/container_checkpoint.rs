@@ -6,6 +6,7 @@ use libcgroups::common::CgroupSetup::{Hybrid, Legacy};
 #[cfg(feature = "v1")]
 use libcgroups::common::DEFAULT_CGROUP_ROOT;
 use oci_spec::runtime::Spec;
+use procfs::process::Process;
 
 use super::{Container, ContainerStatus};
 use crate::container::container::CheckpointOptions;
@@ -155,10 +156,21 @@ impl Container {
         })?;
 
         if !opts.leave_running {
-            self.set_status(ContainerStatus::Stopped).save()?;
+            let exit_code = capture_exit_code_after_dump(pid);
+            self.set_status(ContainerStatus::Stopped(exit_code))
+                .save()?;
         }
 
         tracing::debug!("container {} checkpointed", self.id());
         Ok(())
     }
+}
+
+fn capture_exit_code_after_dump(pid: i32) -> Option<i32> {
+    if let Ok(p) = Process::new(pid) {
+        if let Ok(stat) = p.stat() {
+            return stat.exit_code;
+        }
+    }
+    None
 }

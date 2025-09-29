@@ -9,6 +9,7 @@ use crate::config::YoukiConfig;
 use crate::error::LibcontainerError;
 use crate::hooks;
 use crate::process::intel_rdt::delete_resctrl_subdirectory;
+use crate::signal::Signal;
 
 impl Container {
     /// Deletes the container
@@ -38,7 +39,7 @@ impl Container {
 
         // Check if container is allowed to be deleted based on container status.
         match self.status() {
-            ContainerStatus::Stopped => {}
+            ContainerStatus::Stopped(_) => {}
             ContainerStatus::Created => {
                 // Here, we differ from the OCI spec, but matches the same
                 // behavior as `runc` and `crun`. The OCI spec does not allow
@@ -46,7 +47,9 @@ impl Container {
                 // `runc` and `crun` allows deleting `created`. Therefore we
                 // decided to follow `runc` and `crun`.
                 self.do_kill(signal::Signal::SIGKILL, true)?;
-                self.set_status(ContainerStatus::Stopped).save()?;
+                let exit_code = Signal::from(signal::Signal::SIGKILL).exit_code();
+                self.set_status(ContainerStatus::Stopped(Some(exit_code)))
+                    .save()?;
             }
             ContainerStatus::Creating | ContainerStatus::Running | ContainerStatus::Paused => {
                 // Containers can't be deleted while in these status, unless
@@ -54,7 +57,9 @@ impl Container {
                 // processes associated with containers.
                 if force {
                     self.do_kill(signal::Signal::SIGKILL, true)?;
-                    self.set_status(ContainerStatus::Stopped).save()?;
+                    let exit_code = Signal::from(signal::Signal::SIGKILL).exit_code();
+                    self.set_status(ContainerStatus::Stopped(Some(exit_code)))
+                        .save()?;
                 } else {
                     tracing::error!(
                         id = ?self.id(),

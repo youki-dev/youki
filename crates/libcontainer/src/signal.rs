@@ -77,6 +77,10 @@ impl Signal {
     pub(crate) fn into_raw(self) -> NixSignal {
         self.0
     }
+
+    pub(crate) fn exit_code(&self) -> i32 {
+        128 + self.0 as i32
+    }
 }
 
 #[cfg(test)]

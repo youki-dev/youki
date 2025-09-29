@@ -22,7 +22,7 @@ pub enum ContainerStatus {
     // The container process has executed the user-specified program but has not exited
     Running,
     // The container process has exited
-    Stopped,
+    Stopped(Option<i32>),
     // The container process has paused
     Paused,
 }
@@ -35,13 +35,13 @@ impl ContainerStatus {
     pub fn can_kill(&self) -> bool {
         use ContainerStatus::*;
         match self {
-            Creating | Stopped => false,
+            Creating | Stopped(_) => false,
             Created | Running | Paused => true,
         }
     }
 
     pub fn can_delete(&self) -> bool {
-        matches!(self, ContainerStatus::Stopped)
+        matches!(self, ContainerStatus::Stopped(_))
     }
 
     pub fn can_pause(&self) -> bool {
@@ -59,7 +59,7 @@ impl Display for ContainerStatus {
             Self::Creating => "Creating",
             Self::Created => "Created",
             Self::Running => "Running",
-            Self::Stopped => "Stopped",
+            Self::Stopped(_) => "Stopped",
             Self::Paused => "Paused",
         };
 
@@ -286,7 +286,7 @@ mod tests {
 
     #[test]
     fn test_stopped_status() {
-        let cstatus = ContainerStatus::Stopped;
+        let cstatus = ContainerStatus::Stopped(None);
         assert!(!cstatus.can_start());
         assert!(cstatus.can_delete());
         assert!(!cstatus.can_kill());
