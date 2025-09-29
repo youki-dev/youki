@@ -29,19 +29,22 @@ impl Container {
     /// ```
     pub fn kill<S: Into<Signal>>(&mut self, signal: S, all: bool) -> Result<(), LibcontainerError> {
         self.refresh_status()?;
+        let sig: Signal = signal.into();
+        let exit_code = sig.exit_code();
         match self.can_kill() {
             true => {
-                self.do_kill(signal, all)?;
+                self.do_kill(sig, all)?;
             }
-            false if all && self.status() == ContainerStatus::Stopped => {
-                self.do_kill(signal, all)?;
+            false if all && matches!(self.status(), ContainerStatus::Stopped(_)) => {
+                self.do_kill(sig, all)?;
             }
             false => {
                 tracing::error!(id = ?self.id(), status = ?self.status(), "cannot kill container due to incorrect state");
                 return Err(LibcontainerError::IncorrectStatus);
             }
         }
-        self.set_status(ContainerStatus::Stopped).save()?;
+        self.set_status(ContainerStatus::Stopped(Some(exit_code)))
+            .save()?;
         Ok(())
     }
 
