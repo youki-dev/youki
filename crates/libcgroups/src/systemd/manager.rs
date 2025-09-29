@@ -313,16 +313,13 @@ impl Manager {
         let start = Instant::now();
         let timeout = Duration::from_secs(5);
         while start.elapsed() < timeout {
-            match self.fs_manager.get_all_pids() {
-                Ok(pids) => {
-                    if pids.contains(&pid) {
-                        tracing::debug!("Process {} successfully added to cgroup", pid);
-                        return Ok(());
-                    }
+            // If it fails, it most likely means that the cgroup hasn't been set up yet.
+            if let Ok(pids) = self.fs_manager.get_all_pids() {
+                if pids.contains(&pid) {
+                    tracing::debug!("Process {} successfully added to cgroup", pid);
+                    return Ok(());
                 }
-                Err(e) => return Err(SystemdManagerError::V2Manager(e)),
             }
-
             std::thread::sleep(Duration::from_millis(20));
         }
         Err(SystemdManagerError::WaitForProcessInCgroupTimeout(
