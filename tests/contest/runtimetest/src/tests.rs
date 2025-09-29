@@ -606,27 +606,7 @@ fn numa_maps_indicates_node0(policy_field: &str) -> bool {
 pub fn validate_memory_policy(spec: &Spec) {
     let linux = spec.linux().as_ref().unwrap();
     let memory_policy = linux.memory_policy();
-
     let expected_mode = memory_policy.as_ref().map(|p| p.mode());
-    if expected_mode.is_none() {
-        return;
-    }
-    let expected = expected_mode.unwrap();
-
-    if memory_policy.is_none() {
-        eprintln!("memory policy expected but not found in spec");
-        return;
-    }
-
-    let policy = memory_policy.as_ref().unwrap();
-    if policy.mode() != expected {
-        eprintln!(
-            "memory policy mode mismatch: expected {:?}, got {:?}",
-            expected,
-            policy.mode()
-        );
-        return;
-    }
 
     // Read and parse /proc/self/numa_maps to verify the policy is applied
     let numa_maps_content = match fs::read_to_string("/proc/self/numa_maps") {
