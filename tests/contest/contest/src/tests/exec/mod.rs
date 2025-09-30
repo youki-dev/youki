@@ -1,3 +1,4 @@
+mod cap_test;
 mod cgroup_test;
 mod ignore_paused_test;
 mod preserve_fds_test;
@@ -6,18 +7,15 @@ use anyhow::{Context, Result};
 use oci_spec::runtime::{ProcessBuilder, Spec, SpecBuilder};
 use test_framework::{Test, TestGroup};
 
-fn create_spec() -> Result<Spec> {
+fn create_spec(process: Option<ProcessBuilder>) -> Result<Spec> {
+    let p = process.unwrap_or_default().args(
+        ["sleep", "1000"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<String>>(),
+    );
     SpecBuilder::default()
-        .process(
-            ProcessBuilder::default()
-                .args(
-                    ["sleep", "1000"]
-                        .iter()
-                        .map(|s| s.to_string())
-                        .collect::<Vec<String>>(),
-                )
-                .build()?,
-        )
+        .process(p.build()?)
         .build()
         .context("failed to create spec")
 }
@@ -36,11 +34,16 @@ pub fn get_exec_test() -> TestGroup {
     );
 
     let cgroup_test = Test::new("cgroup_test", Box::new(cgroup_test::cgroup_test));
+    let no_capabilities_test = Test::new(
+        "no_capabilities_test",
+        Box::new(cap_test::get_test_no_capabilities),
+    );
 
     test_group.add(vec![
         Box::new(preserve_fds_test),
         Box::new(ignore_paused_test),
         Box::new(cgroup_test),
+        Box::new(no_capabilities_test),
     ]);
 
     test_group

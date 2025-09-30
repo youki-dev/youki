@@ -11,7 +11,7 @@ use crate::utils::test_utils::{
 };
 
 pub(crate) fn preserve_fds_test() -> TestResult {
-    let spec = test_result!(super::create_spec());
+    let spec = test_result!(super::create_spec(None));
 
     test_outside_container(&spec, &|data| {
         test_result!(check_container_created(&data));

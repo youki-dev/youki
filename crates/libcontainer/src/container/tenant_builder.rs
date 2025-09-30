@@ -497,7 +497,7 @@ impl TenantContainerBuilder {
                 }
             }
 
-            if let Some(no_new_priv) = self.get_no_new_privileges() {
+            if let Some(no_new_priv) = self.get_no_new_privileges(spec) {
                 process_builder = process_builder.no_new_privileges(no_new_priv);
             }
 
@@ -612,8 +612,10 @@ impl TenantContainerBuilder {
         env
     }
 
-    fn get_no_new_privileges(&self) -> Option<bool> {
+    fn get_no_new_privileges(&self, spec: &Spec) -> Option<bool> {
         self.no_new_privs
+            .filter(|&is_set| is_set)
+            .or_else(|| spec.process().clone().and_then(|p| p.no_new_privileges()))
     }
 
     fn get_namespaces(
