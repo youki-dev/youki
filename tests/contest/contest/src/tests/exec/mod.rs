@@ -43,6 +43,14 @@ pub fn get_exec_test() -> TestGroup {
         "some_capabilities_test",
         Box::new(cap_test::get_test_some_capabilities),
     );
+    let capabilities_by_flag_test_case1 = Test::new(
+        "capabilities_by_flag_test_case1",
+        Box::new(cap_test::get_test_capabilities_by_flag_case1),
+    );
+    let capabilities_by_flag_test_case2 = Test::new(
+        "capabilities_by_flag_test_case2",
+        Box::new(cap_test::get_test_capabilities_by_flag_case2),
+    );
 
     test_group.add(vec![
         Box::new(preserve_fds_test),
@@ -51,6 +59,8 @@ pub fn get_exec_test() -> TestGroup {
         Box::new(no_capabilities_test),
         Box::new(new_privileges_test),
         Box::new(some_capabilities_test),
+        Box::new(capabilities_by_flag_test_case1),
+        Box::new(capabilities_by_flag_test_case2),
     ]);
 
     test_group
