@@ -38,12 +38,17 @@ pub fn get_exec_test() -> TestGroup {
         "no_capabilities_test",
         Box::new(cap_test::get_test_no_capabilities),
     );
+    let new_privileges_test = Test::new(
+        "new_privileges_test",
+        Box::new(cap_test::get_test_new_privileges),
+    );
 
     test_group.add(vec![
         Box::new(preserve_fds_test),
         Box::new(ignore_paused_test),
         Box::new(cgroup_test),
         Box::new(no_capabilities_test),
+        Box::new(new_privileges_test),
     ]);
 
     test_group
