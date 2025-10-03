@@ -1,7 +1,7 @@
 # youki: A container runtime in Rust
 
 [![Discord](https://img.shields.io/discord/849943000770412575.svg?logo=discord)](https://discord.gg/zHnyXKSQFD)
-[![GitHub contributors](https://img.shields.io/github/contributors/containers/youki)](https://github.com/youki-dev/youki/graphs/contributors)
+[![GitHub contributors](https://img.shields.io/github/contributors/youki-dev/youki)](https://github.com/youki-dev/youki/graphs/contributors)
 [![Github CI](https://github.com/youki-dev/youki/actions/workflows/basic.yml/badge.svg?branch=main)](https://github.com/youki-dev/youki/actions)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fyouki-dev%2Fyouki.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fyouki-dev%2Fyouki?ref=badge_shield)
 
@@ -22,7 +22,7 @@ youki is named after the Japanese word 'youki', which means 'a container'. In Ja
 > [!TIP]
 > You can immediately set up your environment with youki on GitHub Codespaces and try it out.  
 >
-> [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/containers/youki?quickstart=1)
+> [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/youki-dev/youki?quickstart=1)
 > ```console
 > $ just build
 > $ docker run --runtime youki hello-world
@@ -92,7 +92,7 @@ We have [our roadmap](https://github.com/orgs/containers/projects/15).
 
 # 🔗 Related project
 
-- [containers/oci-spec-rs](https://github.com/containers/oci-spec-rs) - OCI Runtime and Image Spec in Rust
+- [youki-dev/oci-spec-rs](https://github.com/youki-dev/oci-spec-rs) - OCI Runtime and Image Spec in Rust
 
 # 🎨 Design and implementation of youki
 
@@ -142,7 +142,7 @@ $ sudo dnf install          \
 ## Build
 
 ```bash
-$ git clone git@github.com:containers/youki.git
+$ git clone git@github.com:youki-dev/youki.git
 $ cd youki
 $ just youki-dev # or youki-release
 $ ./youki -h # you can get information about youki command
@@ -159,7 +159,7 @@ $ ./youki -h # you can get information about youki command
 Let's try to run a container that executes `sleep 30` with youki. This tutorial may need root permission.
 
 ```bash
-$ git clone git@github.com:containers/youki.git
+$ git clone git@github.com:youki-dev/youki.git
 $ cd youki
 $ just youki-dev # or youki-release
 
@@ -225,7 +225,7 @@ Start the docker daemon.
 $ dockerd --experimental --add-runtime="youki=$(pwd)/youki"
 ```
 
-If you get an error like the below, that means your normal Docker daemon is running, and it needs to be stopped. Do that with your init system (i.e., with systemd, run `sudp systemctl stop docker`, as root if necessary).
+If you get an error like the below, that means your normal Docker daemon is running, and it needs to be stopped. Do that with your init system (i.e., with systemd, run `sudo systemctl stop docker`, as root if necessary).
 
 ```console
 failed to start daemon: pid file found, ensure docker is not running or delete /var/run/docker.pid
@@ -259,7 +259,7 @@ $ just test-oci
 You can try youki on platforms other than Linux by using the Vagrantfile we have prepared. We have prepared two environments for vagrant, namely rootless mode and rootful mode
 
 ```bash
-$ git clone git@github.com:containers/youki.git
+$ git clone git@github.com:youki-dev/youki.git
 $ cd youki
 
 # If you want to develop in rootless mode, and this is the default mode
@@ -282,7 +282,7 @@ Please refer to [our community page](https://youki-dev.github.io/youki/community
 Thanks to all the people who already contributed!
 
 <a href="https://github.com/youki-dev/youki/graphs/contributors">
-  <img src="https://contributors-img.web.app/image?repo=containers/youki" />
+  <img src="https://contributors-img.web.app/image?repo=youki-dev/youki" />
 </a>
 
 - - -
