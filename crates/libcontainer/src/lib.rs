@@ -21,6 +21,6 @@ pub mod workload;
 
 // Because the `libcontainer` api uses the oci_spec who resides in a different
 // crate, we re-export the version of oci_spec this crate uses.
-// Ref: https://github.com/containers/youki/issues/2066
+// Ref: https://github.com/youki-dev/youki/issues/2066
 // Ref: https://github.com/rust-lang/api-guidelines/discussions/176
 pub use oci_spec;

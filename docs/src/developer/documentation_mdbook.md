@@ -12,16 +12,16 @@ When testing locally you can manually test the changes by running `mdbook serve`
 If you want to test it using gh-pages on your own fork, you can use following steps in the docs directory.
 
 ```console
-git worktree prune
+$ git worktree prune
 # Do this if you are running this command first time after booting,
 # As after shutdown /tmp files are removed
-git branch -D gh-pages && git worktree add /tmp/book -b gh-pages
-mdbook build
-rm -rf /tmp/book/* # this won't delete the .git directory
-cp -rp book/* /tmp/book/
-cd /tmp/book
-git add -A
-git commit 'new book message'
-git push -f origin gh-pages
-cd -
+$ git branch -D gh-pages && git worktree add /tmp/book -b gh-pages
+$ mdbook build
+$ rm -rf /tmp/book/* # this won't delete the .git directory
+$ cp -rp book/* /tmp/book/
+$ cd /tmp/book
+$ git add -A
+$ git commit 'new book message'
+$ git push -f origin gh-pages
+$ cd -
 ```

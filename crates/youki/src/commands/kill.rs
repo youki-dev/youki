@@ -15,7 +15,7 @@ pub fn kill(args: Kill, root_path: PathBuf) -> Result<()> {
     match container.kill(signal, args.all) {
         Ok(_) => Ok(()),
         Err(e) => {
-            // see https://github.com/containers/youki/issues/1314
+            // see https://github.com/youki-dev/youki/issues/1314
             if container.status() == ContainerStatus::Stopped {
                 return Err(anyhow!(e).context("container not running"));
             }

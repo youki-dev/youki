@@ -1,8 +1,8 @@
 # youki: A container runtime in Rust
 
 [![Discord](https://img.shields.io/discord/849943000770412575.svg?logo=discord)](https://discord.gg/zHnyXKSQFD)
-[![GitHub contributors](https://img.shields.io/github/contributors/containers/youki)](https://github.com/containers/youki/graphs/contributors)
-[![Github CI](https://github.com/containers/youki/actions/workflows/basic.yml/badge.svg?branch=main)](https://github.com/containers/youki/actions)
+[![GitHub contributors](https://img.shields.io/github/contributors/youki-dev/youki)](https://github.com/youki-dev/youki/graphs/contributors)
+[![Github CI](https://github.com/youki-dev/youki/actions/workflows/basic.yml/badge.svg?branch=main)](https://github.com/youki-dev/youki/actions)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fyouki-dev%2Fyouki.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fyouki-dev%2Fyouki?ref=badge_shield)
 
 <p align="center">
@@ -10,7 +10,7 @@
 </p>
 
 **youki** is an implementation of the [OCI runtime-spec](https://github.com/opencontainers/runtime-spec) in Rust, similar to [runc](https://github.com/opencontainers/runc).  
-Your ideas are welcome [here](https://github.com/containers/youki/issues/10).
+Your ideas are welcome [here](https://github.com/youki-dev/youki/issues/10).
 
 # 🏷️ About the name
 
@@ -22,7 +22,7 @@ youki is named after the Japanese word 'youki', which means 'a container'. In Ja
 > [!TIP]
 > You can immediately set up your environment with youki on GitHub Codespaces and try it out.  
 >
-> [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/containers/youki?quickstart=1)
+> [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/youki-dev/youki?quickstart=1)
 > ```console
 > $ just build
 > $ docker run --runtime youki hello-world
@@ -92,7 +92,7 @@ We have [our roadmap](https://github.com/orgs/containers/projects/15).
 
 # 🔗 Related project
 
-- [containers/oci-spec-rs](https://github.com/containers/oci-spec-rs) - OCI Runtime and Image Spec in Rust
+- [youki-dev/oci-spec-rs](https://github.com/youki-dev/oci-spec-rs) - OCI Runtime and Image Spec in Rust
 
 # 🎨 Design and implementation of youki
 
@@ -142,10 +142,10 @@ $ sudo dnf install          \
 ## Build
 
 ```bash
-git clone git@github.com:containers/youki.git
-cd youki
-just youki-dev # or youki-release
-./youki -h # you can get information about youki command
+$ git clone git@github.com:youki-dev/youki.git
+$ cd youki
+$ just youki-dev # or youki-release
+$ ./youki -h # you can get information about youki command
 ```
 
 ## Tutorial
@@ -159,20 +159,20 @@ just youki-dev # or youki-release
 Let's try to run a container that executes `sleep 30` with youki. This tutorial may need root permission.
 
 ```bash
-git clone git@github.com:containers/youki.git
-cd youki
-just youki-dev # or youki-release
+$ git clone git@github.com:youki-dev/youki.git
+$ cd youki
+$ just youki-dev # or youki-release
 
-mkdir -p tutorial/rootfs
-cd tutorial
+$ mkdir -p tutorial/rootfs
+$ cd tutorial
 # use docker to export busybox into the rootfs directory
-docker export $(docker create busybox) | tar -C rootfs -xvf -
+$ docker export $(docker create busybox) | tar -C rootfs -xvf -
 ```
 
 Then, we need to prepare a configuration file. This file contains metadata and specs for a container, such as the process to run, environment variables to inject, sandboxing features to use, etc.
 
 ```bash
-../youki spec  # will generate a spec file named config.json
+$ ../youki spec  # will generate a spec file named config.json
 ```
 
 We can edit the `config.json` to add customized behaviors for container. Here, we modify the `process` field to run `sleep 30`.
@@ -191,12 +191,12 @@ We can edit the `config.json` to add customized behaviors for container. Here, w
 Then we can explore the lifecycle of a container:
 
 ```bash
-cd ..                                                # go back to the repository root
-sudo ./youki create -b tutorial tutorial_container   # create a container with name `tutorial_container`
-sudo ./youki state tutorial_container                # you can see the state the container is `created`
-sudo ./youki start tutorial_container                # start the container
-sudo ./youki list                                    # will show the list of containers, the container is `running`
-sudo ./youki delete tutorial_container               # delete the container
+$ cd ..                                                # go back to the repository root
+$ sudo ./youki create -b tutorial tutorial_container   # create a container with name `tutorial_container`
+$ sudo ./youki state tutorial_container                # you can see the state the container is `created`
+$ sudo ./youki start tutorial_container                # start the container
+$ sudo ./youki list                                    # will show the list of containers, the container is `running`
+$ sudo ./youki delete tutorial_container               # delete the container
 ```
 
 Change the command to be executed in `config.json` and try something other than `sleep 30`.
@@ -222,10 +222,10 @@ $ ../youki run rootless-container   # will create and run a container with rootl
 Start the docker daemon.
 
 ```bash
-dockerd --experimental --add-runtime="youki=$(pwd)/youki"
+$ dockerd --experimental --add-runtime="youki=$(pwd)/youki"
 ```
 
-If you get an error like the below, that means your normal Docker daemon is running, and it needs to be stopped. Do that with your init system (i.e., with systemd, run `systemctl stop docker`, as root if necessary).
+If you get an error like the below, that means your normal Docker daemon is running, and it needs to be stopped. Do that with your init system (i.e., with systemd, run `sudo systemctl stop docker`, as root if necessary).
 
 ```console
 failed to start daemon: pid file found, ensure docker is not running or delete /var/run/docker.pid
@@ -236,13 +236,13 @@ Now repeat the command, which should start the docker daemon.
 You can use youki in a different terminal to start the container.
 
 ```bash
-docker run -it --rm --runtime youki busybox
+$ docker run -it --rm --runtime youki busybox
 ```
 
 Afterwards, you can close the docker daemon process in other the other terminal. To restart normal docker daemon (if you had stopped it before), run:
 
 ```bash
-systemctl start docker # might need root permission
+$ sudo systemctl start docker
 ```
 
 ### Integration Tests
@@ -250,8 +250,8 @@ systemctl start docker # might need root permission
 Go and node-tap are required to run integration tests. See the [opencontainers/runtime-tools](https://github.com/opencontainers/runtime-tools) README for details.
 
 ```bash
-git submodule update --init --recursive
-just test-oci
+$ git submodule update --init --recursive
+$ just test-oci
 ```
 
 ### Setting up Vagrant
@@ -259,20 +259,20 @@ just test-oci
 You can try youki on platforms other than Linux by using the Vagrantfile we have prepared. We have prepared two environments for vagrant, namely rootless mode and rootful mode
 
 ```bash
-git clone git@github.com:containers/youki.git
-cd youki
+$ git clone git@github.com:youki-dev/youki.git
+$ cd youki
 
 # If you want to develop in rootless mode, and this is the default mode
-vagrant up default
-vagrant ssh default
+$ vagrant up default
+$ vagrant ssh default
 
 # or if you want to develop in rootful mode
-vagrant up rootful
-vagrant ssh rootful
+$ vagrant up rootful
+$ vagrant ssh rootful
 
 # in virtual machine
-cd youki
-just youki-dev # or youki-release
+$ cd youki
+$ just youki-dev # or youki-release
 ```
 
 # 👥 Community and Contributing
@@ -281,8 +281,8 @@ Please refer to [our community page](https://youki-dev.github.io/youki/community
 
 Thanks to all the people who already contributed!
 
-<a href="https://github.com/containers/youki/graphs/contributors">
-  <img src="https://contributors-img.web.app/image?repo=containers/youki" />
+<a href="https://github.com/youki-dev/youki/graphs/contributors">
+  <img src="https://contributors-img.web.app/image?repo=youki-dev/youki" />
 </a>
 
 - - -
