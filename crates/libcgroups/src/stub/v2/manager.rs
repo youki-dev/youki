@@ -33,6 +33,10 @@ impl CgroupManager for Manager {
         Err(V2ManagerError::NotEnabled)
     }
 
+    fn get_freezer_state(&self) -> Result<crate::common::FreezerState, Self::Error> {
+        Err(V2ManagerError::NotEnabled)
+    }
+
     fn stats(&self) -> Result<crate::stats::Stats, Self::Error> {
         Err(V2ManagerError::NotEnabled)
     }
