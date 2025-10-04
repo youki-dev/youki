@@ -1,5 +1,4 @@
-use std::fs::OpenOptions;
-use std::fs::read_to_string;
+use std::fs::{OpenOptions, read_to_string};
 use std::io::Read;
 use std::path::Path;
 use std::{thread, time};
@@ -101,7 +100,9 @@ impl Freezer {
                             }
                             _ => {
                                 // should not reach here.
-                                return Err(V1FreezerControllerError::UnexpectedState { state: state });
+                                return Err(V1FreezerControllerError::UnexpectedState {
+                                    state: state,
+                                });
                             }
                         }
                     }
