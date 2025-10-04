@@ -2,9 +2,31 @@ use libcontainer::oci_spec::runtime::Spec;
 use libcontainer::workload::{Executor, ExecutorError, ExecutorValidationError};
 
 #[derive(Clone)]
-pub struct DefaultExecutor {}
+pub struct DefaultExecutor {
+    #[cfg(feature = "libkrun")]
+    libkrun: super::libkrun::LibkrunExecutor,
+}
+
+impl DefaultExecutor {
+    pub fn new() -> Self {
+        Self {
+            #[cfg(feature = "libkrun")]
+            libkrun: super::libkrun::get_executor(),
+        }
+    }
+}
 
 impl Executor for DefaultExecutor {
+    fn pre_exec(&self, spec: Spec) -> Result<Spec, ExecutorError> {
+        #[cfg(feature = "libkrun")]
+        {
+            if super::libkrun::can_handle(&spec) {
+                return self.libkrun.pre_exec(spec);
+            }
+        }
+        Ok(spec)
+    }
+
     fn exec(&self, spec: &Spec) -> Result<(), ExecutorError> {
         #[cfg(feature = "wasm-wasmer")]
         match super::wasmer::get_executor().exec(spec) {
@@ -23,6 +45,14 @@ impl Executor for DefaultExecutor {
             Ok(_) => return Ok(()),
             Err(ExecutorError::CantHandle(_)) => (),
             Err(err) => return Err(err),
+        }
+        #[cfg(feature = "libkrun")]
+        {
+            match self.libkrun.exec(spec) {
+                Ok(_) => return Ok(()),
+                Err(ExecutorError::CantHandle(_)) => (),
+                Err(err) => return Err(err),
+            }
         }
 
         // Leave the default executor as the last option, which executes normal
@@ -49,11 +79,16 @@ impl Executor for DefaultExecutor {
             Err(ExecutorValidationError::CantHandle(_)) => (),
             Err(err) => return Err(err),
         }
-
+        #[cfg(feature = "libkrun")]
+        match self.libkrun.validate(spec) {
+            Ok(_) => return Ok(()),
+            Err(ExecutorValidationError::CantHandle(_)) => (),
+            Err(err) => return Err(err),
+        }
         libcontainer::workload::default::get_executor().validate(spec)
     }
 }
 
 pub fn default_executor() -> DefaultExecutor {
-    DefaultExecutor {}
+    DefaultExecutor::new()
 }

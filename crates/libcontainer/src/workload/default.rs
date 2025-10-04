@@ -10,6 +10,10 @@ use super::{Executor, ExecutorError, ExecutorValidationError};
 pub struct DefaultExecutor {}
 
 impl Executor for DefaultExecutor {
+    fn pre_exec(&self, spec: Spec) -> Result<Spec, ExecutorError> {
+        Ok(spec)
+    }
+
     fn exec(&self, spec: &Spec) -> Result<(), ExecutorError> {
         tracing::debug!("executing workload with default handler");
         let args = spec
