@@ -387,12 +387,7 @@ pub fn container_init_process(
     }
 
     // add HOME into envs if not exists
-    if !ctx.envs.contains_key("HOME") {
-        if let Some(dir_home) = utils::get_user_home(ctx.process.user().uid()) {
-            ctx.envs
-                .insert("HOME".to_owned(), dir_home.to_string_lossy().to_string());
-        }
-    }
+    set_home_env_if_not_exists(&mut ctx.envs, ctx.process.user().uid().into());
 
     args.executor.validate(ctx.spec)?;
     args.executor.setup_envs(ctx.envs)?;
@@ -1002,6 +997,15 @@ fn verify_cwd() -> Result<()> {
     Ok(())
 }
 
+// Set the HOME environment variable if it is not already set or is empty.
+fn set_home_env_if_not_exists(envs: &mut HashMap<String, String>, uid: Uid) {
+    if envs.get("HOME").is_none_or(|v| v.is_empty()) {
+        if let Some(dir_home) = utils::get_user_home(uid.into()) {
+            envs.insert("HOME".to_owned(), dir_home.to_string_lossy().to_string());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -1317,5 +1321,31 @@ mod tests {
         };
         let set_io_prioritys = test_command.get_io_priority_args();
         assert_eq!(set_io_prioritys[0], want_io_priority);
+    }
+
+    #[test]
+    fn test_set_home_env_if_not_exists_already_exists() {
+        let mut envs = HashMap::new();
+        envs.insert("HOME".to_owned(), "/existing/home".to_owned());
+
+        set_home_env_if_not_exists(&mut envs, Uid::from_raw(0));
+        assert_eq!(envs.get("HOME"), Some(&"/existing/home".to_string()));
+    }
+
+    #[test]
+    fn test_set_home_env_if_not_exists_already_exists_but_empty_value() {
+        let mut envs = HashMap::new();
+        envs.insert("HOME".to_owned(), "".to_owned());
+
+        set_home_env_if_not_exists(&mut envs, Uid::from_raw(0));
+        assert_eq!(envs.get("HOME"), Some(&"/root".to_string()));
+    }
+
+    #[test]
+    fn test_set_home_env_if_not_exists_not_set() {
+        let mut envs = HashMap::new();
+
+        set_home_env_if_not_exists(&mut envs, Uid::from_raw(0));
+        assert_eq!(envs.get("HOME"), Some(&"/root".to_string()));
     }
 }
