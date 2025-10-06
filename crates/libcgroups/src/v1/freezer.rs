@@ -100,9 +100,7 @@ impl Freezer {
                             }
                             _ => {
                                 // should not reach here.
-                                return Err(V1FreezerControllerError::UnexpectedState {
-                                    state: state,
-                                });
+                                return Err(V1FreezerControllerError::UnexpectedState { state });
                             }
                         }
                     }
