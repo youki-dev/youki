@@ -38,7 +38,7 @@ nix = { version = "0.29.0", features = [
     "hostname",
     "personality",
 ] }
-oci-spec = { version = "0.8.2", features = ["runtime"] }
+oci-spec = { version = "0.8.3", features = ["runtime"] }
 once_cell = "1.21.3"
 procfs = "0.17.0"
 prctl = "1.0.0"
@@ -55,7 +55,7 @@ safe-path = "0.1.0"
 nc = "0.9.6"
 
 [dev-dependencies]
-oci-spec = { version = "~0.8.2", features = ["proptests", "runtime"] }
+oci-spec = { version = "~0.8.3", features = ["proptests", "runtime"] }
 quickcheck = "1"
 serial_test = "3.1.1"
 tempfile = "3"
