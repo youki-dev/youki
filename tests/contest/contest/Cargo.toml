@@ -23,12 +23,19 @@ uuid = "1.16"
 which = "7.0.2"
 tempfile = "3"
 scopeguard = "1.2.0"
-tracing = { version = "0.1.41", features = ["attributes"]}
+tracing = { version = "0.1.41", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.20", features = ["json", "env-filter"] }
 regex = "1"
 
 [dependencies.clap]
 version = "4.5.13"
 default-features = false
-features = ["std", "suggestions", "derive", "cargo", "help", "usage", "error-context"]
-
+features = [
+    "std",
+    "suggestions",
+    "derive",
+    "cargo",
+    "help",
+    "usage",
+    "error-context",
+]
