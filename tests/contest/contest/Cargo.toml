@@ -10,7 +10,7 @@ libcgroups = { path = "../../../crates/libcgroups" }
 libcontainer = { path = "../../../crates/libcontainer" }
 nix = "0.29.0"
 num_cpus = "1.17"
-oci-spec = { version = "0.8.2", features = ["runtime"] }
+oci-spec = { version = "0.8.3", features = ["runtime"] }
 once_cell = "1.21.3"
 pnet_datalink = "0.35.0"
 procfs = "0.17.0"
@@ -23,12 +23,19 @@ uuid = "1.16"
 which = "7.0.2"
 tempfile = "3"
 scopeguard = "1.2.0"
-tracing = { version = "0.1.41", features = ["attributes"]}
+tracing = { version = "0.1.41", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.19", features = ["json", "env-filter"] }
 regex = "1"
 
 [dependencies.clap]
 version = "4.1.6"
 default-features = false
-features = ["std", "suggestions", "derive", "cargo", "help", "usage", "error-context"]
-
+features = [
+    "std",
+    "suggestions",
+    "derive",
+    "cargo",
+    "help",
+    "usage",
+    "error-context",
+]
