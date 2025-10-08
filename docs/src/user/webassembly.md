@@ -11,19 +11,19 @@ There are 3 things you need to do to run a WebAssembly module with youki.
 - Run `build.sh` with `-f wasm-wasmedge` option.
 
     ```bash
-    $ ./scripts/build.sh -o . -r -f wasm-wasmedge
+    ./scripts/build.sh -o . -r -f wasm-wasmedge
     ```
 
 - Run `build.sh` with `-f wasm-wasmer` option.
 
     ```bash
-    $ ./scripts/build.sh -o . -r -f wasm-wasmer
+    ./scripts/build.sh -o . -r -f wasm-wasmer
     ```
 
 - Run `build.sh` with `-f wasm-wasmtime` option.
 
     ```bash
-    $ ./scripts/build.sh -o . -r -f wasm-wasmtime
+    ./scripts/build.sh -o . -r -f wasm-wasmtime
     ```
 
 ## Build a container image with the WebAssembly module
@@ -53,10 +53,10 @@ It also needs to specify a valid .wasm (webassembly binary) or .wat (webassembly
 A simple wasm module can be created by running
 
 ```console
-$ rustup target add wasm32-wasi
-$ cargo new wasm-module --bin
-$ cd ./wasm-module
-$ vi src/main.rs
+rustup target add wasm32-wasi
+cargo new wasm-module --bin
+cd ./wasm-module
+vi src/main.rs
 ```
 
 ```rust
@@ -76,7 +76,7 @@ fn main() {
 Then compile the program to WASI.
 
 ```console
-$ cargo build --target wasm32-wasi
+cargo build --target wasm32-wasi
 ```
 
 ### Build a container image with the module
@@ -84,7 +84,7 @@ $ cargo build --target wasm32-wasi
 Create a Dockerfile.
 
 ```console
-$ vi Dockerfile
+vi Dockerfile
 ```
 
 ```Dockerfile
@@ -96,7 +96,7 @@ ENTRYPOINT ["wasm-module.wasm"]
 Then build a container image with `module.wasm.image/variant=compat` annotation. [^1]
 
 ```console
-$ sudo buildah build --annotation "module.wasm.image/variant=compat" -t wasm-module .
+sudo buildah build --annotation "module.wasm.image/variant=compat" -t wasm-module .
 ```
 
 ## Run the wasm module with youki and podman
@@ -104,7 +104,7 @@ $ sudo buildah build --annotation "module.wasm.image/variant=compat" -t wasm-mod
 Run podman with youki as runtime. [^1]
 
 ```bash
-$ sudo podman --runtime /PATH/WHARE/YOU/BUILT/WITH/WASM-WASMER/youki run localhost/wasm-module 1 2 3
+sudo podman --runtime /PATH/WHARE/YOU/BUILT/WITH/WASM-WASMER/youki run localhost/wasm-module 1 2 3
 ```
 
 [^1]: You might need `sudo` because of [#719](https://github.com/youki-dev/youki/issues/719).

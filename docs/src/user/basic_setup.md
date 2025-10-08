@@ -14,12 +14,12 @@ The static binary (musl) builds of youki have no additional runtime requirements
 
 #### Debian, Ubuntu and related distributions
 ```console
-$ sudo apt-get install libseccomp2
+sudo apt-get install libseccomp2
 ```
 
 #### Fedora, CentOS, RHEL and related distributions
 ```console
-$ sudo dnf install libseccomp
+sudo dnf install libseccomp
 ```
 
 ### Install youki (prebuilt binary)
@@ -28,7 +28,7 @@ Install from the GitHub release as root:
 
 <!--youki release begin-->
 ```console
-$ curl -sSfL https://github.com/youki-dev/youki/releases/download/v0.5.5/youki-0.5.5-$(uname -m)-musl.tar.gz | tar -xzvC /usr/bin/ youki
+curl -sSfL https://github.com/youki-dev/youki/releases/download/v0.5.5/youki-0.5.5-$(uname -m)-musl.tar.gz | tar -xzvC /usr/bin/ youki
 ```
 <!--youki release end-->
 
@@ -40,7 +40,7 @@ This documentation uses Docker in its examples, which can be installed from [her
 After installing Docker, configure youki as a Docker runtime as follows:
 
 ```console
-$ sudo cat > /etc/docker/daemon.json <<EOF
+sudo cat > /etc/docker/daemon.json <<EOF
 {
   "runtimes": {
     "youki": {
@@ -50,13 +50,13 @@ $ sudo cat > /etc/docker/daemon.json <<EOF
 }
 EOF
 
-$ sudo systemctl reload docker
+sudo systemctl reload docker
 ```
 
 Once configured, you can run a container using youki like this:
 
 ```console
-$ docker run --rm --runtime youki hello-world
+docker run --rm --runtime youki hello-world
 ```
 
 For more details, see [Basic Usage](./basic_usage.md).
@@ -81,33 +81,33 @@ The only build dependency is [cross-rs](https://github.com/cross-rs/cross?tab=re
 
 
 ```console
-$ CARGO=cross TARGET=musl just youki-dev # or youki-release
+CARGO=cross TARGET=musl just youki-dev # or youki-release
 ```
 
 ### Build without cross-rs
 
 Install the build dependencies and then run:
 ```console
-$ just youki-dev # or youki-release
+just youki-dev # or youki-release
 ```
 
 Install the build dependencies using your distribution's package manger
 
 #### Debian, Ubuntu and related distributions
 ```console
-$ sudo apt-get install    \
-      pkg-config          \
-      libsystemd-dev      \
-      build-essential     \
-      libelf-dev          \
-      libseccomp-dev      \
-      libclang-dev        \
+sudo apt-get install    \
+      pkg-config        \
+      libsystemd-dev    \
+      build-essential   \
+      libelf-dev        \
+      libseccomp-dev    \
+      libclang-dev      \
       libssl-dev
 ```
 
 #### Fedora, CentOS, RHEL and related distributions
 ```console
-$ sudo dnf install          \
+sudo dnf install            \
       pkg-config            \
       systemd-devel         \
       elfutils-libelf-devel \
@@ -123,7 +123,7 @@ Currently youki can only be installed from the source code itself, so you will n
 To clone the repository, run
 
 ```console
-$ git clone https://github.com/youki-dev/youki.git
+git clone https://github.com/youki-dev/youki.git
 ```
 
 This will create a directory named youki in the directory you ran the command in. This youki directory will be referred to as root directory throughout the documentation.
@@ -134,9 +134,9 @@ Once you have cloned the source, you can build it with [just](https://github.com
 
 ```console
 # go into the cloned directory
-$ cd youki
-$ just youki-dev # or youki-release
-$ ./youki -h # get information about youki command
+cd youki
+just youki-dev # or youki-release
+./youki -h # get information about youki command
 ```
 
 This will build the youki binary, and put it at the root level of the cloned directory, that is in the youki/ .
@@ -174,14 +174,14 @@ Once installed and setup, you can run vagrant commands in the cloned directory t
 # in the youki directory
 
 # for rootless mode, which is default
-$ vagrant up default
-$ vagrant ssh default
+vagrant up default
+vagrant ssh default
 
 # or if you want to develop in rootful mode
-$ vagrant up rootful
-$ vagrant ssh rootful
+vagrant up rootful
+vagrant ssh rootful
 
 # in virtual machine
-$ cd youki
-$ just youki-dev # or youki-release
+cd youki
+just youki-dev # or youki-release
 ```

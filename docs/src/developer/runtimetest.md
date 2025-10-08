@@ -20,7 +20,7 @@ In case in future this separation is not required, or some other configuration i
 To see if a binary can be run inside the container process, run
 
 ```console
-$ readelf -l path/to/binary |grep "program interpreter"
+readelf -l path/to/binary |grep "program interpreter"
 ```
 
 `[Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]` means that the binary is not statically linked, and cannot be run inside the container process. If the above command gives no output, that means it does not require any program interpreter and can be run inside the container.
@@ -28,17 +28,17 @@ $ readelf -l path/to/binary |grep "program interpreter"
 Another way is to run
 
 ```console
-$ file path/to/binary
+file path/to/binary
 ```
 
 ```console
-$ ./youki: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=...., for GNU/Linux 3.2.0, with debug_info, not stripped`
+./youki: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=...., for GNU/Linux 3.2.0, with debug_info, not stripped`
 ```
 
 This output indicates that the binary is dynamically linked, thus cannot be run inside the container process
 
 ```console
-$ ./runtimetest: ELF 64-bit LSB executable, x86-64, version 1 (GNU/Linux), statically linked, BuildID[sha1]=...., for GNU/Linux 3.2.0, with debug_info, not stripped
+./runtimetest: ELF 64-bit LSB executable, x86-64, version 1 (GNU/Linux), statically linked, BuildID[sha1]=...., for GNU/Linux 3.2.0, with debug_info, not stripped
 ```
 
 This output indicates that the binary is statically linked, and can be run inside the container process
