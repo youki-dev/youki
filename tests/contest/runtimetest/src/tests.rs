@@ -617,22 +617,33 @@ pub fn validate_memory_policy(spec: &Spec) {
         }
     };
 
-    let first_line = match numa_maps_content.lines().next() {
-        Some(l) if !l.is_empty() => l,
-        _ => {
-            eprintln!("first line of /proc/self/numa_maps is empty");
-            return;
-        }
-    };
+    let policy_entries: Vec<(&str, &str)> = numa_maps_content
+        .lines()
+        .filter_map(|line| {
+            if line.trim().is_empty() {
+                return None;
+            }
+            let mut parts = line.split_whitespace();
+            parts.next()?; // skip address field
+            let policy_field = parts.next()?;
+            Some((policy_field, line))
+        })
+        .collect();
 
-    // Extract the policy part (usually the second field)
-    let parts: Vec<&str> = first_line.split_whitespace().collect();
-    if parts.len() < 2 {
-        eprintln!("unexpected format in /proc/self/numa_maps: {}", first_line);
+    if policy_entries.is_empty() {
+        eprintln!("no parsable entries found in /proc/self/numa_maps");
         return;
     }
 
-    let policy_field = parts[1];
+    let fallback_entry = policy_entries[0];
+    let default_policy_field = fallback_entry.0;
+    let find_with_substring = |needle: &str| -> (&str, &str) {
+        policy_entries
+            .iter()
+            .copied()
+            .find(|(policy, _)| policy.contains(needle))
+            .unwrap_or(fallback_entry)
+    };
 
     // Get auxiliary info from spec (nodes/flags)
     let expected_nodes = expected_nodes_from_spec(spec);
@@ -658,11 +669,13 @@ pub fn validate_memory_policy(spec: &Spec) {
     // Verify the policy matches expected mode
     match expected_mode {
         Some(MemoryPolicyModeType::MpolDefault) => {
+            let (policy_field, _) = find_with_substring("default");
             if !policy_field.contains("default") {
                 eprintln!("expected default policy, but found: {}", policy_field);
             }
         }
         Some(MemoryPolicyModeType::MpolInterleave) => {
+            let (policy_field, full_line) = find_with_substring("interleave");
             if !policy_field.contains("interleave") {
                 eprintln!("expected interleave policy, but found: {}", policy_field);
             }
@@ -671,27 +684,27 @@ pub fn validate_memory_policy(spec: &Spec) {
             {
                 eprintln!(
                     "expected interleave including node0, but got: {}",
-                    first_line
+                    full_line
                 );
             }
         }
         Some(MemoryPolicyModeType::MpolBind) => {
+            let (policy_field, full_line) = find_with_substring("bind");
             if !policy_field.contains("bind") {
                 eprintln!("expected bind policy, but found: {}", policy_field);
             }
-            // Optional: check flag display
             if has_static_flag && !policy_field.contains("static") {
                 eprintln!("expected bind static, but found: {}", policy_field);
             }
             if expected_nodes.as_ref().is_some_and(|v| v.contains(&0))
                 && !numa_maps_indicates_node0(policy_field)
             {
-                eprintln!("expected bind including node0, but got: {}", first_line);
+                eprintln!("expected bind including node0, but got: {}", full_line);
             }
         }
         Some(MemoryPolicyModeType::MpolPreferred) => {
-            // If nodes is empty, it becomes local allocation
             if nodes_is_empty {
+                let (policy_field, _) = find_with_substring("local");
                 if !policy_field.contains("local") {
                     eprintln!(
                         "expected preferred(empty)->local, but found: {}",
@@ -699,39 +712,40 @@ pub fn validate_memory_policy(spec: &Spec) {
                     );
                 }
             } else {
+                let (policy_field, full_line) = find_with_substring("prefer");
                 if !policy_field.contains("prefer") {
                     eprintln!("expected preferred policy, but found: {}", policy_field);
                 }
-                // Optional: check relative flag
                 if has_relative_flag && !policy_field.contains("relative") {
                     eprintln!("expected preferred relative, but found: {}", policy_field);
                 }
                 if expected_nodes.as_ref().is_some_and(|v| v.contains(&0))
                     && !numa_maps_indicates_node0(policy_field)
                 {
-                    eprintln!(
-                        "expected interleave including node0, but got: {}",
-                        first_line
-                    );
+                    eprintln!("expected preferred including node0, but got: {}", full_line);
                 }
             }
         }
         Some(MemoryPolicyModeType::MpolLocal) => {
-            // Fixed: MPOL_LOCAL shows as "local" not "default"
+            let (policy_field, _) = find_with_substring("local");
             if !policy_field.contains("local") {
                 eprintln!("expected local policy, but found: {}", policy_field);
             }
         }
         Some(_) => {
             // For newer policy types that might not be easily verifiable
-            println!("memory policy {} applied (non-strict check)", policy_field);
+            println!(
+                "memory policy {} applied (non-strict check)",
+                default_policy_field
+            );
         }
         None => {
-            // No specific policy expected - allow default/local behavior
-            if !(policy_field.contains("default") || policy_field.contains("local")) {
+            if !policy_entries.iter().any(|(policy_field, _)| {
+                policy_field.contains("default") || policy_field.contains("local")
+            }) {
                 eprintln!(
                     "expected default/local with no expected policy, got: {}",
-                    policy_field
+                    default_policy_field
                 );
             }
         }
