@@ -15,6 +15,7 @@ pub mod linux_masked_paths;
 pub mod linux_ns_itype;
 pub mod misc_props;
 pub mod mounts_recursive;
+pub mod net_devices;
 pub mod no_pivot;
 pub mod personality;
 pub mod pidfile;
