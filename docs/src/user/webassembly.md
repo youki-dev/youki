@@ -107,4 +107,4 @@ Run podman with youki as runtime. [^1]
 sudo podman --runtime /PATH/WHARE/YOU/BUILT/WITH/WASM-WASMER/youki run localhost/wasm-module 1 2 3
 ```
 
-[^1]: You might need `sudo` because of [#719](https://github.com/containers/youki/issues/719).
+[^1]: You might need `sudo` because of [#719](https://github.com/youki-dev/youki/issues/719).

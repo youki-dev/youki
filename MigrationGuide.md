@@ -5,7 +5,7 @@ This contains information for migrating library versions.
 ## v0.2.0 -> v0.3.0
 
 ### libcgroups
-- Switched from dbus-rs to a native dbus implementation see [#2208](https://github.com/containers/youki/issues/2208) for motivation behind this. This replaces the `dbus` module with `dbus_native` module. However, As this is not in public interface for the crate, the users of this crate should not need any code changes. As this removes the dependency on the `libdbus` system library, you can uninstall it if desired.
+- Switched from dbus-rs to a native dbus implementation see [#2208](https://github.com/youki-dev/youki/issues/2208) for motivation behind this. This replaces the `dbus` module with `dbus_native` module. However, As this is not in public interface for the crate, the users of this crate should not need any code changes. As this removes the dependency on the `libdbus` system library, you can uninstall it if desired.
 
 ## v0.1.0 -> v0.2.0
 

@@ -15,7 +15,7 @@ By default, after installation the docker sets up so that its daemon process wil
 As Youki needs systemd to compile, this assumes that you are running on a systemd based system. So you an first check if the docker daemon is running or not by running
 
 ```console
-systemctl status docker
+sudo systemctl status docker
 ```
 
 This will print a message showing if the daemon is active or not. If it is active, then you will need to stop it by running

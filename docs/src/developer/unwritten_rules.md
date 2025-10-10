@@ -8,7 +8,7 @@ This is the place to write down rules or conventions that were discussed in PRs,
 
 Youki currently uses [anyhow](https://www.crates.io/crates/anyhow) library to deal with errors occurring during its execution. So wherever you use fallible actions, or functions that can return `Result`, make sure you attach enough information with the errors so that error logs can be useful for debugging later. For example, if you are reading a file, or parsing something and the operation does not succeed, you can add the path from which you attempted to read the file, or the string that you attempted to parse.
 
-Also for the error messages, we follow the convention all small-case letters and no period at the end, as discussed in [this PR](https://github.com/containers/youki/issues/313). Whenever you write error messages, please follow this convention to keep them uniform.
+Also for the error messages, we follow the convention all small-case letters and no period at the end, as discussed in [this PR](https://github.com/youki-dev/youki/issues/313). Whenever you write error messages, please follow this convention to keep them uniform.
 
 #### Logs
 

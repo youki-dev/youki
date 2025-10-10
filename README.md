@@ -1,8 +1,8 @@
 # youki: A container runtime in Rust
 
 [![Discord](https://img.shields.io/discord/849943000770412575.svg?logo=discord)](https://discord.gg/zHnyXKSQFD)
-[![GitHub contributors](https://img.shields.io/github/contributors/containers/youki)](https://github.com/containers/youki/graphs/contributors)
-[![Github CI](https://github.com/containers/youki/actions/workflows/basic.yml/badge.svg?branch=main)](https://github.com/containers/youki/actions)
+[![GitHub contributors](https://img.shields.io/github/contributors/youki-dev/youki)](https://github.com/youki-dev/youki/graphs/contributors)
+[![Github CI](https://github.com/youki-dev/youki/actions/workflows/basic.yml/badge.svg?branch=main)](https://github.com/youki-dev/youki/actions)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fyouki-dev%2Fyouki.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fyouki-dev%2Fyouki?ref=badge_shield)
 
 <p align="center">
@@ -10,7 +10,7 @@
 </p>
 
 **youki** is an implementation of the [OCI runtime-spec](https://github.com/opencontainers/runtime-spec) in Rust, similar to [runc](https://github.com/opencontainers/runc).  
-Your ideas are welcome [here](https://github.com/containers/youki/issues/10).
+Your ideas are welcome [here](https://github.com/youki-dev/youki/issues/10).
 
 # 🏷️ About the name
 
@@ -22,11 +22,11 @@ youki is named after the Japanese word 'youki', which means 'a container'. In Ja
 > [!TIP]
 > You can immediately set up your environment with youki on GitHub Codespaces and try it out.  
 >
-> [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/containers/youki?quickstart=1)
+> [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/youki-dev/youki?quickstart=1)
 > ```console
-> $ just build
-> $ docker run --runtime youki hello-world
-> $ sudo podman run --cgroup-manager=cgroupfs --runtime /workspaces/youki/youki hello-world
+> just build
+> docker run --runtime youki hello-world
+> sudo podman run --cgroup-manager=cgroupfs --runtime /workspaces/youki/youki hello-world
 > ```
 
 [User Documentation](https://youki-dev.github.io/youki/user/basic_setup.html#quick-install)
@@ -92,7 +92,7 @@ We have [our roadmap](https://github.com/orgs/containers/projects/15).
 
 # 🔗 Related project
 
-- [containers/oci-spec-rs](https://github.com/containers/oci-spec-rs) - OCI Runtime and Image Spec in Rust
+- [youki-dev/oci-spec-rs](https://github.com/youki-dev/oci-spec-rs) - OCI Runtime and Image Spec in Rust
 
 # 🎨 Design and implementation of youki
 
@@ -117,20 +117,20 @@ To install `just`, follow the instruction [here](https://github.com/casey/just#i
 ### Debian, Ubuntu and related distributions
 
 ```console
-$ sudo apt-get install    \
-      pkg-config          \
-      libsystemd-dev      \
-      build-essential     \
-      libelf-dev          \
-      libseccomp-dev      \
-      libclang-dev        \
+sudo apt-get install    \
+      pkg-config        \
+      libsystemd-dev    \
+      build-essential   \
+      libelf-dev        \
+      libseccomp-dev    \
+      libclang-dev      \
       libssl-dev
 ```
 
 ### Fedora, CentOS, RHEL and related distributions
 
 ```console
-$ sudo dnf install          \
+sudo dnf install            \
       pkg-config            \
       systemd-devel         \
       elfutils-libelf-devel \
@@ -142,7 +142,7 @@ $ sudo dnf install          \
 ## Build
 
 ```bash
-git clone git@github.com:containers/youki.git
+git clone git@github.com:youki-dev/youki.git
 cd youki
 just youki-dev # or youki-release
 ./youki -h # you can get information about youki command
@@ -159,7 +159,7 @@ just youki-dev # or youki-release
 Let's try to run a container that executes `sleep 30` with youki. This tutorial may need root permission.
 
 ```bash
-git clone git@github.com:containers/youki.git
+git clone git@github.com:youki-dev/youki.git
 cd youki
 just youki-dev # or youki-release
 
@@ -206,15 +206,15 @@ Change the command to be executed in `config.json` and try something other than 
 `youki` provides the ability to run containers as non-root user([rootless mode](https://docs.docker.com/engine/security/rootless/)). To run a container in rootless mode, we need to add some extra options in `config.json`, other steps are same with above:
 
 ```bash
-$ mkdir -p tutorial/rootfs
-$ cd tutorial
+mkdir -p tutorial/rootfs
+cd tutorial
 # use docker to export busybox into the rootfs directory
-$ docker export $(docker create busybox) | tar -C rootfs -xvf -
+docker export $(docker create busybox) | tar -C rootfs -xvf -
 
-$ ../youki spec --rootless          # will generate a spec file named config.json with rootless mode
+../youki spec --rootless          # will generate a spec file named config.json with rootless mode
 ## Modify the `args` field as you like
 
-$ ../youki run rootless-container   # will create and run a container with rootless mode
+../youki run rootless-container   # will create and run a container with rootless mode
 ```
 
 ## Usage
@@ -225,7 +225,7 @@ Start the docker daemon.
 dockerd --experimental --add-runtime="youki=$(pwd)/youki"
 ```
 
-If you get an error like the below, that means your normal Docker daemon is running, and it needs to be stopped. Do that with your init system (i.e., with systemd, run `systemctl stop docker`, as root if necessary).
+If you get an error like the below, that means your normal Docker daemon is running, and it needs to be stopped. Do that with your init system (i.e., with systemd, run `sudo systemctl stop docker`, as root if necessary).
 
 ```console
 failed to start daemon: pid file found, ensure docker is not running or delete /var/run/docker.pid
@@ -242,7 +242,7 @@ docker run -it --rm --runtime youki busybox
 Afterwards, you can close the docker daemon process in other the other terminal. To restart normal docker daemon (if you had stopped it before), run:
 
 ```bash
-systemctl start docker # might need root permission
+sudo systemctl start docker
 ```
 
 ### Integration Tests
@@ -259,7 +259,7 @@ just test-oci
 You can try youki on platforms other than Linux by using the Vagrantfile we have prepared. We have prepared two environments for vagrant, namely rootless mode and rootful mode
 
 ```bash
-git clone git@github.com:containers/youki.git
+git clone git@github.com:youki-dev/youki.git
 cd youki
 
 # If you want to develop in rootless mode, and this is the default mode
@@ -281,8 +281,8 @@ Please refer to [our community page](https://youki-dev.github.io/youki/community
 
 Thanks to all the people who already contributed!
 
-<a href="https://github.com/containers/youki/graphs/contributors">
-  <img src="https://contributors-img.web.app/image?repo=containers/youki" />
+<a href="https://github.com/youki-dev/youki/graphs/contributors">
+  <img src="https://contributors-img.web.app/image?repo=youki-dev/youki" />
 </a>
 
 - - -
