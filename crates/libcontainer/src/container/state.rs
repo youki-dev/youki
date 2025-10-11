@@ -11,8 +11,7 @@ use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 /// Indicates status of the container
-#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub enum ContainerStatus {
     // The container is being created
     #[default]
@@ -22,9 +21,38 @@ pub enum ContainerStatus {
     // The container process has executed the user-specified program but has not exited
     Running,
     // The container process has exited
-    Stopped,
+    Stopped(Option<i32>),
     // The container process has paused
     Paused,
+}
+
+impl Serialize for ContainerStatus {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(format!("{}", self).to_lowercase().as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ContainerStatus {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.to_ascii_lowercase().as_str() {
+            "creating" => Ok(ContainerStatus::Creating),
+            "created" => Ok(ContainerStatus::Created),
+            "running" => Ok(ContainerStatus::Running),
+            "stopped" => Ok(ContainerStatus::Stopped(None)),
+            "paused" => Ok(ContainerStatus::Paused),
+            other => Err(serde::de::Error::custom(format!(
+                "unknown container status: {}",
+                other
+            ))),
+        }
+    }
 }
 
 impl ContainerStatus {
@@ -35,13 +63,13 @@ impl ContainerStatus {
     pub fn can_kill(&self) -> bool {
         use ContainerStatus::*;
         match self {
-            Creating | Stopped => false,
+            Creating | Stopped(_) => false,
             Created | Running | Paused => true,
         }
     }
 
     pub fn can_delete(&self) -> bool {
-        matches!(self, ContainerStatus::Stopped)
+        matches!(self, ContainerStatus::Stopped(_))
     }
 
     pub fn can_pause(&self) -> bool {
@@ -59,7 +87,7 @@ impl Display for ContainerStatus {
             Self::Creating => "Creating",
             Self::Created => "Created",
             Self::Running => "Running",
-            Self::Stopped => "Stopped",
+            Self::Stopped(_) => "Stopped",
             Self::Paused => "Paused",
         };
 
@@ -286,7 +314,7 @@ mod tests {
 
     #[test]
     fn test_stopped_status() {
-        let cstatus = ContainerStatus::Stopped;
+        let cstatus = ContainerStatus::Stopped(None);
         assert!(!cstatus.can_start());
         assert!(cstatus.can_delete());
         assert!(!cstatus.can_kill());
