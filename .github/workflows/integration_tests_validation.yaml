@@ -92,9 +92,11 @@ jobs:
         run: sudo add-apt-repository -y ppa:criu/ppa
       - name: Install requirements
         run: sudo env PATH=$PATH just ci-prepare
-      - name: Install runc 1.3.1
+      # Install runc v1.4.0-rc.2 to support memory policy (https://github.com/opencontainers/runtime-spec/pull/1282)
+      # TODO: Update once the stable version of runc with memory policy implementation is released
+      - name: Install runc v1.4.0-rc.2
         run: |
-          wget -q https://github.com/opencontainers/runc/releases/download/v1.3.1/runc.amd64
+          wget -q https://github.com/opencontainers/runc/releases/download/v1.4.0-rc.2/runc.amd64
           sudo mv runc.amd64 /usr/bin/runc
           sudo chmod 755 /usr/bin/runc
       - name: Build
