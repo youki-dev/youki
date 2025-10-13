@@ -5,9 +5,9 @@
 Every commit must be signed off with the `Signed-off-by: REAL NAME <email@example.com>` line.
 Use the `git commit -s` command to add the Signed-off-by line.
 
-## Licensing 
+## Licensing
 
-Youki is licensed under the terms of [Apache License 2.0](https://github.com/containers/youki/blob/main/LICENSE).
+Youki is licensed under the terms of [Apache License 2.0](https://github.com/youki-dev/youki/blob/main/LICENSE).
 
 ## Sending pull requests
 
