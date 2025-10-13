@@ -177,7 +177,7 @@
                     <main>
                         <h1 id="good-places-to-start"><a class="header" href="#good-places-to-start">Good places to start</a></h1>
 <p>First of all, welcome to youki! Hope you have fun while developing and contributing :)</p>
-<p>This lists some of the known places that are long-running and would be useful for beginners. But as the things under development can change any time, the best place to check are the issues on the <a href="https://github.com/containers/youki/issues">GitHub repo</a>. You can find issues with labels <code>good first issue</code> or <code>help wanted</code> and start working on them.</p>
+<p>This lists some of the known places that are long-running and would be useful for beginners. But as the things under development can change any time, the best place to check are the issues on the <a href="https://github.com/youki-dev/youki/issues">GitHub repo</a>. You can find issues with labels <code>good first issue</code> or <code>help wanted</code> and start working on them.</p>
 <p>You can also search for <code>TODO</code> or <code>FIXME</code> comments in the source, and try working on them, but not all of them are easy places to start, and some of them can be particularly tricky to fix.</p>
 <hr />
 <p>This lists known parts of youki that can be good for beginners at the time of the writing. Please update as things change.</p>
@@ -186,7 +186,7 @@
 <p>If you don't know much about container runtime or low level system working, then this can be a good place to start. While going through the code and documenting it, you can learn about it. Make sure that you update this documentation with useful links that you found while commenting some code if it has some peculiar behavior, or it is hard to understand without knowing some background.</p>
 <h4 id="integration-tests"><a class="header" href="#integration-tests">Integration Tests</a></h4>
 <p>You can find more detailed information about this in the <code>integration_test</code> crate, but in brief, we currently use <a href="https://github.com/opencontainers/runtime-tools">OCI-runtime-tools</a> provided integration tests to validate that youki is OCI spec compliant. But those are written in Go, which makes the developer depend on two language env to compile youki and test it. These tests also have some issues which makes them hard to use on some system setups.</p>
-<p>Thus we are porting those test to Rust, so that it can be a Rust implementation of OCI-runtime integration tests, as well as be easy to run on local systems for testing. If you know Go and Rust this can be a great place to start. Check out the <a href="https://github.com/containers/youki/issues/361">tracking issue</a>.</p>
+<p>Thus we are porting those test to Rust, so that it can be a Rust implementation of OCI-runtime integration tests, as well as be easy to run on local systems for testing. If you know Go and Rust this can be a great place to start. Check out the <a href="https://github.com/youki-dev/youki/issues/361">tracking issue</a>.</p>
 
                     </main>
 

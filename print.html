@@ -233,11 +233,48 @@ youki is named after the Japanese word 'youki', which means 'a container'. In Ja
 <li>Webassembly : This explains how to use webassembly module with youki.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="basic-setup"><a class="header" href="#basic-setup">Basic Setup</a></h1>
-<p>This explains the requirements for compiling Youki as a binary, to use it as a low-level container runtime, or to depend once of its crates as dependency for your own project.</p>
-<p>Youki currently only supports Linux Platform, and to use it on other platform you will need to use some kind of virtualization. The repo itself provides Vagrantfile that provides basic setup to use Youki on non-Linux system using Vagrant. The last sub-section explains using this vagrantfile.</p>
-<p>Also note that Youki currently only supports and expects systemd as init system, and would not work on other systems. There is currently work on-going to put systemd dependent features behind a feature flag, but till then you will need a systemd enabled system to work with Youki.</p>
-<h2 id="build-requirements"><a class="header" href="#build-requirements">Build Requirements</a></h2>
-<p>As Youki is written in Rust, you will need to install and setup Rust toolchain to compile it. The instructions for that can be found on Rust's official site <a href="https://www.rust-lang.org/tools/install">here</a>.
+<p>This explains the requirements to use youki as a low-level container runtime, or to depend once of its crates as dependency for your own project.</p>
+<p>Youki currently only supports Linux Platform, and to use it on other platform you will need to use some kind of virtualization.</p>
+<p>Also note that youki currently only supports and expects systemd as init system, and would not work on other systems. There is currently work on-going to put systemd dependent features behind a feature flag, but till then you will need a systemd enabled system to work with youki.</p>
+<h2 id="getting-started"><a class="header" href="#getting-started">Getting Started</a></h2>
+<h3 id="runtime-requirements"><a class="header" href="#runtime-requirements">Runtime requirements</a></h3>
+<p>The static binary (musl) builds of youki have no additional runtime requirements. Otherwise you need to install the runtime requirements using your distribution's package manager:</p>
+<h4 id="debian-ubuntu-and-related-distributions"><a class="header" href="#debian-ubuntu-and-related-distributions">Debian, Ubuntu and related distributions</a></h4>
+<pre><code class="language-console">sudo apt-get install libseccomp2
+</code></pre>
+<h4 id="fedora-centos-rhel-and-related-distributions"><a class="header" href="#fedora-centos-rhel-and-related-distributions">Fedora, CentOS, RHEL and related distributions</a></h4>
+<pre><code class="language-console">sudo dnf install libseccomp
+</code></pre>
+<h3 id="install-youki-prebuilt-binary"><a class="header" href="#install-youki-prebuilt-binary">Install youki (prebuilt binary)</a></h3>
+<p>Install from the GitHub release as root:</p>
+<!--youki release begin-->
+<pre><code class="language-console">curl -sSfL https://github.com/youki-dev/youki/releases/download/v0.5.5/youki-0.5.5-$(uname -m)-musl.tar.gz | tar -xzvC /usr/bin/ youki
+</code></pre>
+<!--youki release end-->
+<h3 id="running-youki"><a class="header" href="#running-youki">Running youki</a></h3>
+<p>You can use youki by itself to start and run containers, but it can be a little tedious, as it is a low-level container runtime. You can use a High-level container runtime, with its runtime set to youki, so that it will be easier to use.</p>
+<p>This documentation uses Docker in its examples, which can be installed from <a href="https://docs.docker.com/engine/install">here</a>.
+After installing Docker, configure youki as a Docker runtime as follows:</p>
+<pre><code class="language-console">sudo cat &gt; /etc/docker/daemon.json &lt;&lt;EOF
+{
+  "runtimes": {
+    "youki": {
+      "path": "/usr/bin/youki"
+    }
+  }
+}
+EOF
+
+sudo systemctl reload docker
+</code></pre>
+<p>Once configured, you can run a container using youki like this:</p>
+<pre><code class="language-console">docker run --rm --runtime youki hello-world
+</code></pre>
+<p>For more details, see <a href="user/./basic_usage.html">Basic Usage</a>.</p>
+<hr />
+<h2 id="installing-youki-from-source"><a class="header" href="#installing-youki-from-source">Installing youki from source</a></h2>
+<h3 id="build-requirements"><a class="header" href="#build-requirements">Build Requirements</a></h3>
+<p>As youki is written in Rust, you will need to install and setup Rust toolchain to compile it. The instructions for that can be found on Rust's official site <a href="https://www.rust-lang.org/tools/install">here</a>.
 If you installed it using rustup, the correct compiler version will be setup automatically from <code>rust-toolchain.toml</code> in the repo root.</p>
 <h3 id="build-with-cross-rs"><a class="header" href="#build-with-cross-rs">Build with cross-rs</a></h3>
 <p>You can compile youki using <a href="https://github.com/cross-rs/cross">cross-rs</a>, which provides:</p>
@@ -247,25 +284,25 @@ If you installed it using rustup, the correct compiler version will be setup aut
 <li>No runtime dependencies when building static binaries (musl targets)</li>
 </ul>
 <p>The only build dependency is <a href="https://github.com/cross-rs/cross?tab=readme-ov-file#installation">cross-rs</a> and its <a href="https://github.com/cross-rs/cross?tab=readme-ov-file#dependencies">dependencies</a> (rustup and docker or podman).</p>
-<pre><code class="language-console">$ CARGO=cross TARGET=musl just youki-dev # or youki-release
+<pre><code class="language-console">CARGO=cross TARGET=musl just youki-dev # or youki-release
 </code></pre>
 <h3 id="build-without-cross-rs"><a class="header" href="#build-without-cross-rs">Build without cross-rs</a></h3>
 <p>Install the build dependencies and then run:</p>
-<pre><code class="language-console">$ just youki-dev # or youki-release
+<pre><code class="language-console">just youki-dev # or youki-release
 </code></pre>
 <p>Install the build dependencies using your distribution's package manger</p>
-<h4 id="debian-ubuntu-and-related-distributions"><a class="header" href="#debian-ubuntu-and-related-distributions">Debian, Ubuntu and related distributions</a></h4>
-<pre><code class="language-console">$ sudo apt-get install    \
-      pkg-config          \
-      libsystemd-dev      \
-      build-essential     \
-      libelf-dev          \
-      libseccomp-dev      \
-      libclang-dev        \
+<h4 id="debian-ubuntu-and-related-distributions-1"><a class="header" href="#debian-ubuntu-and-related-distributions-1">Debian, Ubuntu and related distributions</a></h4>
+<pre><code class="language-console">sudo apt-get install    \
+      pkg-config        \
+      libsystemd-dev    \
+      build-essential   \
+      libelf-dev        \
+      libseccomp-dev    \
+      libclang-dev      \
       libssl-dev
 </code></pre>
-<h4 id="fedora-centos-rhel-and-related-distributions"><a class="header" href="#fedora-centos-rhel-and-related-distributions">Fedora, CentOS, RHEL and related distributions</a></h4>
-<pre><code class="language-console">$ sudo dnf install          \
+<h4 id="fedora-centos-rhel-and-related-distributions-1"><a class="header" href="#fedora-centos-rhel-and-related-distributions-1">Fedora, CentOS, RHEL and related distributions</a></h4>
+<pre><code class="language-console">sudo dnf install            \
       pkg-config            \
       systemd-devel         \
       elfutils-libelf-devel \
@@ -273,43 +310,26 @@ If you installed it using rustup, the correct compiler version will be setup aut
       clang-devel           \
       openssl-devel
 </code></pre>
-<h2 id="runtime-requirements"><a class="header" href="#runtime-requirements">Runtime requirements</a></h2>
-<p>The static binary (musl) builds of youki have no additional runtime requirements. Otherwise you need to install the runtime requirements using your distribution's package manager:</p>
-<h4 id="debian-ubuntu-and-related-distributions-1"><a class="header" href="#debian-ubuntu-and-related-distributions-1">Debian, Ubuntu and related distributions</a></h4>
-<pre><code class="language-console">$ sudo apt-get install libseccomp2
-</code></pre>
-<h4 id="fedora-centos-rhel-and-related-distributions-1"><a class="header" href="#fedora-centos-rhel-and-related-distributions-1">Fedora, CentOS, RHEL and related distributions</a></h4>
-<pre><code class="language-console">$ sudo dnf install libseccomp
-</code></pre>
-<h2 id="running-youki"><a class="header" href="#running-youki">Running youki</a></h2>
-<p>You can use Youki by itself to start and run containers, but it can be a little tedious, as it is a low-level container runtime. You can use a High-level container runtime, with its runtime set to Youki, so that it will be easier to use. Both of these are explained in the <a href="user/./basic_usage.html">Basic Usage</a>. For using it along with an high-level runtime, you will to install one such as Docker or Podman. This documentation uses Docker in its examples, which can be installed from <a href="https://docs.docker.com/engine/install">here</a>.</p>
-<hr />
-<h2 id="quick-install"><a class="header" href="#quick-install">Quick install</a></h2>
-<p>Install from the GitHub release as root:</p>
-<!--youki release begin-->
-<pre><code class="language-console"># curl -sSfL https://github.com/containers/youki/releases/download/v0.5.5/youki-0.5.5-$(uname -m)-musl.tar.gz | tar -xzvC /usr/bin/ youki
-</code></pre>
-<!--youki release end-->
-<h2 id="getting-the-source"><a class="header" href="#getting-the-source">Getting the source</a></h2>
-<p>Currently Youki can only be installed from the source code itself, so you will need to clone the Youki GitHub repository to get the source code for using it as a runtime. If you are using any crates of Youki as dependency you need to do this step, as Cargo will automatically clone the repository for you.</p>
+<h3 id="getting-the-source"><a class="header" href="#getting-the-source">Getting the source</a></h3>
+<p>Currently youki can only be installed from the source code itself, so you will need to clone the youki GitHub repository to get the source code for using it as a runtime. If you are using any crates of youki as dependency you need to do this step, as Cargo will automatically clone the repository for you.</p>
 <p>To clone the repository, run</p>
-<pre><code class="language-console">$ git clone https://github.com/containers/youki.git
+<pre><code class="language-console">git clone https://github.com/youki-dev/youki.git
 </code></pre>
 <p>This will create a directory named youki in the directory you ran the command in. This youki directory will be referred to as root directory throughout the documentation.</p>
-<h2 id="installing-the-source"><a class="header" href="#installing-the-source">Installing the source</a></h2>
+<h3 id="build-from-source"><a class="header" href="#build-from-source">Build from source</a></h3>
 <p>Once you have cloned the source, you can build it with <a href="https://github.com/casey/just#installation">just</a> :</p>
 <pre><code class="language-console"># go into the cloned directory
-$ cd youki
-$ just youki-dev # or youki-release
-$ ./youki -h # get information about youki command
+cd youki
+just youki-dev # or youki-release
+./youki -h # get information about youki command
 </code></pre>
-<p>This will build the Youki binary, and put it at the root level of the cloned directory, that is in the youki/ .</p>
+<p>This will build the youki binary, and put it at the root level of the cloned directory, that is in the youki/ .</p>
 <hr />
-<h2 id="using-sub-crates-as-dependency"><a class="header" href="#using-sub-crates-as-dependency">Using sub-crates as dependency</a></h2>
+<h3 id="using-sub-crates-as-dependency"><a class="header" href="#using-sub-crates-as-dependency">Using sub-crates as dependency</a></h3>
 <p>To use any of the sub-crate as a dependency in your own project, you can specify the dependency as follows,</p>
 <pre><code class="language-toml">[dependencies]
 ...
-liboci-cli = { git = "https://github.com/containers/Youki.git" }
+liboci-cli = { git = "https://github.com/youki-dev/youki.git" }
 ...
 </code></pre>
 <p>Here we use <code>liboci-cli</code> as an example, which can be replaced by the sub-crate that you need.</p>
@@ -317,22 +337,22 @@ liboci-cli = { git = "https://github.com/containers/Youki.git" }
 <pre><code>use liboci_cli::{...}
 </code></pre>
 <hr />
-<h2 id="using-vagrant-to-run-youki-on-non-linux-platform"><a class="header" href="#using-vagrant-to-run-youki-on-non-linux-platform">Using Vagrant to run Youki on non-Linux Platform</a></h2>
-<p>As explained before, Youki only support Linux, and to build/use it on non-Linux Platforms, you will need to use some kind of virtualization. The repo provides a Vagrantfile to do the required VM setup using Vagrant, which can be installed from <a href="https://www.vagrantup.com/docs/installation">here</a>.</p>
-<p>Once installed and setup, you can run vagrant commands in the cloned directory to run Youki inside the VM created by vagrant :</p>
+<h3 id="using-vagrant-to-run-youki-on-non-linux-platform"><a class="header" href="#using-vagrant-to-run-youki-on-non-linux-platform">Using Vagrant to run youki on non-Linux Platform</a></h3>
+<p>As explained before, youki only support Linux, and to build/use it on non-Linux Platforms, you will need to use some kind of virtualization. The repo provides a Vagrantfile to do the required VM setup using Vagrant, which can be installed from <a href="https://www.vagrantup.com/docs/installation">here</a>.</p>
+<p>Once installed and setup, you can run vagrant commands in the cloned directory to run youki inside the VM created by vagrant :</p>
 <pre><code class="language-console"># in the youki directory
 
 # for rootless mode, which is default
-$ vagrant up default
-$ vagrant ssh default
+vagrant up default
+vagrant ssh default
 
 # or if you want to develop in rootful mode
-$ vagrant up rootful
-$ vagrant ssh rootful
+vagrant up rootful
+vagrant ssh rootful
 
 # in virtual machine
-$ cd youki
-$ just youki-dev # or youki-release
+cd youki
+just youki-dev # or youki-release
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="basic-usage"><a class="header" href="#basic-usage">Basic Usage</a></h1>
 <p>This explains using Youki as a low-level container runtime. Youki can be used by itself to create, start and run containers, but doing so can be tedious, and thus you might want to use a higher-level runtime with Youki set as its runtime, so that you can get a convenient and easy interface.</p>
@@ -342,7 +362,7 @@ $ just youki-dev # or youki-release
 <p>We will first see how to use Youki with a high-level runtime such as Docker. You can install Docker from <a href="https://docs.docker.com/engine/install/">here</a>.</p>
 <p>By default, after installation the docker sets up so that its daemon process will start running in background after booting up. By default, this configures Docker to use its default low-level runtime, and to use Youki instead , we will first need to stop the running Docker daemon.</p>
 <p>As Youki needs systemd to compile, this assumes that you are running on a systemd based system. So you an first check if the docker daemon is running or not by running</p>
-<pre><code class="language-console">systemctl status docker
+<pre><code class="language-console">sudo systemctl status docker
 </code></pre>
 <p>This will print a message showing if the daemon is active or not. If it is active, then you will need to stop it by running</p>
 <pre><code class="language-console">sudo systemctl stop docker
@@ -717,7 +737,7 @@ ENTRYPOINT ["wasm-module.wasm"]
 </code></pre>
 <hr>
 <ol class="footnote-definition"><li id="footnote-1">
-<p>You might need <code>sudo</code> because of <a href="https://github.com/containers/youki/issues/719">#719</a>. <a href="#fr-1-1">↩</a> <a href="#fr-1-2">↩2</a></p>
+<p>You might need <code>sudo</code> because of <a href="https://github.com/youki-dev/youki/issues/719">#719</a>. <a href="#fr-1-1">↩</a> <a href="#fr-1-2">↩2</a></p>
 </li>
 </ol><div style="break-before: page; page-break-before: always;"></div><h1 id="community"><a class="header" href="#community">Community</a></h1>
 <ul>
@@ -776,7 +796,7 @@ Before submitting the pull request, the proposer should reach out to the Committ
 <p>Every commit must be signed off with the <code>Signed-off-by: REAL NAME &lt;email@example.com&gt;</code> line.
 Use the <code>git commit -s</code> command to add the Signed-off-by line.</p>
 <h2 id="licensing"><a class="header" href="#licensing">Licensing</a></h2>
-<p>Youki is licensed under the terms of <a href="https://github.com/containers/youki/blob/main/LICENSE">Apache License 2.0</a>.</p>
+<p>Youki is licensed under the terms of <a href="https://github.com/youki-dev/youki/blob/main/LICENSE">Apache License 2.0</a>.</p>
 <h2 id="sending-pull-requests"><a class="header" href="#sending-pull-requests">Sending pull requests</a></h2>
 <p>Pull requests can be submitted using <a href="https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request">the GitHub standard process</a>.</p>
 <h2 id="merging-pull-requests"><a class="header" href="#merging-pull-requests">Merging pull requests</a></h2>
@@ -835,7 +855,7 @@ A Committer shouldn’t merge their own pull requests without approval by at lea
 <h2 id="conventions-to-follow"><a class="header" href="#conventions-to-follow">Conventions to follow</a></h2>
 <h4 id="errors"><a class="header" href="#errors">Errors</a></h4>
 <p>Youki currently uses <a href="https://www.crates.io/crates/anyhow">anyhow</a> library to deal with errors occurring during its execution. So wherever you use fallible actions, or functions that can return <code>Result</code>, make sure you attach enough information with the errors so that error logs can be useful for debugging later. For example, if you are reading a file, or parsing something and the operation does not succeed, you can add the path from which you attempted to read the file, or the string that you attempted to parse.</p>
-<p>Also for the error messages, we follow the convention all small-case letters and no period at the end, as discussed in <a href="https://github.com/containers/youki/issues/313">this PR</a>. Whenever you write error messages, please follow this convention to keep them uniform.</p>
+<p>Also for the error messages, we follow the convention all small-case letters and no period at the end, as discussed in <a href="https://github.com/youki-dev/youki/issues/313">this PR</a>. Whenever you write error messages, please follow this convention to keep them uniform.</p>
 <h4 id="logs"><a class="header" href="#logs">Logs</a></h4>
 <p>youki uses <a href="https://crates.io/crates/log">log</a> crate to log information while running. Whenever adding code to interact with system or kernel features or such, make sure to add debug logs so that if youki crashes, you can trace the errors and zero-in on the reasons using logs.</p>
 <h4 id="comments"><a class="header" href="#comments">Comments</a></h4>
@@ -846,7 +866,7 @@ A Committer shouldn’t merge their own pull requests without approval by at lea
 <p>Keep this Documentation updated! Make sure you add any relevant doc-links and resources to this that you found helpful or contains background information required to understand the code, so that it can help newcomers as well as others to find the resources in one single place.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="good-places-to-start"><a class="header" href="#good-places-to-start">Good places to start</a></h1>
 <p>First of all, welcome to youki! Hope you have fun while developing and contributing :)</p>
-<p>This lists some of the known places that are long-running and would be useful for beginners. But as the things under development can change any time, the best place to check are the issues on the <a href="https://github.com/containers/youki/issues">GitHub repo</a>. You can find issues with labels <code>good first issue</code> or <code>help wanted</code> and start working on them.</p>
+<p>This lists some of the known places that are long-running and would be useful for beginners. But as the things under development can change any time, the best place to check are the issues on the <a href="https://github.com/youki-dev/youki/issues">GitHub repo</a>. You can find issues with labels <code>good first issue</code> or <code>help wanted</code> and start working on them.</p>
 <p>You can also search for <code>TODO</code> or <code>FIXME</code> comments in the source, and try working on them, but not all of them are easy places to start, and some of them can be particularly tricky to fix.</p>
 <hr />
 <p>This lists known parts of youki that can be good for beginners at the time of the writing. Please update as things change.</p>
@@ -855,7 +875,7 @@ A Committer shouldn’t merge their own pull requests without approval by at lea
 <p>If you don't know much about container runtime or low level system working, then this can be a good place to start. While going through the code and documenting it, you can learn about it. Make sure that you update this documentation with useful links that you found while commenting some code if it has some peculiar behavior, or it is hard to understand without knowing some background.</p>
 <h4 id="integration-tests"><a class="header" href="#integration-tests">Integration Tests</a></h4>
 <p>You can find more detailed information about this in the <code>integration_test</code> crate, but in brief, we currently use <a href="https://github.com/opencontainers/runtime-tools">OCI-runtime-tools</a> provided integration tests to validate that youki is OCI spec compliant. But those are written in Go, which makes the developer depend on two language env to compile youki and test it. These tests also have some issues which makes them hard to use on some system setups.</p>
-<p>Thus we are porting those test to Rust, so that it can be a Rust implementation of OCI-runtime integration tests, as well as be easy to run on local systems for testing. If you know Go and Rust this can be a great place to start. Check out the <a href="https://github.com/containers/youki/issues/361">tracking issue</a>.</p>
+<p>Thus we are porting those test to Rust, so that it can be a Rust implementation of OCI-runtime integration tests, as well as be easy to run on local systems for testing. If you know Go and Rust this can be a great place to start. Check out the <a href="https://github.com/youki-dev/youki/issues/361">tracking issue</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="this-documentation"><a class="header" href="#this-documentation">This Documentation</a></h1>
 <p>This documentation is created using mdbook and aims to provide a concise reference for users and developers of youki. For more information on mdbook itself, you can check out the <a href="https://rust-lang.github.io/mdBook/">mdbook documentation</a>.</p>
 <p>Please make sure that you update this documentation along with newly added features and resources that you found helpful while developing, so that it will be helpful for newcomers.</p>
@@ -1013,7 +1033,7 @@ TIME                 COMMAND PID      EVENT     CONTENT
 </ul>
 <p>As youki currently depends on systemd as an init system, this crate also exposes module systemd, which provides interface for working with systemd related operations. <a href="https://www.freedesktop.org/software/systemd/man/systemd.resource-control.html">systemd resource control</a> is a good place to read more about systemd and its involvement in resource control.</p>
 <h2 id="dbus-native"><a class="header" href="#dbus-native">Dbus Native</a></h2>
-<p>This module is the native implementation of dbus connection functionality used for connecting with systemd via dbus. Refer to <a href="https://github.com/containers/youki/issues/2208">this issue discussion</a> following for the discussion regarding moving away from existing dbus-interfacing library.</p>
+<p>This module is the native implementation of dbus connection functionality used for connecting with systemd via dbus. Refer to <a href="https://github.com/youki-dev/youki/issues/2208">this issue discussion</a> following for the discussion regarding moving away from existing dbus-interfacing library.</p>
 <p>Note that this implements the minimal required functionality for youki to use dbus, and thus does not have all the dbus features.</p>
 <ul>
 <li>
@@ -1136,7 +1156,7 @@ when the executor can't handle the workload.</p>
 <p>
 <pre><code class="language-rust no_run noplayground">use anyhow::{Context, Result};
 use oci_spec::runtime::{ProcessBuilder, Spec, SpecBuilder};
-use test_framework::{test_result, Test, TestGroup, TestResult};
+use test_framework::{Test, TestGroup, TestResult, test_result};
 
 use crate::utils::test_inside_container;
 use crate::utils::test_utils::CreateOptions;
@@ -1243,7 +1263,7 @@ Therefore, it is common practice here to write an OCI Runtime Spec that executes
 <p><strong>Note</strong> that these tests resides in <code>/tests/integration_test/</code> at the time of writing.</p>
 <p>This crate contains the Rust port of OCI-runtime tools integration tests, which are used to test if the runtime works as per the OCI spec or not. Initially youki used the original implementation of these test provided in the OCI repository <a href="https://github.com/opencontainers/runtime-tools/tree/master/validation">here</a>. But those tests are written in Go, which made the developers depend on two language environments Rust and Go to compile youki and test it. The Validation tests themselves also have an optional dependency on node js to parse their output, which can make it a third language dependency.</p>
 <p>Other than that, those tests also showed some issues while running on some local systems, and thus running the tests would be difficult on local system. As the runtime is a complex piece of software, it becomes useful to have a set of tests that can be run with changes in code, so one can verify that change in one part of youki has not accidentally broken some other part of youki.</p>
-<p>Thus we decided to port the tests to Rust, and validate them, so that we have a set of unit tests as well of integration tests to validate the working of runtime. These tests are still under development, and you can check the <a href="https://github.com/containers/youki/issues/361">tracking issue</a> for more details. More details on working of these tests can be found at <a href="https://github.com/containers/youki/tree/main/crates/integration_test">https://github.com/containers/youki/tree/main/crates/integration_test</a>.</p>
+<p>Thus we decided to port the tests to Rust, and validate them, so that we have a set of unit tests as well of integration tests to validate the working of runtime. These tests are still under development, and you can check the <a href="https://github.com/youki-dev/youki/issues/361">tracking issue</a> for more details. More details on working of these tests can be found at <a href="https://github.com/youki-dev/youki/tree/main/crates/integration_test">https://github.com/youki-dev/youki/tree/main/crates/integration_test</a>.</p>
 <p>As these tests are under development, these are validated on a standard runtime such as runc in the GitHub CI, so validate the tests themselves.</p>
 <h2 id="notes-2"><a class="header" href="#notes-2">Notes</a></h2>
 <h3 id="about-the-create-container-function"><a class="header" href="#about-the-create-container-function">About the create container function</a></h3>
@@ -1256,7 +1276,7 @@ For that, first whichever integration test needs to use it, must define the runt
 <p><strong>Note</strong> that these tests resides in /tests/test_framework at the time of writing.</p>
 <p>This crate contains the testing framework specifically developed for porting the OCI integration test to rust. This contains structs to represent the individual tests, group of tests and a test manager that has responsibility to run tests. This Also exposes traits which can be used to implement custom test structs or test group structs if needed.</p>
 <p>By default the test groups are run in parallel using the <a href="https://www.crates.io/crates/crossbeam">crossbeam crate</a>, and the default test_group implementation also runs individual tests parallelly.</p>
-<p>Sometimes you might need to run the tests in a test group serially or in certain order, for example in case of testing container lifecycle, a container must be created and started before stopping it. In such cases, you will need to implement the respective traits on your own structs, so that you can have fine control over the running of tests. Check the readme of the test_framework crate to see the struct and trait documentation <a href="https://github.com/containers/youki/tree/main/crates/test_framework">here</a>.</p>
+<p>Sometimes you might need to run the tests in a test group serially or in certain order, for example in case of testing container lifecycle, a container must be created and started before stopping it. In such cases, you will need to implement the respective traits on your own structs, so that you can have fine control over the running of tests. Check the readme of the test_framework crate to see the struct and trait documentation <a href="https://github.com/youki-dev/youki/tree/main/crates/test_framework">here</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="runtime-test"><a class="header" href="#runtime-test">Runtime Test</a></h1>
 <p><strong>Note</strong> that these tests resides in /tests/runtimetest at the time of writing.</p>
 <p>This crate provides a binary which is used by integration tests to verify that the restrictions and constraints applied to the container are upheld by the container process, from inside the container process. This runs the tests one-by-one, and the failing test prints the error to the stderr.</p>

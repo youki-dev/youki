@@ -180,7 +180,7 @@
 <h2 id="conventions-to-follow"><a class="header" href="#conventions-to-follow">Conventions to follow</a></h2>
 <h4 id="errors"><a class="header" href="#errors">Errors</a></h4>
 <p>Youki currently uses <a href="https://www.crates.io/crates/anyhow">anyhow</a> library to deal with errors occurring during its execution. So wherever you use fallible actions, or functions that can return <code>Result</code>, make sure you attach enough information with the errors so that error logs can be useful for debugging later. For example, if you are reading a file, or parsing something and the operation does not succeed, you can add the path from which you attempted to read the file, or the string that you attempted to parse.</p>
-<p>Also for the error messages, we follow the convention all small-case letters and no period at the end, as discussed in <a href="https://github.com/containers/youki/issues/313">this PR</a>. Whenever you write error messages, please follow this convention to keep them uniform.</p>
+<p>Also for the error messages, we follow the convention all small-case letters and no period at the end, as discussed in <a href="https://github.com/youki-dev/youki/issues/313">this PR</a>. Whenever you write error messages, please follow this convention to keep them uniform.</p>
 <h4 id="logs"><a class="header" href="#logs">Logs</a></h4>
 <p>youki uses <a href="https://crates.io/crates/log">log</a> crate to log information while running. Whenever adding code to interact with system or kernel features or such, make sure to add debug logs so that if youki crashes, you can trace the errors and zero-in on the reasons using logs.</p>
 <h4 id="comments"><a class="header" href="#comments">Comments</a></h4>
