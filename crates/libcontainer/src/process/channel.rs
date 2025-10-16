@@ -58,6 +58,13 @@ impl MainSender {
         Ok(())
     }
 
+    pub fn time_offset_request(&mut self) -> Result<(), ChannelError> {
+        tracing::debug!("send time offset request");
+        self.sender.send(Message::WriteTimeOffsets)?;
+
+        Ok(())
+    }
+
     pub fn seccomp_notify_request(&mut self, fd: RawFd) -> Result<(), ChannelError> {
         self.sender
             .send_fds(Message::SeccompNotify, &[fd.as_raw_fd()])?;
@@ -135,6 +142,23 @@ impl MainReceiver {
             Message::WriteMapping => Ok(()),
             msg => Err(ChannelError::UnexpectedMessage {
                 expected: Message::WriteMapping,
+                received: msg,
+            }),
+        }
+    }
+
+    pub fn wait_for_time_offset_request(&mut self) -> Result<(), ChannelError> {
+        let msg = self
+            .receiver
+            .recv()
+            .map_err(|err| ChannelError::ReceiveError {
+                msg: "waiting for time offset request".to_string(),
+                source: err,
+            })?;
+        match msg {
+            Message::WriteTimeOffsets => Ok(()),
+            msg => Err(ChannelError::UnexpectedMessage {
+                expected: Message::WriteTimeOffsets,
                 received: msg,
             }),
         }
@@ -219,6 +243,13 @@ impl IntermediateSender {
         Ok(())
     }
 
+    pub fn time_offsets_written(&mut self) -> Result<(), ChannelError> {
+        tracing::debug!("time offsets written");
+        self.sender.send(Message::TimeOffsetsWritten)?;
+
+        Ok(())
+    }
+
     pub fn close(&self) -> Result<(), ChannelError> {
         self.sender.close()?;
 
@@ -245,6 +276,24 @@ impl IntermediateReceiver {
             Message::MappingWritten => Ok(()),
             msg => Err(ChannelError::UnexpectedMessage {
                 expected: Message::MappingWritten,
+                received: msg,
+            }),
+        }
+    }
+
+    pub fn wait_for_time_offsets_ack(&mut self) -> Result<(), ChannelError> {
+        tracing::debug!("waiting for time offsets ack");
+        let msg = self
+            .receiver
+            .recv()
+            .map_err(|err| ChannelError::ReceiveError {
+                msg: "waiting for time offsets ack".to_string(),
+                source: err,
+            })?;
+        match msg {
+            Message::TimeOffsetsWritten => Ok(()),
+            msg => Err(ChannelError::UnexpectedMessage {
+                expected: Message::TimeOffsetsWritten,
                 received: msg,
             }),
         }
