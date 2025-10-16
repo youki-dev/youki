@@ -1,6 +1,6 @@
 use std::fs;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use oci_spec::runtime::{
     LinuxBuilder, LinuxMemoryPolicyBuilder, MemoryPolicyFlagType, MemoryPolicyModeType,
     ProcessBuilder, Spec, SpecBuilder,
