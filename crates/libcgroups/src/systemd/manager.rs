@@ -4,6 +4,7 @@ use std::fmt::{Debug, Display};
 use std::fs::{self};
 use std::path::Component::RootDir;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use nix::NixPath;
 use nix::unistd::Pid;
@@ -28,6 +29,7 @@ use crate::v2::manager::{Manager as FsManager, V2ManagerError};
 
 const CGROUP_CONTROLLERS: &str = "cgroup.controllers";
 const CGROUP_SUBTREE_CONTROL: &str = "cgroup.subtree_control";
+const PROCESS_IN_CGROUP_TIMEOUT_DURATION_IN_SECONDS: u64 = 5;
 
 pub struct Manager {
     /// Root path of the cgroup hierarchy e.g. /sys/fs/cgroup
@@ -156,7 +158,7 @@ pub enum SystemdManagerError {
     #[error("in v2 manager: {0}")]
     V2Manager(#[from] V2ManagerError),
 
-    #[error("Timeout waiting for pid {0}")]
+    #[error("Timeout waiting for pid {0} to be added to cgroup")]
     WaitForProcessInCgroupTimeout(String),
 
     #[error("in cpu controller: {0}")]
@@ -309,14 +311,13 @@ impl Manager {
     }
 
     fn wait_for_process_in_cgroup(&self, pid: Pid) -> Result<(), SystemdManagerError> {
-        use std::time::{Duration, Instant};
         let start = Instant::now();
-        let timeout = Duration::from_secs(5);
+        let timeout = Duration::from_secs(PROCESS_IN_CGROUP_TIMEOUT_DURATION_IN_SECONDS);
         while start.elapsed() < timeout {
             // If it fails, it most likely means that the cgroup hasn't been set up yet.
             if let Ok(pids) = self.fs_manager.get_all_pids() {
                 if pids.contains(&pid) {
-                    tracing::debug!("Process {} successfully added to cgroup", pid);
+                    tracing::info!("Process {} successfully added to cgroup", pid);
                     return Ok(());
                 }
             }
