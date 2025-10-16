@@ -468,6 +468,7 @@ mod tests {
         // Test MPOL_DEFAULT with flags (should fail)
         let policy_default_with_flags = LinuxMemoryPolicyBuilder::default()
             .mode(MemoryPolicyModeType::MpolDefault)
+            .nodes("".to_string())
             .flags(vec![
                 oci_spec::runtime::MemoryPolicyFlagType::MpolFStaticNodes,
             ])
