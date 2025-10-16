@@ -384,6 +384,7 @@ mod tests {
         let policy = LinuxMemoryPolicyBuilder::default()
             .mode(MemoryPolicyModeType::MpolBind)
             .nodes("0,1".to_string())
+            .flags(vec![])
             .build()
             .unwrap();
 
@@ -458,6 +459,7 @@ mod tests {
         let policy_default_with_nodes = LinuxMemoryPolicyBuilder::default()
             .mode(MemoryPolicyModeType::MpolDefault)
             .nodes("0".to_string())
+            .flags(vec![])
             .build()
             .unwrap();
 
@@ -478,6 +480,7 @@ mod tests {
         let policy_local_with_nodes = LinuxMemoryPolicyBuilder::default()
             .mode(MemoryPolicyModeType::MpolLocal)
             .nodes("0".to_string())
+            .flags(vec![])
             .build()
             .unwrap();
 
@@ -487,6 +490,7 @@ mod tests {
         let policy_bind_empty = LinuxMemoryPolicyBuilder::default()
             .mode(MemoryPolicyModeType::MpolBind)
             .nodes("".to_string())
+            .flags(vec![])
             .build()
             .unwrap();
 
@@ -496,6 +500,7 @@ mod tests {
         let policy_bind_whitespace = LinuxMemoryPolicyBuilder::default()
             .mode(MemoryPolicyModeType::MpolBind)
             .nodes("   ".to_string())
+            .flags(vec![])
             .build()
             .unwrap();
 
