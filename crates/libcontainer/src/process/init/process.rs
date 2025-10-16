@@ -553,7 +553,9 @@ fn apply_rest_namespaces(
 ) -> Result<()> {
     namespaces
         .apply_namespaces(|ns_type| -> bool {
-            ns_type != CloneFlags::CLONE_NEWUSER && ns_type != CloneFlags::CLONE_NEWPID
+            ns_type != CloneFlags::CLONE_NEWUSER
+                && ns_type != CloneFlags::CLONE_NEWPID
+                && ns_type != CloneFlags::from_bits_retain(LinuxNamespaceType::Time as i32)
         })
         .map_err(|err| {
             tracing::error!(
