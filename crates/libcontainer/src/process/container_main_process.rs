@@ -108,7 +108,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
         inter_sender.mapping_written()?;
     }
 
-    // If creating a container with time namespace and offsets are specified, 
+    // If creating a container with time namespace and offsets are specified,
     // the intermediate process will ask the main process to write the time offsets.
     // This must be done from the parent process since CAP_SYS_TIME is required.
     if let Some(time_offsets) = &container_args.time_offsets {
@@ -240,13 +240,12 @@ fn setup_mapping(config: &UserNamespaceConfig, pid: Pid) -> Result<()> {
 
 fn setup_time_offsets(offsets: &str, pid: Pid) -> Result<()> {
     tracing::debug!("write time offsets for pid {:?}: '{}'", pid, offsets);
-    
-    std::fs::write(format!("/proc/{pid}/timens_offsets"), offsets)
-        .map_err(|err| {
-            tracing::error!("failed to write timens_offsets for pid {:?}: {}", pid, err);
-            ProcessError::SyscallOther(SyscallError::IO(err))
-        })?;
-    
+
+    std::fs::write(format!("/proc/{pid}/timens_offsets"), offsets).map_err(|err| {
+        tracing::error!("failed to write timens_offsets for pid {:?}: {}", pid, err);
+        ProcessError::SyscallOther(SyscallError::IO(err))
+    })?;
+
     Ok(())
 }
 
