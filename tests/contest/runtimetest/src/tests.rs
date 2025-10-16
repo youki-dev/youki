@@ -600,7 +600,11 @@ fn expected_nodes_from_spec(spec: &Spec) -> Option<Vec<u32>> {
 }
 
 fn numa_maps_indicates_node0(policy_field: &str) -> bool {
-    policy_field.contains("bind:0") || policy_field.contains("prefer:0")
+    if let Some((_, nodes_spec)) = policy_field.rsplit_once(':') {
+        return parse_node_string(nodes_spec).contains(&0);
+    }
+
+    false
 }
 
 pub fn validate_memory_policy(spec: &Spec) {
