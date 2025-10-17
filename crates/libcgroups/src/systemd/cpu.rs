@@ -91,7 +91,22 @@ pub fn convert_shares_to_cgroup2(shares: u64) -> u64 {
         return 0;
     }
 
-    1 + ((shares.saturating_sub(2)) * 9999) / 262142
+    const MIN_SHARES: u64 = 2;
+    const MAX_SHARES: u64 = 262_144;
+    const MAX_WEIGHT: u64 = 10_000;
+
+    if shares <= MIN_SHARES {
+        return 1;
+    }
+
+    if shares >= MAX_SHARES {
+        return MAX_WEIGHT;
+    }
+
+    let log_shares = (shares as f64).log2();
+    let exponent = (log_shares * log_shares + 125.0 * log_shares) / 612.0 - 7.0 / 34.0;
+
+    (10f64.powf(exponent)).ceil() as u64
 }
 
 #[cfg(test)]
@@ -120,7 +135,7 @@ mod tests {
 
         let cpu_weight = &properties[CPU_WEIGHT];
         let val = recast!(cpu_weight, Variant)?;
-        assert_eq!(val, Variant::U64(840));
+        assert_eq!(val, Variant::U64(1204));
 
         Ok(())
     }

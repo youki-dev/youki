@@ -60,7 +60,7 @@ fn test_cpu_idle_default() -> TestResult {
 /// Tests if a cpu weight that is in the valid range [1, 10000] is successfully set
 fn test_cpu_weight_valid_set() -> TestResult {
     let cpu_weight = 22_000u64;
-    let converted_cpu_weight = 840u64;
+    let converted_cpu_weight = 1204u64;
     let cpu = test_result!(
         LinuxCpuBuilder::default()
             .shares(cpu_weight)
