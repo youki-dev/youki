@@ -619,7 +619,7 @@ mod tests {
         .unwrap();
 
         // Bogus Pid
-        let p1_id = nix::unistd::Pid::from_raw(-1 as i32);
+        let p1_id = nix::unistd::Pid::from_raw(-1_i32);
 
         let result = manager.wait_for_process_in_cgroup(p1_id);
 
