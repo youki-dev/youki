@@ -144,6 +144,43 @@ impl ContainerBuilderImpl {
             })?;
         }
 
+        // Extract time namespace offsets from spec
+        // Only set time_offsets if we're creating a NEW time namespace (not joining an existing one)
+        let time_offsets = self
+            .spec
+            .linux()
+            .as_ref()
+            .and_then(|linux| {
+                let creating_new_time_ns = linux
+                    .namespaces()
+                    .as_ref()
+                    .and_then(|namespaces| {
+                        namespaces
+                            .iter()
+                            .find(|ns| ns.typ() == oci_spec::runtime::LinuxNamespaceType::Time)
+                    })
+                    .map(|time_ns| time_ns.path().is_none())
+                    .unwrap_or(false);
+
+                if creating_new_time_ns {
+                    linux.time_offsets().as_ref()
+                } else {
+                    None
+                }
+            })
+            .map(|offsets| {
+                offsets
+                    .iter()
+                    .map(|(clock_type, offset)| {
+                        let secs = offset.secs().unwrap_or(0);
+                        let nanosecs = offset.nanosecs().unwrap_or(0);
+                        format!("{} {} {}", clock_type, secs, nanosecs)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .filter(|s| !s.is_empty());
+
         // This container_args will be passed to the container processes,
         // therefore we will have to move all the variable by value. Since self
         // is a shared reference, we have to clone these variables here.
@@ -165,6 +202,7 @@ impl ContainerBuilderImpl {
             stdout: self.stdout.as_ref().map(|x| x.as_raw_fd()),
             stderr: self.stderr.as_ref().map(|x| x.as_raw_fd()),
             as_sibling: self.as_sibling,
+            time_offsets,
         };
 
         let (init_pid, need_to_clean_up_intel_rdt_dir) =
