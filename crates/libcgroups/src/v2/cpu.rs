@@ -138,8 +138,22 @@ impl Cpu {
             return 0;
         }
 
-        let weight = 1 + ((shares.saturating_sub(2)) * 9999) / 262142;
-        weight.min(MAX_CPU_WEIGHT)
+        const MIN_SHARES: u64 = 2;
+        const MAX_SHARES: u64 = 262_144;
+
+        if shares <= MIN_SHARES {
+            return 1;
+        }
+
+        if shares >= MAX_SHARES {
+            return MAX_CPU_WEIGHT;
+        }
+
+        let log_shares = (shares as f64).log2();
+        let exponent = (log_shares * log_shares + 125.0 * log_shares) / 612.0 - 7.0 / 34.0;
+        let weight = (10f64.powf(exponent)).ceil() as u64;
+
+        weight.clamp(1, MAX_CPU_WEIGHT)
     }
 
     fn is_realtime_requested(cpu: &LinuxCpu) -> bool {
@@ -190,7 +204,7 @@ mod tests {
         // assert
         let content = fs::read_to_string(weight)
             .unwrap_or_else(|_| panic!("read {CGROUP_CPU_WEIGHT} file content"));
-        assert_eq!(content, 840.to_string());
+        assert_eq!(content, 1204.to_string());
     }
 
     #[test]
