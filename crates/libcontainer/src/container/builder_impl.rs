@@ -145,11 +145,29 @@ impl ContainerBuilderImpl {
         }
 
         // Extract time namespace offsets from spec
+        // Only set time_offsets if we're creating a NEW time namespace (not joining an existing one)
         let time_offsets = self
             .spec
             .linux()
             .as_ref()
-            .and_then(|linux| linux.time_offsets().as_ref())
+            .and_then(|linux| {
+                let creating_new_time_ns = linux
+                    .namespaces()
+                    .as_ref()
+                    .and_then(|namespaces| {
+                        namespaces
+                            .iter()
+                            .find(|ns| ns.typ() == oci_spec::runtime::LinuxNamespaceType::Time)
+                    })
+                    .map(|time_ns| time_ns.path().is_none())
+                    .unwrap_or(false);
+
+                if creating_new_time_ns {
+                    linux.time_offsets().as_ref()
+                } else {
+                    None
+                }
+            })
             .map(|offsets| {
                 offsets
                     .iter()
