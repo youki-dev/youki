@@ -29,7 +29,7 @@ use crate::v2::manager::{Manager as FsManager, V2ManagerError};
 
 const CGROUP_CONTROLLERS: &str = "cgroup.controllers";
 const CGROUP_SUBTREE_CONTROL: &str = "cgroup.subtree_control";
-const PROCESS_IN_CGROUP_TIMEOUT_DURATION_IN_SECONDS: u64 = 5;
+pub const PROCESS_IN_CGROUP_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
 
 pub struct Manager {
     /// Root path of the cgroup hierarchy e.g. /sys/fs/cgroup
@@ -51,6 +51,8 @@ pub struct Manager {
     fs_manager: FsManager,
     /// Last control group which is managed by systemd, e.g. /user.slice/user-1000/user@1000.service
     delegation_boundary: PathBuf,
+    /// Duration to wait for a specific PID to be added to a cgroup
+    cgroup_wait_timeout_duration: Duration,
 }
 
 /// Represents the systemd cgroups path:
@@ -179,6 +181,7 @@ impl Manager {
         cgroups_path: PathBuf,
         container_name: String,
         use_system: bool,
+        cgroup_wait_timeout_duration: Duration,
     ) -> Result<Self, SystemdManagerError> {
         let mut destructured_path: CgroupsPath = cgroups_path.as_path().try_into()?;
         ensure_parent_unit(&mut destructured_path, use_system);
@@ -203,6 +206,7 @@ impl Manager {
             client,
             fs_manager,
             delegation_boundary,
+            cgroup_wait_timeout_duration,
         })
     }
 
@@ -312,7 +316,7 @@ impl Manager {
 
     fn wait_for_process_in_cgroup(&self, pid: Pid) -> Result<(), SystemdManagerError> {
         let start = Instant::now();
-        let timeout = Duration::from_secs(PROCESS_IN_CGROUP_TIMEOUT_DURATION_IN_SECONDS);
+        let timeout = self.cgroup_wait_timeout_duration;
         while start.elapsed() < timeout {
             // If it fails, it most likely means that the cgroup hasn't been set up yet.
             if let Ok(pids) = self.fs_manager.get_all_pids() {
@@ -568,6 +572,7 @@ mod tests {
 
         Ok(())
     }
+
     #[test]
     fn test_task_addition() {
         let manager = Manager::new(
@@ -575,6 +580,7 @@ mod tests {
             ":youki:test".into(),
             "youki_test_container".into(),
             false,
+            PROCESS_IN_CGROUP_TIMEOUT_DURATION,
         )
         .unwrap();
         let mut p1 = std::process::Command::new("sleep")
@@ -599,5 +605,28 @@ mod tests {
         // the remove call above should remove the dir, we just do this again
         // for contingency, and thus ignore the result
         let _ = fs::remove_dir(&manager.full_path);
+    }
+
+    #[test]
+    fn test_error_thrown_if_process_never_added_to_cgroup() -> Result<()> {
+        let manager = Manager::new(
+            DEFAULT_CGROUP_ROOT.into(),
+            ":youki:test".into(),
+            "youki_test_container".into(),
+            false,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        // Bogus Pid
+        let p1_id = nix::unistd::Pid::from_raw(-1 as i32);
+
+        let result = manager.wait_for_process_in_cgroup(p1_id);
+
+        assert!(matches!(
+            result,
+            Err(SystemdManagerError::WaitForProcessInCgroupTimeout(..))
+        ));
+        Ok(())
     }
 }
