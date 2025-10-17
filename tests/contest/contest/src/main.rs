@@ -41,6 +41,7 @@ use crate::tests::scheduler::get_scheduler_test;
 use crate::tests::seccomp::get_seccomp_test;
 use crate::tests::seccomp_notify::get_seccomp_notify_test;
 use crate::tests::sysctl::get_sysctl_test;
+use crate::tests::time_ns::get_time_ns_test;
 use crate::tests::tlb::get_tlb_test;
 use crate::tests::uid_mappings::get_uid_mappings_test;
 use crate::utils::support::{set_runtime_path, set_runtimetest_path};
@@ -148,6 +149,7 @@ fn main() -> Result<()> {
     let exec_cpu_affinity = get_exec_cpu_affinity_test();
     let personality = get_personality_test();
     let prohibit_symlink = get_prohibit_symlink_test();
+    let time_ns = get_time_ns_test();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -190,6 +192,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(personality));
     tm.add_test_group(Box::new(prohibit_symlink));
     tm.add_test_group(Box::new(io_priority_test));
+    tm.add_test_group(Box::new(time_ns));
     tm.add_cleanup(Box::new(cgroups::cleanup_v1));
     tm.add_cleanup(Box::new(cgroups::cleanup_v2));
 
