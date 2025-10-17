@@ -997,23 +997,37 @@ fn verify_cwd() -> Result<()> {
     Ok(())
 }
 
-// Set the HOME environment variable if it is not already set or is empty.
+/// Set the HOME environment variable if it is not already set or is empty.
 fn set_home_env_if_not_exists(envs: &mut HashMap<String, String>, uid: Uid) {
     if envs.get("HOME").is_none_or(|v| v.is_empty()) {
         if let Some(dir_home) = utils::get_user_home(uid.into()) {
-            envs.insert("HOME".to_owned(), dir_home.to_string_lossy().to_string());
+            set_home_from_path(envs, &dir_home);
         }
+    }
+}
+
+/// Set the HOME environment variable if dir_home string is valid UTF-8
+fn set_home_from_path(envs: &mut HashMap<String, String>, dir_home: &Path) {
+    if let Some(home_str) = dir_home.to_str() {
+        envs.insert("HOME".to_owned(), home_str.to_owned());
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
     use std::fs;
+<<<<<<< HEAD
     use std::path::Path;
+=======
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::PathBuf;
+>>>>>>> 4dcdadc6 (Edit the commented content)
 
     use anyhow::Result;
     #[cfg(feature = "libseccomp")]
     use nix::unistd;
+    use nix::unistd::{Uid, User as NixUser};
     use oci_spec::runtime::{LinuxNamespaceBuilder, SpecBuilder, UserBuilder};
     #[cfg(feature = "libseccomp")]
     use serial_test::serial;
@@ -1333,6 +1347,15 @@ mod tests {
     }
 
     #[test]
+    fn test_set_home_env_if_not_exists_already_exists_non_root() {
+        let mut envs = HashMap::new();
+        envs.insert("HOME".to_owned(), "/existing/home".to_owned());
+
+        set_home_env_if_not_exists(&mut envs, Uid::current());
+        assert_eq!(envs.get("HOME"), Some(&"/existing/home".to_string()));
+    }
+
+    #[test]
     fn test_set_home_env_if_not_exists_already_exists_but_empty_value() {
         let mut envs = HashMap::new();
         envs.insert("HOME".to_owned(), "".to_owned());
@@ -1342,10 +1365,62 @@ mod tests {
     }
 
     #[test]
+    fn test_set_home_env_if_not_exists_already_exists_but_empty_value_non_root() {
+        let mut envs = HashMap::new();
+        envs.insert("HOME".to_owned(), "".to_owned());
+
+        let current_uid = Uid::current();
+        let expected = NixUser::from_uid(current_uid)
+            .ok()
+            .flatten()
+            .and_then(|user| user.dir.to_str().map(|s| s.to_owned()))
+            .unwrap_or_default();
+
+        set_home_env_if_not_exists(&mut envs, current_uid);
+        assert_eq!(envs.get("HOME"), Some(&expected));
+    }
+
+    #[test]
     fn test_set_home_env_if_not_exists_not_set() {
         let mut envs = HashMap::new();
 
         set_home_env_if_not_exists(&mut envs, Uid::from_raw(0));
         assert_eq!(envs.get("HOME"), Some(&"/root".to_string()));
+    }
+
+    #[test]
+    fn test_set_home_env_if_not_exists_not_set_non_root() {
+        let mut envs = HashMap::new();
+
+        let current_uid = Uid::current();
+        let expected = NixUser::from_uid(current_uid)
+            .ok()
+            .flatten()
+            .and_then(|user| user.dir.to_str().map(|s| s.to_owned()))
+            .unwrap_or_default();
+
+        set_home_env_if_not_exists(&mut envs, current_uid);
+        assert_eq!(envs.get("HOME"), Some(&expected));
+    }
+
+    #[test]
+    fn test_set_home_from_path_valid_utf8() {
+        let mut envs = HashMap::new();
+        let valid_path = PathBuf::from("/home/user");
+
+        set_home_from_path(&mut envs, &valid_path);
+        assert_eq!(envs.get("HOME"), Some(&"/home/user".to_string()));
+    }
+
+    #[test]
+    fn test_set_home_from_path_invalid_utf8() {
+        let mut envs = HashMap::new();
+
+        let invalid_bytes = b"/home/user/\xFF\xFE";
+        let invalid_path = PathBuf::from(OsStr::from_bytes(invalid_bytes));
+        assert!(invalid_path.to_str().is_none());
+
+        set_home_from_path(&mut envs, &invalid_path);
+        assert_eq!(envs.get("HOME"), None);
     }
 }
