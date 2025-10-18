@@ -44,7 +44,7 @@ procfs = "0.17.0"
 prctl = "1.0.0"
 protobuf = "= 3.2.0" # https://github.com/checkpoint-restore/rust-criu/issues/19
 libcgroups = { path = "../libcgroups", default-features = false, version = "0.5.5" } # MARK: Version
-libseccomp = { version = "0.3.0", optional = true }
+libseccomp = { version = "0.4.0", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 rust-criu = "0.4.0"
