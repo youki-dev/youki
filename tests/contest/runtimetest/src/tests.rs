@@ -1020,3 +1020,55 @@ pub fn validate_uid_mappings(spec: &Spec) {
     let expected_gid_mappings = linux.gid_mappings().as_ref().unwrap();
     validate_id_mappings(expected_gid_mappings, "/proc/self/gid_map", "gid_mappings");
 }
+
+pub fn validate_time_offsets(spec: &Spec) {
+    let linux = spec.linux().as_ref().unwrap();
+    let time_offsets_mapping = linux.time_offsets().as_ref().unwrap();
+
+    let boottime_values = time_offsets_mapping.get("boottime").unwrap();
+    let boottime_secs = boottime_values.secs().unwrap();
+    let boottime_nanosecs = boottime_values.nanosecs().unwrap();
+
+    let monotonic_values = time_offsets_mapping.get("monotonic").unwrap();
+    let monotonic_secs = monotonic_values.secs().unwrap();
+    let monotonic_nanosecs = monotonic_values.nanosecs().unwrap();
+
+    let actual_offsets = match fs::read_to_string("/proc/self/timens_offsets") {
+        Ok(contents) => contents,
+        Err(e) => {
+            eprintln!("Failed to read /proc/self/timens_offsets: {}", e);
+            return;
+        }
+    };
+
+    for line in actual_offsets.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() != 3 {
+            continue;
+        }
+
+        let clock_type = parts[0];
+        let actual_secs = parts[1].parse::<i64>().unwrap();
+        let actual_nanosecs = parts[2].parse::<u32>().unwrap();
+
+        match clock_type {
+            "monotonic" => {
+                if actual_secs != monotonic_secs || actual_nanosecs != monotonic_nanosecs {
+                    eprintln!(
+                        "Unexpected monotonic time offset, expected: {} {}, found: {} {}",
+                        monotonic_secs, monotonic_nanosecs, actual_secs, actual_nanosecs
+                    );
+                }
+            }
+            "boottime" => {
+                if actual_secs != boottime_secs || actual_nanosecs != boottime_nanosecs {
+                    eprintln!(
+                        "Unexpected boottime time offset, expected: {} {}, found: {} {}",
+                        boottime_secs, boottime_nanosecs, actual_secs, actual_nanosecs
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+}
