@@ -1023,15 +1023,22 @@ pub fn validate_uid_mappings(spec: &Spec) {
 
 pub fn validate_time_offsets(spec: &Spec) {
     let linux = spec.linux().as_ref().unwrap();
-    let time_offsets_mapping = linux.time_offsets().as_ref().unwrap();
+    let time_offsets_mapping = linux.time_offsets();
 
-    let boottime_values = time_offsets_mapping.get("boottime").unwrap();
-    let boottime_secs = boottime_values.secs().unwrap();
-    let boottime_nanosecs = boottime_values.nanosecs().unwrap();
+    let (boottime_secs, boottime_nanosecs, monotonic_secs, monotonic_nanosecs) = 
+        if let Some(offsets) = time_offsets_mapping {
+            let boottime_values = offsets.get("boottime").unwrap();
+            let boottime_secs = boottime_values.secs().unwrap_or(0);
+            let boottime_nanosecs = boottime_values.nanosecs().unwrap_or(0);
 
-    let monotonic_values = time_offsets_mapping.get("monotonic").unwrap();
-    let monotonic_secs = monotonic_values.secs().unwrap();
-    let monotonic_nanosecs = monotonic_values.nanosecs().unwrap();
+            let monotonic_values = offsets.get("monotonic").unwrap();
+            let monotonic_secs = monotonic_values.secs().unwrap_or(0);
+            let monotonic_nanosecs = monotonic_values.nanosecs().unwrap_or(0);
+
+            (boottime_secs, boottime_nanosecs, monotonic_secs, monotonic_nanosecs)
+        } else {
+            (0, 0, 0, 0)
+        };
 
     let actual_offsets = match fs::read_to_string("/proc/self/timens_offsets") {
         Ok(contents) => contents,
