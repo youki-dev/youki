@@ -1025,7 +1025,7 @@ pub fn validate_time_offsets(spec: &Spec) {
     let linux = spec.linux().as_ref().unwrap();
     let time_offsets_mapping = linux.time_offsets();
 
-    let (boottime_secs, boottime_nanosecs, monotonic_secs, monotonic_nanosecs) = 
+    let (boottime_secs, boottime_nanosecs, monotonic_secs, monotonic_nanosecs) =
         if let Some(offsets) = time_offsets_mapping {
             let boottime_values = offsets.get("boottime").unwrap();
             let boottime_secs = boottime_values.secs().unwrap_or(0);
@@ -1035,7 +1035,12 @@ pub fn validate_time_offsets(spec: &Spec) {
             let monotonic_secs = monotonic_values.secs().unwrap_or(0);
             let monotonic_nanosecs = monotonic_values.nanosecs().unwrap_or(0);
 
-            (boottime_secs, boottime_nanosecs, monotonic_secs, monotonic_nanosecs)
+            (
+                boottime_secs,
+                boottime_nanosecs,
+                monotonic_secs,
+                monotonic_nanosecs,
+            )
         } else {
             (0, 0, 0, 0)
         };
