@@ -133,6 +133,11 @@ impl Cpu {
         Ok(())
     }
 
+    // Convert CPU shares (cgroup v1) into CPU weight (cgroup v2).
+    // cgroup v1 shares span [2, 262_144] with a default of 1_024.
+    // cgroup v2 weight spans [1, 10_000] with a default of 100.
+    // A shares value of 0 keeps the field unset.
+    // The quadratic fit mirrors runc's mapping to keep extrema and defaults.
     fn convert_shares_to_cgroup2(shares: u64) -> u64 {
         if shares == 0 {
             return 0;
