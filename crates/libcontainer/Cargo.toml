@@ -1,6 +1,6 @@
 [package]
 name = "libcontainer"
-version = "0.5.5" # MARK: Version
+version = "0.5.5"                                 # MARK: Version
 description = "Library for container control"
 license = "Apache-2.0"
 repository = "https://github.com/youki-dev/youki"
@@ -48,7 +48,10 @@ libseccomp = { version = "0.3.0", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 rust-criu = "0.4.0"
-regex = { version = "1.12.2", default-features = false, features = ["std", "unicode-perl"] }
+regex = { version = "1.12.2", default-features = false, features = [
+    "std",
+    "unicode-perl",
+] }
 thiserror = "2.0.17"
 tracing = { version = "0.1.41", features = ["attributes"] }
 safe-path = "0.1.0"

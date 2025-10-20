@@ -1,5 +1,6 @@
 use crate::namespaces::NamespaceError;
 use crate::process::channel;
+use crate::process::memory_policy::MemoryPolicyError;
 #[cfg(feature = "libseccomp")]
 use crate::seccomp;
 use crate::syscall::SyscallError;
@@ -61,6 +62,10 @@ pub enum InitProcessError {
     IoPriorityClass(String),
     #[error("call exec sched_setattr error: {0}")]
     SchedSetattr(String),
+    #[error("invalid memory policy: {0}")]
+    InvalidMemoryPolicy(String),
+    #[error(transparent)]
+    MemoryPolicy(#[from] MemoryPolicyError),
     #[error("failed to verify if current working directory is safe")]
     InvalidCwd(#[source] nix::Error),
     #[error("missing linux section in spec")]
