@@ -420,6 +420,10 @@ impl CgroupManager for Manager {
         Ok(self.fs_manager.freeze(state)?)
     }
 
+    fn get_freezer_state(&self) -> Result<FreezerState, Self::Error> {
+        Ok(self.fs_manager.get_freezer_state()?)
+    }
+
     fn stats(&self) -> Result<Stats, Self::Error> {
         Ok(self.fs_manager.stats()?)
     }

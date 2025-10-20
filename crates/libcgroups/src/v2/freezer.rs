@@ -80,16 +80,18 @@ impl Freezer {
         Ok(())
     }
 
-    fn read_freezer_state(path: &Path) -> Result<FreezerState, V2FreezerError> {
+    pub fn read_freezer_state(path: &Path) -> Result<FreezerState, V2FreezerError> {
         let target = path.join(CGROUP_FREEZE);
         let mut buf = [0; 1];
-        OpenOptions::new()
+        let result = OpenOptions::new()
             .create(false)
             .read(true)
             .open(&target)
-            .wrap_open(&target)?
-            .read_exact(&mut buf)
-            .wrap_read(&target)?;
+            .and_then(|mut file| file.read_exact(&mut buf));
+
+        if result.is_err() {
+            return Ok(FreezerState::Undefined);
+        }
 
         let state = str::from_utf8(&buf)?;
         match state {

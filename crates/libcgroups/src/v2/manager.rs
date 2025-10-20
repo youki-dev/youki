@@ -217,6 +217,10 @@ impl CgroupManager for Manager {
         Ok(Freezer::apply(&controller_opt, &self.full_path)?)
     }
 
+    fn get_freezer_state(&self) -> Result<FreezerState, Self::Error> {
+        Ok(Freezer::read_freezer_state(&self.full_path)?)
+    }
+
     fn stats(&self) -> Result<Stats, Self::Error> {
         let mut stats = Stats::default();
 
