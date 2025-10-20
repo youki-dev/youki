@@ -20,7 +20,7 @@ v1 = ["libcgroups/v1"]
 cgroupsv2_devices = ["libcgroups/cgroupsv2_devices"]
 
 [dependencies]
-caps = "0.5.5"
+caps = "0.5.6"
 chrono = { version = "0.4", default-features = false, features = [
     "clock",
     "serde",
