@@ -130,6 +130,14 @@ pub fn container_intermediate_process(
         namespaces.unshare_or_setns(pid_namespace)?;
     }
 
+    if let Some(time_namespace) = namespaces.get(LinuxNamespaceType::Time)? {
+        namespaces.unshare_or_setns(time_namespace)?;
+
+        if time_namespace.path().is_none() && args.time_offsets.is_some() {
+            setup_time_offsets(main_sender, inter_receiver)?;
+        }
+    }
+
     let cb: CloneCb = {
         Box::new(|| {
             if let Err(ret) = prctl::set_name("youki:[2:INIT]") {
@@ -253,6 +261,36 @@ fn setup_userns(
             nix::errno::Errno::from_raw(e)
         ))
     })?;
+    Ok(())
+}
+
+fn setup_time_offsets(sender: &mut MainSender, receiver: &mut IntermediateReceiver) -> Result<()> {
+    tracing::debug!("requesting parent to write time namespace offsets");
+
+    prctl::set_dumpable(true).map_err(|e| {
+        IntermediateProcessError::Other(format!(
+            "error in setting dumpable to true for time offsets: {}",
+            nix::errno::Errno::from_raw(e)
+        ))
+    })?;
+
+    sender.time_offset_request().map_err(|err| {
+        tracing::error!("failed to send time offset request: {}", err);
+        err
+    })?;
+
+    receiver.wait_for_time_offsets_ack().map_err(|err| {
+        tracing::error!("failed to receive time offsets ack: {}", err);
+        err
+    })?;
+
+    prctl::set_dumpable(false).map_err(|e| {
+        IntermediateProcessError::Other(format!(
+            "error in setting dumpable to false after time offsets: {}",
+            nix::errno::Errno::from_raw(e)
+        ))
+    })?;
+
     Ok(())
 }
 
