@@ -145,41 +145,7 @@ impl ContainerBuilderImpl {
         }
 
         // Extract time namespace offsets from spec
-        // Only set time_offsets if we're creating a NEW time namespace (not joining an existing one)
-        let time_offsets = self
-            .spec
-            .linux()
-            .as_ref()
-            .and_then(|linux| {
-                let creating_new_time_ns = linux
-                    .namespaces()
-                    .as_ref()
-                    .and_then(|namespaces| {
-                        namespaces
-                            .iter()
-                            .find(|ns| ns.typ() == oci_spec::runtime::LinuxNamespaceType::Time)
-                    })
-                    .map(|time_ns| time_ns.path().is_none())
-                    .unwrap_or(false);
-
-                if creating_new_time_ns {
-                    linux.time_offsets().as_ref()
-                } else {
-                    None
-                }
-            })
-            .map(|offsets| {
-                offsets
-                    .iter()
-                    .map(|(clock_type, offset)| {
-                        let secs = offset.secs().unwrap_or(0);
-                        let nanosecs = offset.nanosecs().unwrap_or(0);
-                        format!("{} {} {}", clock_type, secs, nanosecs)
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .filter(|s| !s.is_empty());
+        let time_offsets = Self::extract_time_offsets(self.spec.linux().as_ref())?;
 
         // This container_args will be passed to the container processes,
         // therefore we will have to move all the variable by value. Since self
@@ -285,5 +251,50 @@ impl ContainerBuilderImpl {
         }
 
         Ok(())
+    }
+
+    fn extract_time_offsets(
+        linux: Option<&oci_spec::runtime::Linux>,
+    ) -> Result<Option<String>, LibcontainerError> {
+        let linux = match linux {
+            Some(l) => l,
+            None => return Ok(None),
+        };
+
+        let spec = match linux.time_offsets() {
+            Some(s) if !s.is_empty() => s,
+            _ => return Ok(None),
+        };
+
+        let time_ns = linux
+            .namespaces()
+            .as_ref()
+            .and_then(|nss| {
+                nss.iter()
+                    .find(|ns| ns.typ() == oci_spec::runtime::LinuxNamespaceType::Time)
+            })
+            .ok_or_else(|| {
+                LibcontainerError::Other(
+                    "time namespace offsets specified, but time namespace isn't enabled in the config"
+                        .to_string(),
+                )
+            })?;
+
+        // Only set offsets if we're creating a NEW time namespace (no `path`)
+        if time_ns.path().is_some() {
+            return Ok(None);
+        }
+
+        let s = spec
+            .iter()
+            .map(|(clock_type, offset)| {
+                let secs = offset.secs().unwrap_or(0);
+                let nanos = offset.nanosecs().unwrap_or(0);
+                format!("{clock_type} {secs} {nanos}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        Ok((!s.is_empty()).then_some(s))
     }
 }
