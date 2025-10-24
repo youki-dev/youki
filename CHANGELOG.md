@@ -1,5 +1,50 @@
 # Changelog
 
+## [v0.5.6](https://github.com/youki-dev/youki/compare/v0.5.5...v0.5.6) - 2025-10-24
+### 💪 Improvements
+- fix(3197): fix youki version command Part of Enhancing Compatibility with runc by @tommady in https://github.com/youki-dev/youki/pull/3200
+- feat(3199): Add Linux personality support by @tommady in https://github.com/youki-dev/youki/pull/3202
+### 💥 Breaking Changes
+- Upgrade to Rust 1.89 and Edition 2024 by @utam0k in https://github.com/youki-dev/youki/pull/3244
+### 📖 Documentation improvements
+- added saku3 as reviewers by @saku3 in https://github.com/youki-dev/youki/pull/3228
+- Changed the events_logger in the Dev Container to file by @bells17 in https://github.com/youki-dev/youki/pull/3221
+- Update Rust edition requirement in docs to 2024 by @FalkWoldmann in https://github.com/youki-dev/youki/pull/3246
+- Update basic_setup.md by @bells17 in https://github.com/youki-dev/youki/pull/3253
+### 🧪 Test improvements and Misc Fixes
+- Update Vagrantfile to support the ARM architecture by @bells17 in https://github.com/youki-dev/youki/pull/3222
+- setup runc integration test by @saku3 in https://github.com/youki-dev/youki/pull/3182
+- update runc ci to 1.3.1 by @saku3 in https://github.com/youki-dev/youki/pull/3237
+- Add mdbook binary to devcontainer by @bells17 in https://github.com/youki-dev/youki/pull/3240
+- Unskip runc tests after CI runc update 1.3.1 by @saku3 in https://github.com/youki-dev/youki/pull/3249
+- Fix podman ci by @saku3 in https://github.com/youki-dev/youki/pull/3260
+- add misc_props test by @YamasouA in https://github.com/youki-dev/youki/pull/3250
+- chore(deps): bump libseccomp from 0.3.0 to 0.4.0 by @MattPatchava in https://github.com/youki-dev/youki/pull/3275
+### Other Changes
+- (auto merged) chore(deps): bump thiserror from 2.0.14 to 2.0.15 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3223
+- (auto merged) chore(deps): bump serde_json from 1.0.142 to 1.0.143 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3225
+- (auto merged) chore(deps): bump thiserror from 2.0.15 to 2.0.16 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3226
+- chore(deps): bump tempfile from 3.20.0 to 3.21.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3224
+- (auto merged) chore(deps): bump regex from 1.11.1 to 1.11.2 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3229
+- (auto merged) chore(deps): bump tracing-subscriber from 0.3.19 to 0.3.20 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3231
+- (auto merged) chore(deps): bump chrono from 0.4.41 to 0.4.42 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3239
+- (auto merged) chore(deps): bump errno from 0.3.13 to 0.3.14 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3241
+- (auto merged) chore(deps): bump the patch group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3245
+- chore(deps): bump tempfile from 3.21.0 to 3.22.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3242
+- (auto merged) chore(deps): bump serde from 1.0.223 to 1.0.224 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3247
+- (auto merged) chore(deps): bump serde from 1.0.224 to 1.0.225 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3248
+- (auto merged) chore(deps): bump the patch group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3251
+- (auto merged) chore(deps): bump libc from 0.2.175 to 0.2.176 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3254
+- chore(deps): bump tempfile from 3.22.0 to 3.23.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3255
+- (auto merged) chore(deps): bump the patch group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3257
+- (auto merged) chore(deps): bump the patch group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3261
+- (auto merged) chore(deps): bump flate2 from 1.1.2 to 1.1.4 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3268
+- (auto merged) chore(deps): bump the patch group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3270
+- (auto merged) chore(deps): bump libc from 0.2.176 to 0.2.177 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3271
+- chore(deps): bump regex from 1.11.3 to 1.12.1 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3272
+- (auto merged) chore(deps): bump regex from 1.12.1 to 1.12.2 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3273
+- (auto merged) chore(deps): bump caps from 0.5.5 to 0.5.6 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3277
+
 ## [v0.5.5](https://github.com/youki-dev/youki/compare/v0.5.4...v0.5.5) - 2025-08-14
 ### 💪 Improvements
 - fix(3198): fix difference in how commands are passed after exec and ps by @tommady in https://github.com/youki-dev/youki/pull/3201
