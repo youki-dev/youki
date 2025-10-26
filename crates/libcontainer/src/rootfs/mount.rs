@@ -1063,18 +1063,18 @@ mod tests {
         Ok(())
     }
 
+    struct FakeMountInfo {
+        entries: Vec<MountInfo>,
+    }
+    impl MountInfoProvider for FakeMountInfo {
+        fn mountinfo(&self) -> std::result::Result<Vec<MountInfo>, MountError> {
+            std::result::Result::Ok(self.entries.clone())
+        }
+    }
+
     #[test]
     fn test_make_parent_mount_private() -> Result<()> {
         let tmp_dir = tempfile::tempdir()?;
-
-        struct FakeMountInfo {
-            entries: Vec<MountInfo>,
-        }
-        impl MountInfoProvider for FakeMountInfo {
-            fn mountinfo(&self) -> std::result::Result<Vec<MountInfo>, MountError> {
-                std::result::Result::Ok(self.entries.clone())
-            }
-        }
 
         let parent = tmp_dir.path().parent().unwrap().to_path_buf();
         let fake = FakeMountInfo {
@@ -1123,15 +1123,6 @@ mod tests {
     #[test]
     fn test_not_make_parent_mount_private_if_already_private() -> Result<()> {
         let tmp_dir = tempfile::tempdir()?;
-
-        struct FakeMountInfo {
-            entries: Vec<MountInfo>,
-        }
-        impl MountInfoProvider for FakeMountInfo {
-            fn mountinfo(&self) -> std::result::Result<Vec<MountInfo>, MountError> {
-                std::result::Result::Ok(self.entries.clone())
-            }
-        }
 
         let parent = tmp_dir.path().parent().unwrap().to_path_buf();
         let fake = FakeMountInfo {
