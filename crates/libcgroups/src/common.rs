@@ -330,6 +330,7 @@ pub enum CreateCgroupSetupError {
 pub struct CgroupConfig {
     pub cgroup_path: PathBuf,
     pub systemd_cgroup: bool,
+    pub rootless_container: bool,
     pub container_name: String,
 }
 
@@ -338,7 +339,13 @@ pub struct CgroupConfig {
 pub fn create_cgroup_manager_with_root(
     root_path: Option<&Path>,
     config: CgroupConfig,
-) -> Result<AnyCgroupManager, CreateCgroupSetupError> {
+) -> Result<Option<AnyCgroupManager>, CreateCgroupSetupError> {
+    // Creating cgroups with cgroupfs as non-root is not possible.
+    if !config.systemd_cgroup && config.rootless_container {
+        tracing::warn!("cannot configure rootless cgroup using the cgroupfs manager");
+        return Ok(None);
+    }
+
     let root = match root_path {
         Some(p) => p,
         None => Path::new(DEFAULT_CGROUP_ROOT),
@@ -353,24 +360,24 @@ pub fn create_cgroup_manager_with_root(
 
     match cgroup_setup {
         CgroupSetup::Legacy | CgroupSetup::Hybrid => {
-            Ok(create_v1_cgroup_manager(cgroup_path)?.any())
+            Ok(Some(create_v1_cgroup_manager(cgroup_path)?.any()))
         }
         CgroupSetup::Unified => {
             // ref https://github.com/opencontainers/runtime-spec/blob/main/config-linux.md#cgroups-path
             if cgroup_path.is_absolute() || !config.systemd_cgroup {
-                return Ok(create_v2_cgroup_manager(root, cgroup_path)?.any());
+                return Ok(Some(create_v2_cgroup_manager(root, cgroup_path)?.any()));
             }
-            Ok(
+            Ok(Some(
                 create_systemd_cgroup_manager(root, cgroup_path, config.container_name.as_str())?
                     .any(),
-            )
+            ))
         }
     }
 }
 
 pub fn create_cgroup_manager(
     config: CgroupConfig,
-) -> Result<AnyCgroupManager, CreateCgroupSetupError> {
+) -> Result<Option<AnyCgroupManager>, CreateCgroupSetupError> {
     create_cgroup_manager_with_root(Some(Path::new(DEFAULT_CGROUP_ROOT)), config)
 }
 
