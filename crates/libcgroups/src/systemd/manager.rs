@@ -316,8 +316,7 @@ impl Manager {
 
     fn wait_for_process_in_cgroup(&self, pid: Pid) -> Result<(), SystemdManagerError> {
         let start = Instant::now();
-        let timeout = self.cgroup_wait_timeout_duration;
-        while start.elapsed() < timeout {
+        while start.elapsed() < self.cgroup_wait_timeout_duration {
             // If it fails, it most likely means that the cgroup hasn't been set up yet.
             if let Ok(pids) = self.fs_manager.get_all_pids() {
                 if pids.contains(&pid) {
