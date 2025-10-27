@@ -23,6 +23,7 @@ use crate::tests::kill::get_kill_test;
 use crate::tests::lifecycle::{ContainerCreate, ContainerLifecycle};
 use crate::tests::linux_masked_paths::get_linux_masked_paths_tests;
 use crate::tests::linux_ns_itype::get_ns_itype_tests;
+use crate::tests::misc_props::get_misc_props_test;
 use crate::tests::mounts_recursive::get_mounts_recursive_test;
 use crate::tests::no_pivot::get_no_pivot_test;
 use crate::tests::personality::get_personality_test;
@@ -124,6 +125,7 @@ fn main() -> Result<()> {
     let seccomp_notify = get_seccomp_notify_test();
     let ro_paths = get_ro_paths_test();
     let hostname = get_hostname_test();
+    let misc_props = get_misc_props_test();
     let mounts_recursive = get_mounts_recursive_test();
     let domainname = get_domainname_tests();
     let intel_rdt = get_intel_rdt_test();
@@ -166,6 +168,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(seccomp_notify));
     tm.add_test_group(Box::new(ro_paths));
     tm.add_test_group(Box::new(hostname));
+    tm.add_test_group(Box::new(misc_props));
     tm.add_test_group(Box::new(mounts_recursive));
     tm.add_test_group(Box::new(domainname));
     tm.add_test_group(Box::new(intel_rdt));

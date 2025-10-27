@@ -1,9 +1,9 @@
 [package]
 name = "youki"
-version = "0.5.5" # MARK: Version
+version = "0.5.6" # MARK: Version
 description = "A container runtime written in Rust"
 license = "Apache-2.0"
-repository = "https://github.com/containers/youki"
+repository = "https://github.com/youki-dev/youki"
 homepage = "https://youki-dev.github.io/youki/"
 readme = "../../README.md"
 authors = ["youki team"]
@@ -30,16 +30,16 @@ features = ["std", "suggestions", "derive", "cargo", "help", "usage", "error-con
 [dependencies]
 anyhow = "1.0.100"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
-libcgroups = { path = "../libcgroups", default-features = false, version = "0.5.5" } # MARK: Version
-libcontainer = { path = "../libcontainer", default-features = false, version = "0.5.5" } # MARK: Version
-liboci-cli = { path = "../liboci-cli", version = "0.5.5" } # MARK: Version
+libcgroups = { path = "../libcgroups", default-features = false, version = "0.5.6" } # MARK: Version
+libcontainer = { path = "../libcontainer", default-features = false, version = "0.5.6" } # MARK: Version
+liboci-cli = { path = "../liboci-cli", version = "0.5.6" } # MARK: Version
 nix = "0.29.0"
 pentacle = "1.1.0"
 procfs = "0.17.0"
 serde_json = "1.0"
 tabwriter = "1"
 clap_complete = "4.5.13"
-caps = "0.5.5"
+caps = "0.5.6"
 wasmer = { version = "4.0.0", optional = true }
 wasmer-wasix = { version = "0.9.0", optional = true }
 wasmedge-sdk = { version = "0.14.0", optional = true }

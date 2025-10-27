@@ -31,7 +31,7 @@ As youki currently depends on systemd as an init system, this crate also exposes
 
 ## Dbus Native
 
-This module is the native implementation of dbus connection functionality used for connecting with systemd via dbus. Refer to [this issue discussion](https://github.com/containers/youki/issues/2208) following for the discussion regarding moving away from existing dbus-interfacing library.
+This module is the native implementation of dbus connection functionality used for connecting with systemd via dbus. Refer to [this issue discussion](https://github.com/youki-dev/youki/issues/2208) following for the discussion regarding moving away from existing dbus-interfacing library.
 
 Note that this implements the minimal required functionality for youki to use dbus, and thus does not have all the dbus features.
 
