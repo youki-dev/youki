@@ -318,12 +318,22 @@ impl Manager {
         let start = Instant::now();
         while start.elapsed() < self.cgroup_wait_timeout_duration {
             // If it fails, it most likely means that the cgroup hasn't been set up yet.
-            if let Ok(pids) = self.fs_manager.get_all_pids() {
+            let result = self.fs_manager.get_all_pids();
+            if let Ok(pids) = result {
                 if pids.contains(&pid) {
                     tracing::info!("Process {} successfully added to cgroup", pid);
                     return Ok(());
                 }
+            } else if let Err(e) = result {
+                if let V2ManagerError::WrappedIo(ref wrapped_io_error) = e {
+                    if !matches!(wrapped_io_error, WrappedIoError::Read { .. }) {
+                        return Err(e.into());
+                    }
+                } else {
+                    return Err(e.into());
+                }
             }
+
             std::thread::sleep(Duration::from_millis(20));
         }
         Err(SystemdManagerError::WaitForProcessInCgroupTimeout(
