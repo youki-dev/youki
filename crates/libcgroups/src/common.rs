@@ -412,6 +412,8 @@ fn create_systemd_cgroup_manager(
     cgroup_path: &Path,
     container_name: &str,
 ) -> Result<systemd::manager::Manager, systemd::manager::SystemdManagerError> {
+    use crate::systemd::manager::PROCESS_IN_CGROUP_TIMEOUT_DURATION;
+
     if !systemd::booted() {
         panic!(
             "systemd cgroup flag passed, but systemd support for managing cgroups is not available"
@@ -429,6 +431,7 @@ fn create_systemd_cgroup_manager(
         cgroup_path.to_owned(),
         container_name.into(),
         use_system,
+        PROCESS_IN_CGROUP_TIMEOUT_DURATION,
     )
 }
 
