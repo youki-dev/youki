@@ -2,7 +2,7 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Child, Command};
 use std::time::Instant;
 use anyhow::{anyhow, Error};
 use oci_spec::runtime::{LinuxBuilder, LinuxNamespaceBuilder, LinuxNamespaceType, Spec, SpecBuilder};
@@ -10,6 +10,25 @@ use test_framework::{Test, TestGroup, TestResult};
 use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
 use crate::utils::test_outside_container;
+
+struct WithCleanup {
+    child: Child,
+}
+
+impl WithCleanup {
+    fn new(child: Child) -> Self {
+        Self { child }
+    }
+}
+
+impl Drop for WithCleanup {
+    fn drop(&mut self) {
+        match kill(Pid::from_raw(-(self.child.id() as i32)), Signal::SIGKILL) {
+            Ok(()) => {},
+            Err(_e) => {} // Not sure what else can be done here
+        }
+    }
+}
 
 fn create_spec(lnt : LinuxNamespaceType, path : PathBuf) -> Spec {
     let spec = SpecBuilder::default()
@@ -68,9 +87,10 @@ fn test_namespace_path(case: &Case) -> TestResult {
             return TestResult::Failed(anyhow!(format!("could not spawn unshare: {}", e)));
         }
     };
+    let guard = WithCleanup::new(child);
 
 
-    let mut unshare_path = format!("/proc/{}/ns/{}", child.id(), case.lnt.to_string());
+    let mut unshare_path = format!("/proc/{}/ns/{}", guard.child.id(), case.lnt.to_string());
     if case.lnt == LinuxNamespaceType::Pid {
         // Unsharing pidns does not move the process into the new
         // pidns but the next forked process. 'unshare' is called with
@@ -128,13 +148,6 @@ fn test_namespace_path(case: &Case) -> TestResult {
         }
         TestResult::Passed
     });
-
-    match kill(Pid::from_raw(-(child.id() as i32)), Signal::SIGKILL) {
-        Ok(()) => {},
-        Err(e) => {
-            return TestResult::Failed(Error::msg(format!("could not kill child process: {}", e)));
-        }
-    }
 
     result
 }
