@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use oci_spec::runtime::LinuxBlockIo;
+use oci_spec::runtime::{LinuxBlockIo, LinuxThrottleDevice};
 
 use crate::systemd::controller::Controller;
 use crate::systemd::dbus_native::serialize::{Structure, Variant};
@@ -37,65 +37,36 @@ impl Io {
         blkio: &LinuxBlockIo,
         properties: &mut HashMap<&str, Variant>,
     ) -> Result<(), SystemdIoError> {
-        if let Some(devices) = blkio.throttle_read_bps_device() {
-            let mut limits = Vec::new();
-            for d in devices {
-                let rate = d.rate();
-                // get device file path from major and minor numbers
-                if let Some(dev) = dev_path_from_major_minor(d.major(), d.minor()) {
+        // anonymous function for applying limits
+        let mut apply_limits =
+            |devices: &Vec<LinuxThrottleDevice>, key| -> Result<(), SystemdIoError> {
+                let mut limits = Vec::new();
+                for d in devices {
+                    let rate = d.rate();
+                    let Some(dev) = dev_path_from_major_minor(d.major(), d.minor()) else {
+                        return Err(SystemdIoError::DeviceNotFound(d.major(), d.minor()));
+                    };
                     limits.push(Structure::new(dev, rate));
-                } else {
-                    return Err(SystemdIoError::DeviceNotFound(d.major(), d.minor()));
                 }
-            }
-            if !limits.is_empty() {
-                properties.insert(IO_READ_BANDWIDTH_MAX, Variant::ArrayStructU64(limits));
-            }
+                if !limits.is_empty() {
+                    properties.insert(key, Variant::ArrayStructU64(limits));
+                }
+                Ok(())
+            };
+        if let Some(devices) = blkio.throttle_read_bps_device() {
+            apply_limits(devices, IO_READ_BANDWIDTH_MAX)?;
         }
 
         if let Some(devices) = blkio.throttle_write_bps_device() {
-            let mut limits = Vec::new();
-            for d in devices {
-                let rate = d.rate();
-                if let Some(dev) = dev_path_from_major_minor(d.major(), d.minor()) {
-                    limits.push(Structure::new(dev, rate));
-                } else {
-                    return Err(SystemdIoError::DeviceNotFound(d.major(), d.minor()));
-                }
-            }
-            if !limits.is_empty() {
-                properties.insert(IO_WRITE_BANDWIDTH_MAX, Variant::ArrayStructU64(limits));
-            }
+            apply_limits(devices, IO_WRITE_BANDWIDTH_MAX)?;
         }
 
         if let Some(devices) = blkio.throttle_read_iops_device() {
-            let mut limits = Vec::new();
-            for d in devices {
-                let rate = d.rate();
-                if let Some(dev) = dev_path_from_major_minor(d.major(), d.minor()) {
-                    limits.push(Structure::new(dev, rate));
-                } else {
-                    return Err(SystemdIoError::DeviceNotFound(d.major(), d.minor()));
-                }
-            }
-            if !limits.is_empty() {
-                properties.insert(IO_READ_IOPS_MAX, Variant::ArrayStructU64(limits));
-            }
+            apply_limits(devices, IO_READ_IOPS_MAX)?;
         }
 
         if let Some(devices) = blkio.throttle_write_iops_device() {
-            let mut limits = Vec::new();
-            for d in devices {
-                let rate = d.rate();
-                if let Some(dev) = dev_path_from_major_minor(d.major(), d.minor()) {
-                    limits.push(Structure::new(dev, rate));
-                } else {
-                    return Err(SystemdIoError::DeviceNotFound(d.major(), d.minor()));
-                }
-            }
-            if !limits.is_empty() {
-                properties.insert(IO_WRITE_IOPS_MAX, Variant::ArrayStructU64(limits));
-            }
+            apply_limits(devices, IO_WRITE_IOPS_MAX)?;
         }
         Ok(())
     }
