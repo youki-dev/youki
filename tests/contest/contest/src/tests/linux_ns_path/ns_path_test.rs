@@ -156,49 +156,52 @@ fn test_namespace_path(case: &Case) -> TestResult {
 struct Case {
     pub lnt: LinuxNamespaceType,
     pub unshare_opt: &'static str,
-    pub name: &'static str
+}
+
+fn test_pid_ns() -> TestResult {
+    test_namespace_path (&Case {
+        lnt: LinuxNamespaceType::Pid,
+        unshare_opt: "--pid",
+    })
+}
+
+fn test_uts_ns() -> TestResult {
+    test_namespace_path (&Case {
+        lnt: LinuxNamespaceType::Uts,
+        unshare_opt: "--uts",
+    })
+}
+
+fn test_ipc_ns() -> TestResult {
+    test_namespace_path (&Case {
+        lnt: LinuxNamespaceType::Ipc,
+        unshare_opt: "--ipc",
+    })
+}
+
+fn test_mount_ns() -> TestResult {
+    test_namespace_path (&Case {
+        lnt: LinuxNamespaceType::Mount,
+        unshare_opt: "--mount",
+    })
+}
+
+fn test_network_ns() -> TestResult {
+    test_namespace_path (&Case {
+        lnt: LinuxNamespaceType::Network,
+        unshare_opt: "--net",
+    })
 }
 
 pub fn get_ns_path_test() -> TestGroup {
     let mut linux_ns_path_test_group = TestGroup::new("linux_ns_path");
 
-    let cases = vec![
-        Case {
-            lnt: LinuxNamespaceType::Ipc,
-            unshare_opt: "--ipc",
-            name: "test_ns_path_ipc"
-        },
-        Case {
-            lnt: LinuxNamespaceType::Mount,
-            unshare_opt: "--mount",
-            name: "test_ns_path_mount"
-        },
-        Case {
-            lnt: LinuxNamespaceType::Network,
-            unshare_opt: "--net",
-            name: "test_ns_path_network"
-        },
-        Case {
-            lnt: LinuxNamespaceType::Pid,
-            unshare_opt: "--pid",
-            name: "test_ns_path_pid"
-        },
-        Case {
-            lnt: LinuxNamespaceType::Uts,
-            unshare_opt: "--uts",
-            name: "test_ns_path_uts"
-        }
-    ];
-
     let mut tests :Vec<Box<Test>> = vec!();
-    for case in cases {
-
-        let test = Test::new(case.name, Box::new(move || {
-            test_namespace_path(&case)
-        }));
-
-        tests.push(Box::new(test))
-    }
+    tests.push(Box::new(Test::new("test_network_ns", Box::new(test_network_ns))));
+    tests.push(Box::new(Test::new("test_mount_ns", Box::new(test_mount_ns))));
+    tests.push(Box::new(Test::new("test_ipc_ns", Box::new(test_ipc_ns))));
+    tests.push(Box::new(Test::new("test_uts_ns", Box::new(test_uts_ns))));
+    tests.push(Box::new(Test::new("test_pid_ns", Box::new(test_pid_ns))));
 
     linux_ns_path_test_group.add(tests);
     linux_ns_path_test_group
