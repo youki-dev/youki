@@ -29,10 +29,16 @@ fn create_spec(lnt : LinuxNamespaceType, path : PathBuf) -> Spec {
     spec
 }
 
-fn wait_for_path(path : &PathBuf, timeout : u64, interval : u64)-> Result<(), Error>{
+fn wait_for_inode_diff(path : &PathBuf, lnt: LinuxNamespaceType, timeout : u64, interval : u64)-> Result<(), Error>{
     let start = Instant::now();
+
+    let pid = std::process::id();
+    let process_path = PathBuf::from(format!("/proc/{}/ns/{}", pid, lnt.to_string()));
+    let process_ns_inode = fs::metadata(&process_path)?.ino();
+
     loop {
-        if path.exists() {
+        let unshared_ns_inode = fs::metadata(&path)?.ino();
+        if unshared_ns_inode != process_ns_inode {
             return Ok(());
         }
         if start.elapsed().as_secs() > timeout {
@@ -83,8 +89,8 @@ fn test_namespace_path(case: &Case) -> TestResult {
 
     let path = PathBuf::from(unshare_path);
 
-    // waiting for the path to be created as unshare takes time to do this
-    let err = wait_for_path(&path, 10, 100).err();
+    // waiting for the unshare ns inode and current process ns inode to be different
+    let err = wait_for_inode_diff(&path, case.lnt,10, 100).err();
     if err.is_some() {
         return TestResult::Failed(anyhow!(format!("could not wait for path {}", path.display())));
     }
