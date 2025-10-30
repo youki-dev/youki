@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.5.7](https://github.com/youki-dev/youki/compare/v0.5.6...v0.5.7) - 2025-10-30
+### 🐛 Bug Fixes
+- Waiting on systemd to add intermediate process to cgroup. by @CheatCodeSam in https://github.com/youki-dev/youki/pull/3262
+### 🧪 Test improvements and Misc Fixes
+- Update/runc 1.3.2 by @n4mlz in https://github.com/youki-dev/youki/pull/3274
+### Other Changes
+- (auto merged) chore(deps): bump flate2 from 1.1.4 to 1.1.5 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3281
+
 ## [v0.5.6](https://github.com/youki-dev/youki/compare/v0.5.5...v0.5.6) - 2025-10-24
 ### 💪 Improvements
 - fix(3197): fix youki version command Part of Enhancing Compatibility with runc by @tommady in https://github.com/youki-dev/youki/pull/3200
