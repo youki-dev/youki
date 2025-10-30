@@ -133,13 +133,35 @@ impl Cpu {
         Ok(())
     }
 
+    // Convert CPU shares (cgroup v1) into CPU weight (cgroup v2).
+    // cgroup v1 shares span [2, 262_144] with a default of 1_024.
+    // cgroup v2 weight spans [1, 10_000] with a default of 100.
+    // A shares value of 0 keeps the field unset.
+    // The quadratic fit mirrors runc's mapping to keep extrema and defaults.
+    // For reference, see:
+    // https://github.com/opencontainers/runc/releases/tag/v1.3.2
+    // https://github.com/opencontainers/cgroups/pull/20
     fn convert_shares_to_cgroup2(shares: u64) -> u64 {
         if shares == 0 {
             return 0;
         }
 
-        let weight = 1 + ((shares.saturating_sub(2)) * 9999) / 262142;
-        weight.min(MAX_CPU_WEIGHT)
+        const MIN_SHARES: u64 = 2;
+        const MAX_SHARES: u64 = 262_144;
+
+        if shares <= MIN_SHARES {
+            return 1;
+        }
+
+        if shares >= MAX_SHARES {
+            return MAX_CPU_WEIGHT;
+        }
+
+        let log_shares = (shares as f64).log2();
+        let exponent = (log_shares * log_shares + 125.0 * log_shares) / 612.0 - 7.0 / 34.0;
+        let weight = (10f64.powf(exponent)).ceil() as u64;
+
+        weight.clamp(1, MAX_CPU_WEIGHT)
     }
 
     fn is_realtime_requested(cpu: &LinuxCpu) -> bool {
@@ -190,7 +212,7 @@ mod tests {
         // assert
         let content = fs::read_to_string(weight)
             .unwrap_or_else(|_| panic!("read {CGROUP_CPU_WEIGHT} file content"));
-        assert_eq!(content, 840.to_string());
+        assert_eq!(content, 1204.to_string());
     }
 
     #[test]
