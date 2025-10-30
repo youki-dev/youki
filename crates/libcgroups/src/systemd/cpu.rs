@@ -91,6 +91,9 @@ impl Cpu {
 // cgroup v2 weight spans [1, 10_000] with a default of 100.
 // A shares value of 0 keeps the field unset.
 // The quadratic fit matches runc's mapping and preserves the defaults.
+// For reference, see:
+// https://github.com/opencontainers/runc/releases/tag/v1.3.2
+// https://github.com/opencontainers/cgroups/pull/20
 pub fn convert_shares_to_cgroup2(shares: u64) -> u64 {
     if shares == 0 {
         return 0;
