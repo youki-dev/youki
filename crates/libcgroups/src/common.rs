@@ -51,6 +51,9 @@ pub trait CgroupManager {
 
     /// Gets the PIDs inside the cgroup
     fn get_all_pids(&self) -> Result<Vec<Pid>, Self::Error>;
+
+    /// Gets the current FreezerState of the cgroup.
+    fn get_freezer_state(&self) -> Result<FreezerState, Self::Error>;
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -118,6 +121,14 @@ impl CgroupManager for AnyCgroupManager {
             AnyCgroupManager::Systemd(m) => Ok(m.get_all_pids()?),
             AnyCgroupManager::V1(m) => Ok(m.get_all_pids()?),
             AnyCgroupManager::V2(m) => Ok(m.get_all_pids()?),
+        }
+    }
+
+    fn get_freezer_state(&self) -> Result<FreezerState, Self::Error> {
+        match self {
+            AnyCgroupManager::Systemd(m) => Ok(m.get_freezer_state()?),
+            AnyCgroupManager::V1(m) => Ok(m.get_freezer_state()?),
+            AnyCgroupManager::V2(m) => Ok(m.get_freezer_state()?),
         }
     }
 }

@@ -1,6 +1,6 @@
 use std::os::fd::FromRawFd;
 
-use libcgroups::common::CgroupManager;
+use libcgroups::common::{CgroupManager, FreezerState};
 use nix::unistd::{Gid, Pid, Uid, close, write};
 use oci_spec::runtime::{LinuxNamespace, LinuxNamespaceType, LinuxResources};
 use procfs::process::Process;
@@ -53,6 +53,14 @@ pub fn container_intermediate_process(
     let namespaces = Namespaces::try_from(linux.namespaces().as_ref())?;
     let cgroup_manager = libcgroups::common::create_cgroup_manager(args.cgroup_config.to_owned())
         .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?;
+    let state = cgroup_manager.get_freezer_state().map_err(|e| {
+        IntermediateProcessError::Cgroup(format!("unable to get cgroup freezer state: {}", e))
+    })?;
+    if state == FreezerState::Frozen {
+        return Err(IntermediateProcessError::Cgroup(String::from(
+            "container's cgroup unexpectedly frozen",
+        )));
+    }
 
     let current_pid = Pid::this();
     // setting CPU affinity for tenant container before cgroup move

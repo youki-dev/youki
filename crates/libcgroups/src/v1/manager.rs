@@ -252,6 +252,14 @@ impl CgroupManager for Manager {
         )?)
     }
 
+    fn get_freezer_state(&self) -> Result<FreezerState, Self::Error> {
+        Ok(Freezer::read_freezer_state(
+            self.subsystems
+                .get(&CtrlType::Freezer)
+                .ok_or(V1ManagerError::SubsystemDoesNotExist)?,
+        ))
+    }
+
     fn stats(&self) -> Result<Stats, Self::Error> {
         let mut stats = Stats::default();
 

@@ -33,6 +33,10 @@ impl CgroupManager for Manager {
         Err(SystemdManagerError::NotEnabled)
     }
 
+    fn get_freezer_state(&self) -> Result<crate::common::FreezerState, Self::Error> {
+        Err(SystemdManagerError::NotEnabled)
+    }
+
     fn stats(&self) -> Result<crate::stats::Stats, Self::Error> {
         Err(SystemdManagerError::NotEnabled)
     }
