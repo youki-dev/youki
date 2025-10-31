@@ -64,6 +64,8 @@ pub enum LibcontainerError {
     Checkpoint(#[from] crate::container::CheckpointError),
     #[error[transparent]]
     CreateContainerError(#[from] CreateContainerError),
+    #[error(transparent)]
+    Executor(#[from] crate::workload::ExecutorError),
 
     // Catch all errors that are not covered by the above
     #[error("syscall error")]
