@@ -146,7 +146,7 @@ pub fn initialize_seccomp(seccomp: &LinuxSeccomp) -> Result<Option<io::RawFd>> {
     tracing::trace!(default_action = ?seccomp.default_action(), errno = ?seccomp.default_errno_ret(), "initializing seccomp");
     let default_action = translate_action(seccomp.default_action(), seccomp.default_errno_ret())?;
     let mut ctx =
-        ScmpFilterContext::new_filter(default_action).map_err(|err| SeccompError::NewFilter {
+        ScmpFilterContext::new(default_action).map_err(|err| SeccompError::NewFilter {
             source: err,
             default: seccomp.default_action(),
         })?;
