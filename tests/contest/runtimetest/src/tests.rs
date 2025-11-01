@@ -16,8 +16,8 @@ use nix::sys::utsname;
 use nix::unistd::{Gid, Uid, getcwd, getgid, getgroups, getuid};
 use oci_spec::runtime::IOPriorityClass::{self, IoprioClassBe, IoprioClassIdle, IoprioClassRt};
 use oci_spec::runtime::{
-    LinuxDevice, LinuxDeviceType, LinuxIdMapping, LinuxSchedulerPolicy, PosixRlimit,
-    PosixRlimitType, Spec,
+    LinuxDevice, LinuxDeviceType, LinuxIdMapping, LinuxSchedulerPolicy, MemoryPolicyModeType,
+    PosixRlimit, PosixRlimitType, Spec,
 };
 use tempfile::Builder;
 
@@ -558,6 +558,201 @@ pub fn test_io_priority_class(spec: &Spec, io_priority_class: IOPriorityClass) {
     };
     if priority != expected_priority {
         eprintln!("error ioprio_get expected priority {expected_priority:?}, got {priority}")
+    }
+}
+
+fn parse_node_string(nodes: &str) -> Vec<u32> {
+    let mut out = Vec::new();
+    let s = nodes.trim();
+    if s.is_empty() {
+        return out;
+    }
+    for part in s.split(',') {
+        let p = part.trim();
+        if p.is_empty() {
+            continue;
+        }
+        if let Some(dash) = p.find('-') {
+            let start = p[..dash].trim().parse::<u32>();
+            let end = p[dash + 1..].trim().parse::<u32>();
+            match (start, end) {
+                (Ok(a), Ok(b)) if a <= b => {
+                    for n in a..=b {
+                        out.push(n);
+                    }
+                }
+                _ => {
+                    // invalid token, ignore
+                }
+            }
+        } else if let Ok(n) = p.parse::<u32>() {
+            out.push(n);
+        }
+    }
+    out
+}
+
+fn expected_nodes_from_spec(spec: &Spec) -> Option<Vec<u32>> {
+    let linux = spec.linux().as_ref()?;
+    let mp = linux.memory_policy().as_ref()?;
+    let nodes = mp.nodes().as_deref()?;
+    Some(parse_node_string(nodes))
+}
+
+fn numa_maps_indicates_node0(policy_field: &str) -> bool {
+    if let Some((_, nodes_spec)) = policy_field.rsplit_once(':') {
+        return parse_node_string(nodes_spec).contains(&0);
+    }
+
+    false
+}
+
+pub fn validate_memory_policy(spec: &Spec) {
+    let linux = spec.linux().as_ref().unwrap();
+    let memory_policy = linux.memory_policy();
+    let expected_mode = memory_policy.as_ref().map(|p| p.mode());
+
+    // Read and parse /proc/self/numa_maps to verify the policy is applied
+    let numa_maps_content = match fs::read_to_string("/proc/self/numa_maps") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("failed to read /proc/self/numa_maps: {}", e);
+            return;
+        }
+    };
+
+    let policy_entries: Vec<(&str, &str)> = numa_maps_content
+        .lines()
+        .filter_map(|line| {
+            if line.trim().is_empty() {
+                return None;
+            }
+            let mut parts = line.split_whitespace();
+            parts.next()?; // skip address field
+            let policy_field = parts.next()?;
+            Some((policy_field, line))
+        })
+        .collect();
+
+    if policy_entries.is_empty() {
+        eprintln!("no parsable entries found in /proc/self/numa_maps");
+        return;
+    }
+
+    let fallback_entry = policy_entries[0];
+    let default_policy_field = fallback_entry.0;
+    let find_with_substring = |needle: &str| -> (&str, &str) {
+        policy_entries
+            .iter()
+            .copied()
+            .find(|(policy, _)| policy.contains(needle))
+            .unwrap_or(fallback_entry)
+    };
+
+    // Get auxiliary info from spec (nodes/flags)
+    let expected_nodes = expected_nodes_from_spec(spec);
+    let (nodes_is_empty, has_static_flag, has_relative_flag) = if let Some(p) = memory_policy {
+        let nodes_is_empty = p.nodes().as_ref().is_none_or(|n| n.trim().is_empty());
+        let mut has_static = false;
+        let mut has_relative = false;
+        if let Some(flags) = p.flags() {
+            for f in flags {
+                use oci_spec::runtime::MemoryPolicyFlagType::*;
+                match f {
+                    MpolFStaticNodes => has_static = true,
+                    MpolFRelativeNodes => has_relative = true,
+                    _ => {}
+                }
+            }
+        }
+        (nodes_is_empty, has_static, has_relative)
+    } else {
+        (true, false, false)
+    };
+
+    // Verify the policy matches expected mode
+    match expected_mode {
+        Some(MemoryPolicyModeType::MpolDefault) => {
+            let (policy_field, _) = find_with_substring("default");
+            if !policy_field.contains("default") {
+                eprintln!("expected default policy, but found: {}", policy_field);
+            }
+        }
+        Some(MemoryPolicyModeType::MpolInterleave) => {
+            let (policy_field, full_line) = find_with_substring("interleave");
+            if !policy_field.contains("interleave") {
+                eprintln!("expected interleave policy, but found: {}", policy_field);
+            }
+            if expected_nodes.as_ref().is_some_and(|v| v.contains(&0))
+                && !numa_maps_indicates_node0(policy_field)
+            {
+                eprintln!(
+                    "expected interleave including node0, but got: {}",
+                    full_line
+                );
+            }
+        }
+        Some(MemoryPolicyModeType::MpolBind) => {
+            let (policy_field, full_line) = find_with_substring("bind");
+            if !policy_field.contains("bind") {
+                eprintln!("expected bind policy, but found: {}", policy_field);
+            }
+            if has_static_flag && !policy_field.contains("static") {
+                eprintln!("expected bind static, but found: {}", policy_field);
+            }
+            if expected_nodes.as_ref().is_some_and(|v| v.contains(&0))
+                && !numa_maps_indicates_node0(policy_field)
+            {
+                eprintln!("expected bind including node0, but got: {}", full_line);
+            }
+        }
+        Some(MemoryPolicyModeType::MpolPreferred) => {
+            if nodes_is_empty {
+                let (policy_field, _) = find_with_substring("local");
+                if !policy_field.contains("local") {
+                    eprintln!(
+                        "expected preferred(empty)->local, but found: {}",
+                        policy_field
+                    );
+                }
+            } else {
+                let (policy_field, full_line) = find_with_substring("prefer");
+                if !policy_field.contains("prefer") {
+                    eprintln!("expected preferred policy, but found: {}", policy_field);
+                }
+                if has_relative_flag && !policy_field.contains("relative") {
+                    eprintln!("expected preferred relative, but found: {}", policy_field);
+                }
+                if expected_nodes.as_ref().is_some_and(|v| v.contains(&0))
+                    && !numa_maps_indicates_node0(policy_field)
+                {
+                    eprintln!("expected preferred including node0, but got: {}", full_line);
+                }
+            }
+        }
+        Some(MemoryPolicyModeType::MpolLocal) => {
+            let (policy_field, _) = find_with_substring("local");
+            if !policy_field.contains("local") {
+                eprintln!("expected local policy, but found: {}", policy_field);
+            }
+        }
+        Some(_) => {
+            // For newer policy types that might not be easily verifiable
+            println!(
+                "memory policy {} applied (non-strict check)",
+                default_policy_field
+            );
+        }
+        None => {
+            if !policy_entries.iter().any(|(policy_field, _)| {
+                policy_field.contains("default") || policy_field.contains("local")
+            }) {
+                eprintln!(
+                    "expected default/local with no expected policy, got: {}",
+                    default_policy_field
+                );
+            }
+        }
     }
 }
 
