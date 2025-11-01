@@ -158,7 +158,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(huge_tlb));
     tm.add_test_group(Box::new(pidfile));
     tm.add_test_group(Box::new(ns_itype));
-    tm.add_test_group(Box::new(ns_path));   
+    tm.add_test_group(Box::new(ns_path));
     tm.add_test_group(Box::new(hooks));
     tm.add_test_group(Box::new(cgroup_v1_pids));
     tm.add_test_group(Box::new(cgroup_v1_cpu));

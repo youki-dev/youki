@@ -1,15 +1,17 @@
+use crate::utils::test_outside_container;
+use anyhow::{Error, anyhow};
+use nix::sys::signal::{Signal, kill};
+use nix::unistd::Pid;
+use oci_spec::runtime::{
+    LinuxBuilder, LinuxNamespaceBuilder, LinuxNamespaceType, Spec, SpecBuilder,
+};
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::time::Instant;
-use anyhow::{anyhow, Error};
-use oci_spec::runtime::{LinuxBuilder, LinuxNamespaceBuilder, LinuxNamespaceType, Spec, SpecBuilder};
 use test_framework::{Test, TestGroup, TestResult};
-use nix::sys::signal::{kill, Signal};
-use nix::unistd::Pid;
-use crate::utils::test_outside_container;
 
 struct WithCleanup {
     child: Child,
@@ -24,13 +26,13 @@ impl WithCleanup {
 impl Drop for WithCleanup {
     fn drop(&mut self) {
         match kill(Pid::from_raw(-(self.child.id() as i32)), Signal::SIGKILL) {
-            Ok(()) => {},
+            Ok(()) => {}
             Err(_e) => {} // Not sure what else can be done here
         }
     }
 }
 
-fn create_spec(lnt : LinuxNamespaceType, path : PathBuf) -> Spec {
+fn create_spec(lnt: LinuxNamespaceType, path: PathBuf) -> Spec {
     let spec = SpecBuilder::default()
         .linux(
             LinuxBuilder::default()
@@ -39,16 +41,23 @@ fn create_spec(lnt : LinuxNamespaceType, path : PathBuf) -> Spec {
                     LinuxNamespaceBuilder::default()
                         .typ(lnt)
                         .path(path)
-                        .build().expect("could not build spec namespace")
+                        .build()
+                        .expect("could not build spec namespace"),
                 ])
-                .build().expect("could not build spec"),
+                .build()
+                .expect("could not build spec"),
         )
         .build()
         .unwrap();
     spec
 }
 
-fn wait_for_inode_diff(path : &PathBuf, lnt: LinuxNamespaceType, timeout : u64, interval : u64)-> Result<(), Error>{
+fn wait_for_inode_diff(
+    path: &PathBuf,
+    lnt: LinuxNamespaceType,
+    timeout: u64,
+    interval: u64,
+) -> Result<(), Error> {
     let start = Instant::now();
 
     let pid = std::process::id();
@@ -61,7 +70,10 @@ fn wait_for_inode_diff(path : &PathBuf, lnt: LinuxNamespaceType, timeout : u64, 
             return Ok(());
         }
         if start.elapsed().as_secs() > timeout {
-            return Err(Error::msg(format!("timeout waiting for path {}", path.display())));
+            return Err(Error::msg(format!(
+                "timeout waiting for path {}",
+                path.display()
+            )));
         }
         std::thread::sleep(std::time::Duration::from_millis(interval));
     }
@@ -80,15 +92,12 @@ fn test_namespace_path(case: &Case) -> TestResult {
         .spawn();
 
     let child = match child {
-        Ok(child) => {
-            child
-        },
+        Ok(child) => child,
         Err(e) => {
             return TestResult::Failed(anyhow!(format!("could not spawn unshare: {}", e)));
         }
     };
     let guard = WithCleanup::new(child);
-
 
     let mut unshare_path = format!("/proc/{}/ns/{}", guard.child.id(), case.lnt.to_string());
     if case.lnt == LinuxNamespaceType::Pid {
@@ -110,16 +119,23 @@ fn test_namespace_path(case: &Case) -> TestResult {
     let path = PathBuf::from(unshare_path);
 
     // waiting for the unshare ns inode and current process ns inode to be different
-    let err = wait_for_inode_diff(&path, case.lnt,10, 100).err();
+    let err = wait_for_inode_diff(&path, case.lnt, 10, 100).err();
     if err.is_some() {
-        return TestResult::Failed(anyhow!(format!("could not wait for path {}", path.display())));
+        return TestResult::Failed(anyhow!(format!(
+            "could not wait for path {}",
+            path.display()
+        )));
     }
 
     let unshared_metadata = fs::metadata(&path);
     let unshared_inode = match unshared_metadata {
         Ok(m) => m.ino(),
         Err(e) => {
-            return TestResult::Failed(anyhow!(format!("could not get inode of {}: {}", path.display(), e)));
+            return TestResult::Failed(anyhow!(format!(
+                "could not get inode of {}: {}",
+                path.display(),
+                e
+            )));
         }
     };
 
@@ -137,14 +153,20 @@ fn test_namespace_path(case: &Case) -> TestResult {
         let container_ns_inode = match container_ns_metadata {
             Ok(m) => m.ino(),
             Err(e) => {
-                return TestResult::Failed(anyhow!(format!("could not get inode of {}: {}", container_ns_path.display(), e)));
+                return TestResult::Failed(anyhow!(format!(
+                    "could not get inode of {}: {}",
+                    container_ns_path.display(),
+                    e
+                )));
             }
         };
 
         if container_ns_inode != unshared_inode {
             return TestResult::Failed(anyhow!(
-                        "error : namespaces are not correctly inherited. Expected inode {} but got inode {}", unshared_inode, container_ns_inode
-                    ));
+                "error : namespaces are not correctly inherited. Expected inode {} but got inode {}",
+                unshared_inode,
+                container_ns_inode
+            ));
         }
         TestResult::Passed
     });
@@ -152,42 +174,41 @@ fn test_namespace_path(case: &Case) -> TestResult {
     result
 }
 
-
 struct Case {
     pub lnt: LinuxNamespaceType,
     pub unshare_opt: &'static str,
 }
 
 fn test_pid_ns() -> TestResult {
-    test_namespace_path (&Case {
+    test_namespace_path(&Case {
         lnt: LinuxNamespaceType::Pid,
         unshare_opt: "--pid",
     })
 }
 
 fn test_uts_ns() -> TestResult {
-    test_namespace_path (&Case {
+    test_namespace_path(&Case {
         lnt: LinuxNamespaceType::Uts,
         unshare_opt: "--uts",
     })
 }
 
 fn test_ipc_ns() -> TestResult {
-    test_namespace_path (&Case {
+    test_namespace_path(&Case {
         lnt: LinuxNamespaceType::Ipc,
         unshare_opt: "--ipc",
     })
 }
 
 fn test_mount_ns() -> TestResult {
-    test_namespace_path (&Case {
+    test_namespace_path(&Case {
         lnt: LinuxNamespaceType::Mount,
         unshare_opt: "--mount",
     })
 }
 
 fn test_network_ns() -> TestResult {
-    test_namespace_path (&Case {
+    test_namespace_path(&Case {
         lnt: LinuxNamespaceType::Network,
         unshare_opt: "--net",
     })
@@ -196,9 +217,15 @@ fn test_network_ns() -> TestResult {
 pub fn get_ns_path_test() -> TestGroup {
     let mut linux_ns_path_test_group = TestGroup::new("linux_ns_path");
 
-    let mut tests :Vec<Box<Test>> = vec!();
-    tests.push(Box::new(Test::new("test_network_ns", Box::new(test_network_ns))));
-    tests.push(Box::new(Test::new("test_mount_ns", Box::new(test_mount_ns))));
+    let mut tests: Vec<Box<Test>> = vec![];
+    tests.push(Box::new(Test::new(
+        "test_network_ns",
+        Box::new(test_network_ns),
+    )));
+    tests.push(Box::new(Test::new(
+        "test_mount_ns",
+        Box::new(test_mount_ns),
+    )));
     tests.push(Box::new(Test::new("test_ipc_ns", Box::new(test_ipc_ns))));
     tests.push(Box::new(Test::new("test_uts_ns", Box::new(test_uts_ns))));
     tests.push(Box::new(Test::new("test_pid_ns", Box::new(test_pid_ns))));
@@ -206,7 +233,3 @@ pub fn get_ns_path_test() -> TestGroup {
     linux_ns_path_test_group.add(tests);
     linux_ns_path_test_group
 }
-
-
-
-
