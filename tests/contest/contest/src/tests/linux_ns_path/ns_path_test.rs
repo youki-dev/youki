@@ -32,23 +32,29 @@ impl Drop for WithCleanup {
     }
 }
 
-fn create_spec(lnt: LinuxNamespaceType, path: PathBuf) -> Spec {
-    let spec = SpecBuilder::default()
+fn create_spec(namespace_path: &Vec<NamespacePath>) -> Spec {
+    let mut linux_namespace_types = Vec::new();
+    for namespace_path in namespace_path {
+        linux_namespace_types.push(
+            LinuxNamespaceBuilder::default()
+                .typ(namespace_path.lnt)
+                .path(&namespace_path.path)
+                .build()
+                .expect("could not build spec namespace"),
+        );
+    }
+
+    let mut spec = SpecBuilder::default()
         .linux(
             LinuxBuilder::default()
                 // passing in a custom namespace that we will generate
-                .namespaces(vec![
-                    LinuxNamespaceBuilder::default()
-                        .typ(lnt)
-                        .path(path)
-                        .build()
-                        .expect("could not build spec namespace"),
-                ])
+                .namespaces(linux_namespace_types)
                 .build()
                 .expect("could not build spec"),
         )
         .build()
         .unwrap();
+    spec.set_hostname(None);
     spec
 }
 
@@ -79,17 +85,70 @@ fn wait_for_inode_diff(
     }
 }
 
-fn test_namespace_path(case: &Case) -> TestResult {
+fn collect_namespace_paths(
+    linux_namespace_types: Vec<LinuxNamespaceType>,
+    process_id: u32,
+) -> Vec<NamespacePath> {
+    let mut namespaces = Vec::new();
+    for linux_namespace_type in linux_namespace_types {
+        let mut unshare_path = format!(
+            "/proc/{}/ns/{}",
+            process_id,
+            linux_namespace_type.to_string()
+        );
+        if linux_namespace_type == LinuxNamespaceType::Pid {
+            // Unsharing pidns does not move the process into the new
+            // pidns but the next forked process. 'unshare' is called with
+            // '--fork' so the pidns will be fully created and populated
+            // with a pid 1.
+            //
+            // However, finding out the pid of the child process is not
+            // trivial: it would require to parse
+            // /proc/$pid/task/$tid/children but that only works on kernels
+            // with CONFIG_PROC_CHILDREN (not all distros have that).
+            //
+            // It is easier to look at /proc/$pid/ns/pid_for_children on
+            // the parent process. Available since Linux 4.12.
+            unshare_path = unshare_path + "_for_children";
+        }
+
+        let path = PathBuf::from(unshare_path);
+
+        namespaces.push(NamespacePath {
+            lnt: linux_namespace_type,
+            path,
+        })
+    }
+    namespaces
+}
+
+fn test_namespace_path(lnt: LinuxNamespaceType) -> TestResult {
+    let mut namespaces = Vec::new();
+    namespaces.push(lnt);
+    test_namespace_paths(namespaces)
+}
+
+fn test_namespace_paths(mut linux_namespace_types: Vec<LinuxNamespaceType>) -> TestResult {
+    if !linux_namespace_types.contains(&LinuxNamespaceType::Mount) {
+        // to prevent mounting issues with the new container, we will always
+        // create a new mount namespace. This was added for the runc runtime as the container would
+        // fail to be created without it
+        linux_namespace_types.push(LinuxNamespaceType::Mount);
+    }
+
     // call unshared to create a new namespace
-    let child = Command::new("unshare")
-        .arg(case.unshare_opt)
-        .arg("--fork")
-        .arg("sleep")
-        .arg("10000")
-        // so we can kill the both unshared and the child sleep process
-        // by setting 0 the group id will be the same as child.id()
-        .process_group(0)
-        .spawn();
+    let mut command = Command::new("unshare");
+    for linux_namespace_type in &linux_namespace_types {
+        command.arg(get_unshare_opt(linux_namespace_type));
+    }
+
+    command.arg("--fork");
+    command.arg("sleep");
+    command.arg("10000");
+    // so we can kill the both unshared and the child sleep process
+    // by setting 0 the group id will be the same as child.id()
+    command.process_group(0);
+    let child = command.spawn();
 
     let child = match child {
         Ok(child) => child,
@@ -97,49 +156,21 @@ fn test_namespace_path(case: &Case) -> TestResult {
             return TestResult::Failed(anyhow!(format!("could not spawn unshare: {}", e)));
         }
     };
-    let guard = WithCleanup::new(child);
+    let g_child = WithCleanup::new(child);
 
-    let mut unshare_path = format!("/proc/{}/ns/{}", guard.child.id(), case.lnt.to_string());
-    if case.lnt == LinuxNamespaceType::Pid {
-        // Unsharing pidns does not move the process into the new
-        // pidns but the next forked process. 'unshare' is called with
-        // '--fork' so the pidns will be fully created and populated
-        // with a pid 1.
-        //
-        // However, finding out the pid of the child process is not
-        // trivial: it would require to parse
-        // /proc/$pid/task/$tid/children but that only works on kernels
-        // with CONFIG_PROC_CHILDREN (not all distros have that).
-        //
-        // It is easier to look at /proc/$pid/ns/pid_for_children on
-        // the parent process. Available since Linux 4.12.
-        unshare_path = unshare_path + "_for_children";
-    }
+    let namespace_paths = collect_namespace_paths(linux_namespace_types, g_child.child.id());
 
-    let path = PathBuf::from(unshare_path);
-
-    // waiting for the unshare ns inode and current process ns inode to be different
-    let err = wait_for_inode_diff(&path, case.lnt, 10, 100).err();
-    if err.is_some() {
-        return TestResult::Failed(anyhow!(format!(
-            "could not wait for path {}",
-            path.display()
-        )));
-    }
-
-    let unshared_metadata = fs::metadata(&path);
-    let unshared_inode = match unshared_metadata {
-        Ok(m) => m.ino(),
-        Err(e) => {
+    for namespace_path in &namespace_paths {
+        let err = wait_for_inode_diff(&namespace_path.path, namespace_path.lnt, 10, 100).err();
+        if err.is_some() {
             return TestResult::Failed(anyhow!(format!(
-                "could not get inode of {}: {}",
-                path.display(),
-                e
+                "could not wait for path {}",
+                &namespace_path.path.display()
             )));
         }
-    };
+    }
 
-    let spec = create_spec(case.lnt, path);
+    let spec = create_spec(&namespace_paths);
 
     // compare the namespaces of the container and the unshared process
     let result = test_outside_container(&spec, &move |data| {
@@ -148,70 +179,83 @@ fn test_namespace_path(case: &Case) -> TestResult {
             None => return TestResult::Failed(anyhow!("state command returned error")),
         };
 
-        let container_ns_path = PathBuf::from(format!("/proc/{}/ns/{}", pid, case.lnt.to_string()));
-        let container_ns_metadata = fs::metadata(&container_ns_path);
-        let container_ns_inode = match container_ns_metadata {
-            Ok(m) => m.ino(),
-            Err(e) => {
-                return TestResult::Failed(anyhow!(format!(
-                    "could not get inode of {}: {}",
-                    container_ns_path.display(),
-                    e
-                )));
-            }
-        };
+        for unshared_namespace_path in &namespace_paths {
+            let unshared_ns_inode = match fs::metadata(&unshared_namespace_path.path) {
+                Ok(m) => m.ino(),
+                Err(e) => {
+                    return TestResult::Failed(anyhow!(format!(
+                        "could not get inode of {}: {}",
+                        &unshared_namespace_path.path.display(),
+                        e
+                    )));
+                }
+            };
 
-        if container_ns_inode != unshared_inode {
-            return TestResult::Failed(anyhow!(
-                "error : namespaces are not correctly inherited. Expected inode {} but got inode {}",
-                unshared_inode,
-                container_ns_inode
+            let container_ns_path = PathBuf::from(format!(
+                "/proc/{}/ns/{}",
+                pid,
+                unshared_namespace_path.lnt.to_string()
             ));
+            let container_ns_inode = match fs::metadata(&container_ns_path) {
+                Ok(m) => m.ino(),
+                Err(e) => {
+                    return TestResult::Failed(anyhow!(format!(
+                        "could not get inode of {}: {}",
+                        container_ns_path.display(),
+                        e
+                    )));
+                }
+            };
+
+            if container_ns_inode != unshared_ns_inode {
+                return TestResult::Failed(anyhow!(
+                    "error : namespaces are not correctly inherited. Expected {:?} inode {} to equal {:?} inode {}",
+                    &unshared_namespace_path.path,
+                    unshared_ns_inode,
+                    container_ns_path,
+                    container_ns_inode
+                ));
+            }
         }
         TestResult::Passed
     });
-
     result
 }
 
-struct Case {
+struct NamespacePath {
     pub lnt: LinuxNamespaceType,
-    pub unshare_opt: &'static str,
+    pub path: PathBuf,
 }
 
 fn test_pid_ns() -> TestResult {
-    test_namespace_path(&Case {
-        lnt: LinuxNamespaceType::Pid,
-        unshare_opt: "--pid",
-    })
+    test_namespace_path(LinuxNamespaceType::Pid)
 }
 
 fn test_uts_ns() -> TestResult {
-    test_namespace_path(&Case {
-        lnt: LinuxNamespaceType::Uts,
-        unshare_opt: "--uts",
-    })
+    test_namespace_path(LinuxNamespaceType::Uts)
 }
 
 fn test_ipc_ns() -> TestResult {
-    test_namespace_path(&Case {
-        lnt: LinuxNamespaceType::Ipc,
-        unshare_opt: "--ipc",
-    })
+    test_namespace_path(LinuxNamespaceType::Ipc)
 }
 
 fn test_mount_ns() -> TestResult {
-    test_namespace_path(&Case {
-        lnt: LinuxNamespaceType::Mount,
-        unshare_opt: "--mount",
-    })
+    test_namespace_path(LinuxNamespaceType::Mount)
 }
 
 fn test_network_ns() -> TestResult {
-    test_namespace_path(&Case {
-        lnt: LinuxNamespaceType::Network,
-        unshare_opt: "--net",
-    })
+    test_namespace_path(LinuxNamespaceType::Network)
+}
+
+fn get_unshare_opt(lnt: &LinuxNamespaceType) -> &'static str {
+    match lnt {
+        LinuxNamespaceType::Network => "--net",
+        LinuxNamespaceType::Ipc => "--ipc",
+        LinuxNamespaceType::Uts => "--uts",
+        LinuxNamespaceType::Mount => "--mount",
+        LinuxNamespaceType::Pid => "--pid",
+        _ => panic!("Unsupported namespace type"),
+    }
 }
 
 pub fn get_ns_path_test() -> TestGroup {
