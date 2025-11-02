@@ -160,8 +160,10 @@ fn test_namespace_paths(mut linux_namespace_types: Vec<LinuxNamespaceType>) -> T
 
     let namespace_paths = collect_namespace_paths(linux_namespace_types, g_child.child.id());
 
+    const MAX_TIMEOUT_SEC: u64 = 10;
+    const RETRY_DELAY_MS: u64 = 100;
     for namespace_path in &namespace_paths {
-        let err = wait_for_inode_diff(&namespace_path.path, namespace_path.lnt, 10, 100).err();
+        let err = wait_for_inode_diff(&namespace_path.path, namespace_path.lnt, MAX_TIMEOUT_SEC, RETRY_DELAY_MS).err();
         if err.is_some() {
             return TestResult::Failed(anyhow!(format!(
                 "could not wait for path {}",
