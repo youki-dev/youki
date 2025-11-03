@@ -1,17 +1,19 @@
-use crate::utils::test_outside_container;
-use anyhow::{Error, anyhow};
-use nix::sys::signal::{Signal, kill};
-use nix::unistd::Pid;
-use oci_spec::runtime::{
-    LinuxBuilder, LinuxNamespaceBuilder, LinuxNamespaceType, Spec, SpecBuilder,
-};
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::time::Instant;
+
+use anyhow::{Error, anyhow};
+use nix::sys::signal::{Signal, kill};
+use nix::unistd::Pid;
+use oci_spec::runtime::{
+    LinuxBuilder, LinuxNamespaceBuilder, LinuxNamespaceType, Spec, SpecBuilder,
+};
 use test_framework::{Test, TestGroup, TestResult};
+
+use crate::utils::test_outside_container;
 
 struct WithCleanup {
     child: Child,
@@ -163,7 +165,13 @@ fn test_namespace_paths(mut linux_namespace_types: Vec<LinuxNamespaceType>) -> T
     const MAX_TIMEOUT_SEC: u64 = 10;
     const RETRY_DELAY_MS: u64 = 100;
     for namespace_path in &namespace_paths {
-        let err = wait_for_inode_diff(&namespace_path.path, namespace_path.lnt, MAX_TIMEOUT_SEC, RETRY_DELAY_MS).err();
+        let err = wait_for_inode_diff(
+            &namespace_path.path,
+            namespace_path.lnt,
+            MAX_TIMEOUT_SEC,
+            RETRY_DELAY_MS,
+        )
+        .err();
         if err.is_some() {
             return TestResult::Failed(anyhow!(format!(
                 "could not wait for path {}",
