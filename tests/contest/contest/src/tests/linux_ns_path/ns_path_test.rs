@@ -69,11 +69,11 @@ fn wait_for_inode_diff(
     let start = Instant::now();
 
     let pid = std::process::id();
-    let process_path = PathBuf::from(format!("/proc/{}/ns/{}", pid, lnt.to_string()));
+    let process_path = PathBuf::from(format!("/proc/{}/ns/{}", pid, lnt));
     let process_ns_inode = fs::metadata(&process_path)?.ino();
 
     loop {
-        let unshared_ns_inode = fs::metadata(&path)?.ino();
+        let unshared_ns_inode = fs::metadata(path)?.ino();
         if unshared_ns_inode != process_ns_inode {
             return Ok(());
         }
@@ -93,11 +93,7 @@ fn collect_namespace_paths(
 ) -> Vec<NamespacePath> {
     let mut namespaces = Vec::new();
     for linux_namespace_type in linux_namespace_types {
-        let mut unshare_path = format!(
-            "/proc/{}/ns/{}",
-            process_id,
-            linux_namespace_type.to_string()
-        );
+        let mut unshare_path = format!("/proc/{}/ns/{}", process_id, linux_namespace_type);
         if linux_namespace_type == LinuxNamespaceType::Pid {
             // Unsharing pidns does not move the process into the new
             // pidns but the next forked process. 'unshare' is called with
@@ -111,7 +107,7 @@ fn collect_namespace_paths(
             //
             // It is easier to look at /proc/$pid/ns/pid_for_children on
             // the parent process. Available since Linux 4.12.
-            unshare_path = unshare_path + "_for_children";
+            unshare_path += "_for_children";
         }
 
         let path = PathBuf::from(unshare_path);
@@ -125,8 +121,7 @@ fn collect_namespace_paths(
 }
 
 fn test_namespace_path(lnt: LinuxNamespaceType) -> TestResult {
-    let mut namespaces = Vec::new();
-    namespaces.push(lnt);
+    let namespaces = vec![lnt];
     test_namespace_paths(namespaces)
 }
 
@@ -183,7 +178,7 @@ fn test_namespace_paths(mut linux_namespace_types: Vec<LinuxNamespaceType>) -> T
     let spec = create_spec(&namespace_paths);
 
     // compare the namespaces of the container and the unshared process
-    let result = test_outside_container(&spec, &move |data| {
+    test_outside_container(&spec, &move |data| {
         let pid = match data.state {
             Some(s) => s.pid.unwrap(),
             None => return TestResult::Failed(anyhow!("state command returned error")),
@@ -201,11 +196,8 @@ fn test_namespace_paths(mut linux_namespace_types: Vec<LinuxNamespaceType>) -> T
                 }
             };
 
-            let container_ns_path = PathBuf::from(format!(
-                "/proc/{}/ns/{}",
-                pid,
-                unshared_namespace_path.lnt.to_string()
-            ));
+            let container_ns_path =
+                PathBuf::from(format!("/proc/{}/ns/{}", pid, unshared_namespace_path.lnt));
             let container_ns_inode = match fs::metadata(&container_ns_path) {
                 Ok(m) => m.ino(),
                 Err(e) => {
@@ -228,8 +220,7 @@ fn test_namespace_paths(mut linux_namespace_types: Vec<LinuxNamespaceType>) -> T
             }
         }
         TestResult::Passed
-    });
-    result
+    })
 }
 
 struct NamespacePath {
@@ -271,18 +262,13 @@ fn get_unshare_opt(lnt: &LinuxNamespaceType) -> &'static str {
 pub fn get_ns_path_test() -> TestGroup {
     let mut linux_ns_path_test_group = TestGroup::new("linux_ns_path");
 
-    let mut tests: Vec<Box<Test>> = vec![];
-    tests.push(Box::new(Test::new(
-        "test_network_ns",
-        Box::new(test_network_ns),
-    )));
-    tests.push(Box::new(Test::new(
-        "test_mount_ns",
-        Box::new(test_mount_ns),
-    )));
-    tests.push(Box::new(Test::new("test_ipc_ns", Box::new(test_ipc_ns))));
-    tests.push(Box::new(Test::new("test_uts_ns", Box::new(test_uts_ns))));
-    tests.push(Box::new(Test::new("test_pid_ns", Box::new(test_pid_ns))));
+    let tests: Vec<Box<Test>> = vec![
+        Box::new(Test::new("test_network_ns", Box::new(test_network_ns))),
+        Box::new(Test::new("test_mount_ns", Box::new(test_mount_ns))),
+        Box::new(Test::new("test_ipc_ns", Box::new(test_ipc_ns))),
+        Box::new(Test::new("test_uts_ns", Box::new(test_uts_ns))),
+        Box::new(Test::new("test_pid_ns", Box::new(test_pid_ns))),
+    ];
 
     linux_ns_path_test_group.add(tests);
     linux_ns_path_test_group
