@@ -552,7 +552,7 @@ impl Mount {
 
         if let Some(l) = label {
             if typ != Some("proc") && typ != Some("sysfs") {
-                if selinux_enabled() {
+                if Path::new("/sys/fs/selinux").exists() {
                     data_options.push(format!("context={}", l));
                 } else {
                     tracing::debug!("ignoring mount label because SELinux is disabled");
@@ -966,10 +966,6 @@ impl Mount {
             }
         }
     }
-}
-
-fn selinux_enabled() -> bool {
-    matches!(fs::read_to_string("/sys/fs/selinux/enforce"), Ok(val) if val.trim() != "0")
 }
 
 /// Find parent mount of rootfs in given mount infos
