@@ -42,6 +42,8 @@ pub const MOUNT_ATTR_NOATIME: u64 = 0x00000010;
 pub const MOUNT_ATTR_STRICTATIME: u64 = 0x00000020;
 pub const MOUNT_ATTR_NODIRATIME: u64 = 0x00000080;
 pub const MOUNT_ATTR_NOSYMFOLLOW: u64 = 0x00200000;
+pub const MOVE_MOUNT_F_EMPTY_PATH: u32 = 0x00000004;
+pub const MOVE_MOUNT_T_EMPTY_PATH: u32 = 0x00000040;
 
 // The type of fsconfig() call made.
 pub const FSCONFIG_SET_FLAG: u64 = 0;
@@ -659,7 +661,7 @@ impl Syscall for LinuxSyscall {
                 EMPTY_PATH.as_ptr(),
                 parent_fd.as_raw_fd(),
                 name_cstr.as_ptr(),
-                libc::MOVE_MOUNT_F_EMPTY_PATH as libc::c_uint,
+                MOVE_MOUNT_F_EMPTY_PATH as libc::c_uint,
             )
         };
 

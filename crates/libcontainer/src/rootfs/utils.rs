@@ -13,8 +13,8 @@ pub struct MountOptionConfig {
     /// Mount Flags.
     pub flags: MsFlags,
 
-    /// Mount data applied to the mount.
-    pub data: String,
+    /// Mount data options applied to the mount (e.g. `lowerdir=...`).
+    pub data: Vec<String>,
 
     /// RecAttr represents mount properties to be applied recursively.
     pub rec_attr: Option<linux::MountAttr>,
@@ -187,7 +187,7 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
     }
     Ok(MountOptionConfig {
         flags,
-        data: data.join(","),
+        data: data.into_iter().map(|s| s.to_string()).collect(),
         rec_attr: mount_attr,
     })
 }
@@ -224,7 +224,7 @@ mod tests {
         assert_eq!(
             MountOptionConfig {
                 flags: MsFlags::empty(),
-                data: "".to_string(),
+                data: vec![],
                 rec_attr: None,
             },
             mount_option_config
@@ -246,7 +246,7 @@ mod tests {
         assert_eq!(
             MountOptionConfig {
                 flags: MsFlags::MS_NOSUID | MsFlags::MS_STRICTATIME,
-                data: "mode=755,size=65536k".to_string(),
+                data: vec!["mode=755".to_string(), "size=65536k".to_string()],
                 rec_attr: None,
             },
             mount_option_config
@@ -271,7 +271,12 @@ mod tests {
         assert_eq!(
             MountOptionConfig {
                 flags: MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC,
-                data: "newinstance,ptmxmode=0666,mode=0620,gid=5".to_string(),
+                data: vec![
+                    "newinstance".to_string(),
+                    "ptmxmode=0666".to_string(),
+                    "mode=0620".to_string(),
+                    "gid=5".to_string()
+                ],
                 rec_attr: None
             },
             mount_option_config
@@ -294,7 +299,7 @@ mod tests {
         assert_eq!(
             MountOptionConfig {
                 flags: MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC | MsFlags::MS_NODEV,
-                data: "mode=1777,size=65536k".to_string(),
+                data: vec!["mode=1777".to_string(), "size=65536k".to_string()],
                 rec_attr: None
             },
             mount_option_config
@@ -316,7 +321,7 @@ mod tests {
         assert_eq!(
             MountOptionConfig {
                 flags: MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC | MsFlags::MS_NODEV,
-                data: "".to_string(),
+                data: vec![],
                 rec_attr: None
             },
             mount_option_config
@@ -341,7 +346,7 @@ mod tests {
                     | MsFlags::MS_NOEXEC
                     | MsFlags::MS_NODEV
                     | MsFlags::MS_RDONLY,
-                data: "".to_string(),
+                data: vec![],
                 rec_attr: None,
             },
             mount_option_config
@@ -368,7 +373,7 @@ mod tests {
                     | MsFlags::MS_NODEV
                     | MsFlags::MS_RDONLY
                     | MsFlags::MS_RELATIME,
-                data: "".to_string(),
+                data: vec![],
                 rec_attr: None
             },
             mount_option_config,
@@ -425,7 +430,7 @@ mod tests {
                     | MsFlags::MS_NODIRATIME
                     | MsFlags::MS_BIND
                     | MsFlags::MS_UNBINDABLE,
-                data: "".to_string(),
+                data: vec![],
                 rec_attr: None,
             },
             mount_option_config
@@ -459,7 +464,7 @@ mod tests {
         assert_eq!(
             MountOptionConfig {
                 flags: MsFlags::empty(),
-                data: "".to_string(),
+                data: vec![],
                 rec_attr: Some(MountAttr::all())
             },
             mount_option_config

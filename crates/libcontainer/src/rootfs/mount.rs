@@ -350,7 +350,7 @@ impl Mount {
 
         let mount_options_config = MountOptionConfig {
             flags: MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
-            data: data.to_string(),
+            data: vec![data.into_owned()],
             rec_attr: None,
         };
 
@@ -548,13 +548,14 @@ impl Mount {
         label: Option<&str>,
     ) -> Result<()> {
         let typ = m.typ().as_deref();
-        let mut d = mount_option_config.data.to_string();
+        let mut data_options = mount_option_config.data.clone();
 
         if let Some(l) = label {
             if typ != Some("proc") && typ != Some("sysfs") {
-                match mount_option_config.data.is_empty() {
-                    true => d = format!("context=\"{l}\""),
-                    false => d = format!("{},context=\"{}\"", mount_option_config.data, l),
+                if selinux_enabled() {
+                    data_options.push(format!("context={}", l));
+                } else {
+                    tracing::debug!("ignoring mount label because SELinux is disabled");
                 }
             }
         }
@@ -669,7 +670,7 @@ impl Mount {
                 None,
                 dest_fd,
                 None,
-                libc::MOVE_MOUNT_T_EMPTY_PATH | libc::MOVE_MOUNT_F_EMPTY_PATH,
+                linux::MOVE_MOUNT_T_EMPTY_PATH | linux::MOVE_MOUNT_F_EMPTY_PATH,
             )?;
         } else {
             let mount_fn = || -> std::result::Result<(), SyscallError> {
@@ -690,7 +691,7 @@ impl Mount {
                     0,
                 )?;
 
-                for opt in d.split(',').filter(|s| !s.is_empty()) {
+                for opt in data_options.iter().filter(|s| !s.is_empty()) {
                     if let Some((k, v)) = opt.split_once('=') {
                         self.syscall.fsconfig(
                             fsfd,
@@ -751,7 +752,7 @@ impl Mount {
                     None,
                     dest_fd,
                     None,
-                    libc::MOVE_MOUNT_T_EMPTY_PATH | libc::MOVE_MOUNT_F_EMPTY_PATH,
+                    linux::MOVE_MOUNT_T_EMPTY_PATH | linux::MOVE_MOUNT_F_EMPTY_PATH,
                 )?;
                 Ok(())
             };
@@ -965,6 +966,10 @@ impl Mount {
             }
         }
     }
+}
+
+fn selinux_enabled() -> bool {
+    matches!(fs::read_to_string("/sys/fs/selinux/enforce"), Ok(val) if val.trim() != "0")
 }
 
 /// Find parent mount of rootfs in given mount infos
@@ -1445,7 +1450,7 @@ mod tests {
         // act
         let mount_option_config = MountOptionConfig {
             flags,
-            data: String::new(),
+            data: vec![],
             rec_attr: None,
         };
         mounter

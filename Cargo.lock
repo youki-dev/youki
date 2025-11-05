@@ -2632,7 +2632,7 @@ version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c63f58f2463b3eecc7d285eace144d8c4820631d018d927049f8569be4b3b1a4"
 dependencies = [
- "bitflags 2.6.0",
+ "bitflags 2.9.4",
  "itertools 0.14.0",
  "libc",
  "memchr",
