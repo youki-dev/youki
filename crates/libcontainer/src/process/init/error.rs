@@ -1,5 +1,6 @@
 use crate::namespaces::NamespaceError;
 use crate::process::channel;
+use crate::rootfs::device::DeviceError;
 #[cfg(feature = "libseccomp")]
 use crate::seccomp;
 use crate::syscall::SyscallError;
@@ -36,6 +37,8 @@ pub enum InitProcessError {
     SyscallOther(#[source] SyscallError),
     #[error("failed apparmor")]
     AppArmor(#[source] apparmor::AppArmorError),
+    #[error(transparent)]
+    Pathrs(#[from] pathrs::error::Error),
     #[error("invalid umask")]
     InvalidUmask(u32),
     #[error(transparent)]
@@ -67,6 +70,8 @@ pub enum InitProcessError {
     NoLinux,
     #[error("missing process section in spec")]
     NoProcess,
+    #[error("device error")]
+    Device(#[source] DeviceError),
     #[error("personality flag has not supported at this time")]
     UnsupportedPersonalityFlag,
 }

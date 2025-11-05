@@ -53,6 +53,7 @@ thiserror = "2.0.17"
 tracing = { version = "0.1.41", features = ["attributes"] }
 safe-path = "0.1.0"
 nc = "0.9.6"
+pathrs = "0.2.1"
 
 [dev-dependencies]
 oci-spec = { version = "~0.8.3", features = ["proptests", "runtime"] }
