@@ -8,7 +8,6 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use nix::sys::stat::Mode;
-use nix::sys::statfs;
 use nix::unistd::{Uid, User};
 use oci_spec::runtime::Spec;
 
@@ -223,33 +222,6 @@ pub fn create_dir_all_with_mode<P: AsRef<Path>>(
     } else {
         Err(MkdirWithModeError::MetadataMismatch)
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum EnsureProcfsError {
-    #[error(transparent)]
-    Nix(#[from] nix::Error),
-    #[error(transparent)]
-    IO(#[from] std::io::Error),
-}
-
-// Make sure a given path is on procfs. This is to avoid the security risk that
-// /proc path is mounted over. Ref: CVE-2019-16884
-pub fn ensure_procfs(path: &Path) -> Result<(), EnsureProcfsError> {
-    let procfs_fd = fs::File::open(path).map_err(|err| {
-        tracing::error!(?err, ?path, "failed to open procfs file");
-        err
-    })?;
-    let fstat_info = statfs::fstatfs(&procfs_fd).inspect_err(|err| {
-        tracing::error!(?err, ?path, "failed to fstatfs the procfs");
-    })?;
-
-    if fstat_info.filesystem_type() != statfs::PROC_SUPER_MAGIC {
-        tracing::error!(?path, "given path is not on the procfs");
-        Err(nix::Error::EINVAL)?;
-    }
-
-    Ok(())
 }
 
 pub fn is_in_new_userns() -> Result<bool, std::io::Error> {

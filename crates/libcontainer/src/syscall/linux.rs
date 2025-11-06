@@ -1,17 +1,18 @@
 //! Implements Command trait for Linux systems
 use std::any::Any;
 use std::ffi::{CStr, CString, OsStr};
-use std::os::fd::BorrowedFd;
+use std::os::fd::{BorrowedFd, FromRawFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::symlink;
-use std::os::unix::io::RawFd;
+use std::os::unix::io::{AsRawFd, OwnedFd};
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::{fs, mem, ptr};
+use std::{mem, ptr};
 
 use caps::{CapSet, CapsHashSet};
 use libc::{c_char, setdomainname, uid_t};
+use nix::dir::Dir;
 use nix::fcntl;
 use nix::fcntl::{OFlag, open};
 use nix::mount::{MntFlags, MsFlags, mount, umount2};
@@ -19,25 +20,41 @@ use nix::sched::{CloneFlags, unshare};
 use nix::sys::stat::{Mode, SFlag, mknod};
 use nix::unistd::{Gid, Uid, chown, chroot, close, fchdir, pivot_root, sethostname};
 use oci_spec::runtime::PosixRlimit;
+use pathrs::flags::OpenFlags;
+use pathrs::procfs::{ProcfsBase, ProcfsHandle};
 
 use super::{Result, Syscall, SyscallError};
+use crate::capabilities;
 use crate::config::PersonalityDomain;
-use crate::{capabilities, utils};
 
 // Flags used in mount_setattr(2).
 // see https://man7.org/linux/man-pages/man2/mount_setattr.2.html.
 pub const AT_RECURSIVE: u32 = 0x00008000; // Change the mount properties of the entire mount tree.
+pub const AT_EMPTY_PATH: u32 = 0x00001000;
 #[allow(non_upper_case_globals)]
 pub const MOUNT_ATTR__ATIME: u64 = 0x00000070; // Setting on how atime should be updated.
-const MOUNT_ATTR_RDONLY: u64 = 0x00000001;
-const MOUNT_ATTR_NOSUID: u64 = 0x00000002;
-const MOUNT_ATTR_NODEV: u64 = 0x00000004;
-const MOUNT_ATTR_NOEXEC: u64 = 0x00000008;
-const MOUNT_ATTR_RELATIME: u64 = 0x00000000;
-const MOUNT_ATTR_NOATIME: u64 = 0x00000010;
-const MOUNT_ATTR_STRICTATIME: u64 = 0x00000020;
-const MOUNT_ATTR_NODIRATIME: u64 = 0x00000080;
-const MOUNT_ATTR_NOSYMFOLLOW: u64 = 0x00200000;
+pub const MOUNT_ATTR_RDONLY: u64 = 0x00000001;
+pub const MOUNT_ATTR_NOSUID: u64 = 0x00000002;
+pub const MOUNT_ATTR_NODEV: u64 = 0x00000004;
+pub const MOUNT_ATTR_NOEXEC: u64 = 0x00000008;
+pub const MOUNT_ATTR_RELATIME: u64 = 0x00000000;
+pub const MOUNT_ATTR_NOATIME: u64 = 0x00000010;
+pub const MOUNT_ATTR_STRICTATIME: u64 = 0x00000020;
+pub const MOUNT_ATTR_NODIRATIME: u64 = 0x00000080;
+pub const MOUNT_ATTR_NOSYMFOLLOW: u64 = 0x00200000;
+pub const MOVE_MOUNT_F_EMPTY_PATH: u32 = 0x00000004;
+pub const MOVE_MOUNT_T_EMPTY_PATH: u32 = 0x00000040;
+
+// The type of fsconfig() call made.
+pub const FSCONFIG_SET_FLAG: u64 = 0;
+pub const FSCONFIG_SET_STRING: u64 = 1;
+pub const FSCONFIG_SET_BINARY: u64 = 2;
+pub const FSCONFIG_SET_PATH: u64 = 3;
+pub const FSCONFIG_SET_PATH_EMPTY: u64 = 4;
+pub const FSCONFIG_SET_FD: u64 = 5;
+pub const FSCONFIG_CMD_CREATE: u64 = 6;
+pub const FSCONFIG_CMD_RECONFIGURE: u64 = 7;
+pub const FSCONFIG_CMD_CREATE_EXCL: u64 = 8;
 
 /// Constants used by mount(2).
 pub enum MountOption {
@@ -327,31 +344,24 @@ impl LinuxSyscall {
 
     // Get a list of open fds for the calling process.
     fn get_open_fds() -> Result<Vec<i32>> {
-        const PROCFS_FD_PATH: &str = "/proc/self/fd";
-        utils::ensure_procfs(Path::new(PROCFS_FD_PATH)).map_err(|err| {
-            tracing::error!(?err, "failed to ensure /proc is mounted");
-            match err {
-                utils::EnsureProcfsError::Nix(err) => SyscallError::Nix(err),
-                utils::EnsureProcfsError::IO(err) => SyscallError::IO(err),
-            }
-        })?;
+        let dir = ProcfsHandle::new()?.open(
+            ProcfsBase::ProcSelf,
+            Path::new("fd"),
+            OpenFlags::O_DIRECTORY | OpenFlags::O_CLOEXEC,
+        )?;
 
-        let fds: Vec<i32> = fs::read_dir(PROCFS_FD_PATH)
-            .map_err(|err| {
-                tracing::error!(?err, "failed to read /proc/self/fd");
-                err
-            })?
-            .filter_map(|entry| match entry {
-                Ok(entry) => Some(entry.path()),
-                Err(_) => None,
-            })
-            .filter_map(|path| path.file_name().map(|file_name| file_name.to_owned()))
-            .filter_map(|file_name| file_name.to_str().map(String::from))
-            .filter_map(|file_name| -> Option<i32> {
+        let fds = Dir::from(dir)?
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
                 // Convert the file name from string into i32. Since we are looking
                 // at /proc/<pid>/fd, anything that's not a number (i32) can be
                 // ignored. We are only interested in opened fds.
-                file_name.parse().ok()
+                entry
+                    .file_name()
+                    .to_str()
+                    .ok()
+                    .and_then(|name| name.parse::<i32>().ok())
             })
             .collect();
 
@@ -599,6 +609,213 @@ impl Syscall for LinuxSyscall {
         Ok(())
     }
 
+    fn mount_from_fd(&self, source_fd: &OwnedFd, target: &Path) -> Result<()> {
+        let parent = target.parent().ok_or_else(|| {
+            tracing::error!(?target, "target has no parent");
+            SyscallError::Nix(nix::Error::EINVAL)
+        })?;
+        let name = target.file_name().ok_or_else(|| {
+            tracing::error!(?target, "target has no file name");
+            SyscallError::Nix(nix::Error::EINVAL)
+        })?;
+
+        let parent_fd = unsafe {
+            OwnedFd::from_raw_fd(open(
+                parent,
+                OFlag::O_PATH | OFlag::O_CLOEXEC | OFlag::O_DIRECTORY,
+                Mode::empty(),
+            )?)
+        };
+
+        let open_tree_flags: libc::c_uint = (libc::OPEN_TREE_CLOEXEC as libc::c_uint)
+            | (libc::OPEN_TREE_CLONE as libc::c_uint)
+            | (libc::AT_EMPTY_PATH as libc::c_uint);
+
+        const EMPTY_PATH: [libc::c_char; 1] = [0];
+
+        let mount_fd_raw = unsafe {
+            libc::syscall(
+                libc::SYS_open_tree,
+                source_fd.as_raw_fd(),
+                EMPTY_PATH.as_ptr(),
+                open_tree_flags,
+            )
+        };
+
+        if mount_fd_raw < 0 {
+            let err = nix::errno::Errno::last();
+            tracing::error!(?err, "open_tree from fd failed");
+            return Err(SyscallError::Nix(err));
+        }
+        let mount_fd = unsafe { OwnedFd::from_raw_fd(mount_fd_raw as RawFd) };
+
+        let name_cstr = CString::new(name.as_bytes()).map_err(|err| {
+            tracing::error!(?target, ?err, "failed to convert file name to cstring");
+            SyscallError::Nix(nix::Error::EINVAL)
+        })?;
+
+        let res = unsafe {
+            libc::syscall(
+                libc::SYS_move_mount,
+                mount_fd.as_raw_fd(),
+                EMPTY_PATH.as_ptr(),
+                parent_fd.as_raw_fd(),
+                name_cstr.as_ptr(),
+                MOVE_MOUNT_F_EMPTY_PATH as libc::c_uint,
+            )
+        };
+
+        if res < 0 {
+            let err = nix::errno::Errno::last();
+            tracing::error!(?target, ?err, "move_mount failed");
+            return Err(SyscallError::Nix(err));
+        }
+
+        Ok(())
+    }
+
+    fn move_mount(
+        &self,
+        from_dirfd: BorrowedFd<'_>,
+        from_path: Option<&str>,
+        to_dirfd: BorrowedFd<'_>,
+        to_path: Option<&str>,
+        flags: u32,
+    ) -> Result<()> {
+        const EMPTY_PATH: [libc::c_char; 1] = [0];
+
+        let from_cstr: Option<CString> = from_path
+            .and_then(|s| if s.is_empty() { None } else { Some(s) })
+            .map(|s| CString::new(s).map_err(|_| nix::Error::EINVAL))
+            .transpose()?;
+        let from_ptr = from_cstr
+            .as_ref()
+            .map_or(EMPTY_PATH.as_ptr(), |c| c.as_ptr());
+
+        let to_cstr: Option<CString> = to_path
+            .and_then(|s| if s.is_empty() { None } else { Some(s) })
+            .map(|s| CString::new(s).map_err(|_| nix::Error::EINVAL))
+            .transpose()?;
+        let to_ptr = to_cstr.as_ref().map_or(EMPTY_PATH.as_ptr(), |c| c.as_ptr());
+
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_move_mount,
+                from_dirfd,
+                from_ptr,
+                to_dirfd,
+                to_ptr,
+                flags as libc::c_uint,
+            )
+        };
+
+        match rc {
+            0 => Ok(()),
+            -1 => Err(nix::Error::last().into()),
+            _ => Err(nix::Error::UnknownErrno.into()),
+        }
+    }
+
+    fn fsopen(&self, fstype: Option<&str>, flags: u32) -> Result<OwnedFd> {
+        let t_cstr: Option<CString> = fstype
+            .map(|t| CString::new(t).map_err(|_| SyscallError::Nix(nix::errno::Errno::EINVAL)))
+            .transpose()?;
+
+        let t_ptr = t_cstr.as_ref().map_or(std::ptr::null(), |c| c.as_ptr());
+
+        let fd =
+            unsafe { libc::syscall(libc::SYS_fsopen, t_ptr, flags as libc::c_uint) } as libc::c_int;
+        if fd < 0 {
+            return Err(SyscallError::Nix(nix::Error::last()));
+        }
+        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    }
+
+    fn fsconfig(
+        &self,
+        fsfd: BorrowedFd<'_>,
+        cmd: u32,
+        key: Option<&str>,
+        val: Option<&str>,
+        aux: libc::c_int,
+    ) -> Result<()> {
+        let k_cstr: Option<CString> = key
+            .map(|k| CString::new(k).map_err(|_| SyscallError::Nix(nix::errno::Errno::EINVAL)))
+            .transpose()?;
+        let k_ptr = k_cstr.as_ref().map_or(std::ptr::null(), |k| k.as_ptr());
+
+        let v_cstr: Option<CString> = val
+            .map(|v| CString::new(v).map_err(|_| SyscallError::Nix(nix::errno::Errno::EINVAL)))
+            .transpose()?;
+        let v_ptr = v_cstr
+            .as_ref()
+            .map_or(std::ptr::null(), |v| v.as_ptr() as *const libc::c_void);
+
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_fsconfig,
+                fsfd.as_raw_fd() as libc::c_int,
+                cmd as libc::c_uint,
+                k_ptr,
+                v_ptr,
+                aux,
+            )
+        };
+        if rc == -1 {
+            return Err(SyscallError::Nix(nix::Error::last()));
+        }
+        Ok(())
+    }
+
+    fn fsmount(
+        &self,
+        fsfd: BorrowedFd<'_>,
+        flags: u32,
+        attr_flags: Option<u64>,
+    ) -> Result<OwnedFd> {
+        let attr = attr_flags.unwrap_or(0);
+
+        let ret = unsafe {
+            libc::syscall(
+                libc::SYS_fsmount,
+                fsfd.as_raw_fd() as libc::c_int,
+                flags as libc::c_uint,
+                attr as libc::c_ulong,
+            )
+        } as libc::c_int;
+
+        if ret < 0 {
+            return Err(SyscallError::Nix(nix::Error::last()));
+        }
+        Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(ret) })
+    }
+
+    //dirfd is RawFd because we need to pass AT_FDCWD
+    fn open_tree(&self, dirfd: RawFd, path: Option<&str>, flags: u32) -> Result<OwnedFd> {
+        static EMPTY: [libc::c_char; 1] = [0];
+        let path_cstr: Option<CString> = path
+            .map(|s| CString::new(s).map_err(|_| SyscallError::Nix(nix::errno::Errno::EINVAL)))
+            .transpose()?;
+        let c_path: *const c_char = match path_cstr.as_ref() {
+            Some(cs) => cs.as_ptr(),
+            None => EMPTY.as_ptr(),
+        };
+
+        let fd = unsafe {
+            libc::syscall(
+                libc::SYS_open_tree,
+                dirfd as libc::c_int,
+                c_path,
+                flags as libc::c_uint,
+            )
+        } as libc::c_int;
+
+        if fd < 0 {
+            return Err(SyscallError::Nix(nix::Error::last()));
+        }
+        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    }
+
     fn symlink(&self, original: &Path, link: &Path) -> Result<()> {
         symlink(original, link)?;
 
@@ -660,7 +877,7 @@ impl Syscall for LinuxSyscall {
 
     fn mount_setattr(
         &self,
-        dirfd: RawFd,
+        dirfd: BorrowedFd<'_>,
         pathname: &Path,
         flags: u32,
         mount_attr: &MountAttr,

@@ -1,18 +1,20 @@
-use std::fs::{self};
-use std::path::Path;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
-use crate::utils;
+use pathrs::flags::OpenFlags;
+use pathrs::procfs::{ProcfsBase, ProcfsHandle};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppArmorError {
     #[error("failed to apply AppArmor profile")]
     ActivateProfile {
-        path: std::path::PathBuf,
+        path: PathBuf,
         profile: String,
         source: std::io::Error,
     },
     #[error(transparent)]
-    EnsureProcfs(#[from] utils::EnsureProcfsError),
+    Pathrs(#[from] pathrs::error::Error),
 }
 
 type Result<T> = std::result::Result<T, AppArmorError>;
@@ -33,19 +35,22 @@ pub fn apply_profile(profile: &str) -> Result<()> {
 
     // Try the module specific subdirectory. This is the recommended way to configure
     // LSMs since Linux 5.1. AppArmor has such a directory since Linux 5.8.
-    if activate_profile(Path::new("/proc/self/attr/apparmor/exec"), profile).is_ok() {
-        return Ok(());
-    }
-
-    // try the legacy interface
-    activate_profile(Path::new("/proc/self/attr/exec"), profile)
+    activate_profile(Path::new("attr/apparmor/exec"), profile)
+        // try the legacy interface
+        .or_else(|_| activate_profile(Path::new("attr/exec"), profile))
 }
 
-fn activate_profile(path: &Path, profile: &str) -> Result<()> {
-    utils::ensure_procfs(path).map_err(AppArmorError::EnsureProcfs)?;
-    fs::write(path, format!("exec {profile}")).map_err(|err| AppArmorError::ActivateProfile {
-        path: path.to_owned(),
-        profile: profile.to_owned(),
-        source: err,
-    })
+fn activate_profile(subpath: &Path, profile: &str) -> Result<()> {
+    ProcfsHandle::new()?
+        .open(
+            ProcfsBase::ProcSelf,
+            subpath,
+            OpenFlags::O_WRONLY | OpenFlags::O_CLOEXEC,
+        )?
+        .write_all(format!("exec {profile}").as_bytes())
+        .map_err(|err| AppArmorError::ActivateProfile {
+            path: PathBuf::from("/proc/self").join(subpath),
+            profile: profile.to_owned(),
+            source: err,
+        })
 }

@@ -2,6 +2,8 @@ use std::any::Any;
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
+use std::os::fd::{AsRawFd, BorrowedFd, RawFd};
+use std::os::unix::io::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -22,6 +24,27 @@ pub struct MountArgs {
     pub fstype: Option<String>,
     pub flags: MsFlags,
     pub data: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MountFromFdArgs {
+    pub fd: i32,
+    pub target: PathBuf,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MoveMountArgs {
+    pub from_dirfd: i32,
+    pub from_path: Option<OsString>,
+    pub to_dirfd: i32,
+    pub to_path: Option<OsString>,
+    pub flags: u32,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct FsopenArgs {
+    pub fsname: Option<String>,
+    pub flags: u32,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -70,6 +93,7 @@ pub enum ArgName {
     Namespace,
     Unshare,
     Mount,
+    MountFromFd,
     Symlink,
     Mknod,
     Chown,
@@ -80,6 +104,8 @@ pub enum ArgName {
     IoPriority,
     MemPolicy,
     UMount2,
+    MoveMount,
+    Fsopen,
 }
 
 impl ArgName {
@@ -88,6 +114,7 @@ impl ArgName {
             ArgName::Namespace,
             ArgName::Unshare,
             ArgName::Mount,
+            ArgName::MountFromFd,
             ArgName::Symlink,
             ArgName::Mknod,
             ArgName::Chown,
@@ -97,6 +124,7 @@ impl ArgName {
             ArgName::Capability,
             ArgName::IoPriority,
             ArgName::MemPolicy,
+            ArgName::MoveMount,
         ]
         .iter()
         .copied()
@@ -233,16 +261,74 @@ impl Syscall for TestHelperSyscall {
         flags: MsFlags,
         data: Option<&str>,
     ) -> Result<()> {
+        // For tests: resolve /proc/self/fd/<n> to the real path before recording.
+        let target_owned = if target.starts_with(Path::new("/proc/self/fd")) {
+            std::fs::read_link(target).unwrap_or_else(|_| target.to_owned())
+        } else {
+            target.to_owned()
+        };
+
         self.mocks.act(
             ArgName::Mount,
             Box::new(MountArgs {
                 source: source.map(|x| x.to_owned()),
-                target: target.to_owned(),
+                target: target_owned,
                 fstype: fstype.map(|x| x.to_owned()),
                 flags,
                 data: data.map(|x| x.to_owned()),
             }),
         )
+    }
+
+    fn mount_from_fd(&self, source_fd: &OwnedFd, target: &Path) -> Result<()> {
+        self.mocks.act(
+            ArgName::MountFromFd,
+            Box::new(MountFromFdArgs {
+                fd: source_fd.as_raw_fd(),
+                target: target.to_owned(),
+            }),
+        )
+    }
+
+    fn move_mount(
+        &self,
+        from_dirfd: BorrowedFd<'_>,
+        from_path: Option<&str>,
+        to_dirfd: BorrowedFd<'_>,
+        to_path: Option<&str>,
+        flags: u32,
+    ) -> Result<()> {
+        let rec = MoveMountArgs {
+            from_dirfd: from_dirfd.as_raw_fd(),
+            from_path: from_path.map(OsString::from),
+            to_dirfd: to_dirfd.as_raw_fd(),
+            to_path: to_path.map(OsString::from),
+            flags,
+        };
+        self.mocks.act(ArgName::MoveMount, Box::new(rec))
+    }
+
+    fn fsopen(&self, _: Option<&str>, _: u32) -> Result<OwnedFd> {
+        todo!()
+    }
+
+    fn fsconfig(
+        &self,
+        _: BorrowedFd<'_>,
+        _: u32,
+        _: Option<&str>,
+        _: Option<&str>,
+        _: libc::c_int,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    fn fsmount(&self, _: BorrowedFd<'_>, _: u32, _: Option<u64>) -> Result<OwnedFd> {
+        todo!()
+    }
+
+    fn open_tree(&self, _: RawFd, _: Option<&str>, _: u32) -> Result<OwnedFd> {
+        todo!()
     }
 
     fn symlink(&self, original: &Path, link: &Path) -> Result<()> {
@@ -284,7 +370,7 @@ impl Syscall for TestHelperSyscall {
 
     fn mount_setattr(
         &self,
-        _: i32,
+        _: BorrowedFd<'_>,
         _: &Path,
         _: u32,
         _: &linux::MountAttr,
@@ -386,6 +472,15 @@ impl TestHelperSyscall {
             .iter()
             .map(|x| x.downcast_ref::<MountArgs>().unwrap().clone())
             .collect::<Vec<MountArgs>>()
+    }
+
+    pub fn get_mount_from_fd_args(&self) -> Vec<MountFromFdArgs> {
+        self.mocks
+            .fetch(ArgName::MountFromFd)
+            .values
+            .iter()
+            .map(|x| x.downcast_ref::<MountFromFdArgs>().unwrap().clone())
+            .collect::<Vec<MountFromFdArgs>>()
     }
 
     pub fn get_symlink_args(&self) -> Vec<(PathBuf, PathBuf)> {

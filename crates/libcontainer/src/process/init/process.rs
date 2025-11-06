@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::{Read, Write};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::{env, fs, mem};
@@ -12,6 +13,8 @@ use oci_spec::runtime::{
     IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxPersonalityDomain,
     LinuxSchedulerFlag, LinuxSchedulerPolicy, Scheduler, Spec, User,
 };
+use pathrs::flags::OpenFlags;
+use pathrs::procfs::{ProcfsBase, ProcfsHandle, ProcfsHandleBuilder};
 
 use super::Result;
 use super::context::InitContext;
@@ -22,6 +25,7 @@ use crate::namespaces::Namespaces;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::{channel, memory_policy};
 use crate::rootfs::RootFS;
+use crate::rootfs::device::{open_device_fd, verify_dev_null};
 #[cfg(feature = "libseccomp")]
 use crate::seccomp;
 use crate::syscall::{Syscall, SyscallError};
@@ -192,18 +196,11 @@ pub fn container_init_process(
     }
 
     if let Some(paths) = ctx.linux.masked_paths() {
-        // mount masked path
-        for path in paths {
-            masked_path(
-                Path::new(path),
-                ctx.linux.mount_label(),
-                ctx.syscall.as_ref(),
-            )
-            .map_err(|err| {
-                tracing::error!(?err, ?path, "failed to set masked path");
-                err
-            })?;
-        }
+        // mount masked paths
+        masked_paths(paths, ctx.linux.mount_label(), ctx.syscall.as_ref()).map_err(|err| {
+            tracing::error!(?err, "failed to set masked paths");
+            err
+        })?;
     }
 
     let cwd = format!("{}", ctx.process.cwd().display());
@@ -436,15 +433,22 @@ pub fn container_init_process(
 }
 
 fn sysctl(kernel_params: &HashMap<String, String>) -> Result<()> {
-    let sys = PathBuf::from("/proc/sys");
+    let procfs = ProcfsHandleBuilder::new().unmasked().build()?;
+    let sys = PathBuf::from("sys");
     for (kernel_param, value) in kernel_params {
-        let path = sys.join(kernel_param.replace('.', "/"));
         tracing::debug!(
             "apply value {} to kernel parameter {}.",
             value,
             kernel_param
         );
-        fs::write(path, value.as_bytes()).map_err(|err| {
+
+        let subpath = sys.join(kernel_param.replace('.', "/"));
+        let mut f = procfs.open(
+            ProcfsBase::ProcRoot,
+            subpath,
+            OpenFlags::O_WRONLY | OpenFlags::O_CLOEXEC,
+        )?;
+        f.write_all(value.as_bytes()).map_err(|err| {
             tracing::error!("failed to set sysctl {kernel_param}={value}: {err}");
             InitProcessError::Sysctl(err)
         })?;
@@ -500,44 +504,53 @@ fn readonly_path(path: &Path, syscall: &dyn Syscall) -> Result<()> {
 
 // For files, bind mounts /dev/null over the top of the specified path.
 // For directories, mounts read-only tmpfs over the top of the specified path.
-fn masked_path(path: &Path, mount_label: &Option<String>, syscall: &dyn Syscall) -> Result<()> {
-    if let Err(err) = syscall.mount(
-        Some(Path::new("/dev/null")),
-        path,
-        None,
-        MsFlags::MS_BIND,
-        None,
-    ) {
-        match err {
-            SyscallError::Nix(nix::errno::Errno::ENOENT) => {
-                // ignore error if path is not exist.
-            }
-            SyscallError::Nix(nix::errno::Errno::ENOTDIR) => {
-                let label = match mount_label {
-                    Some(l) => format!("context=\"{l}\""),
-                    None => "".to_string(),
-                };
-                syscall
-                    .mount(
-                        Some(Path::new("tmpfs")),
-                        path,
-                        Some("tmpfs"),
-                        MsFlags::MS_RDONLY,
-                        Some(label.as_str()),
-                    )
-                    .map_err(|err| {
-                        tracing::error!(?path, ?err, "failed to mount path as masked using tempfs");
-                        InitProcessError::MountPathMasked(err)
-                    })?;
-            }
-            _ => {
+fn masked_paths(
+    paths: &Vec<String>,
+    mount_label: &Option<String>,
+    syscall: &dyn Syscall,
+) -> Result<()> {
+    let (dev_null_fd, dev_null_stat) =
+        open_device_fd(Path::new("/dev/null")).map_err(InitProcessError::NixOther)?;
+    verify_dev_null(&dev_null_stat).map_err(|err| {
+        tracing::error!(?err, "invalid /dev/null device");
+        InitProcessError::Device(err)
+    })?;
+
+    for path_str in paths {
+        let path = Path::new(path_str);
+        if !path.exists() {
+            // Skip if the path does not exist.
+            continue;
+        }
+
+        if path.is_dir() {
+            // Destination is a directory, mount a read-only tmpfs over the top of it.
+            let label = match mount_label {
+                Some(l) => format!("context=\"{l}\""),
+                None => "".to_string(),
+            };
+            syscall
+                .mount(
+                    Some(Path::new("tmpfs")),
+                    path,
+                    Some("tmpfs"),
+                    MsFlags::MS_RDONLY,
+                    Some(label.as_str()),
+                )
+                .map_err(|err| {
+                    tracing::error!(?path, ?err, "failed to mount path as masked using tempfs");
+                    InitProcessError::MountPathMasked(err)
+                })?;
+        } else {
+            // Destination is a file, bind mount /dev/null over the top of it.
+            syscall.mount_from_fd(&dev_null_fd, path).map_err(|err| {
                 tracing::error!(
                     ?path,
                     ?err,
                     "failed to mount path as masked using /dev/null"
                 );
-                return Err(InitProcessError::MountPathMasked(err));
-            }
+                InitProcessError::MountPathMasked(err)
+            })?;
         }
     }
 
@@ -590,7 +603,6 @@ fn reopen_dev_null() -> Result<()> {
     // At this point we should be inside of the container and now
     // we can re-open /dev/null if it is in use to the /dev/null
     // in the container.
-
     let dev_null = fs::File::open("/dev/null").map_err(|err| {
         tracing::error!(?err, "failed to open /dev/null inside the container");
         InitProcessError::ReopenDevNull(err)
@@ -598,6 +610,10 @@ fn reopen_dev_null() -> Result<()> {
     let dev_null_fstat_info = nix::sys::stat::fstat(dev_null.as_raw_fd()).map_err(|err| {
         tracing::error!(?err, "failed to fstat /dev/null inside the container");
         InitProcessError::NixOther(err)
+    })?;
+    verify_dev_null(&dev_null_fstat_info).map_err(|err| {
+        tracing::error!(?err, "invalid /dev/null device inside the container");
+        InitProcessError::Device(err)
     })?;
 
     // Check if stdin, stdout or stderr point to /dev/null
@@ -724,10 +740,15 @@ fn set_supplementary_gids(
             return Ok(());
         }
 
-        let setgroups = fs::read_to_string("/proc/self/setgroups").map_err(|err| {
-            tracing::error!(?err, "failed to read setgroups");
-            InitProcessError::Io(err)
-        })?;
+        let mut setgroups = String::new();
+        ProcfsHandle::new()?
+            .open(ProcfsBase::ProcSelf, "setgroups", OpenFlags::O_RDONLY)?
+            .read_to_string(&mut setgroups)
+            .map_err(|err| {
+                tracing::error!(?err, "failed to read setgroups");
+                InitProcessError::Io(err)
+            })?;
+
         if setgroups.trim() == "deny" {
             tracing::error!("cannot set supplementary gids, setgroup is disabled");
             return Err(InitProcessError::SetGroupDisabled);
@@ -906,6 +927,7 @@ fn verify_cwd() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::Path;
 
     use anyhow::Result;
     #[cfg(feature = "libseccomp")]
@@ -1094,13 +1116,31 @@ mod tests {
             .as_any()
             .downcast_ref::<TestHelperSyscall>()
             .unwrap();
-        mocks.set_ret_err(ArgName::Mount, || {
-            Err(SyscallError::Nix(nix::errno::Errno::ENOENT))
-        });
 
-        assert!(masked_path(Path::new("/proc/self"), &None, syscall.as_ref()).is_ok());
+        let paths = vec!["/doesnotexist".to_string()];
+        assert!(super::masked_paths(&paths, &None, syscall.as_ref()).is_ok());
+        let got = mocks.get_mount_from_fd_args();
+        assert_eq!(0, got.len());
         let got = mocks.get_mount_args();
         assert_eq!(0, got.len());
+    }
+
+    #[test]
+    fn test_masked_path_mounts_via_fd() -> Result<()> {
+        let syscall = create_syscall();
+        let paths = vec!["/proc/sys/kernel/core_pattern".to_string()];
+        super::masked_paths(&paths, &None, syscall.as_ref()).map_err(anyhow::Error::from)?;
+
+        let got = syscall
+            .as_any()
+            .downcast_ref::<TestHelperSyscall>()
+            .unwrap()
+            .get_mount_from_fd_args();
+        assert_eq!(1, got.len());
+        let arg = &got[0];
+        assert!(arg.fd >= 0);
+        assert_eq!(PathBuf::from("/proc/sys/kernel/core_pattern"), arg.target);
+        Ok(())
     }
 
     #[test]
@@ -1110,11 +1150,12 @@ mod tests {
             .as_any()
             .downcast_ref::<TestHelperSyscall>()
             .unwrap();
-        mocks.set_ret_err(ArgName::Mount, || {
+        mocks.set_ret_err(ArgName::MountFromFd, || {
             Err(SyscallError::Nix(nix::errno::Errno::ENOTDIR))
         });
 
-        assert!(masked_path(Path::new("/proc/self"), &None, syscall.as_ref()).is_ok());
+        let paths = vec!["/proc/self".to_string()];
+        assert!(super::masked_paths(&paths, &None, syscall.as_ref()).is_ok());
 
         let got = mocks.get_mount_args();
         let want = MountArgs {
@@ -1135,17 +1176,13 @@ mod tests {
             .as_any()
             .downcast_ref::<TestHelperSyscall>()
             .unwrap();
-        mocks.set_ret_err(ArgName::Mount, || {
+        mocks.set_ret_err(ArgName::MountFromFd, || {
             Err(SyscallError::Nix(nix::errno::Errno::ENOTDIR))
         });
 
+        let paths = vec!["/proc/self".to_string()];
         assert!(
-            masked_path(
-                Path::new("/proc/self"),
-                &Some("default".to_string()),
-                syscall.as_ref()
-            )
-            .is_ok()
+            super::masked_paths(&paths, &Some("default".to_string()), syscall.as_ref()).is_ok()
         );
 
         let got = mocks.get_mount_args();
@@ -1167,11 +1204,20 @@ mod tests {
             .as_any()
             .downcast_ref::<TestHelperSyscall>()
             .unwrap();
-        mocks.set_ret_err(ArgName::Mount, || {
+        mocks.set_ret_err(ArgName::MountFromFd, || {
             Err(SyscallError::Nix(nix::errno::Errno::UnknownErrno))
         });
 
-        assert!(masked_path(Path::new("/proc/self"), &None, syscall.as_ref()).is_err());
+        let paths = vec!["/proc/self/exe".to_string()];
+        assert!(super::masked_paths(&paths, &None, syscall.as_ref()).is_err());
+        let got = mocks.get_mount_args();
+        assert_eq!(0, got.len());
+
+        mocks.set_ret_err(ArgName::Mount, || {
+            Err(SyscallError::Nix(nix::errno::Errno::UnknownErrno))
+        });
+        let paths = vec!["/proc/self".to_string()];
+        assert!(super::masked_paths(&paths, &None, syscall.as_ref()).is_err());
         let got = mocks.get_mount_args();
         assert_eq!(0, got.len());
     }

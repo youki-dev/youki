@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use nix::unistd::Pid;
 use oci_spec::runtime::LinuxIntelRdt;
 use once_cell::sync::Lazy;
-use procfs::process::Process;
+use pathrs::flags::OpenFlags;
+use pathrs::procfs::{ProcfsBase, ProcfsHandle};
+use procfs::process::MountInfo;
 use regex::Regex;
 
 #[derive(Debug, thiserror::Error)]
@@ -45,6 +47,10 @@ pub enum IntelRdtError {
     CreateClosIDDirectory(#[source] std::io::Error),
     #[error("failed to canonicalize path")]
     Canonicalize(#[source] std::io::Error),
+    #[error(transparent)]
+    Pathrs(#[from] pathrs::error::Error),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -90,16 +96,21 @@ pub fn delete_resctrl_subdirectory(id: &str) -> Result<()> {
 
 /// Finds the resctrl mount path by looking at the process mountinfo data.
 pub fn find_resctrl_mount_point() -> Result<PathBuf> {
-    let process = Process::myself()?;
-    let mount_infos = process.mountinfo()?;
+    let reader = BufReader::new(ProcfsHandle::new()?.open(
+        ProcfsBase::ProcSelf,
+        "mountinfo",
+        OpenFlags::O_RDONLY | OpenFlags::O_CLOEXEC,
+    )?);
 
-    for mount_info in mount_infos.0.iter() {
-        // "resctrl" type fs can be mounted only once.
-        if mount_info.fs_type == "resctrl" {
-            let path = mount_info.mount_point.clone().canonicalize().map_err(|err| {
-                tracing::error!(path = ?mount_info.mount_point, "failed to canonicalize path: {}", err);
-                IntelRdtError::Canonicalize(err)
-            })?;
+    for lr in reader.lines() {
+        let s = lr.map_err(IntelRdtError::from)?;
+        let mi = MountInfo::from_line(&s).map_err(IntelRdtError::from)?;
+
+        if mi.fs_type == "resctrl" {
+            let path = mi
+                .mount_point
+                .canonicalize()
+                .map_err(IntelRdtError::Canonicalize)?;
             return Ok(path);
         }
     }
