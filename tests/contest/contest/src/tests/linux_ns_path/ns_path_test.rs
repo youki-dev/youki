@@ -141,7 +141,7 @@ fn test_namespace_paths(mut linux_namespace_types: Vec<LinuxNamespaceType>) -> T
 
     command.arg("--fork");
     command.arg("sleep");
-    command.arg("10000");
+    command.arg("120");
     // so we can kill the both unshared and the child sleep process
     // by setting 0 the group id will be the same as child.id()
     command.process_group(0);
