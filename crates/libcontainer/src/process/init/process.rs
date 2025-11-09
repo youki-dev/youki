@@ -925,15 +925,11 @@ fn configure_container_network_devices(
             })?;
 
             // Assign IP addresses to the device
-            setup_addresses_in_network_namespace(
-                &serialize_addrs,
-                new_name,
-                &mut addr_client,
-            )
-            .map_err(|err| {
-                tracing::error!(?err, "failed to setup addresses for device: {}", new_name);
-                err
-            })?;
+            setup_addresses_in_network_namespace(serialize_addrs, new_name, &mut addr_client)
+                .map_err(|err| {
+                    tracing::error!(?err, "failed to setup addresses for device: {}", new_name);
+                    err
+                })?;
 
             // Bring the device up
             link_client.set_up(ns_link.header.index).map_err(|err| {

@@ -1069,7 +1069,7 @@ pub fn validate_net_devices(spec: &Spec) {
             };
 
             let mut message = AddressMessage::default();
-            message.header.index = index; 
+            message.header.index = index;
             let mut req = NetlinkMessage::from(RouteNetlinkMessage::GetAddress(message));
             req.header.flags = NLM_F_REQUEST | NLM_F_DUMP;
             req.finalize();
@@ -1088,7 +1088,10 @@ pub fn validate_net_devices(spec: &Spec) {
                     println!("address is present for network device {}", net_device_name);
                 }
                 _ => {
-                    eprintln!("address is not present for network device {}", net_device_name);
+                    eprintln!(
+                        "address is not present for network device {}",
+                        net_device_name
+                    );
                 }
             }
         }

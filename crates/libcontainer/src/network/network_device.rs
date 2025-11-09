@@ -1,7 +1,9 @@
-use std::os::fd::RawFd;
 use std::net::IpAddr;
+use std::os::fd::RawFd;
 
-use netlink_packet_route::address::{AddressAttribute, AddressHeaderFlags, AddressMessage, AddressScope};
+use netlink_packet_route::address::{
+    AddressAttribute, AddressHeaderFlags, AddressMessage, AddressScope,
+};
 use oci_spec::runtime::LinuxNetDevice;
 
 use super::Result;
@@ -103,18 +105,14 @@ pub fn dev_change_net_namespace(
 /// Note: The addresses passed to this function are already filtered in the main process
 /// to include only global scope and permanent addresses.
 pub fn setup_addresses_in_network_namespace(
-    addrs: &Vec<SerializableAddress>,
+    addrs: &[SerializableAddress],
     new_name: &str,
     addr_client: &mut AddressClient,
 ) -> Result<()> {
     // Re-add the original IP addresses to the interface in the new namespace.
     // The kernel removes IP addresses when an interface is moved between network namespaces.
     for addr in addrs.iter().map(AddressMessage::from) {
-        tracing::debug!(
-            "adding address {:?} to network device {}",
-            addr,
-            new_name
-        );
+        tracing::debug!("adding address {:?} to network device {}", addr, new_name);
 
         // Extract the IP address from attributes
         let ip_addr = parse_ip_address(&addr);
@@ -190,7 +188,8 @@ mod tests {
         let addrs = [addr_msg];
         let serializable_addrs: Vec<SerializableAddress> =
             addrs.iter().map(SerializableAddress::from).collect();
-        let result = setup_addresses_in_network_namespace(&serializable_addrs, "eth1", &mut addr_client);
+        let result =
+            setup_addresses_in_network_namespace(&serializable_addrs, "eth1", &mut addr_client);
         assert!(result.is_ok());
 
         // Verify the call was tracked
@@ -243,11 +242,9 @@ mod tests {
     fn test_parse_ip_address_ipv6_with_local() {
         // Test IPv6 PtP with IFA_LOCAL
         let mut addr_msg = AddressMessage::default();
-        addr_msg
-            .attributes
-            .push(AddressAttribute::Local(IpAddr::V6(
-                std::net::Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1),
-            )));
+        addr_msg.attributes.push(AddressAttribute::Local(IpAddr::V6(
+            std::net::Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1),
+        )));
         addr_msg
             .attributes
             .push(AddressAttribute::Address(IpAddr::V6(
@@ -274,7 +271,9 @@ mod tests {
 
     #[test]
     fn test_resolve_device_name_with_name() {
-        let device = LinuxNetDevice::default().set_name(Some("eth0".to_string())).clone();
+        let device = LinuxNetDevice::default()
+            .set_name(Some("eth0".to_string()))
+            .clone();
         let original = "veth0";
 
         let result = resolve_device_name(&device, original);
@@ -283,7 +282,9 @@ mod tests {
 
     #[test]
     fn test_resolve_device_name_with_empty_name() {
-        let device = LinuxNetDevice::default().set_name(Some("".to_string())).clone();
+        let device = LinuxNetDevice::default()
+            .set_name(Some("".to_string()))
+            .clone();
         let original = "veth0";
 
         let result = resolve_device_name(&device, original);
@@ -298,5 +299,4 @@ mod tests {
         let result = resolve_device_name(&device, original);
         assert_eq!(result, "veth0");
     }
-
 }

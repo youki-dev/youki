@@ -270,14 +270,18 @@ fn move_network_devices_to_container(
         // and is ready for network device setup
         main_receiver.wait_for_network_setup_ready()?;
 
-                // the container init process has already joined the provided net namespace,
+        // the container init process has already joined the provided net namespace,
         // so we can use the process's net ns path directly.
         let default_ns_path = PathBuf::from(format!("/proc/{}/ns/net", init_pid.as_raw()));
         let ns_path = net_ns.path().as_deref().unwrap_or(&default_ns_path);
 
         // Open the network namespace file and validate it exists before moving devices
         let netns_file = File::open(ns_path).map_err(|err| {
-            tracing::error!("failed to open network namespace at {}: {}", ns_path.display(), err);
+            tracing::error!(
+                "failed to open network namespace at {}: {}",
+                ns_path.display(),
+                err
+            );
             ProcessError::Network(err.into())
         })?;
         let netns_fd = netns_file.as_raw_fd();
@@ -289,11 +293,10 @@ fn move_network_devices_to_container(
         let addrs_map = devices
             .iter()
             .map(|(name, net_dev)| {
-                let addrs =
-                    dev_change_net_namespace(name, netns_fd, net_dev).map_err(|err| {
-                        tracing::error!("failed to dev_change_net_namespace: {}", err);
-                        err
-                    })?;
+                let addrs = dev_change_net_namespace(name, netns_fd, net_dev).map_err(|err| {
+                    tracing::error!("failed to dev_change_net_namespace: {}", err);
+                    err
+                })?;
                 Ok((name.clone(), addrs))
             })
             .collect::<Result<HashMap<String, Vec<SerializableAddress>>>>()?;

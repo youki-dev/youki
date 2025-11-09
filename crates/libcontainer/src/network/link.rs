@@ -107,7 +107,7 @@ impl LinkClient {
         }
         // NLM_F_REQUEST: This is a request to the kernel
         // NLM_F_ACK: Request an acknowledgment from the kernel
-        req.header.flags = NLM_F_REQUEST | NLM_F_ACK; 
+        req.header.flags = NLM_F_REQUEST | NLM_F_ACK;
         req.finalize();
 
         self.client.send_and_receive(&req, LinkMessageHandler)?;
