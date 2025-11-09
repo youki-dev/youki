@@ -2389,7 +2389,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc0e7987b28514adf555dc1f9a5c30dfc3e50750bbaffb1aec41ca7b23dcd8e4"
 dependencies = [
  "anyhow",
- "bitflags 2.6.0",
+ "bitflags 2.9.4",
  "byteorder",
  "libc",
  "log",

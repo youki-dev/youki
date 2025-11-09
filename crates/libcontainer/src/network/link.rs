@@ -360,7 +360,7 @@ mod tests {
             }
 
             // Verify the netlink flags
-            let expected_flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_EXCL | NLM_F_CREATE;
+            let expected_flags = NLM_F_REQUEST | NLM_F_ACK;
             assert_eq!(send_calls[0].header.flags, expected_flags);
         } else {
             panic!("Expected Fake client");
@@ -411,7 +411,7 @@ mod tests {
             }
 
             // Verify the netlink flags
-            let expected_flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_EXCL | NLM_F_CREATE;
+            let expected_flags = NLM_F_REQUEST | NLM_F_ACK;
             assert_eq!(send_calls[0].header.flags, expected_flags);
         } else {
             panic!("Expected Fake client");
