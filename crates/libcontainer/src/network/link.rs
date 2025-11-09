@@ -100,10 +100,14 @@ impl LinkClient {
         if let NetlinkPayload::InnerMessage(RouteNetlinkMessage::SetLink(ref mut link)) =
             req.payload
         {
+            // change_mask specifies which flags we want to modify
             link.header.change_mask |= LinkFlags::Up;
+            // Set the Up flag to bring the interface up
             link.header.flags |= LinkFlags::Up;
         }
-        req.header.flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_EXCL | NLM_F_CREATE;
+        // NLM_F_REQUEST: This is a request to the kernel
+        // NLM_F_ACK: Request an acknowledgment from the kernel
+        req.header.flags = NLM_F_REQUEST | NLM_F_ACK; 
         req.finalize();
 
         self.client.send_and_receive(&req, LinkMessageHandler)?;
@@ -127,10 +131,14 @@ impl LinkClient {
         if let NetlinkPayload::InnerMessage(RouteNetlinkMessage::SetLink(ref mut link)) =
             req.payload
         {
+            // change_mask specifies which flags we want to modify
             link.header.change_mask |= LinkFlags::Up;
+            // Remove the Up flag to bring the interface down
             link.header.flags.remove(LinkFlags::Up);
         }
-        req.header.flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_EXCL | NLM_F_CREATE;
+        // NLM_F_REQUEST: This is a request to the kernel
+        // NLM_F_ACK: Request an acknowledgment from the kernel
+        req.header.flags = NLM_F_REQUEST | NLM_F_ACK;
         req.finalize();
 
         self.client.send_and_receive(&req, LinkMessageHandler)?;
@@ -157,6 +165,10 @@ impl LinkClient {
         message.attributes.push(LinkAttribute::NetNsFd(ns_path));
 
         let mut req = NetlinkMessage::from(RouteNetlinkMessage::SetLink(message));
+        // NLM_F_REQUEST: This is a request to the kernel
+        // NLM_F_ACK: Request an acknowledgment from the kernel
+        // NLM_F_EXCL: Fail if the interface name already exists in the target namespace
+        // NLM_F_CREATE: Create the interface if it doesn't exist
         req.header.flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_EXCL | NLM_F_CREATE;
         req.finalize();
 

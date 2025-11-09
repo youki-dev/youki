@@ -100,6 +100,8 @@ impl AddressClient {
         message.header.index = index;
 
         let mut req = NetlinkMessage::from(RouteNetlinkMessage::GetAddress(message));
+        // NLM_F_REQUEST: This is a request to the kernel
+        // NLM_F_DUMP: Request a dump of all matching entries
         req.header.flags = NLM_F_REQUEST | NLM_F_DUMP;
         req.finalize();
 
@@ -123,6 +125,10 @@ impl AddressClient {
         let message = self.create_address_request(index, address, prefix_len)?;
 
         let mut req = NetlinkMessage::from(RouteNetlinkMessage::NewAddress(message));
+        // NLM_F_REQUEST: This is a request to the kernel
+        // NLM_F_ACK: Request an acknowledgment from the kernel
+        // NLM_F_EXCL: Fail if the address already exists
+        // NLM_F_CREATE: Create the address if it doesn't exist
         req.header.flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_EXCL | NLM_F_CREATE;
         req.finalize();
 
