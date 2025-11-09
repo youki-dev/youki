@@ -9,6 +9,16 @@ use super::link::LinkClient;
 use super::wrapper::create_network_client;
 use crate::network::serialize::SerializableAddress;
 
+/// Resolves the final name for a network device.
+/// If the device has a configured name (non-empty), use it; otherwise use the original name.
+pub fn resolve_device_name<'a>(device: &'a LinuxNetDevice, original_name: &'a str) -> &'a str {
+    device
+        .name()
+        .as_ref()
+        .filter(|d| !d.is_empty())
+        .map_or(original_name, |d| d)
+}
+
 /// dev_change_netns allows to move a device given by name to a network namespace given by netns_fd
 /// and optionally change the device name.
 /// The device name will be kept the same if device.Name is None or an empty string.
@@ -28,11 +38,7 @@ pub fn dev_change_net_namespace(
     let mut link_client = LinkClient::new(create_network_client())?;
     let mut addr_client = AddressClient::new(create_network_client())?;
 
-    let new_name = device
-        .name()
-        .as_ref()
-        .filter(|d| !d.is_empty())
-        .map_or(name, |d| d);
+    let new_name = resolve_device_name(device, name);
 
     let link = link_client.get_by_name(name)?;
 
@@ -64,7 +70,6 @@ pub fn dev_change_net_namespace(
 pub fn setup_addresses_in_network_namespace(
     addrs: &Vec<SerializableAddress>,
     new_name: &str,
-    ns_index: u32,
     addr_client: &mut AddressClient,
 ) -> Result<()> {
     // Re-add the original IP addresses to the interface in the new namespace.
@@ -113,7 +118,7 @@ pub fn setup_addresses_in_network_namespace(
         if let Some(ip) = ip_opts {
             // Remove the interface attribute of the original address
             // to avoid issues when the interface is renamed.
-            addr_client.add(ns_index, ip, addr.header.prefix_len)?;
+            addr_client.add(addr.header.index, ip, addr.header.prefix_len)?;
         }
     }
 

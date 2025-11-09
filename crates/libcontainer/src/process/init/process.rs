@@ -21,7 +21,7 @@ use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
 use crate::network::address::AddressClient;
 use crate::network::link::LinkClient;
-use crate::network::network_device::setup_addresses_in_network_namespace;
+use crate::network::network_device::{resolve_device_name, setup_addresses_in_network_namespace};
 use crate::network::wrapper::create_network_client;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::channel;
@@ -906,11 +906,7 @@ fn configure_container_network_devices(
     for (name, net_dev) in net_device {
         if let Some(serialize_addrs) = addrs_map.get(name) {
             // Get the device's final name (use configured name if provided, otherwise use original name)
-            let new_name = net_dev
-                .name()
-                .as_ref()
-                .filter(|d| !d.is_empty())
-                .map_or(name.as_str(), |d| d);
+            let new_name = resolve_device_name(net_dev, name.as_str());
 
             // Create network clients
             let mut link_client = LinkClient::new(create_network_client()).map_err(|err| {
@@ -927,13 +923,11 @@ fn configure_container_network_devices(
                 tracing::error!(?err, "failed to get device by name: {}", new_name);
                 err
             })?;
-            let ns_index = ns_link.header.index;
 
             // Assign IP addresses to the device
             setup_addresses_in_network_namespace(
                 &serialize_addrs,
                 new_name,
-                ns_index,
                 &mut addr_client,
             )
             .map_err(|err| {
@@ -942,7 +936,7 @@ fn configure_container_network_devices(
             })?;
 
             // Bring the device up
-            link_client.set_up(ns_index).map_err(|err| {
+            link_client.set_up(ns_link.header.index).map_err(|err| {
                 tracing::error!(?err, "failed to bring up device: {}", new_name);
                 err
             })?;

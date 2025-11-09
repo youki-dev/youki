@@ -250,6 +250,12 @@ fn move_network_devices_to_container(
     main_receiver: &mut channel::MainReceiver,
     init_sender: &mut channel::InitSender,
 ) -> Result<()> {
+    // Early return if there are no network devices to move
+    let devices = match linux.net_devices() {
+        Some(devs) if !devs.is_empty() => devs,
+        _ => return Ok(()),
+    };
+
     if let Some(namespaces) = linux.namespaces() {
         // network devices are not moved for containers running in the host network.
         let net_ns = match namespaces
@@ -269,28 +275,26 @@ fn move_network_devices_to_container(
         // The runtime spec requires that the kernel handles moving back any devices
         // that were successfully moved before the failure occurred.
         // See: https://github.com/opencontainers/runtime-spec/blob/27cb0027fd92ef81eda1ea3a8153b8337f56d94a/config-linux.md#namespace-lifecycle-and-container-termination
-        if let Some(devices) = linux.net_devices() {
-            main_receiver.wait_for_network_setup_ready()?;
-            // Open the network namespace file and validate it exists before moving devices
-            let netns_file = File::open(ns_path).map_err(|err| {
-                tracing::error!("failed to open network namespace at {}: {}", ns_path.display(), err);
-                ProcessError::Network(err.into())
-            })?;
-            let netns_fd = netns_file.as_raw_fd();
+        main_receiver.wait_for_network_setup_ready()?;
+        // Open the network namespace file and validate it exists before moving devices
+        let netns_file = File::open(ns_path).map_err(|err| {
+            tracing::error!("failed to open network namespace at {}: {}", ns_path.display(), err);
+            ProcessError::Network(err.into())
+        })?;
+        let netns_fd = netns_file.as_raw_fd();
 
-            let addrs_map = devices
-                .iter()
-                .map(|(name, net_dev)| {
-                    let addrs =
-                        dev_change_net_namespace(name, netns_fd, net_dev).map_err(|err| {
-                            tracing::error!("failed to dev_change_net_namespace: {}", err);
-                            err
-                        })?;
-                    Ok((name.clone(), addrs))
-                })
-                .collect::<Result<HashMap<String, Vec<SerializableAddress>>>>()?;
-            init_sender.move_network_device(addrs_map)?;
-        }
+        let addrs_map = devices
+            .iter()
+            .map(|(name, net_dev)| {
+                let addrs =
+                    dev_change_net_namespace(name, netns_fd, net_dev).map_err(|err| {
+                        tracing::error!("failed to dev_change_net_namespace: {}", err);
+                        err
+                    })?;
+                Ok((name.clone(), addrs))
+            })
+            .collect::<Result<HashMap<String, Vec<SerializableAddress>>>>()?;
+        init_sender.move_network_device(addrs_map)?;
     }
 
     Ok(())
