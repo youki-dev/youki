@@ -13,12 +13,7 @@ use crate::utils::test_utils::{
 };
 use crate::utils::{is_runtime_runc, test_inside_container, test_outside_container};
 
-fn create_unique_netns_name(prefix: &str) -> String {
-    let random_part: u16 = rand::random();
-    format!("{}{}", prefix, random_part)
-}
-
-pub fn create_unique_device_name(prefix: &str) -> String {
+fn create_unique_name(prefix: &str) -> String {
     let random_part: u16 = rand::random();
     format!("{}{}", prefix, random_part)
 }
@@ -90,6 +85,42 @@ fn delete_dummy_device(name: &str) -> Result<()> {
             "Failed to delete dummy device: {}",
             String::from_utf8_lossy(&output.stderr)
         ))
+    }
+}
+
+/// RAII guard for dummy network devices that automatically cleans up on drop
+struct DummyDevice {
+    name: String,
+}
+
+impl DummyDevice {
+    fn create(name: String) -> Result<Self> {
+        create_dummy_device(&name)?;
+        Ok(Self { name })
+    }
+}
+
+impl Drop for DummyDevice {
+    fn drop(&mut self) {
+        let _ = delete_dummy_device(&self.name);
+    }
+}
+
+/// RAII guard for network namespaces that automatically cleans up on drop
+struct NetNamespace {
+    name: String,
+}
+
+impl NetNamespace {
+    fn create(name: String) -> Result<Self> {
+        create_netns(&name)?;
+        Ok(Self { name })
+    }
+}
+
+impl Drop for NetNamespace {
+    fn drop(&mut self) {
+        let _ = cleanup_netns(&self.name);
     }
 }
 
@@ -176,7 +207,7 @@ fn create_spec_with_netns(net_devices: HashMap<String, LinuxNetDevice>, netns: S
 }
 
 fn check_net_device() -> TestResult {
-    let device_name = create_unique_device_name("dummy");
+    let device_name = create_unique_name("dummy");
 
     if let Err(e) = create_dummy_device(&device_name) {
         return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
@@ -205,8 +236,8 @@ fn check_net_device() -> TestResult {
 }
 
 fn check_net_device_rename() -> TestResult {
-    let device_name = create_unique_device_name("rename");
-    let device_name_rename = create_unique_device_name("renamed");
+    let device_name = create_unique_name("rename");
+    let device_name_rename = create_unique_name("renamed");
 
     if let Err(e) = create_dummy_device(&device_name) {
         return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
@@ -241,16 +272,18 @@ fn check_net_device_rename() -> TestResult {
 }
 
 fn check_net_devices() -> TestResult {
-    let device_name1 = create_unique_device_name("dummy");
-    let device_name2 = create_unique_device_name("dummy");
+    let device_name1 = create_unique_name("dummy");
+    let device_name2 = create_unique_name("dummy");
 
-    if let Err(e) = create_dummy_device(&device_name1) {
-        return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
-    }
+    let _device1 = match DummyDevice::create(device_name1.clone()) {
+        Ok(dev) => dev,
+        Err(e) => return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e)),
+    };
 
-    if let Err(e) = create_dummy_device(&device_name2) {
-        return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
-    }
+    let _device2 = match DummyDevice::create(device_name2.clone()) {
+        Ok(dev) => dev,
+        Err(e) => return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e)),
+    };
 
     let mut net_devices = HashMap::new();
     net_devices.insert(device_name1.clone(), LinuxNetDevice::default());
@@ -284,15 +317,13 @@ fn check_net_devices() -> TestResult {
         }
     }
 
-    // cleanup both devices regardless of test result
-    let _ = delete_dummy_device(&device_name1);
-    let _ = delete_dummy_device(&device_name2);
+    // Devices will be automatically cleaned up when _device1 and _device2 go out of scope
 
     result
 }
 
 fn check_empty_net_devices() -> TestResult {
-    let device_name = create_unique_device_name("empty");
+    let device_name = create_unique_name("empty");
 
     let mut net_devices = HashMap::new();
     net_devices.insert(device_name.clone(), LinuxNetDevice::default());
@@ -310,8 +341,8 @@ fn check_empty_net_devices() -> TestResult {
 }
 
 fn check_back_device() -> TestResult {
-    let netns_name = create_unique_netns_name("back");
-    let device_name = create_unique_device_name("back");
+    let netns_name = create_unique_name("back");
+    let device_name = create_unique_name("back");
 
     let mut net_devices = HashMap::new();
     net_devices.insert(
@@ -322,13 +353,15 @@ fn check_back_device() -> TestResult {
             .unwrap(),
     );
 
-    if let Err(e) = create_netns(&netns_name) {
-        return TestResult::Failed(anyhow!("Failed to create netns: {}", e));
-    }
+    let _netns = match NetNamespace::create(netns_name.clone()) {
+        Ok(ns) => ns,
+        Err(e) => return TestResult::Failed(anyhow!("Failed to create netns: {}", e)),
+    };
 
-    if let Err(e) = create_dummy_device(&device_name) {
-        return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e));
-    }
+    let _device = match DummyDevice::create(device_name.clone()) {
+        Ok(dev) => dev,
+        Err(e) => return TestResult::Failed(anyhow!("Failed to create dummy device: {}", e)),
+    };
 
     let spec = create_spec_with_netns(
         net_devices,
@@ -343,9 +376,6 @@ fn check_back_device() -> TestResult {
         TestResult::Passed
     });
     if let TestResult::Failed(_) = test_result {
-        // Clean up on failure
-        let _ = delete_dummy_device(&device_name);
-        let _ = cleanup_netns(&netns_name);
         return test_result;
     }
 
@@ -378,30 +408,21 @@ fn check_back_device() -> TestResult {
                 &device_name,
             ])
             .output();
-        let _ = cleanup_netns(&netns_name);
         return TestResult::Failed(anyhow!("Failed to move device back: {}", e));
     }
 
     // Check that the device exists
     if let Err(e) = check_device_exists(&device_name) {
-        let _ = cleanup_netns(&netns_name);
         return TestResult::Failed(anyhow!("Failed to check device: {}", e));
     }
 
-    if let Err(e) = delete_dummy_device(&device_name) {
-        let _ = cleanup_netns(&netns_name);
-        return TestResult::Failed(anyhow!("Failed to delete device: {}", e));
-    }
-
-    if let Err(e) = cleanup_netns(&netns_name) {
-        return TestResult::Failed(anyhow!("Failed to cleanup netns: {}", e));
-    }
+    // Cleanup will happen automatically when _device and _netns go out of scope
 
     TestResult::Passed
 }
 
 fn check_address() -> TestResult {
-    let device_name = create_unique_device_name("addr");
+    let device_name = create_unique_name("addr");
     const DUMMY_ADDRESS: &str = "244.178.44.111/24";
 
     let mut net_devices = HashMap::new();

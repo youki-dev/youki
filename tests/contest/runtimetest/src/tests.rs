@@ -7,8 +7,9 @@ use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::Path;
 
 use anyhow::{Result, bail};
-use netlink_packet_core::{NLM_F_REQUEST, NetlinkMessage, NetlinkPayload};
+use netlink_packet_core::{NLM_F_DUMP, NLM_F_REQUEST, NetlinkMessage, NetlinkPayload};
 use netlink_packet_route::RouteNetlinkMessage;
+use netlink_packet_route::address::AddressMessage;
 use netlink_packet_route::link::{LinkAttribute, LinkMessage};
 use netlink_sys::Socket;
 use netlink_sys::protocols::NETLINK_ROUTE;
@@ -1056,12 +1057,38 @@ pub fn validate_net_devices(spec: &Spec) {
             let bytes = &receive_buf[..n_received];
             let rx_packet = <NetlinkMessage<RouteNetlinkMessage>>::deserialize(bytes).unwrap();
 
-            match rx_packet.payload {
-                NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewLink(_link)) => {
+            let index = match rx_packet.payload {
+                NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewLink(link)) => {
                     println!("network device {} is present", net_device_name);
+                    link.header.index
                 }
                 _ => {
                     eprintln!("network device {} is not present", net_device_name);
+                    continue;
+                }
+            };
+
+            let mut message = AddressMessage::default();
+            message.header.index = index; 
+            let mut req = NetlinkMessage::from(RouteNetlinkMessage::GetAddress(message));
+            req.header.flags = NLM_F_REQUEST | NLM_F_DUMP;
+            req.finalize();
+
+            let mut send_buf = vec![0; req.header.length as usize];
+            req.serialize(&mut send_buf[..]);
+            socket.send(&send_buf[..], 0).unwrap();
+
+            let mut receive_buf = vec![0u8; 4096];
+            let n_received = socket.recv(&mut &mut receive_buf[..], 0).unwrap();
+            let bytes = &receive_buf[..n_received];
+            let rx_packet = <NetlinkMessage<RouteNetlinkMessage>>::deserialize(bytes).unwrap();
+
+            match rx_packet.payload {
+                NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewAddress(_address)) => {
+                    println!("address is present for network device {}", net_device_name);
+                }
+                _ => {
+                    eprintln!("address is not present for network device {}", net_device_name);
                 }
             }
         }
