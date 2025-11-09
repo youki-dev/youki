@@ -21,7 +21,7 @@ use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
 use crate::network::address::AddressClient;
 use crate::network::link::LinkClient;
-use crate::network::network_device::setup_addresses_in_namespace;
+use crate::network::network_device::setup_addresses_in_network_namespace;
 use crate::network::wrapper::create_network_client;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::channel;
@@ -930,8 +930,8 @@ fn configure_container_network_devices(
             let ns_index = ns_link.header.index;
 
             // Assign IP addresses to the device
-            setup_addresses_in_namespace(
-                serialize_addrs.clone(),
+            setup_addresses_in_network_namespace(
+                &serialize_addrs,
                 new_name,
                 ns_index,
                 &mut addr_client,

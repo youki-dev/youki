@@ -1,6 +1,4 @@
-use std::fs::File;
-use std::os::fd::AsRawFd;
-use std::path::Path;
+use std::os::fd::RawFd;
 
 use netlink_packet_route::address::{AddressAttribute, AddressFlags, AddressMessage, AddressScope};
 use oci_spec::runtime::LinuxNetDevice;
@@ -11,26 +9,24 @@ use super::link::LinkClient;
 use super::wrapper::create_network_client;
 use crate::network::serialize::SerializableAddress;
 
-/// dev_change_netns allows to move a device given by name to a network namespace given by nsPath
+/// dev_change_netns allows to move a device given by name to a network namespace given by netns_fd
 /// and optionally change the device name.
 /// The device name will be kept the same if device.Name is None or an empty string.
 /// This function ensures that the move and rename operations occur atomically.
 /// It preserves existing interface attributes, including IP addresses.
 pub fn dev_change_net_namespace(
     name: &str,
-    netns_path: &Path,
+    netns_fd: RawFd,
     device: &LinuxNetDevice,
 ) -> Result<Vec<SerializableAddress>> {
     tracing::debug!(
-        "attaching network device {} to network namespace {}",
+        "attaching network device {} to network namespace fd {}",
         name,
-        netns_path.display()
+        netns_fd
     );
 
     let mut link_client = LinkClient::new(create_network_client())?;
     let mut addr_client = AddressClient::new(create_network_client())?;
-
-    let netns_file = File::open(netns_path)?;
 
     let new_name = device
         .name()
@@ -51,7 +47,7 @@ pub fn dev_change_net_namespace(
     let addrs = addr_client.get_by_index(index)?;
 
     link_client
-        .set_ns_fd(index, new_name, netns_file.as_raw_fd())
+        .set_ns_fd(index, new_name, netns_fd)
         .map_err(|err| {
             tracing::error!(?err, "failed to set_ns_fd");
             err
@@ -63,21 +59,20 @@ pub fn dev_change_net_namespace(
     Ok(serialize_addrs)
 }
 
-/// Core logic for setting up addresses in the new namespace
+/// Core logic for setting up addresses in the new network namespace
 /// This function is extracted to make it testable without system calls
-pub fn setup_addresses_in_namespace(
-    addrs: Vec<SerializableAddress>,
+pub fn setup_addresses_in_network_namespace(
+    addrs: &Vec<SerializableAddress>,
     new_name: &str,
     ns_index: u32,
     addr_client: &mut AddressClient,
 ) -> Result<()> {
     // Re-add the original IP addresses to the interface in the new namespace.
     // The kernel removes IP addresses when an interface is moved between network namespaces.
-    for addr in addrs {
-        let addr = AddressMessage::from(&addr);
+    for addr in addrs.iter().map(AddressMessage::from) {
         tracing::debug!(
             "processing address {:?} from network device {}",
-            addr.clone(),
+            addr,
             new_name
         );
         let mut ip_opts = None;
@@ -88,7 +83,7 @@ pub fn setup_addresses_in_namespace(
         if addr.header.scope != AddressScope::Universe {
             tracing::debug!(
                 "skipping address {:?} from network device {}",
-                addr.clone(),
+                addr,
                 new_name
             );
             continue;
@@ -109,7 +104,7 @@ pub fn setup_addresses_in_namespace(
             if !flag.contains(AddressFlags::Permanent) {
                 tracing::debug!(
                     "skipping address {:?} from network device {}",
-                    addr.clone(),
+                    addr,
                     new_name
                 );
                 continue;

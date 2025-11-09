@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::fs::File;
+use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 
 use nix::sys::wait::{WaitStatus, waitpid};
@@ -269,11 +271,18 @@ fn move_network_devices_to_container(
         // See: https://github.com/opencontainers/runtime-spec/blob/27cb0027fd92ef81eda1ea3a8153b8337f56d94a/config-linux.md#namespace-lifecycle-and-container-termination
         if let Some(devices) = linux.net_devices() {
             main_receiver.wait_for_network_setup_ready()?;
+            // Open the network namespace file and validate it exists before moving devices
+            let netns_file = File::open(ns_path).map_err(|err| {
+                tracing::error!("failed to open network namespace at {}: {}", ns_path.display(), err);
+                ProcessError::Network(err.into())
+            })?;
+            let netns_fd = netns_file.as_raw_fd();
+
             let addrs_map = devices
                 .iter()
                 .map(|(name, net_dev)| {
                     let addrs =
-                        dev_change_net_namespace(name, ns_path, net_dev).map_err(|err| {
+                        dev_change_net_namespace(name, netns_fd, net_dev).map_err(|err| {
                             tracing::error!("failed to dev_change_net_namespace: {}", err);
                             err
                         })?;
