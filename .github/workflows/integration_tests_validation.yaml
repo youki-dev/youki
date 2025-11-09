@@ -92,9 +92,9 @@ jobs:
         run: sudo add-apt-repository -y ppa:criu/ppa
       - name: Install requirements
         run: sudo env PATH=$PATH just ci-prepare
-      - name: Install runc 1.3.1
+      - name: Install runc 1.3.2
         run: |
-          wget -q https://github.com/opencontainers/runc/releases/download/v1.3.1/runc.amd64
+          wget -q https://github.com/opencontainers/runc/releases/download/v1.3.2/runc.amd64
           sudo mv runc.amd64 /usr/bin/runc
           sudo chmod 755 /usr/bin/runc
       - name: Build

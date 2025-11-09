@@ -3,6 +3,8 @@
 //! implementation details
 use std::any::Any;
 use std::ffi::OsStr;
+use std::os::fd::{BorrowedFd, RawFd};
+use std::os::unix::io::OwnedFd;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -41,6 +43,29 @@ pub trait Syscall {
         flags: MsFlags,
         data: Option<&str>,
     ) -> Result<()>;
+    // mount_from_fd mounts a filesystem specified by source_fd to target path.
+    // NOTE: mount_from_fd only supports BIND_MOUNT.
+    fn mount_from_fd(&self, source_fd: &OwnedFd, target: &Path) -> Result<()>;
+    fn move_mount(
+        &self,
+        from_dirfd: BorrowedFd<'_>,
+        from_path: Option<&str>,
+        to_dirfd: BorrowedFd<'_>,
+        to_path: Option<&str>,
+        flags: u32,
+    ) -> Result<()>;
+    fn fsopen(&self, fstype: Option<&str>, flags: u32) -> Result<OwnedFd>;
+    fn fsconfig(
+        &self,
+        fsfd: BorrowedFd<'_>,
+        cmd: u32,
+        key: Option<&str>,
+        val: Option<&str>,
+        aux: libc::c_int,
+    ) -> Result<()>;
+    fn fsmount(&self, fsfd: BorrowedFd<'_>, flags: u32, attr_flags: Option<u64>)
+    -> Result<OwnedFd>;
+    fn open_tree(&self, dirfd: RawFd, path: Option<&str>, flags: u32) -> Result<OwnedFd>;
     fn symlink(&self, original: &Path, link: &Path) -> Result<()>;
     fn mknod(&self, path: &Path, kind: SFlag, perm: Mode, dev: u64) -> Result<()>;
     fn chown(&self, path: &Path, owner: Option<Uid>, group: Option<Gid>) -> Result<()>;
@@ -48,7 +73,7 @@ pub trait Syscall {
     fn close_range(&self, preserve_fds: i32) -> Result<()>;
     fn mount_setattr(
         &self,
-        dirfd: i32,
+        dirfd: BorrowedFd<'_>,
         pathname: &Path,
         flags: u32,
         mount_attr: &MountAttr,

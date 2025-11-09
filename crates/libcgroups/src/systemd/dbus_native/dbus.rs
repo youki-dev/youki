@@ -308,7 +308,7 @@ impl DbusConnection {
 
         // it is possible that while receiving messages, we get some extra/previous message
         // for method calls, we need to have an error or method return type message, so
-        // we keep looping until we get either of these. see https://github.com/containers/youki/issues/2826
+        // we keep looping until we get either of these. see https://github.com/youki-dev/youki/issues/2826
         // for more detailed analysis.
         loop {
             let reply = self.receive_complete_response()?;
