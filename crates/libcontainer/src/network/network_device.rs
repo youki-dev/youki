@@ -1,6 +1,7 @@
 use std::os::fd::RawFd;
+use std::net::IpAddr;
 
-use netlink_packet_route::address::{AddressAttribute, AddressFlags, AddressMessage, AddressScope};
+use netlink_packet_route::address::{AddressAttribute, AddressHeaderFlags, AddressMessage, AddressScope};
 use oci_spec::runtime::LinuxNetDevice;
 
 use super::Result;
@@ -59,14 +60,48 @@ pub fn dev_change_net_namespace(
             err
         })?;
 
-    let serialize_addrs: Vec<SerializableAddress> =
-        addrs.iter().map(SerializableAddress::from).collect();
+    // Filter addresses before sending to init process:
+    // Only include IP addresses with global scope and permanent flag.
+    let serialize_addrs: Vec<SerializableAddress> = addrs
+        .iter()
+        .filter(|addr| {
+            // Only move IP addresses with global scope because those are not host-specific, auto-configured,
+            // or have limited network scope, making them unsuitable inside the container namespace.
+            // Ref: https://www.ietf.org/rfc/rfc3549.txt
+            if addr.header.scope != AddressScope::Universe {
+                tracing::debug!(
+                    "skipping address with scope {:?} from network device {}",
+                    addr.header.scope,
+                    new_name
+                );
+                return false;
+            }
+
+            // Only move permanent IP addresses configured by the user, dynamic addresses are excluded because
+            // their validity may rely on the original network namespace's context and they may have limited
+            // lifetimes and are not guaranteed to be available in a new namespace.
+            // Ref: https://www.ietf.org/rfc/rfc3549.txt
+            if !addr.header.flags.contains(AddressHeaderFlags::Permanent) {
+                tracing::debug!(
+                    "skipping non-permanent address from network device {}",
+                    new_name
+                );
+                return false;
+            }
+
+            true
+        })
+        .map(SerializableAddress::from)
+        .collect();
 
     Ok(serialize_addrs)
 }
 
 /// Core logic for setting up addresses in the new network namespace
 /// This function is extracted to make it testable without system calls
+///
+/// Note: The addresses passed to this function are already filtered in the main process
+/// to include only global scope and permanent addresses.
 pub fn setup_addresses_in_network_namespace(
     addrs: &Vec<SerializableAddress>,
     new_name: &str,
@@ -76,53 +111,49 @@ pub fn setup_addresses_in_network_namespace(
     // The kernel removes IP addresses when an interface is moved between network namespaces.
     for addr in addrs.iter().map(AddressMessage::from) {
         tracing::debug!(
-            "processing address {:?} from network device {}",
+            "adding address {:?} to network device {}",
             addr,
             new_name
         );
-        let mut ip_opts = None;
-        let mut flags_opts = None;
-        // Only move IP addresses with global scope because those are not host-specific, auto-configured,
-        // or have limited network scope, making them unsuitable inside the container namespace.
-        // Ref: https://www.ietf.org/rfc/rfc3549.txt
-        if addr.header.scope != AddressScope::Universe {
-            tracing::debug!(
-                "skipping address {:?} from network device {}",
-                addr,
-                new_name
-            );
-            continue;
-        }
-        for attr in &addr.attributes {
-            match attr {
-                AddressAttribute::Flags(flags) => flags_opts = Some(*flags),
-                AddressAttribute::Address(ip) => ip_opts = Some(*ip),
-                _ => {}
-            }
-        }
 
-        // Only move permanent IP addresses configured by the user, dynamic addresses are excluded because
-        // their validity may rely on the original network namespace's context and they may have limited
-        // lifetimes and are not guaranteed to be available in a new namespace.
-        // Ref: https://www.ietf.org/rfc/rfc3549.txt
-        if let Some(flag) = flags_opts {
-            if !flag.contains(AddressFlags::Permanent) {
-                tracing::debug!(
-                    "skipping address {:?} from network device {}",
-                    addr,
-                    new_name
-                );
-                continue;
-            }
-        }
-        if let Some(ip) = ip_opts {
-            // Remove the interface attribute of the original address
-            // to avoid issues when the interface is renamed.
+        // Extract the IP address from attributes
+        let ip_addr = parse_ip_address(&addr);
+
+        if let Some(ip) = ip_addr {
             addr_client.add(addr.header.index, ip, addr.header.prefix_len)?;
         }
     }
 
     Ok(())
+}
+
+/// Parses the IP address from an AddressMessage following libnl conventions.
+///
+/// From libnl addr.c:
+/// - IPv6 sends the local address as IFA_ADDRESS with no IFA_LOCAL
+/// - IPv4 sends both IFA_LOCAL and IFA_ADDRESS, with IFA_ADDRESS being the peer address if they differ
+/// - For IPv6 Point-to-Point addresses, IFA_LOCAL should also be handled
+///
+/// Priority:
+/// 1. If IFA_LOCAL exists, use it (this handles IPv4 and IPv6 PtP correctly)
+/// 2. Otherwise, fall back to IFA_ADDRESS (this handles regular IPv6)
+fn parse_ip_address(addr: &AddressMessage) -> Option<IpAddr> {
+    // First, try to find IFA_LOCAL
+    let local = addr.attributes.iter().find_map(|attr| match attr {
+        AddressAttribute::Local(ip) => Some(*ip),
+        _ => None,
+    });
+
+    // If IFA_LOCAL exists, use it
+    if let Some(ip) = local {
+        return Some(ip);
+    }
+
+    // Otherwise, fall back to IFA_ADDRESS
+    addr.attributes.iter().find_map(|attr| match attr {
+        AddressAttribute::Address(ip) => Some(*ip),
+        _ => None,
+    })
 }
 
 #[cfg(test)]
@@ -138,20 +169,18 @@ mod tests {
     use crate::network::wrapper::ClientWrapper;
 
     #[test]
-    fn test_setup_addresses_in_namespace() {
+    fn test_setup_addresses_in_network_namespace() {
         let mut fake_client = FakeNetlinkClient::new();
 
         let mut addr_msg = AddressMessage::default();
         addr_msg.header.scope = AddressScope::Universe;
         addr_msg.header.prefix_len = 24;
+        addr_msg.header.flags = AddressHeaderFlags::Permanent;
         addr_msg
             .attributes
             .push(AddressAttribute::Address(IpAddr::V4(Ipv4Addr::new(
                 192, 168, 1, 1,
             ))));
-        addr_msg
-            .attributes
-            .push(AddressAttribute::Flags(AddressFlags::Permanent));
 
         let responses = vec![RouteNetlinkMessage::NewAddress(addr_msg.clone())];
         fake_client.set_expected_responses(responses);
@@ -161,7 +190,7 @@ mod tests {
         let addrs = [addr_msg];
         let serializable_addrs: Vec<SerializableAddress> =
             addrs.iter().map(SerializableAddress::from).collect();
-        let result = setup_addresses_in_namespace(serializable_addrs, "eth1", 1, &mut addr_client);
+        let result = setup_addresses_in_network_namespace(&serializable_addrs, "eth1", &mut addr_client);
         assert!(result.is_ok());
 
         // Verify the call was tracked
@@ -173,66 +202,101 @@ mod tests {
     }
 
     #[test]
-    fn test_setup_addresses_in_namespace_skip_non_universe_scope() {
-        let fake_client = FakeNetlinkClient::new();
-
+    fn test_parse_ip_address_with_local() {
+        // Test IPv4 with IFA_LOCAL (typical IPv4 case)
         let mut addr_msg = AddressMessage::default();
-        addr_msg.header.scope = AddressScope::Host; // Non-universe scope
-        addr_msg.header.prefix_len = 24;
+        addr_msg
+            .attributes
+            .push(AddressAttribute::Local(IpAddr::V4(Ipv4Addr::new(
+                10, 0, 0, 1,
+            ))));
         addr_msg
             .attributes
             .push(AddressAttribute::Address(IpAddr::V4(Ipv4Addr::new(
-                192, 168, 1, 1,
+                10, 0, 0, 2,
             ))));
 
-        let mut addr_client = AddressClient::new(ClientWrapper::Fake(fake_client)).unwrap();
-
-        let addrs = [addr_msg];
-        let serializable_addrs: Vec<SerializableAddress> =
-            addrs.iter().map(SerializableAddress::from).collect();
-        let result = setup_addresses_in_namespace(serializable_addrs, "eth1", 1, &mut addr_client);
-        assert!(result.is_ok());
-
-        // Verify the call was tracked
-        if let Some(send_calls) = addr_client.get_send_calls() {
-            assert_eq!(send_calls.len(), 0);
-        } else {
-            panic!("Expected Fake client");
-        }
+        let result = parse_ip_address(&addr_msg);
+        assert_eq!(result, Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
     }
 
     #[test]
-    fn test_setup_addresses_in_namespace_skip_non_permanent() {
-        let mut fake_client = FakeNetlinkClient::new();
-
+    fn test_parse_ip_address_without_local() {
+        // Test IPv6 without IFA_LOCAL (typical IPv6 case)
         let mut addr_msg = AddressMessage::default();
-        addr_msg.header.scope = AddressScope::Universe;
-        addr_msg.header.prefix_len = 24;
         addr_msg
             .attributes
-            .push(AddressAttribute::Address(IpAddr::V4(Ipv4Addr::new(
-                192, 168, 1, 1,
-            ))));
-        addr_msg
-            .attributes
-            .push(AddressAttribute::Flags(AddressFlags::empty())); // Non-permanent
+            .push(AddressAttribute::Address(IpAddr::V6(
+                std::net::Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
+            )));
 
-        let responses = vec![RouteNetlinkMessage::NewAddress(addr_msg.clone())];
-        fake_client.set_expected_responses(responses);
-
-        let mut addr_client = AddressClient::new(ClientWrapper::Fake(fake_client)).unwrap();
-
-        let addrs = [addr_msg];
-        let serializable_addrs: Vec<SerializableAddress> =
-            addrs.iter().map(SerializableAddress::from).collect();
-        let result = setup_addresses_in_namespace(serializable_addrs, "eth1", 1, &mut addr_client);
-        assert!(result.is_ok());
-
-        // Verify the call was tracked
-        if let Some(send_calls) = addr_client.get_send_calls() {
-            assert_eq!(send_calls.len(), 0);
-        } else {
-            panic!("Expected Fake client");
-        }
+        let result = parse_ip_address(&addr_msg);
+        assert_eq!(
+            result,
+            Some(IpAddr::V6(std::net::Ipv6Addr::new(
+                0x2001, 0xdb8, 0, 0, 0, 0, 0, 1
+            )))
+        );
     }
+
+    #[test]
+    fn test_parse_ip_address_ipv6_with_local() {
+        // Test IPv6 PtP with IFA_LOCAL
+        let mut addr_msg = AddressMessage::default();
+        addr_msg
+            .attributes
+            .push(AddressAttribute::Local(IpAddr::V6(
+                std::net::Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1),
+            )));
+        addr_msg
+            .attributes
+            .push(AddressAttribute::Address(IpAddr::V6(
+                std::net::Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 2),
+            )));
+
+        let result = parse_ip_address(&addr_msg);
+        assert_eq!(
+            result,
+            Some(IpAddr::V6(std::net::Ipv6Addr::new(
+                0xfe80, 0, 0, 0, 0, 0, 0, 1
+            )))
+        );
+    }
+
+    #[test]
+    fn test_parse_ip_address_no_attributes() {
+        // Test with no address attributes
+        let addr_msg = AddressMessage::default();
+
+        let result = parse_ip_address(&addr_msg);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_resolve_device_name_with_name() {
+        let device = LinuxNetDevice::default().set_name(Some("eth0".to_string())).clone();
+        let original = "veth0";
+
+        let result = resolve_device_name(&device, original);
+        assert_eq!(result, "eth0");
+    }
+
+    #[test]
+    fn test_resolve_device_name_with_empty_name() {
+        let device = LinuxNetDevice::default().set_name(Some("".to_string())).clone();
+        let original = "veth0";
+
+        let result = resolve_device_name(&device, original);
+        assert_eq!(result, "veth0");
+    }
+
+    #[test]
+    fn test_resolve_device_name_without_name() {
+        let device = LinuxNetDevice::default();
+        let original = "veth0";
+
+        let result = resolve_device_name(&device, original);
+        assert_eq!(result, "veth0");
+    }
+
 }

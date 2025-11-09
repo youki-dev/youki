@@ -98,7 +98,6 @@ impl AddressClient {
     pub fn get_by_index(&mut self, index: u32) -> Result<Vec<AddressMessage>> {
         let mut message = AddressMessage::default();
         message.header.index = index;
-
         let mut req = NetlinkMessage::from(RouteNetlinkMessage::GetAddress(message));
         // NLM_F_REQUEST: This is a request to the kernel
         // NLM_F_DUMP: Request a dump of all matching entries

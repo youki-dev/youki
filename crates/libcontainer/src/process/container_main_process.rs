@@ -266,16 +266,15 @@ fn move_network_devices_to_container(
             None => return Ok(()),
         };
 
-        // the container init process has already joined the provided net namespace,
+        // Wait for the init process to signal that it has joined the network namespace
+        // and is ready for network device setup
+        main_receiver.wait_for_network_setup_ready()?;
+
+                // the container init process has already joined the provided net namespace,
         // so we can use the process's net ns path directly.
         let default_ns_path = PathBuf::from(format!("/proc/{}/ns/net", init_pid.as_raw()));
         let ns_path = net_ns.path().as_deref().unwrap_or(&default_ns_path);
 
-        // If moving any of the network devices fails, we return an error immediately.
-        // The runtime spec requires that the kernel handles moving back any devices
-        // that were successfully moved before the failure occurred.
-        // See: https://github.com/opencontainers/runtime-spec/blob/27cb0027fd92ef81eda1ea3a8153b8337f56d94a/config-linux.md#namespace-lifecycle-and-container-termination
-        main_receiver.wait_for_network_setup_ready()?;
         // Open the network namespace file and validate it exists before moving devices
         let netns_file = File::open(ns_path).map_err(|err| {
             tracing::error!("failed to open network namespace at {}: {}", ns_path.display(), err);
@@ -283,6 +282,10 @@ fn move_network_devices_to_container(
         })?;
         let netns_fd = netns_file.as_raw_fd();
 
+        // If moving any of the network devices fails, we return an error immediately.
+        // The runtime spec requires that the kernel handles moving back any devices
+        // that were successfully moved before the failure occurred.
+        // See: https://github.com/opencontainers/runtime-spec/blob/27cb0027fd92ef81eda1ea3a8153b8337f56d94a/config-linux.md#namespace-lifecycle-and-container-termination
         let addrs_map = devices
             .iter()
             .map(|(name, net_dev)| {
