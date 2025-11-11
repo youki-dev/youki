@@ -30,6 +30,10 @@ impl From<&AddressMessage> for CidrAddress {
 /// Priority:
 /// 1. If IFA_LOCAL exists, use it (this handles IPv4 and IPv6 PtP correctly)
 /// 2. Otherwise, fall back to IFA_ADDRESS (this handles regular IPv6)
+///
+/// Note: While the RFC does not explicitly prohibit multiple IFA_ADDRESS attributes,
+/// common implementations (libnl, vishvananda/netlink) assume a single instance.
+/// This implementation follows the same assumption and uses the first matching attribute.
 fn parse_ip_address(addr: &AddressMessage) -> Option<IpAddr> {
     // First, try to find IFA_LOCAL
     let local = addr.attributes.iter().find_map(|attr| match attr {
