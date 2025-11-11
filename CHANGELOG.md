@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.5.8](https://github.com/youki-dev/youki/compare/v0.5.7...v0.5.8) - 2025-11-11
+### Other Changes
+- chore(deps): bump which from 7.0.2 to 8.0.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3287
+
 ## [v0.5.7](https://github.com/youki-dev/youki/compare/v0.5.6...v0.5.7) - 2025-11-05
 ### 💪 Improvements
 - Drop cgroup v1 in github workflows by @utam0k in https://github.com/youki-dev/youki/pull/3284
