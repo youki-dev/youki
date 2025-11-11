@@ -1,16 +1,13 @@
-use std::net::IpAddr;
 use std::os::fd::RawFd;
 
-use netlink_packet_route::address::{
-    AddressAttribute, AddressHeaderFlags, AddressMessage, AddressScope,
-};
+use netlink_packet_route::address::{AddressHeaderFlags, AddressScope};
 use oci_spec::runtime::LinuxNetDevice;
 
 use super::Result;
 use super::address::AddressClient;
 use super::link::LinkClient;
 use super::wrapper::create_network_client;
-use crate::network::serialize::SerializableAddress;
+use crate::network::cidr::CidrAddress;
 
 /// Resolves the final name for a network device.
 /// If the device has a configured name (non-empty), use it; otherwise use the original name.
@@ -31,7 +28,7 @@ pub fn dev_change_net_namespace(
     name: &str,
     netns_fd: RawFd,
     device: &LinuxNetDevice,
-) -> Result<Vec<SerializableAddress>> {
+) -> Result<Vec<CidrAddress>> {
     tracing::debug!(
         "attaching network device {} to network namespace fd {}",
         name,
@@ -64,7 +61,7 @@ pub fn dev_change_net_namespace(
 
     // Filter addresses before sending to init process:
     // Only include IP addresses with global scope and permanent flag.
-    let serialize_addrs: Vec<SerializableAddress> = addrs
+    let cidr_addrs: Vec<CidrAddress> = addrs
         .iter()
         .filter(|addr| {
             // Only move IP addresses with global scope because those are not host-specific, auto-configured,
@@ -93,10 +90,10 @@ pub fn dev_change_net_namespace(
 
             true
         })
-        .map(SerializableAddress::from)
+        .map(CidrAddress::from)
         .collect();
 
-    Ok(serialize_addrs)
+    Ok(cidr_addrs)
 }
 
 /// Core logic for setting up addresses in the new network namespace
@@ -105,53 +102,24 @@ pub fn dev_change_net_namespace(
 /// Note: The addresses passed to this function are already filtered in the main process
 /// to include only global scope and permanent addresses.
 pub fn setup_addresses_in_network_namespace(
-    addrs: &[SerializableAddress],
+    addrs: &[CidrAddress],
+    link_index: u32,
     new_name: &str,
     addr_client: &mut AddressClient,
 ) -> Result<()> {
     // Re-add the original IP addresses to the interface in the new namespace.
     // The kernel removes IP addresses when an interface is moved between network namespaces.
-    for addr in addrs.iter().map(AddressMessage::from) {
-        tracing::debug!("adding address {:?} to network device {}", addr, new_name);
-
-        // Extract the IP address from attributes
-        let ip_addr = parse_ip_address(&addr);
-
-        if let Some(ip) = ip_addr {
-            addr_client.add(addr.header.index, ip, addr.header.prefix_len)?;
-        }
+    for addr in addrs {
+        tracing::debug!(
+            "adding address {:?}/{} to network device {}",
+            addr.address,
+            addr.prefix_len,
+            new_name
+        );
+        addr_client.add(link_index, addr.address, addr.prefix_len)?;
     }
 
     Ok(())
-}
-
-/// Parses the IP address from an AddressMessage following libnl conventions.
-///
-/// From libnl addr.c:
-/// - IPv6 sends the local address as IFA_ADDRESS with no IFA_LOCAL
-/// - IPv4 sends both IFA_LOCAL and IFA_ADDRESS, with IFA_ADDRESS being the peer address if they differ
-/// - For IPv6 Point-to-Point addresses, IFA_LOCAL should also be handled
-///
-/// Priority:
-/// 1. If IFA_LOCAL exists, use it (this handles IPv4 and IPv6 PtP correctly)
-/// 2. Otherwise, fall back to IFA_ADDRESS (this handles regular IPv6)
-fn parse_ip_address(addr: &AddressMessage) -> Option<IpAddr> {
-    // First, try to find IFA_LOCAL
-    let local = addr.attributes.iter().find_map(|attr| match attr {
-        AddressAttribute::Local(ip) => Some(*ip),
-        _ => None,
-    });
-
-    // If IFA_LOCAL exists, use it
-    if let Some(ip) = local {
-        return Some(ip);
-    }
-
-    // Otherwise, fall back to IFA_ADDRESS
-    addr.attributes.iter().find_map(|attr| match attr {
-        AddressAttribute::Address(ip) => Some(*ip),
-        _ => None,
-    })
 }
 
 #[cfg(test)]
@@ -159,7 +127,7 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
 
     use netlink_packet_route::RouteNetlinkMessage;
-    use netlink_packet_route::address::AddressMessage;
+    use netlink_packet_route::address::{AddressAttribute, AddressMessage};
 
     use super::*;
     use crate::network::address::AddressClient;
@@ -186,10 +154,9 @@ mod tests {
         let mut addr_client = AddressClient::new(ClientWrapper::Fake(fake_client)).unwrap();
 
         let addrs = [addr_msg];
-        let serializable_addrs: Vec<SerializableAddress> =
-            addrs.iter().map(SerializableAddress::from).collect();
+        let serializable_addrs: Vec<CidrAddress> = addrs.iter().map(CidrAddress::from).collect();
         let result =
-            setup_addresses_in_network_namespace(&serializable_addrs, "eth1", &mut addr_client);
+            setup_addresses_in_network_namespace(&serializable_addrs, 5, "eth1", &mut addr_client);
         assert!(result.is_ok());
 
         // Verify the call was tracked
@@ -198,75 +165,6 @@ mod tests {
         } else {
             panic!("Expected Fake client");
         }
-    }
-
-    #[test]
-    fn test_parse_ip_address_with_local() {
-        // Test IPv4 with IFA_LOCAL (typical IPv4 case)
-        let mut addr_msg = AddressMessage::default();
-        addr_msg
-            .attributes
-            .push(AddressAttribute::Local(IpAddr::V4(Ipv4Addr::new(
-                10, 0, 0, 1,
-            ))));
-        addr_msg
-            .attributes
-            .push(AddressAttribute::Address(IpAddr::V4(Ipv4Addr::new(
-                10, 0, 0, 2,
-            ))));
-
-        let result = parse_ip_address(&addr_msg);
-        assert_eq!(result, Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
-    }
-
-    #[test]
-    fn test_parse_ip_address_without_local() {
-        // Test IPv6 without IFA_LOCAL (typical IPv6 case)
-        let mut addr_msg = AddressMessage::default();
-        addr_msg
-            .attributes
-            .push(AddressAttribute::Address(IpAddr::V6(
-                std::net::Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
-            )));
-
-        let result = parse_ip_address(&addr_msg);
-        assert_eq!(
-            result,
-            Some(IpAddr::V6(std::net::Ipv6Addr::new(
-                0x2001, 0xdb8, 0, 0, 0, 0, 0, 1
-            )))
-        );
-    }
-
-    #[test]
-    fn test_parse_ip_address_ipv6_with_local() {
-        // Test IPv6 PtP with IFA_LOCAL
-        let mut addr_msg = AddressMessage::default();
-        addr_msg.attributes.push(AddressAttribute::Local(IpAddr::V6(
-            std::net::Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1),
-        )));
-        addr_msg
-            .attributes
-            .push(AddressAttribute::Address(IpAddr::V6(
-                std::net::Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 2),
-            )));
-
-        let result = parse_ip_address(&addr_msg);
-        assert_eq!(
-            result,
-            Some(IpAddr::V6(std::net::Ipv6Addr::new(
-                0xfe80, 0, 0, 0, 0, 0, 0, 1
-            )))
-        );
-    }
-
-    #[test]
-    fn test_parse_ip_address_no_attributes() {
-        // Test with no address attributes
-        let addr_msg = AddressMessage::default();
-
-        let result = parse_ip_address(&addr_msg);
-        assert_eq!(result, None);
     }
 
     #[test]

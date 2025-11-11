@@ -8,7 +8,6 @@ use nix::unistd::Pid;
 use oci_spec::runtime::{Linux, LinuxNamespaceType};
 
 use crate::network::network_device::dev_change_net_namespace;
-use crate::network::serialize::SerializableAddress;
 use crate::process::args::ContainerArgs;
 use crate::process::fork::{self, CloneCb};
 use crate::process::intel_rdt::setup_intel_rdt;
@@ -299,7 +298,7 @@ fn move_network_devices_to_container(
                 })?;
                 Ok((name.clone(), addrs))
             })
-            .collect::<Result<HashMap<String, Vec<SerializableAddress>>>>()?;
+            .collect::<Result<HashMap<String, Vec<crate::network::cidr::CidrAddress>>>>()?;
         init_sender.move_network_device(addrs_map)?;
     }
 

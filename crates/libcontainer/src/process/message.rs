@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::network::serialize::SerializableAddress;
+use crate::network::cidr::CidrAddress;
 
 /// Used as a wrapper for messages to be sent between child and parent processes
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -15,7 +15,7 @@ pub enum Message {
     SeccompNotify,
     SeccompNotifyDone,
     SetupNetworkDeviceReady,
-    MoveNetworkDevice(HashMap<String, Vec<SerializableAddress>>),
+    MoveNetworkDevice(HashMap<String, Vec<CidrAddress>>),
     ExecFailed(String),
     OtherError(String),
 }

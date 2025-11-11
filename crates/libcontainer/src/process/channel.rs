@@ -4,7 +4,7 @@ use std::os::unix::prelude::{AsRawFd, RawFd};
 use nix::unistd::Pid;
 
 use crate::channel::{Receiver, Sender, channel};
-use crate::network::serialize::SerializableAddress;
+use crate::network::cidr::CidrAddress;
 use crate::process::message::Message;
 
 #[derive(Debug, thiserror::Error)]
@@ -301,7 +301,7 @@ impl InitSender {
 
     pub fn move_network_device(
         &mut self,
-        addrs: HashMap<String, Vec<SerializableAddress>>,
+        addrs: HashMap<String, Vec<CidrAddress>>,
     ) -> Result<(), ChannelError> {
         self.sender.send(Message::MoveNetworkDevice(addrs))?;
 
@@ -340,7 +340,7 @@ impl InitReceiver {
 
     pub fn wait_for_move_network_device(
         &mut self,
-    ) -> Result<HashMap<String, Vec<SerializableAddress>>, ChannelError> {
+    ) -> Result<HashMap<String, Vec<CidrAddress>>, ChannelError> {
         let msg = self
             .receiver
             .recv()
@@ -517,17 +517,13 @@ mod tests {
     #[test]
     #[serial]
     fn test_move_network_device_message() -> Result<()> {
-        use crate::network::serialize::SerializableAddress;
+        use crate::network::cidr::CidrAddress;
 
         let device_name = "dummy".to_string();
         let ip = "10.0.0.1".parse().unwrap();
-        let addr = SerializableAddress {
-            index: 1,
+        let addr = CidrAddress {
             prefix_len: 24,
-            family: 2,
-            scope: 0,
-            address: Some(ip),
-            flags: Some(0x10),
+            address: ip,
         };
         let mut addrs = HashMap::new();
         addrs.insert(device_name.clone(), vec![addr.clone()]);
@@ -549,7 +545,7 @@ mod tests {
                 let received_addrs = receiver.wait_for_move_network_device()?;
                 receiver.close()?;
                 if let Some(received_addr) = received_addrs.get(&device_name) {
-                    if !(received_addr[0].index == addr.index
+                    if !(received_addr[0].prefix_len == addr.prefix_len
                         && received_addr[0].address == addr.address)
                     {
                         eprintln!("assertion failed in child");

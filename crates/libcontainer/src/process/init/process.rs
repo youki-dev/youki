@@ -925,7 +925,7 @@ fn configure_container_network_devices(
 
     let addrs_map = init_receiver.wait_for_move_network_device()?;
     for (name, net_dev) in net_device {
-        if let Some(serialize_addrs) = addrs_map.get(name) {
+        if let Some(cidr_addrs) = addrs_map.get(name) {
             // Get the device's final name (use configured name if provided, otherwise use original name)
             let new_name = resolve_device_name(net_dev, name.as_str());
 
@@ -946,11 +946,16 @@ fn configure_container_network_devices(
             })?;
 
             // Assign IP addresses to the device
-            setup_addresses_in_network_namespace(serialize_addrs, new_name, &mut addr_client)
-                .map_err(|err| {
-                    tracing::error!(?err, "failed to setup addresses for device: {}", new_name);
-                    err
-                })?;
+            setup_addresses_in_network_namespace(
+                cidr_addrs,
+                ns_link.header.index,
+                new_name,
+                &mut addr_client,
+            )
+            .map_err(|err| {
+                tracing::error!(?err, "failed to setup addresses for device: {}", new_name);
+                err
+            })?;
 
             // Bring the device up
             link_client.set_up(ns_link.header.index).map_err(|err| {

@@ -1,9 +1,9 @@
 pub mod address;
+pub mod cidr;
 mod client;
 mod fake;
 pub mod link;
 pub mod network_device;
-pub mod serialize;
 mod traits;
 pub mod wrapper;
 
