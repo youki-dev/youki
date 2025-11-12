@@ -13,6 +13,7 @@ pub mod kill;
 pub mod lifecycle;
 pub mod linux_masked_paths;
 pub mod linux_ns_itype;
+pub mod memory_policy;
 pub mod misc_props;
 pub mod mounts_recursive;
 pub mod no_pivot;
