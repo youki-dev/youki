@@ -596,7 +596,7 @@ fn parse_node_string(nodes: &str) -> Vec<u32> {
 fn mems_allowed_list() -> Option<Vec<u32>> {
     let s = std::fs::read_to_string("/proc/self/status").ok()?;
     let line = s.lines().find(|l| l.starts_with("Mems_allowed_list:"))?;
-    let list = line.splitn(2, ':').nth(1)?.trim();
+    let list = line.split_once(':')?.1.trim();
     let mut nodes = parse_node_string(list);
     nodes.sort_unstable();
     nodes.dedup();
@@ -785,19 +785,15 @@ pub fn validate_memory_policy(spec: &Spec) {
                                     prefer_node, policy_field, full_line
                                 );
                             }
-                        } else {
-                            if !policy_field.contains("local") {
-                                eprintln!(
-                                    "expected local fallback (preferred disallowed), got {} (line: {})",
-                                    policy_field, full_line
-                                );
-                            }
+                        } else if !policy_field.contains("local") {
+                            eprintln!(
+                                "expected local fallback (preferred disallowed), got {} (line: {})",
+                                policy_field, full_line
+                            );
                         }
                     }
-                } else {
-                    if !policy_field.contains("prefer") {
-                        eprintln!("expected preferred policy, but found: {}", policy_field);
-                    }
+                } else if !policy_field.contains("prefer") {
+                    eprintln!("expected preferred policy, but found: {}", policy_field);
                 }
                 if has_relative_flag && !policy_field.contains("relative") {
                     eprintln!("expected preferred relative, but found: {}", policy_field);
