@@ -28,6 +28,7 @@ use crate::tests::mounts_recursive::get_mounts_recursive_test;
 use crate::tests::no_pivot::get_no_pivot_test;
 use crate::tests::personality::get_personality_test;
 use crate::tests::pidfile::get_pidfile_test;
+use crate::tests::poststart::get_poststart_tests;
 use crate::tests::process::get_process_test;
 use crate::tests::process_capabilities_fail::get_process_capabilities_fail_test;
 use crate::tests::process_oom_score_adj::get_process_oom_score_adj_test;
@@ -114,6 +115,7 @@ fn main() -> Result<()> {
     let pidfile = get_pidfile_test();
     let ns_itype = get_ns_itype_tests();
     let hooks = get_hooks_tests();
+    let poststart = get_poststart_tests();
     let cgroup_v1_pids = cgroups::pids::get_test_group();
     let cgroup_v1_cpu = cgroups::cpu::v1::get_test_group();
     let cgroup_v2_cpu = cgroups::cpu::v2::get_test_group();
@@ -157,6 +159,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(pidfile));
     tm.add_test_group(Box::new(ns_itype));
     tm.add_test_group(Box::new(hooks));
+    tm.add_test_group(Box::new(poststart));
     tm.add_test_group(Box::new(cgroup_v1_pids));
     tm.add_test_group(Box::new(cgroup_v1_cpu));
     tm.add_test_group(Box::new(cgroup_v2_cpu));

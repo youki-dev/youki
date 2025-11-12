@@ -1,0 +1,200 @@
+use std::fs;
+use std::path::PathBuf;
+
+use anyhow::anyhow;
+use oci_spec::runtime::{
+    HookBuilder, HooksBuilder, ProcessBuilder, RootBuilder, Spec, SpecBuilder,
+};
+use test_framework::{Test, TestGroup, TestResult};
+
+use crate::utils::test_utils::CreateOptions;
+use crate::utils::{
+    create_container, delete_container, generate_uuid, is_runtime_runc, prepare_bundle, set_config,
+};
+
+const CONTAINER_OUTPUT_FILE: &str = "output";
+
+fn get_output_file_path(bundle: &tempfile::TempDir) -> PathBuf {
+    bundle.as_ref().join("bundle").join("rootfs").join("output")
+}
+
+fn delete_output_file(path: &PathBuf) {
+    if path.exists() {
+        fs::remove_file(path).expect("failed to remove output file");
+    }
+}
+
+fn write_process_command() -> Vec<String> {
+    vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        format!("echo 'process called' >> {}", CONTAINER_OUTPUT_FILE),
+    ]
+}
+
+fn write_poststart_hook(host_output_file: &str) -> oci_spec::runtime::Hook {
+    HookBuilder::default()
+        .path("/bin/sh")
+        .args(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            format!("echo 'post-start called' >> {host_output_file}"),
+        ])
+        .build()
+        .expect("could not build hook")
+}
+
+fn wait_for_file_content(
+    file_path: &PathBuf,
+    expected_content: &str,
+    timeout: std::time::Duration,
+    poll_interval: std::time::Duration,
+) -> anyhow::Result<()> {
+    let start = std::time::Instant::now();
+
+    while start.elapsed() < timeout {
+        if file_path.exists() {
+            if let Ok(contents) = fs::read_to_string(file_path) {
+                if contents.contains(expected_content) {
+                    return Ok(());
+                }
+            }
+        }
+        std::thread::sleep(poll_interval);
+    }
+
+    Err(anyhow!(
+        "Timed out waiting for file {:?} to contain '{}'",
+        file_path,
+        expected_content
+    ))
+}
+
+fn get_spec(host_output_file: &str) -> Spec {
+    SpecBuilder::default()
+        .root(
+            RootBuilder::default()
+                .path("rootfs")
+                .readonly(false)
+                .build()
+                .expect("failed to create root"),
+        )
+        .process(
+            ProcessBuilder::default()
+                .args(write_process_command())
+                .build()
+                .unwrap(),
+        )
+        .hooks(
+            HooksBuilder::default()
+                .poststart(vec![write_poststart_hook(host_output_file)])
+                .build()
+                .expect("could not build hooks"),
+        )
+        .build()
+        .unwrap()
+}
+
+/// Tests that the poststart hook executes in the correct order.
+/// The poststart hook should execute after the container process has started.
+/// This is validated by having both the process and hook write to the same file in sequence.
+fn get_test(test_name: &'static str) -> Test {
+    Test::new(
+        test_name,
+        Box::new(move || {
+            let id = generate_uuid();
+            let id_str = id.to_string();
+            let bundle = prepare_bundle().unwrap();
+
+            let host_output_file = get_output_file_path(&bundle);
+            let host_output_file_str = host_output_file.to_str().unwrap();
+
+            let spec = get_spec(host_output_file_str);
+            set_config(&bundle, &spec).unwrap();
+
+            create_container(&id_str, &bundle, &CreateOptions::default())
+                .unwrap()
+                .wait()
+                .unwrap();
+
+            if !is_runtime_runc() && host_output_file.exists() {
+                // runc behaviour is incorrect in this case
+                // https://github.com/opencontainers/runc/issues/4347
+                let contents = fs::read_to_string(&host_output_file)
+                    .expect("failed to read output file after create");
+                if !contents.is_empty() {
+                    let _ = delete_container(&id_str, &bundle);
+                    delete_output_file(&host_output_file);
+                    let has_poststart = contents.contains("post-start called");
+                    let has_process = contents.contains("process called");
+                    return match (has_poststart, has_process) {
+                        (true, _) => TestResult::Failed(anyhow!(
+                            "The post-start hooks MUST NOT be called before the `start` operation"
+                        )),
+                        (false, true) => TestResult::Failed(anyhow!(
+                            "The user-specified program (from process) MUST NOT be run before the `start` operation"
+                        )),
+                        (false, false) => TestResult::Failed(anyhow!(
+                            "file {:?} should not exist after create",
+                            host_output_file
+                        )),
+                    };
+                }
+            }
+
+            crate::utils::start_container(&id_str, &bundle)
+                .unwrap()
+                .wait()
+                .unwrap();
+
+            let wait_result = wait_for_file_content(
+                &host_output_file,
+                "process called",
+                std::time::Duration::from_secs(5),
+                std::time::Duration::from_millis(100),
+            );
+
+            let result = if let Err(e) = wait_result {
+                TestResult::Failed(anyhow!(
+                    "The poststart hooks MUST be invoked by the runtime\n\
+                     The runtime MUST run the user-specified program, as specified by `process`\n\
+                     Error: {}",
+                    e
+                ))
+            } else if !host_output_file.exists() {
+                TestResult::Failed(anyhow!(
+                    "The poststart hooks MUST be invoked by the runtime\n\
+                     The runtime MUST run the user-specified program, as specified by `process`"
+                ))
+            } else {
+                let contents =
+                    fs::read_to_string(&host_output_file).expect("failed to read output file");
+                match contents.as_str() {
+                    // Order of the execution between the process logic and post-start hook logic
+                    // is not guaranteed, so both outcomes are acceptable
+                    "process called\npost-start called\n" => TestResult::Passed,
+                    "post-start called\nprocess called\n" => TestResult::Passed,
+                    "process called\n" => {
+                        // TODO: in the original test this is allowed for some reason, but I don't
+                        // think this is correct
+                        TestResult::Failed(anyhow!("The runtime MUST run the post-start hook"))
+                    }
+                    "post-start called\n" => TestResult::Failed(anyhow!(
+                        "The runtime MUST run the user-specified program, as specified by `process`"
+                    )),
+                    _ => TestResult::Failed(anyhow!("unsupported output: {contents}")),
+                }
+            };
+
+            let _ = delete_container(&id_str, &bundle);
+            delete_output_file(&host_output_file);
+            result
+        }),
+    )
+}
+
+pub fn get_poststart_tests() -> TestGroup {
+    let mut tg = TestGroup::new("poststart");
+    tg.add(vec![Box::new(get_test("poststart"))]);
+    tg
+}
