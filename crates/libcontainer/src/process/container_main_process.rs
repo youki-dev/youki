@@ -1,6 +1,13 @@
+use std::collections::HashMap;
+use std::fs::File;
+use std::os::fd::AsRawFd;
+use std::path::PathBuf;
+
 use nix::sys::wait::{WaitStatus, waitpid};
 use nix::unistd::Pid;
+use oci_spec::runtime::{Linux, LinuxNamespaceType};
 
+use crate::network::network_device::dev_change_net_namespace;
 use crate::process::args::ContainerArgs;
 use crate::process::fork::{self, CloneCb};
 use crate::process::intel_rdt::setup_intel_rdt;
@@ -27,6 +34,8 @@ pub enum ProcessError {
     #[error("failed seccomp listener")]
     #[cfg(feature = "libseccomp")]
     SeccompListener(#[from] crate::process::seccomp_listener::SeccompListenerError),
+    #[error("failed setup network device")]
+    Network(#[from] crate::network::NetworkError),
     #[error("failed syscall")]
     SyscallOther(#[source] SyscallError),
 }
@@ -94,10 +103,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     })?;
 
     let (mut inter_sender, inter_receiver) = inter_chan;
-    #[cfg(feature = "libseccomp")]
     let (mut init_sender, init_receiver) = init_chan;
-    #[cfg(not(feature = "libseccomp"))]
-    let (init_sender, init_receiver) = init_chan;
 
     // If creating a container with new user namespace, the intermediate process will ask
     // the main process to set up uid and gid mapping, once the intermediate
@@ -119,6 +125,10 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     // process.  The intermediate process should exit after this point.
     let init_pid = main_receiver.wait_for_intermediate_ready()?;
     let mut need_to_clean_up_intel_rdt_subdirectory = false;
+
+    if let Some(linux) = container_args.spec.linux() {
+        move_network_devices_to_container(linux, init_pid, &mut main_receiver, &mut init_sender)?;
+    }
 
     if let Some(linux) = container_args.spec.linux() {
         #[cfg(feature = "libseccomp")]
@@ -226,6 +236,72 @@ fn setup_mapping(config: &UserNamespaceConfig, pid: Pid) -> Result<()> {
         tracing::error!("failed to write gid mapping for pid {:?}: {}", pid, err);
         err
     })?;
+    Ok(())
+}
+
+/// Moves configured network devices from the host to the container's network namespace.
+/// This function waits for the init process to join its namespace, then transfers each
+/// configured device while preserving network addresses. Returns early if the container
+/// runs in the host network namespace.
+fn move_network_devices_to_container(
+    linux: &Linux,
+    init_pid: Pid,
+    main_receiver: &mut channel::MainReceiver,
+    init_sender: &mut channel::InitSender,
+) -> Result<()> {
+    // Early return if there are no network devices to move
+    let devices = match linux.net_devices() {
+        Some(devs) if !devs.is_empty() => devs,
+        _ => return Ok(()),
+    };
+
+    if let Some(namespaces) = linux.namespaces() {
+        // network devices are not moved for containers running in the host network.
+        let net_ns = match namespaces
+            .iter()
+            .find(|ns| ns.typ() == LinuxNamespaceType::Network)
+        {
+            Some(ns) => ns,
+            None => return Ok(()),
+        };
+
+        // Wait for the init process to signal that it has joined the network namespace
+        // and is ready for network device setup
+        main_receiver.wait_for_network_setup_ready()?;
+
+        // the container init process has already joined the provided net namespace,
+        // so we can use the process's net ns path directly.
+        let default_ns_path = PathBuf::from(format!("/proc/{}/ns/net", init_pid.as_raw()));
+        let ns_path = net_ns.path().as_deref().unwrap_or(&default_ns_path);
+
+        // Open the network namespace file and validate it exists before moving devices
+        let netns_file = File::open(ns_path).map_err(|err| {
+            tracing::error!(
+                "failed to open network namespace at {}: {}",
+                ns_path.display(),
+                err
+            );
+            ProcessError::Network(err.into())
+        })?;
+        let netns_fd = netns_file.as_raw_fd();
+
+        // If moving any of the network devices fails, we return an error immediately.
+        // The runtime spec requires that the kernel handles moving back any devices
+        // that were successfully moved before the failure occurred.
+        // See: https://github.com/opencontainers/runtime-spec/blob/27cb0027fd92ef81eda1ea3a8153b8337f56d94a/config-linux.md#namespace-lifecycle-and-container-termination
+        let addrs_map = devices
+            .iter()
+            .map(|(name, net_dev)| {
+                let addrs = dev_change_net_namespace(name, netns_fd, net_dev).map_err(|err| {
+                    tracing::error!("failed to dev_change_net_namespace: {}", err);
+                    err
+                })?;
+                Ok((name.clone(), addrs))
+            })
+            .collect::<Result<HashMap<String, Vec<crate::network::cidr::CidrAddress>>>>()?;
+        init_sender.move_network_device(addrs_map)?;
+    }
+
     Ok(())
 }
 
