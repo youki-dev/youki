@@ -13,6 +13,8 @@ pub enum NetworkError {
     Nix(#[from] nix::Error),
     #[error(transparent)]
     IO(#[from] std::io::Error),
+    #[error("failed to initialize NetlinkClient")]
+    ClientInitializeError,
 }
 
 type Result<T> = std::result::Result<T, NetworkError>;

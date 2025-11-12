@@ -921,6 +921,10 @@ fn configure_container_network_devices(
     main_sender: &mut channel::MainSender,
     init_receiver: &mut channel::InitReceiver,
 ) -> Result<()> {
+    if net_device.is_empty() {
+        return Ok(());
+    }
+
     main_sender.network_setup_ready()?;
 
     let addrs_map = init_receiver.wait_for_move_network_device()?;
