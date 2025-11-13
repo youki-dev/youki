@@ -52,4 +52,6 @@ pub struct ContainerArgs {
     pub stderr: Option<RawFd>,
     // Indicate if the init process should be a sibling of the main process.
     pub as_sibling: bool,
+    // Time namespace offsets (format: "boottime <secs> <nanosecs>\nmonotonic <secs> <nanosecs>")
+    pub time_offsets: Option<String>,
 }
