@@ -13,6 +13,8 @@ pub enum Message {
     SeccompNotifyDone,
     ExecFailed(String),
     OtherError(String),
+    HookRequest,
+    HookDone,
 }
 
 impl fmt::Display for Message {
@@ -24,6 +26,8 @@ impl fmt::Display for Message {
             Message::MappingWritten => write!(f, "MappingWritten"),
             Message::SeccompNotify => write!(f, "SeccompNotify"),
             Message::SeccompNotifyDone => write!(f, "SeccompNotifyDone"),
+            Message::HookRequest => write!(f, "HookRequest"),
+            Message::HookDone => write!(f, "HookDone"),
             Message::ExecFailed(s) => write!(f, "ExecFailed({})", s),
             Message::OtherError(s) => write!(f, "OtherError({})", s),
         }

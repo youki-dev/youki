@@ -1,7 +1,10 @@
+use std::fs;
+
 use nix::sys::wait::{WaitStatus, waitpid};
 use nix::unistd::Pid;
 
-use crate::process::args::ContainerArgs;
+use crate::hooks;
+use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::fork::{self, CloneCb};
 use crate::process::intel_rdt::setup_intel_rdt;
 use crate::process::{channel, container_intermediate_process};
@@ -29,6 +32,8 @@ pub enum ProcessError {
     SeccompListener(#[from] crate::process::seccomp_listener::SeccompListenerError),
     #[error("failed syscall")]
     SyscallOther(#[source] SyscallError),
+    #[error("failed hooks {0}")]
+    Hooks(#[from] crate::hooks::HookError),
 }
 
 type Result<T> = std::result::Result<T, ProcessError>;
@@ -94,10 +99,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     })?;
 
     let (mut inter_sender, inter_receiver) = inter_chan;
-    #[cfg(feature = "libseccomp")]
     let (mut init_sender, init_receiver) = init_chan;
-    #[cfg(not(feature = "libseccomp"))]
-    let (init_sender, init_receiver) = init_chan;
 
     // If creating a container with new user namespace, the intermediate process will ask
     // the main process to set up uid and gid mapping, once the intermediate
@@ -121,7 +123,51 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     let mut need_to_clean_up_intel_rdt_subdirectory = false;
 
     if let Some(linux) = container_args.spec.linux() {
-        #[cfg(feature = "libseccomp")]
+        if let Some(intel_rdt) = linux.intel_rdt() {
+            let container_id = container_args
+                .container
+                .as_ref()
+                .map(|container| container.id());
+            need_to_clean_up_intel_rdt_subdirectory =
+                setup_intel_rdt(container_id, &init_pid, intel_rdt)?;
+        }
+    }
+
+    // if file to write the pid to is specified, write pid of the child
+    if let Some(pid_file) = &container_args.pid_file {
+        if let Err(err) = fs::write(pid_file, format!("{init_pid}")) {
+            tracing::warn!("failed to write pid to file: {err}");
+        }
+    }
+
+    if matches!(container_args.container_type, ContainerType::InitContainer) {
+        if let Some(hooks) = container_args.spec.hooks() {
+            main_receiver.wait_for_hook_request()?;
+            if let Some(mut container_for_hooks) = container_args.container.clone() {
+                container_for_hooks.set_pid(init_pid.as_raw());
+
+                hooks::run_hooks(hooks.prestart().as_ref(), Some(&container_for_hooks), None)
+                    .map_err(|err| {
+                        tracing::error!("failed to run prestart hooks: {}", err);
+                        err
+                    })?;
+
+                hooks::run_hooks(
+                    hooks.create_runtime().as_ref(),
+                    Some(&container_for_hooks),
+                    None,
+                )
+                .map_err(|err| {
+                    tracing::error!("failed to run create runtime hooks: {}", err);
+                    err
+                })?;
+            }
+            init_sender.hook_done()?;
+        }
+    }
+
+    #[cfg(feature = "libseccomp")]
+    if let Some(linux) = container_args.spec.linux() {
         if let Some(seccomp) = linux.seccomp() {
             let state = crate::container::ContainerProcessState {
                 oci_version: container_args.spec.version().to_string(),
@@ -142,15 +188,6 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                 &mut init_sender,
                 &mut main_receiver,
             )?;
-        }
-
-        if let Some(intel_rdt) = linux.intel_rdt() {
-            let container_id = container_args
-                .container
-                .as_ref()
-                .map(|container| container.id());
-            need_to_clean_up_intel_rdt_subdirectory =
-                setup_intel_rdt(container_id, &init_pid, intel_rdt)?;
         }
     }
 
