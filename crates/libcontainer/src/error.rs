@@ -64,6 +64,10 @@ pub enum LibcontainerError {
     Checkpoint(#[from] crate::container::CheckpointError),
     #[error[transparent]]
     CreateContainerError(#[from] CreateContainerError),
+    #[error(transparent)]
+    NetDevicesError(#[from] crate::utils::NetDevicesError),
+    #[error(transparent)]
+    NetworkError(#[from] crate::network::NetworkError),
 
     // Catch all errors that are not covered by the above
     #[error("syscall error")]
