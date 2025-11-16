@@ -55,9 +55,10 @@ fn wait_for_file_content(
     while start.elapsed() < timeout {
         if file_path.exists()
             && let Ok(contents) = fs::read_to_string(file_path)
-                && contents.contains(expected_content) {
-                    return Ok(());
-                }
+            && contents.contains(expected_content)
+        {
+            return Ok(());
+        }
         std::thread::sleep(poll_interval);
     }
 
