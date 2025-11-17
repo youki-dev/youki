@@ -507,6 +507,13 @@ impl Syscall for LinuxSyscall {
                     caps::drop(None, CapSet::Bounding, *c)?
                 }
             }
+            CapSet::Ambient => {
+                value.iter().for_each(|c| {
+                    if let Err(e) = caps::raise(None, CapSet::Ambient, *c) {
+                        tracing::warn!(?e, "can't raise ambient capability");
+                    }
+                });
+            }
             _ => {
                 caps::set(None, cset, value)?;
             }
