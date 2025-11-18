@@ -508,11 +508,19 @@ impl Syscall for LinuxSyscall {
                 }
             }
             CapSet::Ambient => {
-                value.iter().for_each(|c| {
+                // check specifically for ambient, as those might not always be available
+                //
+                // Ambient capabilities are applied from an unordered HashSet, and if any
+                // set_capability() call fails, Youki stops applying the rest. This causes
+                // inconsistent CapAmb results between runs and diverges from runc, which
+                // continues applying all ambient caps even after a failure. The same flawed
+                // ambient-cap logic also causes exec-path capability test failures (seen in
+                // PR #3210, where GNU builds report CapAmb mismatches while musl succeeds).
+                for c in value {
                     if let Err(e) = caps::raise(None, CapSet::Ambient, *c) {
-                        tracing::warn!(?e, "can't raise ambient capability");
+                        tracing::warn!(?e, ?c, "can't raise ambient capability");
                     }
-                });
+                }
             }
             _ => {
                 caps::set(None, cset, value)?;
