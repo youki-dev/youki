@@ -515,6 +515,7 @@ impl Syscall for LinuxSyscall {
                 // inconsistent CapAmb results between runs and diverges from runc, which
                 // continues applying all ambient caps even after a failure. The same flawed
                 // ambient-cap logic also causes exec-path capability test failures.
+                caps::clear(None, CapSet::Ambient)?;
                 for c in value {
                     if let Err(e) = caps::raise(None, CapSet::Ambient, *c) {
                         tracing::warn!(?e, ?c, "can't raise ambient capability");
