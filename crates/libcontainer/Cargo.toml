@@ -55,7 +55,7 @@ safe-path = "0.1.0"
 nc = "0.9.6"
 netlink-packet-route = "0.22.0"
 netlink-sys = "0.8.5"
-netlink-packet-core = "0.7.0"
+netlink-packet-core = "0.8.1"
 pathrs = "0.2.1"
 
 [dev-dependencies]

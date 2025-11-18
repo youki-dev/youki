@@ -2068,7 +2068,7 @@ dependencies = [
  "libcgroups",
  "libseccomp",
  "nc",
- "netlink-packet-core",
+ "netlink-packet-core 0.8.1",
  "netlink-packet-route",
  "netlink-sys",
  "nix 0.29.0",
@@ -2383,6 +2383,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "netlink-packet-core"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3463cbb78394cb0141e2c926b93fc2197e473394b761986eca3b9da2c63ae0f4"
+dependencies = [
+ "paste",
+]
+
+[[package]]
 name = "netlink-packet-route"
 version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2393,7 +2402,7 @@ dependencies = [
  "byteorder",
  "libc",
  "log",
- "netlink-packet-core",
+ "netlink-packet-core 0.7.0",
  "netlink-packet-utils",
 ]
 
@@ -3407,7 +3416,7 @@ dependencies = [
  "anyhow",
  "libc",
  "nc",
- "netlink-packet-core",
+ "netlink-packet-core 0.8.1",
  "netlink-packet-route",
  "netlink-sys",
  "nix 0.29.0",

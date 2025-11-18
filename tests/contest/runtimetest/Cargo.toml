@@ -11,5 +11,5 @@ libc = "0.2.177" # TODO (YJDoc2) upgrade to latest
 nc = "0.9.6"
 tempfile = "3"
 netlink-packet-route = "0.22.0"
-netlink-packet-core = "0.7.0"
+netlink-packet-core = "0.8.1"
 netlink-sys = "0.8.5"
