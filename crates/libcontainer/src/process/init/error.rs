@@ -69,6 +69,8 @@ pub enum InitProcessError {
     InvalidMemoryPolicy(String),
     #[error(transparent)]
     MemoryPolicy(#[from] MemoryPolicyError),
+    #[error(transparent)]
+    Network(#[from] crate::network::NetworkError),
     #[error("failed to verify if current working directory is safe")]
     InvalidCwd(#[source] nix::Error),
     #[error("missing linux section in spec")]
