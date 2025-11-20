@@ -62,10 +62,11 @@ fn wait_for_file_content(
         std::thread::sleep(poll_interval);
     }
 
+    let actual_content = fs::read_to_string(file_path).expect("failed to read output file");
+
     Err(anyhow!(
-        "Timed out waiting for file {:?} to contain '{}'",
-        file_path,
-        expected_content
+        "Timed out waiting for file {} to contain '{expected_content}', but got: '{actual_content}'",
+        file_path.display(),
     ))
 }
 
@@ -119,13 +120,13 @@ fn get_test(test_name: &'static str) -> Test {
             if !is_runtime_runc() && host_output_file.exists() {
                 // runc behaviour is incorrect in this case
                 // https://github.com/opencontainers/runc/issues/4347
-                let contents = fs::read_to_string(&host_output_file)
+                let content = fs::read_to_string(&host_output_file)
                     .expect("failed to read output file after create");
-                if !contents.is_empty() {
+                if !content.is_empty() {
                     let _ = delete_container(&id_str, &bundle);
                     delete_output_file(&host_output_file);
-                    let has_poststart = contents.contains("post-start called");
-                    let has_process = contents.contains("process called");
+                    let has_poststart = content.contains("post-start called");
+                    let has_process = content.contains("process called");
                     return match (has_poststart, has_process) {
                         (true, _) => TestResult::Failed(anyhow!(
                             "The post-start hooks MUST NOT be called before the `start` operation"
@@ -134,8 +135,8 @@ fn get_test(test_name: &'static str) -> Test {
                             "The user-specified program (from process) MUST NOT be run before the `start` operation"
                         )),
                         (false, false) => TestResult::Failed(anyhow!(
-                            "file {:?} should not exist after create",
-                            host_output_file
+                            "file {} should not exist after create, but has content: '{content}'",
+                            host_output_file.display(),
                         )),
                     };
                 }
@@ -154,16 +155,11 @@ fn get_test(test_name: &'static str) -> Test {
             );
 
             let result = if let Err(e) = wait_result {
-                TestResult::Failed(anyhow!(
-                    "The poststart hooks MUST be invoked by the runtime\n\
-                     The runtime MUST run the user-specified program, as specified by `process`\n\
-                     Error: {}",
-                    e
-                ))
+                TestResult::Failed(anyhow!("Container process execution failed: {e}"))
             } else if !host_output_file.exists() {
                 TestResult::Failed(anyhow!(
-                    "The poststart hooks MUST be invoked by the runtime\n\
-                     The runtime MUST run the user-specified program, as specified by `process`"
+                    "Expected output file {} does not exist. Neither the container process nor poststart hook created it",
+                    host_output_file.display()
                 ))
             } else {
                 let contents =
