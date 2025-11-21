@@ -3,7 +3,8 @@ use std::io::{IoSlice, IoSliceMut};
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
-
+use std::sync::mpsc;
+use std::sync::mpsc::Receiver;
 use nix::errno::Errno;
 use nix::sys::socket;
 
@@ -23,7 +24,6 @@ const REPLY_BUF_SIZE: usize = 128; // seems good enough tradeoff between extra s
 // For more information see https://www.freedesktop.org/wiki/Software/systemd/dbus/
 pub struct DbusConnection {
     /// Is the socket system level or session specific
-    #[allow(dead_code)]
     system: bool,
     /// socket fd
     socket: i32,
@@ -223,7 +223,7 @@ impl DbusConnection {
             },
         ];
 
-        let res = self.send_message(MessageType::MethodCall, headers, vec![])?;
+        let res = self.write_message_and_read_response(MessageType::MethodCall, headers, vec![])?;
 
         let res: Vec<_> = res
             .into_iter()
@@ -276,16 +276,9 @@ impl DbusConnection {
 
     /// function to send message of given type with given headers and body
     /// over the dbus connection. The caller must specify the destination, interface etc.etc.
-    /// in the headers, this function will only take care of sending the message and
-    /// returning the received messages. Note that the caller must check if any error
-    /// message was returned or not, this will not check that, the returned Err
-    /// indicates error in sending/receiving message
-    pub fn send_message(
-        &self,
-        mtype: MessageType,
-        mut headers: Vec<Header>,
-        body: Vec<u8>,
-    ) -> Result<Vec<Message>> {
+    /// in the headers, this function will only take care of sending the message. It will not
+    /// read any messages back off the socket
+    pub fn write_message(&self, mtype: MessageType, mut headers: Vec<Header>, body: Vec<u8>) -> Result<()>{
         if let Some(s) = &self.id {
             headers.push(Header {
                 kind: HeaderKind::Sender,
@@ -304,6 +297,45 @@ impl DbusConnection {
             None,
         )?;
 
+        Ok(())
+    }
+
+    /// function to reach messages off the socket
+    pub fn read_messages(&self) -> Result<Vec<Message>> {
+
+        let mut ret = Vec::new();
+
+        let message_bytes = self.receive_complete_response()?;
+
+        let mut buf = &message_bytes[..];
+
+        while !buf.is_empty() {
+            let mut ctr = 0;
+            let msg = Message::deserialize(&buf[ctr..], &mut ctr)?;
+            // we reset the buf, because I couldn't figure out how the adjust_counter function
+            // should should be changed to work correctly with non-zero start counter, and this solved that issue
+            buf = &buf[ctr..];
+            ret.push(msg);
+        }
+
+        Ok(ret)
+    }
+
+    /// function to send message of given type with given headers and body
+    /// over the dbus connection. The caller must specify the destination, interface etc.etc.
+    /// in the headers, this function will only take care of sending the message and
+    /// returning the received messages. Note that the caller must check if any error
+    /// message was returned or not, this will not check that, the returned Err
+    /// indicates error in sending/receiving message
+    pub fn write_message_and_read_response(
+        &self,
+        mtype: MessageType,
+        mut headers: Vec<Header>,
+        body: Vec<u8>,
+    ) -> Result<Vec<Message>> {
+
+        self.write_message(mtype, headers, body)?;
+
         let mut ret = Vec::new();
 
         // it is possible that while receiving messages, we get some extra/previous message
@@ -311,20 +343,7 @@ impl DbusConnection {
         // we keep looping until we get either of these. see https://github.com/youki-dev/youki/issues/2826
         // for more detailed analysis.
         loop {
-            let reply = self.receive_complete_response()?;
-
-            // note that a single received response can contain multiple
-            // messages, so we must deserialize it piece by piece
-            let mut buf = &reply[..];
-
-            while !buf.is_empty() {
-                let mut ctr = 0;
-                let msg = Message::deserialize(&buf[ctr..], &mut ctr)?;
-                // we reset the buf, because I couldn't figure out how the adjust_counter function
-                // should should be changed to work correctly with non-zero start counter, and this solved that issue
-                buf = &buf[ctr..];
-                ret.push(msg);
-            }
+            ret.append(&mut self.read_messages()?);
 
             // in Youki, we only ever do method call apart from initial auth
             // in case it is, we don't really have a specific message to look
@@ -492,6 +511,17 @@ impl SystemdClient for DbusConnection {
     fn add_process_to_unit(&self, unit_name: &str, subcgroup: &str, pid: u32) -> Result<()> {
         let proxy = self.create_proxy();
         proxy.attach_process(unit_name, subcgroup, pid)
+    }
+
+    fn subscribe_job_remove_signal(&self) -> std::result::Result<(), SystemdClientError> {
+        let proxy = self.create_proxy();
+        proxy.method_call_and_forget::<()>("org.freedesktop.systemd1.Manager", "Subscribe", None)
+    }
+
+    fn dbus_add_match(&self, filter_type : &str, sender : &str, interface : &str, member : &str) -> std::result::Result<(), SystemdClientError> {
+        let proxy = self.proxy("org.freedesktop.DBus", "/org/freedesktop/DBus");
+        let rule = format!("type='{}',sender='{}',interface='{}'", filter_type, sender, interface);
+        proxy.method_call_and_forget::<String>("org.freedesktop.DBus", "AddMatch", Some(rule))
     }
 }
 

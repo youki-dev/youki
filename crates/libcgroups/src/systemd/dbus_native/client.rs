@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-
+use std::sync::mpsc::Receiver;
+use crate::systemd::dbus_native::message::Message;
 use super::serialize::Variant;
 use super::utils::SystemdClientError;
 
@@ -36,4 +37,8 @@ pub trait SystemdClient {
         subcgroup: &str,
         pid: u32,
     ) -> Result<(), SystemdClientError>;
+
+    fn subscribe_job_remove_signal(&self) -> Result<(), SystemdClientError>;
+
+    fn dbus_add_match(&self, filter_type : &str, sender : &str, interface : &str, member : &str) -> Result<(), SystemdClientError>;
 }

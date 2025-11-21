@@ -4,6 +4,9 @@ use std::fmt::{Debug, Display};
 use std::fs::{self};
 use std::path::Component::RootDir;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use nix::NixPath;
@@ -23,7 +26,7 @@ use crate::common::{
     PathBufExt, WrapIoResult, WrappedIoError,
 };
 use crate::stats::Stats;
-use crate::systemd::dbus_native::serialize::Variant;
+use crate::systemd::dbus_native::serialize::{DbusSerialize, Variant};
 use crate::systemd::unified::Unified;
 use crate::v2::manager::{Manager as FsManager, V2ManagerError};
 
@@ -387,6 +390,7 @@ impl CgroupManager for Manager {
         if pid.as_raw() == -1 {
             return Ok(());
         }
+
         if self.client.transient_unit_exists(&self.unit_name) {
             tracing::debug!("Transient unit {:?} already exists", self.unit_name);
             self.client
@@ -394,13 +398,32 @@ impl CgroupManager for Manager {
             return Ok(());
         }
 
+        // listen for the signal for
+        let continue_search = Arc::new(AtomicBool::new(true));
+        let search = continue_search.clone();
+        let system = self.client.is_system();
+        let timeout = self.cgroup_wait_timeout_duration.clone();
+        let unit_name = self.unit_name.clone();
+        let t_handle = thread::spawn( move || {
+            wait_for_system_signal(system, search, pid, timeout, unit_name)
+        });
+
         tracing::debug!("Starting {:?}", self.unit_name);
-        self.client.start_transient_unit(
+        let result = self.client.start_transient_unit(
             &self.container_name,
             pid.as_raw() as u32,
             &self.destructured_path.parent,
             &self.unit_name,
-        )?;
+        );
+
+        // something went wrong with start_transient_unit, join thread and return error
+        if let Err(e) = result {
+            continue_search.store(false, Ordering::Release);
+            t_handle.join().unwrap()?;
+            return Err(e.into());
+        }
+
+        let found = t_handle.join().unwrap();
 
         // There is a chance that the intermediate process ends before systemd gets the dbus message to add it to transit unit.
         self.wait_for_process_in_cgroup(pid)?;
@@ -468,13 +491,65 @@ impl CgroupManager for Manager {
     }
 }
 
+fn wait_for_system_signal(system : bool, search : Arc<AtomicBool>, pid : Pid, timeout : Duration, unit_name : String) -> Result<bool, SystemdManagerError> {
+    let new_dbus = if system {
+        DbusConnection::new_system()
+    } else {
+        DbusConnection::new_session()
+    };
+
+    match new_dbus {
+        Ok(dbus) => {
+            dbus.dbus_add_match("signal", "org.freedesktop.systemd1", "org.freedesktop.systemd1.Manager", "RemoveJob")?;
+            dbus.subscribe_job_remove_signal()?;
+
+            let unit_name_found = false;
+
+            let start = Instant::now();
+            while search.load(Ordering::Acquire) && !unit_name_found && start.elapsed() < timeout {
+                let messages = dbus.read_messages()?;
+                for message in messages {
+                    let body = &message.body[..];
+
+                    let mut ctr :usize = 0;
+                    // id, don't need this
+                    u32::deserialize(body, &mut ctr)?;
+                    // job object path, don't need this
+                    String::deserialize(body, &mut ctr)?;
+                    let name = String::deserialize(body, &mut ctr)?;
+                    let result = String::deserialize(body, &mut ctr)?;
+
+                    if unit_name == name && result == "done"{
+                        return Ok(true);
+                    }
+                }
+            }
+
+            if unit_name_found || !search.load(Ordering::Acquire){
+                // either we found the JobRemoval signal or the search was stopped by the main thread
+                Ok(true)
+            } else {
+                Err(SystemdManagerError::WaitForProcessInCgroupTimeout(
+                    pid.to_string(),
+                ))
+            }
+        },
+        Err(e) => {
+            tracing::error!("Failed to create dbus connection for JobRemoval Signal{:?}", e);
+            Err(SystemdManagerError::SystemdClient(e))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc::Receiver;
     use anyhow::{Context, Result};
 
     use super::*;
     use crate::common::DEFAULT_CGROUP_ROOT;
     use crate::systemd::dbus_native::client::SystemdClient;
+    use crate::systemd::dbus_native::message::Message;
     use crate::systemd::dbus_native::serialize::Variant;
     use crate::systemd::dbus_native::utils::SystemdClientError;
 
@@ -526,6 +601,14 @@ mod tests {
             _pid: u32,
         ) -> Result<(), SystemdClientError> {
             Ok(())
+        }
+
+        fn subscribe_job_remove_signal(&self) -> std::result::Result<(), SystemdClientError> {
+            todo!()
+        }
+
+        fn dbus_add_match(&self, filter_type : &str, sender : &str, interface : &str, member : &str) -> std::result::Result<(), SystemdClientError> {
+            todo!()
         }
     }
 

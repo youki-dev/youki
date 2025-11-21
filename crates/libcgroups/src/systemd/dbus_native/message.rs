@@ -76,6 +76,12 @@ pub enum HeaderKind {
     UnixFd, // we will not use this, just for the sake of completion
 }
 
+/// Type of signals that will be sent from systemd
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum SignalType {
+
+}
+
 impl HeaderKind {
     fn signature(&self) -> HeaderSignature {
         match &self {
