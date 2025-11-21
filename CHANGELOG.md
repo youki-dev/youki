@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.5.8](https://github.com/youki-dev/youki/compare/v0.5.7...v0.5.8) - 2025-11-21
+### 💪 Improvements
+- Add net device feature by @nayuta723 in https://github.com/youki-dev/youki/pull/3163
+### 🧪 Test improvements and Misc Fixes
+- Update netlink-packet dependencies to versions 0.8.1 and 0.25.1 in Cargo.toml and Cargo.lock by @nayuta723 in https://github.com/youki-dev/youki/pull/3297
+### Other Changes
+- chore(deps): bump which from 7.0.2 to 8.0.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3287
+
 ## [v0.5.7](https://github.com/youki-dev/youki/compare/v0.5.6...v0.5.7) - 2025-11-05
 ### 💪 Improvements
 - Drop cgroup v1 in github workflows by @utam0k in https://github.com/youki-dev/youki/pull/3284
