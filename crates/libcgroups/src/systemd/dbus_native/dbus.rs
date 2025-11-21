@@ -3,8 +3,7 @@ use std::io::{IoSlice, IoSliceMut};
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::mpsc;
-use std::sync::mpsc::Receiver;
+
 use nix::errno::Errno;
 use nix::sys::socket;
 
@@ -278,7 +277,12 @@ impl DbusConnection {
     /// over the dbus connection. The caller must specify the destination, interface etc.etc.
     /// in the headers, this function will only take care of sending the message. It will not
     /// read any messages back off the socket
-    pub fn write_message(&self, mtype: MessageType, mut headers: Vec<Header>, body: Vec<u8>) -> Result<()>{
+    pub fn write_message(
+        &self,
+        mtype: MessageType,
+        mut headers: Vec<Header>,
+        body: Vec<u8>,
+    ) -> Result<()> {
         if let Some(s) = &self.id {
             headers.push(Header {
                 kind: HeaderKind::Sender,
@@ -302,7 +306,6 @@ impl DbusConnection {
 
     /// function to reach messages off the socket
     pub fn read_messages(&self) -> Result<Vec<Message>> {
-
         let mut ret = Vec::new();
 
         let message_bytes = self.receive_complete_response()?;
@@ -330,10 +333,9 @@ impl DbusConnection {
     pub fn write_message_and_read_response(
         &self,
         mtype: MessageType,
-        mut headers: Vec<Header>,
+        headers: Vec<Header>,
         body: Vec<u8>,
     ) -> Result<Vec<Message>> {
-
         self.write_message(mtype, headers, body)?;
 
         let mut ret = Vec::new();
@@ -518,9 +520,18 @@ impl SystemdClient for DbusConnection {
         proxy.method_call_and_forget::<()>("org.freedesktop.systemd1.Manager", "Subscribe", None)
     }
 
-    fn dbus_add_match(&self, filter_type : &str, sender : &str, interface : &str, member : &str) -> std::result::Result<(), SystemdClientError> {
+    fn dbus_add_match(
+        &self,
+        filter_type: &str,
+        sender: &str,
+        interface: &str,
+        member: &str,
+    ) -> std::result::Result<(), SystemdClientError> {
         let proxy = self.proxy("org.freedesktop.DBus", "/org/freedesktop/DBus");
-        let rule = format!("type='{}',sender='{}',interface='{}'", filter_type, sender, interface);
+        let rule = format!(
+            "type='{}',sender='{}',interface='{}',member={}",
+            filter_type, sender, interface, member
+        );
         proxy.method_call_and_forget::<String>("org.freedesktop.DBus", "AddMatch", Some(rule))
     }
 }

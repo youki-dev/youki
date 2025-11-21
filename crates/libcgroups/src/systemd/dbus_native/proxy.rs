@@ -38,14 +38,13 @@ impl<'conn> Proxy<'conn> {
             path: path.into(),
         }
     }
-    
+
     pub fn method_call_and_forget<Body: DbusSerialize>(
         &self,
         interface: &str,
         member: &str,
         body: Option<Body>,
     ) -> Result<()> {
-
         let headers = self.get_headers(interface, member, &body);
 
         let mut serialized_body = vec![];
@@ -56,7 +55,8 @@ impl<'conn> Proxy<'conn> {
             v.serialize(&mut serialized_body);
         }
 
-        self.conn.write_message(MessageType::MethodCall, headers, serialized_body)?;
+        self.conn
+            .write_message(MessageType::MethodCall, headers, serialized_body)?;
 
         Ok(())
     }
@@ -70,7 +70,7 @@ impl<'conn> Proxy<'conn> {
         body: Option<Body>,
     ) -> Result<Output> {
         tracing::trace!("dbus call at interface {} member {}", interface, member);
-        
+
         let headers = self.get_headers(interface, member, &body);
 
         let mut serialized_body = vec![];
@@ -82,9 +82,11 @@ impl<'conn> Proxy<'conn> {
         }
 
         // send the message and get response
-        let reply_messages =
-            self.conn
-                .write_message_and_read_response(MessageType::MethodCall, headers, serialized_body)?;
+        let reply_messages = self.conn.write_message_and_read_response(
+            MessageType::MethodCall,
+            headers,
+            serialized_body,
+        )?;
 
         // check if there is any error message
         let error_message: Vec<_> = reply_messages
@@ -167,12 +169,13 @@ impl<'conn> Proxy<'conn> {
         let mut ctr = 0;
         Output::deserialize(&reply.body, &mut ctr)
     }
-    
-    fn get_headers<Body : DbusSerialize>(&self,
-                   interface: &str,
-                   member: &str,
-                   body: &Option<Body>) -> Vec<Header> {
 
+    fn get_headers<Body: DbusSerialize>(
+        &self,
+        interface: &str,
+        member: &str,
+        body: &Option<Body>,
+    ) -> Vec<Header> {
         let mut headers = Vec::with_capacity(4);
 
         // create necessary headers
@@ -192,14 +195,14 @@ impl<'conn> Proxy<'conn> {
             kind: HeaderKind::Member,
             value: HeaderValue::String(member.to_string()),
         });
-        
-        if let Some(v) = body {
+
+        if body.is_some() {
             headers.push(Header {
                 kind: HeaderKind::BodySignature,
                 value: HeaderValue::String(Body::get_signature()),
             });
         }
-        
+
         headers
     }
 
