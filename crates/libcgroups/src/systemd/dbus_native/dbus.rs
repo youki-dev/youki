@@ -516,7 +516,7 @@ impl SystemdClient for DbusConnection {
 
     fn subscribe_job_remove_signal(&self) -> std::result::Result<(), SystemdClientError> {
         let proxy = self.create_proxy();
-        proxy.method_call_and_forget::<()>("org.freedesktop.systemd1.Manager", "Subscribe", None)
+        proxy.method_call::<_, ()>("org.freedesktop.systemd1.Manager", "Subscribe", Some(()))
     }
 
     fn dbus_add_match(
@@ -531,7 +531,7 @@ impl SystemdClient for DbusConnection {
             "type='{}',sender='{}',interface='{}',member={}",
             filter_type, sender, interface, member
         );
-        proxy.method_call_and_forget::<String>("org.freedesktop.DBus", "AddMatch", Some(rule))
+        proxy.method_call::<_, ()>("org.freedesktop.DBus", "AddMatch", Some(rule))
     }
 }
 

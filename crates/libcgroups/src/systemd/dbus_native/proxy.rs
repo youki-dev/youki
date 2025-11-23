@@ -39,28 +39,6 @@ impl<'conn> Proxy<'conn> {
         }
     }
 
-    pub fn method_call_and_forget<Body: DbusSerialize>(
-        &self,
-        interface: &str,
-        member: &str,
-        body: Option<Body>,
-    ) -> Result<()> {
-        let headers = self.get_headers(interface, member, &body);
-
-        let mut serialized_body = vec![];
-
-        // if there is some body, serialize it, and set the
-        // body signature header accordingly
-        if let Some(v) = body {
-            v.serialize(&mut serialized_body);
-        }
-
-        self.conn
-            .write_message(MessageType::MethodCall, headers, serialized_body)?;
-
-        Ok(())
-    }
-
     /// Do a method call for given interface and member by sending given body
     /// If no body is to be sent, set it as `None`
     pub fn method_call<Body: DbusSerialize, Output: DbusSerialize>(
