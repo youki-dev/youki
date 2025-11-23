@@ -4,9 +4,9 @@ use std::fmt::{Debug, Display};
 use std::fs::{self};
 use std::path::Component::RootDir;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use nix::NixPath;
@@ -26,6 +26,7 @@ use crate::common::{
     PathBufExt, WrapIoResult, WrappedIoError,
 };
 use crate::stats::Stats;
+use crate::systemd::dbus_native::message::MessageType;
 use crate::systemd::dbus_native::serialize::{DbusSerialize, Variant};
 use crate::systemd::unified::Unified;
 use crate::v2::manager::{Manager as FsManager, V2ManagerError};
@@ -391,6 +392,21 @@ impl CgroupManager for Manager {
             return Ok(());
         }
 
+        //  listen for the signal for
+        let continue_search = Arc::new((Mutex::new(RemoveJobThreadPlan::Block), Condvar::new()));
+        let search = continue_search.clone();
+        let local_search = continue_search.clone();
+        let system = self.client.is_system();
+        let timeout = self.cgroup_wait_timeout_duration;
+        let unit_name = self.unit_name.clone();
+        let t_handle =
+            thread::spawn(move || wait_for_system_signal(system, search, pid, timeout, unit_name));
+        let mut signal_guard = SignalHandlerGuard {
+            t_handle: Some(t_handle),
+            current_signal: RemoveJobThreadPlan::Return,
+            it_com: continue_search,
+        };
+
         if self.client.transient_unit_exists(&self.unit_name) {
             tracing::debug!("Transient unit {:?} already exists", self.unit_name);
             self.client
@@ -398,35 +414,24 @@ impl CgroupManager for Manager {
             return Ok(());
         }
 
-        // listen for the signal for
-        let continue_search = Arc::new(AtomicBool::new(true));
-        let search = continue_search.clone();
-        let system = self.client.is_system();
-        let timeout = self.cgroup_wait_timeout_duration;
-        let unit_name = self.unit_name.clone();
-        let t_handle =
-            thread::spawn(move || wait_for_system_signal(system, search, pid, timeout, unit_name));
-
         tracing::debug!("Starting {:?}", self.unit_name);
-        let result = self.client.start_transient_unit(
+        self.client.start_transient_unit(
             &self.container_name,
             pid.as_raw() as u32,
             &self.destructured_path.parent,
             &self.unit_name,
-        );
+        )?;
 
-        // something went wrong with start_transient_unit, join thread and return error
-        if let Err(e) = result {
-            continue_search.store(false, Ordering::Release);
-            t_handle.join().unwrap()?;
-            return Err(e.into());
-        }
-
-        let found = t_handle.join().unwrap();
-
-        // If for whatever reason the signal was not received, we wait for the process to be added to the cgroup
-        if found.is_err() {
-            self.wait_for_process_in_cgroup(pid)?;
+        // if we reach this point, listen for the remove job signal
+        signal_guard.current_signal = RemoveJobThreadPlan::Run;
+        drop(signal_guard);
+        {
+            let (lock, cvar) = &*local_search;
+            let continue_search = lock.lock().unwrap();
+            if *continue_search != RemoveJobThreadPlan::SearchFinish {
+                tracing::info!("systemd::manager::add_task() Signal Thread never reached SearchFinished");
+                self.wait_for_process_in_cgroup(pid)?;
+            }
         }
 
         Ok(())
@@ -492,9 +497,45 @@ impl CgroupManager for Manager {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+pub enum RemoveJobThreadPlan {
+    Block,
+    Return,
+    Run,
+    ReturnFinish,
+    SearchFinish
+}
+
+struct SignalHandlerGuard {
+    t_handle: Option<JoinHandle<Result<bool, SystemdManagerError>>>,
+    current_signal: RemoveJobThreadPlan,
+    it_com: Arc<(Mutex<RemoveJobThreadPlan>, Condvar)>,
+}
+
+impl Drop for SignalHandlerGuard {
+    fn drop(&mut self) {
+        // Signal the thread to return execute its current
+        let (lock, cvar) = &*self.it_com;
+        {
+            let mut search_lock = lock.lock().unwrap();
+            *search_lock = self.current_signal;
+            cvar.notify_one();
+        }
+
+        if let Some(t_handle) = self.t_handle.take() {
+            let result = t_handle.join().unwrap();
+
+            match result {
+                Ok(_) => {}
+                Err(e) => tracing::error!("Error waiting for signal from systemd {}", e),
+            }
+        }
+    }
+}
+
 fn wait_for_system_signal(
     system: bool,
-    search: Arc<AtomicBool>,
+    search: Arc<(Mutex<RemoveJobThreadPlan>, Condvar)>,
     pid: Pid,
     timeout: Duration,
     unit_name: String,
@@ -507,22 +548,46 @@ fn wait_for_system_signal(
 
     match new_dbus {
         Ok(dbus) => {
+            // These two method calls must remain!!!!
             dbus.dbus_add_match(
                 "signal",
                 "org.freedesktop.systemd1",
                 "org.freedesktop.systemd1.Manager",
                 "JobRemoved",
             )?;
+            dbus.read_messages()?; // read method response
             dbus.subscribe_job_remove_signal()?;
+            dbus.read_messages()?; // read method response
 
-            let unit_name_found = false;
+            // wait for signal from parent thread before we start reading for the RemoveJob signal
+            let (lock, cvar) = &*search;
+            let mut status = RemoveJobThreadPlan::Return;
+            {
+                let mut continue_search = lock.lock().unwrap();
+                while *continue_search == RemoveJobThreadPlan::Block {
+                    continue_search = cvar.wait(continue_search).unwrap();
+                }
+                status = *continue_search;
+            }
+
+            // Ordered to return
+            if status == RemoveJobThreadPlan::Return {
+                {
+                    let mut continue_search = lock.lock().unwrap();
+                    *continue_search = RemoveJobThreadPlan::ReturnFinish;
+                }
+                return Ok(false);
+            }
+
 
             let start = Instant::now();
-            while search.load(Ordering::Acquire) && !unit_name_found && start.elapsed() < timeout {
+            while start.elapsed() < timeout {
                 let messages = dbus.read_messages()?;
                 for message in messages {
+                    if message.preamble.mtype != MessageType::Signal {
+                        continue;
+                    }
                     let body = &message.body[..];
-
                     let mut ctr: usize = 0;
                     // id, don't need this
                     u32::deserialize(body, &mut ctr)?;
@@ -530,21 +595,27 @@ fn wait_for_system_signal(
                     String::deserialize(body, &mut ctr)?;
                     let name = String::deserialize(body, &mut ctr)?;
                     let result = String::deserialize(body, &mut ctr)?;
+                    tracing::debug!(
+                        "JobRemoved signal received for unit {} with result {}",
+                        name,
+                        result
+                    );
 
                     if unit_name == name && result == "done" {
+                        {
+                            let mut continue_search = lock.lock().unwrap();
+                            *continue_search = RemoveJobThreadPlan::SearchFinish;
+                        }
+                        tracing::debug!("Correct JobRemoved signal received for unit {:?}", name);
                         return Ok(true);
                     }
                 }
             }
 
-            if unit_name_found || !search.load(Ordering::Acquire) {
-                // either we found the JobRemoval signal or the search was stopped by the main thread
-                Ok(true)
-            } else {
-                Err(SystemdManagerError::WaitForProcessInCgroupTimeout(
-                    pid.to_string(),
-                ))
-            }
+            Err(SystemdManagerError::WaitForProcessInCgroupTimeout(
+                pid.to_string(),
+            ))
+
         }
         Err(e) => {
             tracing::error!(
@@ -558,7 +629,7 @@ fn wait_for_system_signal(
 
 #[cfg(test)]
 mod tests {
-
+    use std::ops::Add;
     use anyhow::{Context, Result};
 
     use super::*;
@@ -728,7 +799,7 @@ mod tests {
             false,
             Duration::from_secs(1),
         )
-        .unwrap();
+            .unwrap();
 
         // Bogus Pid
         let p1_id = nix::unistd::Pid::from_raw(-1_i32);
@@ -740,5 +811,37 @@ mod tests {
             Err(SystemdManagerError::WaitForProcessInCgroupTimeout(..))
         ));
         Ok(())
+    }
+
+    #[test]
+    fn ensure_thread_termination() {
+        let mut p1 = std::process::Command::new("sleep")
+            .arg("1s")
+            .spawn()
+            .unwrap();
+        let p1_id = nix::unistd::Pid::from_raw(p1.id() as i32);
+        //  listen for the signal for
+        let continue_search = Arc::new((Mutex::new(RemoveJobThreadPlan::Block), Condvar::new()));
+        let search = continue_search.clone();
+        let test_search = continue_search.clone();
+        let system = false;
+        let timeout = PROCESS_IN_CGROUP_TIMEOUT_DURATION;
+        let unit_name = String::from("youki_test_container");
+        let t_handle =
+            thread::spawn(move || wait_for_system_signal(system, search, p1_id, timeout, unit_name));
+        let signal_guard = SignalHandlerGuard {
+            t_handle: Some(t_handle),
+            current_signal: RemoveJobThreadPlan::Return,
+            it_com: continue_search,
+        };
+        drop(signal_guard);
+
+        {
+            let (lock, cvar) = &*test_search;
+            let search_lock = lock.lock().unwrap();
+            assert_eq!(*search_lock, RemoveJobThreadPlan::ReturnFinish);
+        }
+        assert!(true);
+
     }
 }

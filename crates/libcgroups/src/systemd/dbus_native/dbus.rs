@@ -63,7 +63,7 @@ fn parse_dbus_address(env_value: String) -> Result<String> {
     Err(DbusError::BusAddressError(format!("no valid bus path found in list {}", env_value)).into())
 }
 
-fn get_session_bus_address() -> Result<String> {
+pub(crate) fn get_session_bus_address() -> Result<String> {
     if let Ok(s) = std::env::var("DBUS_SESSION_BUS_ADDRESS") {
         return parse_dbus_address(s);
     }
@@ -85,8 +85,7 @@ fn get_session_bus_address() -> Result<String> {
             .into(),
     )
 }
-
-fn get_system_bus_address() -> Result<String> {
+pub fn get_system_bus_address() -> Result<String> {
     if let Ok(s) = std::env::var("DBUS_SYSTEM_BUS_ADDRESS") {
         return parse_dbus_address(s);
     }
@@ -97,7 +96,7 @@ fn get_system_bus_address() -> Result<String> {
     Ok("/var/run/dbus/system_bus_socket".into())
 }
 
-fn get_actual_uid() -> Result<u32> {
+pub fn get_actual_uid() -> Result<u32> {
     let output = std::process::Command::new("busctl")
         .arg("--user")
         .arg("--no-pager")
