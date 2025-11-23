@@ -763,4 +763,53 @@ mod tests {
         ));
         Ok(())
     }
+
+    #[test]
+    fn test_we_receive_remove_job_signal() -> Result<()> {
+        let manager = Manager::new(
+            DEFAULT_CGROUP_ROOT.into(),
+            ":youki:test".into(),
+            "youki_test_container".into(),
+            false,
+            PROCESS_IN_CGROUP_TIMEOUT_DURATION,
+        )?;
+        let mut p1 = std::process::Command::new("sleep").arg("1s").spawn()?;
+        let p1_id = nix::unistd::Pid::from_raw(p1.id() as i32);
+
+        let t_handle = thread::spawn(move || create_signal_listener(false));
+        let mut signal_guard = SignalHandlerGuard {
+            t_handle: Some(t_handle),
+        };
+
+        let signal_dbus = if let Some(t) = signal_guard.t_handle.take() {
+            t.join().unwrap()
+        } else {
+            // this should never happen
+            Err(SystemdManagerError::MissingSignalThread)
+        };
+
+        manager.client.start_transient_unit(
+            &manager.container_name,
+            p1_id.as_raw() as u32,
+            &manager.destructured_path.parent,
+            &manager.unit_name,
+        )?;
+
+        let mut confirmation = false;
+        if let Ok(dbus) = signal_dbus {
+            if let Ok(()) = manager.wait_for_remove_job_signal(&dbus) {
+                confirmation = true
+            }
+        }
+
+        let _ = p1.wait();
+        manager.remove()?;
+        // the remove call above should remove the dir, we just do this again
+        // for contingency, and thus ignore the result
+        let _ = fs::remove_dir(&manager.full_path);
+
+        assert!(confirmation);
+
+        Ok(())
+    }
 }
