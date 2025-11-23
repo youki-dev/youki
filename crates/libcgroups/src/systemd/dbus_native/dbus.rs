@@ -23,6 +23,7 @@ const REPLY_BUF_SIZE: usize = 128; // seems good enough tradeoff between extra s
 // For more information see https://www.freedesktop.org/wiki/Software/systemd/dbus/
 pub struct DbusConnection {
     /// Is the socket system level or session specific
+    #[allow(dead_code)]
     system: bool,
     /// socket fd
     socket: i32,
@@ -63,7 +64,7 @@ fn parse_dbus_address(env_value: String) -> Result<String> {
     Err(DbusError::BusAddressError(format!("no valid bus path found in list {}", env_value)).into())
 }
 
-pub(crate) fn get_session_bus_address() -> Result<String> {
+fn get_session_bus_address() -> Result<String> {
     if let Ok(s) = std::env::var("DBUS_SESSION_BUS_ADDRESS") {
         return parse_dbus_address(s);
     }
@@ -85,7 +86,8 @@ pub(crate) fn get_session_bus_address() -> Result<String> {
             .into(),
     )
 }
-pub fn get_system_bus_address() -> Result<String> {
+
+fn get_system_bus_address() -> Result<String> {
     if let Ok(s) = std::env::var("DBUS_SYSTEM_BUS_ADDRESS") {
         return parse_dbus_address(s);
     }
@@ -96,7 +98,7 @@ pub fn get_system_bus_address() -> Result<String> {
     Ok("/var/run/dbus/system_bus_socket".into())
 }
 
-pub fn get_actual_uid() -> Result<u32> {
+fn get_actual_uid() -> Result<u32> {
     let output = std::process::Command::new("busctl")
         .arg("--user")
         .arg("--no-pager")
@@ -221,7 +223,7 @@ impl DbusConnection {
             },
         ];
 
-        let res = self.write_message_and_read_response(MessageType::MethodCall, headers, vec![])?;
+        let res = self.send_message(MessageType::MethodCall, headers, vec![])?;
 
         let res: Vec<_> = res
             .into_iter()
@@ -272,38 +274,7 @@ impl DbusConnection {
         Ok(ret)
     }
 
-    /// function to send message of given type with given headers and body
-    /// over the dbus connection. The caller must specify the destination, interface etc.etc.
-    /// in the headers, this function will only take care of sending the message. It will not
-    /// read any messages back off the socket
-    pub fn write_message(
-        &self,
-        mtype: MessageType,
-        mut headers: Vec<Header>,
-        body: Vec<u8>,
-    ) -> Result<()> {
-        if let Some(s) = &self.id {
-            headers.push(Header {
-                kind: HeaderKind::Sender,
-                value: HeaderValue::String(s.clone()),
-            });
-        }
-
-        let message = Message::new(mtype, self.get_msg_id(), headers, body);
-        let serialized = message.serialize();
-
-        socket::sendmsg::<()>(
-            self.socket,
-            &[IoSlice::new(&serialized)],
-            &[],
-            socket::MsgFlags::empty(),
-            None,
-        )?;
-
-        Ok(())
-    }
-
-    /// function to reach messages off the socket
+    /// function to read messages off the socket
     pub fn read_messages(&self) -> Result<Vec<Message>> {
         let mut ret = Vec::new();
 
@@ -329,13 +300,29 @@ impl DbusConnection {
     /// returning the received messages. Note that the caller must check if any error
     /// message was returned or not, this will not check that, the returned Err
     /// indicates error in sending/receiving message
-    pub fn write_message_and_read_response(
+    pub fn send_message(
         &self,
         mtype: MessageType,
-        headers: Vec<Header>,
+        mut headers: Vec<Header>,
         body: Vec<u8>,
     ) -> Result<Vec<Message>> {
-        self.write_message(mtype, headers, body)?;
+        if let Some(s) = &self.id {
+            headers.push(Header {
+                kind: HeaderKind::Sender,
+                value: HeaderValue::String(s.clone()),
+            });
+        }
+
+        let message = Message::new(mtype, self.get_msg_id(), headers, body);
+        let serialized = message.serialize();
+
+        socket::sendmsg::<()>(
+            self.socket,
+            &[IoSlice::new(&serialized)],
+            &[],
+            socket::MsgFlags::empty(),
+            None,
+        )?;
 
         let mut ret = Vec::new();
 
@@ -344,7 +331,20 @@ impl DbusConnection {
         // we keep looping until we get either of these. see https://github.com/youki-dev/youki/issues/2826
         // for more detailed analysis.
         loop {
-            ret.append(&mut self.read_messages()?);
+            let reply = self.receive_complete_response()?;
+
+            // note that a single received response can contain multiple
+            // messages, so we must deserialize it piece by piece
+            let mut buf = &reply[..];
+
+            while !buf.is_empty() {
+                let mut ctr = 0;
+                let msg = Message::deserialize(&buf[ctr..], &mut ctr)?;
+                // we reset the buf, because I couldn't figure out how the adjust_counter function
+                // should should be changed to work correctly with non-zero start counter, and this solved that issue
+                buf = &buf[ctr..];
+                ret.push(msg);
+            }
 
             // in Youki, we only ever do method call apart from initial auth
             // in case it is, we don't really have a specific message to look
