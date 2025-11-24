@@ -18,6 +18,8 @@ pub enum Message {
     MoveNetworkDevice(HashMap<String, Vec<CidrAddress>>),
     ExecFailed(String),
     OtherError(String),
+    HookRequest,
+    HookDone,
 }
 
 impl fmt::Display for Message {
@@ -31,6 +33,8 @@ impl fmt::Display for Message {
             Message::MoveNetworkDevice(addr) => write!(f, "MoveNetworkDevice({:?})", addr),
             Message::SeccompNotify => write!(f, "SeccompNotify"),
             Message::SeccompNotifyDone => write!(f, "SeccompNotifyDone"),
+            Message::HookRequest => write!(f, "HookRequest"),
+            Message::HookDone => write!(f, "HookDone"),
             Message::ExecFailed(s) => write!(f, "ExecFailed({})", s),
             Message::OtherError(s) => write!(f, "OtherError({})", s),
         }
