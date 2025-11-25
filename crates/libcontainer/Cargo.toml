@@ -1,6 +1,6 @@
 [package]
 name = "libcontainer"
-version = "0.5.7"                                 # MARK: Version
+version = "0.5.7" # MARK: Version
 description = "Library for container control"
 license = "Apache-2.0"
 repository = "https://github.com/youki-dev/youki"
