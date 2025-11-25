@@ -22,6 +22,52 @@ pub enum MemoryPolicyError {
 
 type Result<T> = std::result::Result<T, MemoryPolicyError>;
 
+#[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MemoryPolicyMode {
+    Default = 0,
+    Preferred = 1,
+    Bind = 2,
+    Interleave = 3,
+    Local = 4,
+    PreferredMany = 5,
+    WeightedInterleave = 6,
+}
+
+impl From<MemoryPolicyMode> for i32 {
+    fn from(mode: MemoryPolicyMode) -> Self {
+        mode as i32
+    }
+}
+
+impl From<MemoryPolicyModeType> for MemoryPolicyMode {
+    fn from(mode: MemoryPolicyModeType) -> Self {
+        match mode {
+            MemoryPolicyModeType::MpolDefault => MemoryPolicyMode::Default,
+            MemoryPolicyModeType::MpolPreferred => MemoryPolicyMode::Preferred,
+            MemoryPolicyModeType::MpolBind => MemoryPolicyMode::Bind,
+            MemoryPolicyModeType::MpolInterleave => MemoryPolicyMode::Interleave,
+            MemoryPolicyModeType::MpolLocal => MemoryPolicyMode::Local,
+            MemoryPolicyModeType::MpolPreferredMany => MemoryPolicyMode::PreferredMany,
+            MemoryPolicyModeType::MpolWeightedInterleave => MemoryPolicyMode::WeightedInterleave,
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MemoryPolicyFlag {
+    NumaBalancing = 1 << 13, // 0x2000
+    RelativeNodes = 1 << 14, // 0x4000
+    StaticNodes = 1 << 15,   // 0x8000
+}
+
+impl From<MemoryPolicyFlag> for u32 {
+    fn from(flag: MemoryPolicyFlag) -> Self {
+        flag as u32
+    }
+}
+
 struct ValidatedMemoryPolicy {
     mode_with_flags: i32,
     nodemask: Vec<libc::c_ulong>,
@@ -35,50 +81,19 @@ fn validate_memory_policy(
         return Ok(None);
     };
 
-    // Memory policy mode constants from Linux UAPI (include/uapi/linux/mempolicy.h)
-    const MPOL_DEFAULT: i32 = 0;
-    const MPOL_PREFERRED: i32 = 1;
-    const MPOL_BIND: i32 = 2;
-    const MPOL_INTERLEAVE: i32 = 3;
-    const MPOL_LOCAL: i32 = 4;
-    const MPOL_PREFERRED_MANY: i32 = 5;
-    const MPOL_WEIGHTED_INTERLEAVE: i32 = 6;
+    let base_mode = MemoryPolicyMode::from(policy.mode());
 
-    // Memory policy flag constants from Linux UAPI
-    const MPOL_F_NUMA_BALANCING: u32 = 1 << 13; // 0x2000
-    const MPOL_F_RELATIVE_NODES: u32 = 1 << 14; // 0x4000
-    const MPOL_F_STATIC_NODES: u32 = 1 << 15; // 0x8000
-
-    let base_mode = match policy.mode() {
-        MemoryPolicyModeType::MpolDefault => MPOL_DEFAULT,
-        MemoryPolicyModeType::MpolPreferred => MPOL_PREFERRED,
-        MemoryPolicyModeType::MpolBind => MPOL_BIND,
-        MemoryPolicyModeType::MpolInterleave => MPOL_INTERLEAVE,
-        MemoryPolicyModeType::MpolLocal => MPOL_LOCAL,
-        MemoryPolicyModeType::MpolPreferredMany => MPOL_PREFERRED_MANY,
-        MemoryPolicyModeType::MpolWeightedInterleave => MPOL_WEIGHTED_INTERLEAVE,
-    };
-
-    let mut has_static = false;
-    let mut has_relative = false;
     if let Some(flags) = policy.flags() {
-        for flag in flags.iter() {
-            match flag {
-                MemoryPolicyFlagType::MpolFNumaBalancing => {
-                    if base_mode != MPOL_BIND {
-                        return Err(MemoryPolicyError::IncompatibleFlagMode(
-                            "MPOL_F_NUMA_BALANCING can only be used with MPOL_BIND".to_string(),
-                        ));
-                    }
-                }
-                MemoryPolicyFlagType::MpolFRelativeNodes => {
-                    has_relative = true;
-                }
-                MemoryPolicyFlagType::MpolFStaticNodes => {
-                    has_static = true;
-                }
-            }
+        if flags.contains(&MemoryPolicyFlagType::MpolFNumaBalancing)
+            && base_mode != MemoryPolicyMode::Bind
+        {
+            return Err(MemoryPolicyError::IncompatibleFlagMode(
+                "MPOL_F_NUMA_BALANCING can only be used with MPOL_BIND".to_string(),
+            ));
         }
+
+        let has_static = flags.contains(&MemoryPolicyFlagType::MpolFStaticNodes);
+        let has_relative = flags.contains(&MemoryPolicyFlagType::MpolFRelativeNodes);
         if has_static && has_relative {
             return Err(MemoryPolicyError::MutuallyExclusiveFlags(
                 "MPOL_F_STATIC_NODES and MPOL_F_RELATIVE_NODES are mutually exclusive".to_string(),
@@ -91,23 +106,23 @@ fn validate_memory_policy(
         for flag in flags {
             match flag {
                 MemoryPolicyFlagType::MpolFNumaBalancing => {
-                    flags_value |= MPOL_F_NUMA_BALANCING;
+                    flags_value |= u32::from(MemoryPolicyFlag::NumaBalancing);
                 }
                 MemoryPolicyFlagType::MpolFRelativeNodes => {
-                    flags_value |= MPOL_F_RELATIVE_NODES;
+                    flags_value |= u32::from(MemoryPolicyFlag::RelativeNodes);
                 }
                 MemoryPolicyFlagType::MpolFStaticNodes => {
-                    flags_value |= MPOL_F_STATIC_NODES;
+                    flags_value |= u32::from(MemoryPolicyFlag::StaticNodes);
                 }
             }
         }
     }
 
-    let mode_with_flags = base_mode | (flags_value as i32);
+    let mode_with_flags = i32::from(base_mode) | (flags_value as i32);
 
     match base_mode {
-        MPOL_DEFAULT | MPOL_LOCAL => {
-            let mode_name = if base_mode == MPOL_DEFAULT {
+        MemoryPolicyMode::Default | MemoryPolicyMode::Local => {
+            let mode_name = if base_mode == MemoryPolicyMode::Default {
                 "MPOL_DEFAULT"
             } else {
                 "MPOL_LOCAL"
@@ -133,52 +148,56 @@ fn validate_memory_policy(
                 maxnode: 0,
             }))
         }
-        MPOL_PREFERRED => match policy.nodes() {
-            None => {
-                if flags_value & (MPOL_F_RELATIVE_NODES | MPOL_F_STATIC_NODES) != 0 {
-                    return Err(MemoryPolicyError::IncompatibleFlagMode(
-                        "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
-                    ));
-                }
-                Ok(Some(ValidatedMemoryPolicy {
-                    mode_with_flags,
-                    nodemask: Vec::new(),
-                    maxnode: 0,
-                }))
-            }
-            Some(nodes) if nodes.trim().is_empty() => {
-                if flags_value & (MPOL_F_RELATIVE_NODES | MPOL_F_STATIC_NODES) != 0 {
-                    return Err(MemoryPolicyError::IncompatibleFlagMode(
-                        "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
-                    ));
-                }
-                Ok(Some(ValidatedMemoryPolicy {
-                    mode_with_flags,
-                    nodemask: Vec::new(),
-                    maxnode: 0,
-                }))
-            }
-            Some(nodes) => {
-                let (nodemask, maxnode) = build_nodemask(nodes)?;
-                if maxnode == 0 {
-                    if flags_value & (MPOL_F_RELATIVE_NODES | MPOL_F_STATIC_NODES) != 0 {
+        MemoryPolicyMode::Preferred => {
+            let relative_or_static: u32 = u32::from(MemoryPolicyFlag::RelativeNodes)
+                | u32::from(MemoryPolicyFlag::StaticNodes);
+            match policy.nodes() {
+                None => {
+                    if flags_value & relative_or_static != 0u32 {
                         return Err(MemoryPolicyError::IncompatibleFlagMode(
                             "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
                         ));
                     }
-                    return Ok(Some(ValidatedMemoryPolicy {
+                    Ok(Some(ValidatedMemoryPolicy {
                         mode_with_flags,
                         nodemask: Vec::new(),
                         maxnode: 0,
-                    }));
+                    }))
                 }
-                Ok(Some(ValidatedMemoryPolicy {
-                    mode_with_flags,
-                    nodemask,
-                    maxnode,
-                }))
+                Some(nodes) if nodes.trim().is_empty() => {
+                    if flags_value & relative_or_static != 0u32 {
+                        return Err(MemoryPolicyError::IncompatibleFlagMode(
+                            "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
+                        ));
+                    }
+                    Ok(Some(ValidatedMemoryPolicy {
+                        mode_with_flags,
+                        nodemask: Vec::new(),
+                        maxnode: 0,
+                    }))
+                }
+                Some(nodes) => {
+                    let (nodemask, maxnode) = build_nodemask(nodes)?;
+                    if maxnode == 0 {
+                        if flags_value & relative_or_static != 0u32 {
+                            return Err(MemoryPolicyError::IncompatibleFlagMode(
+                                "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
+                            ));
+                        }
+                        return Ok(Some(ValidatedMemoryPolicy {
+                            mode_with_flags,
+                            nodemask: Vec::new(),
+                            maxnode: 0,
+                        }));
+                    }
+                    Ok(Some(ValidatedMemoryPolicy {
+                        mode_with_flags,
+                        nodemask,
+                        maxnode,
+                    }))
+                }
             }
-        },
+        }
         _ => {
             let mode_name = match policy.mode() {
                 MemoryPolicyModeType::MpolDefault => "MPOL_DEFAULT",
