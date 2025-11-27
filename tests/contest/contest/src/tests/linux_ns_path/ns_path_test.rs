@@ -34,7 +34,7 @@ impl Drop for WithCleanup {
     }
 }
 
-fn create_spec(namespace_path: &Vec<NamespacePath>) -> Spec {
+fn create_spec(namespace_path: &[NamespacePath]) -> Spec {
     let mut linux_namespace_types = Vec::new();
     for namespace_path in namespace_path {
         linux_namespace_types.push(
@@ -150,7 +150,7 @@ fn test_namespace_paths(mut linux_namespace_types: Vec<LinuxNamespaceType>) -> T
     let child = match child {
         Ok(child) => child,
         Err(e) => {
-            return TestResult::Failed(anyhow!(format!("could not spawn unshare: {}", e)));
+            return TestResult::Failed(anyhow!("could not spawn unshare: {}", e));
         }
     };
     let g_child = WithCleanup::new(child);
@@ -168,10 +168,10 @@ fn test_namespace_paths(mut linux_namespace_types: Vec<LinuxNamespaceType>) -> T
         )
         .err();
         if err.is_some() {
-            return TestResult::Failed(anyhow!(format!(
+            return TestResult::Failed(anyhow!(
                 "could not wait for path {}",
                 &namespace_path.path.display()
-            )));
+            ));
         }
     }
 
@@ -188,11 +188,11 @@ fn test_namespace_paths(mut linux_namespace_types: Vec<LinuxNamespaceType>) -> T
             let unshared_ns_inode = match fs::metadata(&unshared_namespace_path.path) {
                 Ok(m) => m.ino(),
                 Err(e) => {
-                    return TestResult::Failed(anyhow!(format!(
+                    return TestResult::Failed(anyhow!(
                         "could not get inode of {}: {}",
                         &unshared_namespace_path.path.display(),
                         e
-                    )));
+                    ));
                 }
             };
 
@@ -201,11 +201,11 @@ fn test_namespace_paths(mut linux_namespace_types: Vec<LinuxNamespaceType>) -> T
             let container_ns_inode = match fs::metadata(&container_ns_path) {
                 Ok(m) => m.ino(),
                 Err(e) => {
-                    return TestResult::Failed(anyhow!(format!(
+                    return TestResult::Failed(anyhow!(
                         "could not get inode of {}: {}",
                         container_ns_path.display(),
                         e
-                    )));
+                    ));
                 }
             };
 
