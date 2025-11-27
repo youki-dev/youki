@@ -163,8 +163,6 @@ pub enum SystemdManagerError {
 
     #[error("Timeout waiting for pid {0} to be added to cgroup")]
     WaitForProcessInCgroupTimeout(String),
-    #[error("Missing signal Thread")]
-    MissingSignalThread,
 
     #[error("in cpu controller: {0}")]
     Cpu(#[from] super::cpu::SystemdCpuError),
