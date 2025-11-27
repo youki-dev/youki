@@ -46,4 +46,6 @@ pub trait SystemdClient {
         interface: &str,
         member: &str,
     ) -> Result<(), SystemdClientError>;
+
+    fn unsubscribe_job_remove_signal(&self) -> Result<(), SystemdClientError>;
 }

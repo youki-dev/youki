@@ -533,6 +533,11 @@ impl SystemdClient for DbusConnection {
         );
         proxy.method_call::<_, ()>("org.freedesktop.DBus", "AddMatch", Some(rule))
     }
+
+    fn unsubscribe_job_remove_signal(&self) -> std::result::Result<(), SystemdClientError> {
+        let proxy = self.create_proxy();
+        proxy.method_call::<_, ()>("org.freedesktop.systemd1.Manager", "Unsubscribe", Some(()))
+    }
 }
 
 #[cfg(test)]

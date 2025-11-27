@@ -4,8 +4,6 @@ use std::fmt::{Debug, Display};
 use std::fs::{self};
 use std::path::Component::RootDir;
 use std::path::{Path, PathBuf};
-use std::thread;
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use nix::NixPath;
@@ -346,10 +344,10 @@ impl Manager {
         ))
     }
 
-    fn wait_for_remove_job_signal(&self, dbus: &DbusConnection) -> Result<(), SystemdManagerError> {
+    fn wait_for_remove_job_signal(&self) -> Result<(), SystemdManagerError> {
         let start = Instant::now();
         while start.elapsed() < self.cgroup_wait_timeout_duration {
-            let messages = dbus.read_messages()?;
+            let messages = self.client.read_messages()?;
             for message in messages {
                 if message.preamble.mtype != MessageType::Signal {
                     continue;
@@ -428,14 +426,6 @@ impl CgroupManager for Manager {
             return Ok(());
         }
 
-        // in an ideal world we could do this a little earlier but we have to be careful about threads
-        // existing while unshared is because called.
-        let system = self.client.is_system();
-        let t_handle = thread::spawn(move || create_signal_listener(system));
-        let mut signal_guard = SignalHandlerGuard {
-            t_handle: Some(t_handle),
-        };
-
         if self.client.transient_unit_exists(&self.unit_name) {
             tracing::debug!("Transient unit {:?} already exists", self.unit_name);
             self.client
@@ -443,12 +433,14 @@ impl CgroupManager for Manager {
             return Ok(());
         }
 
-        let signal_dbus = if let Some(t) = signal_guard.t_handle.take() {
-            t.join().unwrap()
-        } else {
-            // this should never happen
-            Err(SystemdManagerError::MissingSignalThread)
-        };
+        // subscribe to systemd JobRemoved signal to ensure that the transient unit is removed
+        self.client.dbus_add_match(
+            "signal",
+            "org.freedesktop.systemd1",
+            "org.freedesktop.systemd1.Manager",
+            "JobRemoved",
+        )?;
+        self.client.subscribe_job_remove_signal()?;
 
         tracing::debug!("Starting {:?}", self.unit_name);
         self.client.start_transient_unit(
@@ -458,16 +450,12 @@ impl CgroupManager for Manager {
             &self.unit_name,
         )?;
 
-        let mut confirmation = false;
-        if let Ok(dbus) = signal_dbus {
-            if let Ok(()) = self.wait_for_remove_job_signal(&dbus) {
-                confirmation = true
-            }
-        }
+        // wait for the RemoveJob signal. Fall back to pid check if needed
+        if let Err(_e) = self.wait_for_remove_job_signal() {
+            self.wait_for_process_in_cgroup(pid)?
+        };
 
-        if !confirmation {
-            self.wait_for_process_in_cgroup(pid)?;
-        }
+        self.client.unsubscribe_job_remove_signal()?;
 
         Ok(())
     }
@@ -529,53 +517,6 @@ impl CgroupManager for Manager {
 
     fn get_all_pids(&self) -> Result<Vec<Pid>, Self::Error> {
         Ok(common::get_all_pids(&self.full_path)?)
-    }
-}
-
-struct SignalHandlerGuard {
-    t_handle: Option<JoinHandle<Result<DbusConnection, SystemdManagerError>>>,
-}
-
-impl Drop for SignalHandlerGuard {
-    fn drop(&mut self) {
-        if let Some(t_handle) = self.t_handle.take() {
-            let result = t_handle.join().unwrap();
-            match result {
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::warn!("Error attempting to sping up listener DbusConnection {}", e)
-                }
-            }
-        }
-    }
-}
-
-fn create_signal_listener(system: bool) -> Result<DbusConnection, SystemdManagerError> {
-    let new_dbus = if system {
-        DbusConnection::new_system()
-    } else {
-        DbusConnection::new_session()
-    };
-
-    match new_dbus {
-        Ok(dbus) => {
-            // These two method calls must remain!!!!
-            dbus.dbus_add_match(
-                "signal",
-                "org.freedesktop.systemd1",
-                "org.freedesktop.systemd1.Manager",
-                "JobRemoved",
-            )?;
-            dbus.subscribe_job_remove_signal()?;
-            Ok(dbus)
-        }
-        Err(e) => {
-            tracing::error!(
-                "Failed to create dbus connection for JobRemoval Signal{:?}",
-                e
-            );
-            Err(SystemdManagerError::SystemdClient(e))
-        }
     }
 }
 
@@ -650,6 +591,10 @@ mod tests {
             _interface: &str,
             _member: &str,
         ) -> std::result::Result<(), SystemdClientError> {
+            Ok(())
+        }
+
+        fn unsubscribe_job_remove_signal(&self) -> std::result::Result<(), SystemdClientError> {
             Ok(())
         }
     }
@@ -761,55 +706,6 @@ mod tests {
             result,
             Err(SystemdManagerError::WaitForProcessInCgroupTimeout(..))
         ));
-        Ok(())
-    }
-
-    #[test]
-    fn test_we_receive_remove_job_signal() -> Result<()> {
-        let manager = Manager::new(
-            DEFAULT_CGROUP_ROOT.into(),
-            ":youki:test".into(),
-            "youki_test_container".into(),
-            false,
-            PROCESS_IN_CGROUP_TIMEOUT_DURATION,
-        )?;
-        let mut p1 = std::process::Command::new("sleep").arg("1s").spawn()?;
-        let p1_id = nix::unistd::Pid::from_raw(p1.id() as i32);
-
-        let t_handle = thread::spawn(move || create_signal_listener(false));
-        let mut signal_guard = SignalHandlerGuard {
-            t_handle: Some(t_handle),
-        };
-
-        let signal_dbus = if let Some(t) = signal_guard.t_handle.take() {
-            t.join().unwrap()
-        } else {
-            // this should never happen
-            Err(SystemdManagerError::MissingSignalThread)
-        };
-
-        manager.client.start_transient_unit(
-            &manager.container_name,
-            p1_id.as_raw() as u32,
-            &manager.destructured_path.parent,
-            &manager.unit_name,
-        )?;
-
-        let mut confirmation = false;
-        if let Ok(dbus) = signal_dbus {
-            if let Ok(()) = manager.wait_for_remove_job_signal(&dbus) {
-                confirmation = true
-            }
-        }
-
-        let _ = p1.wait();
-        manager.remove()?;
-        // the remove call above should remove the dir, we just do this again
-        // for contingency, and thus ignore the result
-        let _ = fs::remove_dir(&manager.full_path);
-
-        assert!(confirmation);
-
         Ok(())
     }
 }
