@@ -54,4 +54,7 @@ pub struct ContainerArgs {
     pub as_sibling: bool,
     // Time namespace offsets (format: "boottime <secs> <nanosecs>\nmonotonic <secs> <nanosecs>")
     pub time_offsets: Option<String>,
+    /// File path used to communicate the PID of the
+    /// container process to the higher-level runtime.
+    pub pid_file: Option<PathBuf>,
 }

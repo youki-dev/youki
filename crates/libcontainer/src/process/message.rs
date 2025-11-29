@@ -1,6 +1,9 @@
 use core::fmt;
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+
+use crate::network::cidr::CidrAddress;
 
 /// Used as a wrapper for messages to be sent between child and parent processes
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -13,8 +16,12 @@ pub enum Message {
     TimeOffsetsWritten,
     SeccompNotify,
     SeccompNotifyDone,
+    SetupNetworkDeviceReady,
+    MoveNetworkDevice(HashMap<String, Vec<CidrAddress>>),
     ExecFailed(String),
     OtherError(String),
+    HookRequest,
+    HookDone,
 }
 
 impl fmt::Display for Message {
@@ -26,8 +33,12 @@ impl fmt::Display for Message {
             Message::MappingWritten => write!(f, "MappingWritten"),
             Message::WriteTimeOffsets => write!(f, "WriteTimeOffsets"),
             Message::TimeOffsetsWritten => write!(f, "TimeOffsetsWritten"),
+            Message::SetupNetworkDeviceReady => write!(f, "SetupNetworkDeviceReady"),
+            Message::MoveNetworkDevice(addr) => write!(f, "MoveNetworkDevice({:?})", addr),
             Message::SeccompNotify => write!(f, "SeccompNotify"),
             Message::SeccompNotifyDone => write!(f, "SeccompNotifyDone"),
+            Message::HookRequest => write!(f, "HookRequest"),
+            Message::HookDone => write!(f, "HookDone"),
             Message::ExecFailed(s) => write!(f, "ExecFailed({})", s),
             Message::OtherError(s) => write!(f, "OtherError({})", s),
         }
