@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{ErrorKind, Write};
 use std::os::unix::prelude::CommandExt;
@@ -8,7 +9,7 @@ use nix::sys::signal;
 use nix::unistd::Pid;
 use oci_spec::runtime::Hook;
 
-use crate::container::Container;
+use crate::container::{Container, State};
 use crate::utils;
 
 #[derive(Debug, thiserror::Error)]
@@ -35,8 +36,19 @@ pub fn run_hooks(
     hooks: Option<&Vec<Hook>>,
     container: Option<&Container>,
     cwd: Option<&Path>,
+    pid: Option<Pid>,
 ) -> Result<()> {
-    let state = &(container.ok_or(HookError::MissingContainerState)?.state);
+    let base_state = &(container.ok_or(HookError::MissingContainerState)?.state);
+    let mut state_cow: Cow<'_, State> = Cow::Borrowed(base_state);
+
+    // When using the createRuntime hook in a high-level container runtime (such as containerd),
+    // the PID needs to be set in the container state.
+    // Ref: https://github.com/containerd/containerd/blob/main/cmd/containerd/command/oci-hook.go#L90
+    if let Some(pid) = pid {
+        let s = state_cow.to_mut();
+        s.pid = Some(pid.as_raw());
+    }
+    let state_for_hook = &state_cow;
 
     if let Some(hooks) = hooks {
         for hook in hooks {
@@ -70,6 +82,8 @@ pub fn run_hooks(
                 .env_clear()
                 .envs(envs)
                 .stdin(process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .stderr(process::Stdio::inherit())
                 .spawn()
                 .map_err(HookError::CommandExecute)?;
             let hook_process_pid = Pid::from_raw(hook_process.id() as i32);
@@ -84,8 +98,8 @@ pub fn run_hooks(
                 // fail this step here. We still want to check for all the other
                 // error, in the case that the hook command is waiting for us to
                 // write to stdin.
-                let encoded_state =
-                    serde_json::to_string(state).map_err(HookError::EncodeContainerState)?;
+                let encoded_state = serde_json::to_string(state_for_hook)
+                    .map_err(HookError::EncodeContainerState)?;
                 if let Err(e) = stdin.write_all(encoded_state.as_bytes()) {
                     if e.kind() != ErrorKind::BrokenPipe {
                         // Not a broken pipe. The hook command may be waiting
@@ -176,7 +190,7 @@ mod test {
     fn test_run_hook() -> Result<()> {
         {
             let default_container: Container = Default::default();
-            run_hooks(None, Some(&default_container), None).context("Failed simple test")?;
+            run_hooks(None, Some(&default_container), None, None).context("Failed simple test")?;
         }
 
         {
@@ -185,7 +199,8 @@ mod test {
 
             let hook = HookBuilder::default().path("true").build()?;
             let hooks = Some(vec![hook]);
-            run_hooks(hooks.as_ref(), Some(&default_container), None).context("Failed true")?;
+            run_hooks(hooks.as_ref(), Some(&default_container), None, None)
+                .context("Failed true")?;
         }
 
         {
@@ -205,7 +220,7 @@ mod test {
                 .env(vec![String::from("key=value")])
                 .build()?;
             let hooks = Some(vec![hook]);
-            run_hooks(hooks.as_ref(), Some(&default_container), None)
+            run_hooks(hooks.as_ref(), Some(&default_container), None, None)
                 .context("Failed printenv test")?;
         }
 
@@ -224,8 +239,35 @@ mod test {
                 ])
                 .build()?;
             let hooks = Some(vec![hook]);
-            run_hooks(hooks.as_ref(), Some(&default_container), Some(tmp.path()))
-                .context("Failed pwd test")?;
+            run_hooks(
+                hooks.as_ref(),
+                Some(&default_container),
+                Some(tmp.path()),
+                None,
+            )
+            .context("Failed pwd test")?;
+        }
+
+        {
+            let default_container: Container = Default::default();
+            let expected_pid = Pid::from_raw(1000);
+
+            let hook = HookBuilder::default()
+                .path("bash")
+                .args(vec![
+                    String::from("bash"),
+                    String::from("-c"),
+                    format!("cat | grep '\"pid\":{}'", expected_pid),
+                ])
+                .build()?;
+            let hooks = Some(vec![hook]);
+            run_hooks(
+                hooks.as_ref(),
+                Some(&default_container),
+                None,
+                Some(expected_pid),
+            )
+            .context("Failed pid test")?;
         }
 
         Ok(())
@@ -248,7 +290,7 @@ mod test {
             .timeout(1)
             .build()?;
         let hooks = Some(vec![hook]);
-        match run_hooks(hooks.as_ref(), Some(&default_container), None) {
+        match run_hooks(hooks.as_ref(), Some(&default_container), None, None) {
             Ok(_) => {
                 bail!(
                     "The test expects the hook to error out with timeout. Should not execute cleanly"

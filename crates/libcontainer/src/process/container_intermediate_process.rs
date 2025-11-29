@@ -1,9 +1,8 @@
 use std::os::fd::FromRawFd;
 
 use libcgroups::common::CgroupManager;
-use nix::unistd::{Gid, Pid, Uid, close, write};
+use nix::unistd::{Gid, Pid, Uid, close, getpid, write};
 use oci_spec::runtime::{LinuxNamespace, LinuxNamespaceType, LinuxResources};
-use procfs::process::Process;
 
 use super::args::{ContainerArgs, ContainerType};
 use super::channel::{IntermediateReceiver, MainSender};
@@ -264,7 +263,7 @@ fn apply_cgroups<
     resources: Option<&LinuxResources>,
     init: bool,
 ) -> Result<()> {
-    let pid = Pid::from_raw(Process::myself()?.pid());
+    let pid = getpid();
     cmanager.add_task(pid).map_err(|err| {
         tracing::error!(?pid, ?err, ?init, "failed to add task to cgroup");
         IntermediateProcessError::Cgroup(err.to_string())

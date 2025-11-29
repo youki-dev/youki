@@ -98,12 +98,11 @@ impl Container {
                     })?;
 
                     if let Some(hooks) = config.hooks.as_ref() {
-                        hooks::run_hooks(hooks.poststop().as_ref(), Some(self), None).map_err(
-                            |err| {
+                        hooks::run_hooks(hooks.poststop().as_ref(), Some(self), None, None)
+                            .map_err(|err| {
                                 tracing::error!(err = ?err, "failed to run post stop hooks");
                                 err
-                            },
-                        )?;
+                            })?;
                     }
                 }
                 Err(err) => {

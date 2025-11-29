@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use nix::unistd::Pid;
-use procfs::ProcError;
-use procfs::process::Process;
+use pathrs::flags::OpenFlags;
+use pathrs::procfs::{ProcfsBase, ProcfsHandle};
+use procfs::{FromRead, ProcError, ProcessCGroups};
 
 use super::blkio::{Blkio, V1BlkioStatsError};
 use super::controller::Controller;
@@ -47,6 +48,8 @@ pub enum V1ManagerError {
     CGroupRequired(CtrlType),
     #[error("subsystem does not exist")]
     SubsystemDoesNotExist,
+    #[error(transparent)]
+    Pathrs(#[from] pathrs::error::Error),
 
     #[error(transparent)]
     BlkioController(WrappedIoError),
@@ -101,11 +104,14 @@ impl Manager {
         tracing::debug!("Get path for subsystem: {}", subsystem);
         let mount_point = util::get_subsystem_mount_point(subsystem)?;
 
-        let cgroup = Process::myself()?
-            .cgroups()?
-            .into_iter()
-            .find(|c| c.controllers.contains(&subsystem.to_string()))
-            .ok_or(V1ManagerError::SubsystemDoesNotExist)?;
+        let cgroup = ProcessCGroups::from_read(ProcfsHandle::new()?.open(
+            ProcfsBase::ProcSelf,
+            "cgroup",
+            OpenFlags::O_RDONLY | OpenFlags::O_CLOEXEC,
+        )?)?
+        .into_iter()
+        .find(|c| c.controllers.contains(&subsystem.to_string()))
+        .ok_or(V1ManagerError::SubsystemDoesNotExist)?;
 
         let p = if cgroup_path.as_os_str().is_empty() {
             mount_point.join_safely(Path::new(&cgroup.pathname))?
