@@ -97,7 +97,7 @@ impl MountInfoProvider for ProcMountInfoProvider {
                     .and_then(|s| MountInfo::from_line(&s).map_err(MountError::from))
             })
             .collect::<Result<_>>()?;
-        return Ok(mount_infos);
+        Ok(mount_infos)
     }
 }
 
