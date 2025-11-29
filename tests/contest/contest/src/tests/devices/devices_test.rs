@@ -33,8 +33,6 @@ fn create_spec() -> Result<Spec> {
     let device3 = LinuxDeviceBuilder::default()
         .path("/dev/test3")
         .typ(LinuxDeviceType::P)
-        .major(8)
-        .minor(666)
         .file_mode(432u32)
         .build()
         .context("failed to create device 3")?;
