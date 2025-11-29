@@ -1,4 +1,5 @@
 use std::os::fd::FromRawFd;
+use std::time::Instant;
 
 use libcgroups::common::CgroupManager;
 use nix::unistd::{Gid, Pid, Uid, close, getpid, write};
@@ -264,10 +265,13 @@ fn apply_cgroups<
     init: bool,
 ) -> Result<()> {
     let pid = getpid();
+
+    let start = Instant::now();
     cmanager.add_task(pid).map_err(|err| {
         tracing::error!(?pid, ?err, ?init, "failed to add task to cgroup");
         IntermediateProcessError::Cgroup(err.to_string())
     })?;
+    tracing::debug!(?pid, ?init, "cgroup add_task took {:?}", start.elapsed());
 
     if let Some(resources) = resources {
         if init {
