@@ -19,6 +19,7 @@ pub mod net_devices;
 pub mod no_pivot;
 pub mod personality;
 pub mod pidfile;
+pub mod poststart;
 pub mod process;
 pub mod process_capabilities_fail;
 pub mod process_oom_score_adj;
