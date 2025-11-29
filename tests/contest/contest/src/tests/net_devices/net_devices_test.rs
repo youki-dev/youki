@@ -474,30 +474,12 @@ fn check_address() -> TestResult {
 pub fn get_net_devices_test() -> TestGroup {
     let mut test_group = TestGroup::new("net_devices");
     test_group.set_nonparallel();
-    let net_device_test = Test::new(
-        "net_device",
-        Box::new(check_net_device),
-    );
-    let net_device_rename_test = Test::new(
-        "net_device_rename",
-        Box::new(check_net_device_rename),
-    );
-    let net_devices_test = Test::new(
-        "net_devices",
-        Box::new(check_net_devices),
-    );
-    let empty_net_devices_test = Test::new(
-        "empty_net_devices",
-        Box::new(check_empty_net_devices),
-    );
-    let back_device_test = Test::new(
-        "back_device",
-        Box::new(check_back_device),
-    );
-    let address_test = Test::new(
-        "address",
-        Box::new(check_address),
-    );
+    let net_device_test = Test::new("net_device", Box::new(check_net_device));
+    let net_device_rename_test = Test::new("net_device_rename", Box::new(check_net_device_rename));
+    let net_devices_test = Test::new("net_devices", Box::new(check_net_devices));
+    let empty_net_devices_test = Test::new("empty_net_devices", Box::new(check_empty_net_devices));
+    let back_device_test = Test::new("back_device", Box::new(check_back_device));
+    let address_test = Test::new("address", Box::new(check_address));
     test_group.add(vec![
         Box::new(net_device_test),
         Box::new(net_device_rename_test),
