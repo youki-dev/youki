@@ -540,7 +540,7 @@ impl Mount {
 
     /// Make parent mount of rootfs private if it was shared, which is required by pivot_root.
     /// It also makes sure following bind mount does not propagate in other namespaces.
-    pub fn make_parent_mount_private(&self, rootfs: &Path) -> Result<Option<MountInfo>> {
+    pub fn make_parent_mount_private(&self, rootfs: &Path) -> Result<MountInfo> {
         let reader = BufReader::new(ProcfsHandle::new()?.open(
             ProcfsBase::ProcSelf,
             "mountinfo",
