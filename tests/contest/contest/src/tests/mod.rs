@@ -33,5 +33,6 @@ pub mod scheduler;
 pub mod seccomp;
 pub mod seccomp_notify;
 pub mod sysctl;
+pub mod time_ns;
 pub mod tlb;
 pub mod uid_mappings;
