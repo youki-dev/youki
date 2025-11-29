@@ -84,17 +84,20 @@ impl ProcMountInfoProvider {
 
 impl MountInfoProvider for ProcMountInfoProvider {
     fn mountinfo(&self) -> Result<Vec<MountInfo>> {
-        Process::myself()
-            .map_err(|err| {
-                tracing::error!("failed to get /proc/self: {}", err);
-                MountError::Procfs(err)
-            })?
-            .mountinfo()
-            .map_err(|err| {
-                tracing::error!("failed to get mount info: {}", err);
-                MountError::Procfs(err)
+        let reader = BufReader::new(ProcfsHandle::new()?.open(
+            ProcfsBase::ProcSelf,
+            "mountinfo",
+            OpenFlags::O_RDONLY | OpenFlags::O_CLOEXEC,
+        )?);
+
+        let mount_infos: Vec<MountInfo> = reader
+            .lines()
+            .map(|lr| {
+                lr.map_err(MountError::from)
+                    .and_then(|s| MountInfo::from_line(&s).map_err(MountError::from))
             })
-            .map(|mi| mi.0)
+            .collect::<Result<_>>()?;
+        return Ok(mount_infos);
     }
 }
 
@@ -541,20 +544,7 @@ impl Mount {
     /// Make parent mount of rootfs private if it was shared, which is required by pivot_root.
     /// It also makes sure following bind mount does not propagate in other namespaces.
     pub fn make_parent_mount_private(&self, rootfs: &Path) -> Result<MountInfo> {
-        let reader = BufReader::new(ProcfsHandle::new()?.open(
-            ProcfsBase::ProcSelf,
-            "mountinfo",
-            OpenFlags::O_RDONLY | OpenFlags::O_CLOEXEC,
-        )?);
-
-        let mount_infos: Vec<MountInfo> = reader
-            .lines()
-            .map(|lr| {
-                lr.map_err(MountError::from)
-                    .and_then(|s| MountInfo::from_line(&s).map_err(MountError::from))
-            })
-            .collect::<Result<_>>()?;
-
+        let mount_infos = self.mountinfo_provider.mountinfo()?;
         let parent_mount = find_parent_mount(rootfs, mount_infos)?;
 
         // check parent mount has 'shared' propagation type
