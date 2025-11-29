@@ -6,12 +6,12 @@ use oci_spec::runtime::{
     LinuxBuilder, LinuxNamespaceBuilder, LinuxNamespaceType, LinuxNetDevice, LinuxNetDeviceBuilder,
     ProcessBuilder, Spec, SpecBuilder,
 };
-use test_framework::{ConditionalTest, TestGroup, TestResult, test_result};
+use test_framework::{Test, TestGroup, TestResult, test_result};
 
 use crate::utils::test_utils::{
     CreateOptions, check_container_created, exec_container, start_container,
 };
-use crate::utils::{is_runtime_runc, test_inside_container, test_outside_container};
+use crate::utils::{test_inside_container, test_outside_container};
 
 fn create_unique_name(prefix: &str) -> String {
     let random_part: u16 = rand::random();
@@ -474,36 +474,12 @@ fn check_address() -> TestResult {
 pub fn get_net_devices_test() -> TestGroup {
     let mut test_group = TestGroup::new("net_devices");
     test_group.set_nonparallel();
-    let net_device_test = ConditionalTest::new(
-        "net_device",
-        Box::new(|| !is_runtime_runc()),
-        Box::new(check_net_device),
-    );
-    let net_device_rename_test = ConditionalTest::new(
-        "net_device_rename",
-        Box::new(|| !is_runtime_runc()),
-        Box::new(check_net_device_rename),
-    );
-    let net_devices_test = ConditionalTest::new(
-        "net_devices",
-        Box::new(|| !is_runtime_runc()),
-        Box::new(check_net_devices),
-    );
-    let empty_net_devices_test = ConditionalTest::new(
-        "empty_net_devices",
-        Box::new(|| !is_runtime_runc()),
-        Box::new(check_empty_net_devices),
-    );
-    let back_device_test = ConditionalTest::new(
-        "back_device",
-        Box::new(|| !is_runtime_runc()),
-        Box::new(check_back_device),
-    );
-    let address_test = ConditionalTest::new(
-        "address",
-        Box::new(|| !is_runtime_runc()),
-        Box::new(check_address),
-    );
+    let net_device_test = Test::new("net_device", Box::new(check_net_device));
+    let net_device_rename_test = Test::new("net_device_rename", Box::new(check_net_device_rename));
+    let net_devices_test = Test::new("net_devices", Box::new(check_net_devices));
+    let empty_net_devices_test = Test::new("empty_net_devices", Box::new(check_empty_net_devices));
+    let back_device_test = Test::new("back_device", Box::new(check_back_device));
+    let address_test = Test::new("address", Box::new(check_address));
     test_group.add(vec![
         Box::new(net_device_test),
         Box::new(net_device_rename_test),
