@@ -1267,8 +1267,6 @@ mod tests {
         assert_eq!(got.flags, MsFlags::MS_PRIVATE);
         assert_eq!(got.data, None);
 
-        // This can be either depending on the system, some systems mount tmpfs at /tmp others it's
-        // a plain directory. See https://github.com/containers/youki/issues/471
         assert_eq!(got.target, parent);
 
         Ok(())
