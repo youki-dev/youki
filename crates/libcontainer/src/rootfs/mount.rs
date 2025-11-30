@@ -1012,8 +1012,8 @@ pub fn find_parent_mount(
 mod tests {
     #[cfg(feature = "v1")]
     use std::fs;
-    use std::fs::OpenOptions;
     use std::os::unix::fs::symlink;
+    use std::{fs::OpenOptions, str::FromStr};
 
     use anyhow::{Context, Ok, Result};
 
@@ -1230,9 +1230,9 @@ mod tests {
 
     #[test]
     fn test_make_parent_mount_private() -> Result<()> {
-        let tmp_dir = tempfile::tempdir()?;
+        let tmp_dir = PathBuf::from_str("/tmp/mydir")?;
 
-        let parent = tmp_dir.path().parent().unwrap().to_path_buf();
+        let parent = tmp_dir.as_path().parent().unwrap().to_path_buf();
         let fake = FakeMountInfo {
             entries: vec![MountInfo {
                 mnt_id: 1,
@@ -1249,7 +1249,7 @@ mod tests {
         };
 
         let m = Mount::new().with_mountinfo_provider(fake);
-        m.make_parent_mount_private(tmp_dir.path())?;
+        m.make_parent_mount_private(tmp_dir.as_path())?;
 
         let set = m
             .syscall
@@ -1268,16 +1268,16 @@ mod tests {
 
         // This can be either depending on the system, some systems mount tmpfs at /tmp others it's
         // a plain directory. See https://github.com/containers/youki/issues/471
-        assert!(got.target == PathBuf::from("/") || got.target == PathBuf::from("/tmp"));
+        assert_eq!(got.target, parent);
 
         Ok(())
     }
 
     #[test]
     fn test_not_make_parent_mount_private_if_already_private() -> Result<()> {
-        let tmp_dir = tempfile::tempdir()?;
+        let tmp_dir = PathBuf::from_str("/tmp/mydir")?;
 
-        let parent = tmp_dir.path().parent().unwrap().to_path_buf();
+        let parent = tmp_dir.as_path().parent().unwrap().to_path_buf();
         let fake = FakeMountInfo {
             entries: vec![MountInfo {
                 mnt_id: 1,
@@ -1294,7 +1294,7 @@ mod tests {
         };
 
         let m = Mount::new().with_mountinfo_provider(fake);
-        m.make_parent_mount_private(tmp_dir.path())?;
+        m.make_parent_mount_private(tmp_dir.as_path())?;
 
         let set = m
             .syscall
