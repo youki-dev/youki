@@ -1,8 +1,8 @@
 # libcontainer
 
-This crate is one of the core crates of the youki workspace, and has functions and structs that deal with the actual craetion and management of the container processes.
+This crate is one of the core crates of the youki workspace, and has functions and structs that deal with the actual creation and management of the container processes.
 
-Remember, in the end, a container is just another process in Linux, which has control groups, namespaces, pivot_root and other mechanisms applied to it. The program executing has the impression that is is running on a complete system, but from the host system's perspective, it is just another process, and has attributes such as pid, file descriptors, etc. associated with it like any other process.
+Remember, in the end, a container is just another process in Linux, which has control groups, namespaces, pivot_root and other mechanisms applied to it. The program executing has the impression that it is running on a complete system, but from the host system's perspective, it is just another process, and has attributes such as pid, file descriptors, etc. associated with it like any other process.
 
 Along with the container related functions, this crate also provides Youki Config, a subset of the OCI spec config. This config contains only the essential data required for running the containers, and due to its smaller size, parsing it and passing it around is more efficient than the complete OCI spec config struct.
 
@@ -12,7 +12,7 @@ This crate also provides an interface for Apparmor which is another Linux Kernel
 
 ### Notes
 
-#### Some other modules expose by this crate are
+#### Some other modules exposed by this crate are
 
 - rootfs, which is a ramfs like simple filesystem used by kernel during initialization
 - hooks, which allow running of specified program at certain points in the container lifecycle, such as before and after creation, start etc.
@@ -20,7 +20,7 @@ This crate also provides an interface for Apparmor which is another Linux Kernel
 - capabilities, which has functions related to set and reset specific capabilities, as well as to drop extra privileges
   - [Simple explanation of capabilities](https://blog.container-solutions.com/linux-capabilities-in-practice)
   - [man page for capabilities](https://man7.org/linux/man-pages/man7/capabilities.7.html)
-- tty module which daels with providing terminal interface to the container process
+- tty module which deals with providing terminal interface to the container process
   - [pseudoterminal man page](https://man7.org/linux/man-pages/man7/pty.7.html) : Information about the pseudoterminal system, useful to understand console_socket parameter in create subcommand
 
 #### Executor
