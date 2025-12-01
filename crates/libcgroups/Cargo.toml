@@ -37,7 +37,7 @@ tracing = { version = "0.1.43", features = ["attributes"] }
 anyhow = "1.0"
 oci-spec = { version = "~0.8.3", features = ["proptests", "runtime"] }
 quickcheck = "1"
-mockall = { version = "0.13.1", features = [] }
+mockall = { version = "0.14.0", features = [] }
 clap = "4.5.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
