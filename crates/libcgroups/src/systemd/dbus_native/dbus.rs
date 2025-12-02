@@ -274,6 +274,26 @@ impl DbusConnection {
         Ok(ret)
     }
 
+    /// function to read messages off the socket
+    pub fn read_messages(&self) -> Result<Vec<Message>> {
+        let mut ret = Vec::new();
+
+        let message_bytes = self.receive_complete_response()?;
+
+        let mut buf = &message_bytes[..];
+
+        while !buf.is_empty() {
+            let mut ctr = 0;
+            let msg = Message::deserialize(&buf[ctr..], &mut ctr)?;
+            // we reset the buf, because I couldn't figure out how the adjust_counter function
+            // should should be changed to work correctly with non-zero start counter, and this solved that issue
+            buf = &buf[ctr..];
+            ret.push(msg);
+        }
+
+        Ok(ret)
+    }
+
     /// function to send message of given type with given headers and body
     /// over the dbus connection. The caller must specify the destination, interface etc.etc.
     /// in the headers, this function will only take care of sending the message and
@@ -492,6 +512,31 @@ impl SystemdClient for DbusConnection {
     fn add_process_to_unit(&self, unit_name: &str, subcgroup: &str, pid: u32) -> Result<()> {
         let proxy = self.create_proxy();
         proxy.attach_process(unit_name, subcgroup, pid)
+    }
+
+    fn subscribe_job_remove_signal(&self) -> std::result::Result<(), SystemdClientError> {
+        let proxy = self.create_proxy();
+        proxy.method_call::<_, ()>("org.freedesktop.systemd1.Manager", "Subscribe", Some(()))
+    }
+
+    fn dbus_add_match(
+        &self,
+        filter_type: &str,
+        sender: &str,
+        interface: &str,
+        member: &str,
+    ) -> std::result::Result<(), SystemdClientError> {
+        let proxy = self.proxy("org.freedesktop.DBus", "/org/freedesktop/DBus");
+        let rule = format!(
+            "type='{}',sender='{}',interface='{}',member={}",
+            filter_type, sender, interface, member
+        );
+        proxy.method_call::<_, ()>("org.freedesktop.DBus", "AddMatch", Some(rule))
+    }
+
+    fn unsubscribe_job_remove_signal(&self) -> std::result::Result<(), SystemdClientError> {
+        let proxy = self.create_proxy();
+        proxy.method_call::<_, ()>("org.freedesktop.systemd1.Manager", "Unsubscribe", Some(()))
     }
 }
 
