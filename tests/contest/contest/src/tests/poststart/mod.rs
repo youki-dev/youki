@@ -170,8 +170,6 @@ fn get_test(test_name: &'static str) -> Test {
                     "process called\npost-start called\n" => TestResult::Passed,
                     "post-start called\nprocess called\n" => TestResult::Passed,
                     "process called\n" => {
-                        // TODO: in the original test this is allowed for some reason, but I don't
-                        // think this is correct
                         TestResult::Failed(anyhow!("The runtime MUST run the post-start hook"))
                     }
                     "post-start called\n" => TestResult::Failed(anyhow!(
