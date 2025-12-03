@@ -40,7 +40,7 @@ nix = { version = "0.29.0", features = [
 ] }
 oci-spec = { version = "0.8.3", features = ["runtime"] }
 once_cell = "1.21.3"
-procfs = "0.17.0"
+procfs = "0.18.0"
 prctl = "1.0.0"
 protobuf = "= 3.2.0" # https://github.com/checkpoint-restore/rust-criu/issues/19
 libcgroups = { path = "../libcgroups", default-features = false, version = "0.5.7" } # MARK: Version
