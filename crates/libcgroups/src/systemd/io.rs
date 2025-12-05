@@ -37,21 +37,25 @@ impl Io {
         blkio: &LinuxBlockIo,
         properties: &mut HashMap<&str, Variant>,
     ) -> Result<(), SystemdIoError> {
-        let mut apply_limits =
-            |devices: &[LinuxThrottleDevice], key| -> Result<(), SystemdIoError> {
-                let mut limits = Vec::new();
-                for d in devices {
+        let mut apply_limits = |devices: &[LinuxThrottleDevice],
+                                key|
+         -> Result<(), SystemdIoError> {
+            let limits = devices
+                .iter()
+                .map(|d| {
                     let rate = d.rate();
-                    let Some(dev) = dev_path_from_major_minor(d.major(), d.minor()) else {
-                        return Err(SystemdIoError::DeviceNotFound(d.major(), d.minor()));
+                    let dev = match dev_path_from_major_minor(d.major(), d.minor()) {
+                        Some(path) => path,
+                        None => return Err(SystemdIoError::DeviceNotFound(d.major(), d.minor())),
                     };
-                    limits.push(Structure::new(dev, rate));
-                }
-                if !limits.is_empty() {
-                    properties.insert(key, Variant::ArrayStructU64(limits));
-                }
-                Ok(())
-            };
+                    Ok(Structure::new(dev, rate))
+                })
+                .collect::<Result<Vec<Structure<u64>>, SystemdIoError>>()?;
+            if !limits.is_empty() {
+                properties.insert(key, Variant::ArrayStructU64(limits));
+            }
+            Ok(())
+        };
         if let Some(devices) = blkio.throttle_read_bps_device() {
             apply_limits(devices, IO_READ_BANDWIDTH_MAX)?;
         }
