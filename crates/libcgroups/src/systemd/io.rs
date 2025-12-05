@@ -37,9 +37,8 @@ impl Io {
         blkio: &LinuxBlockIo,
         properties: &mut HashMap<&str, Variant>,
     ) -> Result<(), SystemdIoError> {
-        // anonymous function for applying limits
         let mut apply_limits =
-            |devices: &Vec<LinuxThrottleDevice>, key| -> Result<(), SystemdIoError> {
+            |devices: &[LinuxThrottleDevice], key| -> Result<(), SystemdIoError> {
                 let mut limits = Vec::new();
                 for d in devices {
                     let rate = d.rate();

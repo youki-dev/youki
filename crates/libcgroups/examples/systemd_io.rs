@@ -15,7 +15,9 @@ fn main() -> Result<()> {
     };
     let manager = create_cgroup_manager(cfg)?;
     let mem_limit = 256 * 1024 * 1024;
-    let rate: u64 = 1000;
+    // Throttle rate in bytes per second (Bps) for the block IO device
+    const THROTTLE_RATE_BPS: u64 = 1000;
+    let rate: u64 = THROTTLE_RATE_BPS;
     let memory_resource = LinuxMemoryBuilder::default().limit(mem_limit).build()?;
     let device = LinuxThrottleDeviceBuilder::default()
         .major(259)
