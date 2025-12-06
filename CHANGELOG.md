@@ -1,5 +1,27 @@
 # Changelog
 
+## [v0.5.8](https://github.com/youki-dev/youki/compare/v0.5.7...v0.5.8) - 2025-12-06
+### 💪 Improvements
+- Add net device feature by @nayuta723 in https://github.com/youki-dev/youki/pull/3163
+### 💥 Breaking Changes
+- fix hooks order by @saku3 in https://github.com/youki-dev/youki/pull/3256
+### 📖 Documentation improvements
+- chore: fix docs mdbook toml by @YJDoc2 in https://github.com/youki-dev/youki/pull/3307
+- Doc: delete redundant statement on youki.md in dev doc by @logica0419 in https://github.com/youki-dev/youki/pull/3310
+### 🧪 Test improvements and Misc Fixes
+- Update netlink-packet dependencies to versions 0.8.1 and 0.25.1 in Cargo.toml and Cargo.lock by @nayuta723 in https://github.com/youki-dev/youki/pull/3297
+- Fixed minor spelling errors in libcontainer documentation. by @CheatCodeSam in https://github.com/youki-dev/youki/pull/3305
+- Add poststart hook test by @fspv in https://github.com/youki-dev/youki/pull/3292
+- Update/runc 1.4.0 by @nayuta723 in https://github.com/youki-dev/youki/pull/3304
+### Other Changes
+- chore(deps): bump which from 7.0.2 to 8.0.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3287
+- (auto merged) chore(deps): bump the patch group across 1 directory with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3302
+- (auto merged) chore(deps): bump tracing-journald from 0.3.1 to 0.3.2 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3303
+- (auto merged) chore(deps): bump the patch group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3306
+- chore(deps): bump mockall from 0.13.1 to 0.14.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3301
+- chore(deps): bump wasmtime from 31.0.0 to 35.0.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3288
+- (auto merged) chore(deps): bump libc from 0.2.177 to 0.2.178 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3308
+
 ## [v0.5.7](https://github.com/youki-dev/youki/compare/v0.5.6...v0.5.7) - 2025-11-05
 ### 💪 Improvements
 - Drop cgroup v1 in github workflows by @utam0k in https://github.com/youki-dev/youki/pull/3284
