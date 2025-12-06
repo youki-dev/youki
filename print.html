@@ -13,21 +13,20 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="favicon.svg">
-        <link rel="shortcut icon" href="favicon.png">
-        <link rel="stylesheet" href="css/variables.css">
-        <link rel="stylesheet" href="css/general.css">
-        <link rel="stylesheet" href="css/chrome.css">
-        <link rel="stylesheet" href="css/print.css" media="print">
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="fonts/fonts.css">
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
 
@@ -37,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex.js";
+            window.path_to_searchindex_js = "searchindex-4415311c.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc.js"></script>
+        <script src="toc-d31ef357.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -54,7 +53,7 @@
             </div>
         </div>
     </div>
-    <div id="body-container">
+    <div id="mdbook-body-container">
         <!-- Work around some values being stored in localStorage wrapped in quotes -->
         <script>
             try {
@@ -83,12 +82,12 @@
             html.classList.add("js");
         </script>
 
-        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
 
         <!-- Hide / unhide sidebar before it is displayed -->
         <script>
             let sidebar = null;
-            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
             if (document.body.clientWidth >= 1080) {
                 try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
                 sidebar = sidebar || 'visible';
@@ -103,39 +102,39 @@
             }
         </script>
 
-        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
                 <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
             </noscript>
-            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
             </div>
         </nav>
 
-        <div id="page-wrapper" class="page-wrapper">
+        <div id="mdbook-page-wrapper" class="page-wrapper">
 
             <div class="page">
-                <div id="menu-bar-hover-placeholder"></div>
-                <div id="menu-bar" class="menu-bar sticky">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
                     <div class="left-buttons">
-                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
-                            <i class="fa fa-bars"></i>
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
                         </label>
-                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
-                            <i class="fa fa-paint-brush"></i>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
                         </button>
-                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
-                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
                         </ul>
-                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
-                            <i class="fa fa-search"></i>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
                         </button>
                     </div>
 
@@ -143,61 +142,69 @@
 
                     <div class="right-buttons">
                         <a href="print.html" title="Print this book" aria-label="Print this book">
-                            <i id="print-button" class="fa fa-print"></i>
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
                         </a>
 
                     </div>
                 </div>
 
-                <div id="search-wrapper" class="hidden">
-                    <form id="searchbar-outer" class="searchbar-outer">
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
                         <div class="search-wrapper">
-                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
                             <div class="spinner-wrapper">
-                                <i class="fa fa-spinner fa-spin"></i>
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
                             </div>
                         </div>
                     </form>
-                    <div id="searchresults-outer" class="searchresults-outer hidden">
-                        <div id="searchresults-header" class="searchresults-header"></div>
-                        <ul id="searchresults">
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
                         </ul>
                     </div>
                 </div>
 
                 <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
                 <script>
-                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
-                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
-                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
                         link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
                     });
                 </script>
 
-                <div id="content" class="content">
+                <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="youki"><a class="header" href="#youki">Youki</a></h1>
 <p align="center">
-  <img src="./assets/youki.png" width="450">
+  <img src="assets/youki.png" width="450">
 </p>
+
 <p>youki is an implementation of the <a href="https://github.com/opencontainers/runtime-spec">OCI runtime-spec</a> in Rust, similar to <a href="https://github.com/opencontainers/runc">runc</a>.</p>
 <h2 id="about-the-name"><a class="header" href="#about-the-name">About the name</a></h2>
 <p>youki is pronounced as /joʊki/ or yoh-key.
-youki is named after the Japanese word 'youki', which means 'a container'. In Japanese language, youki also means 'cheerful', 'merry', or 'hilarious'.</p>
+youki is named after the Japanese word ‘youki’, which means ‘a container’. In Japanese language, youki also means ‘cheerful’, ‘merry’, or ‘hilarious’.</p>
 <h2 id="motivation"><a class="header" href="#motivation">Motivation</a></h2>
 <p>Here is why we are writing a new container runtime in Rust.</p>
 <ul>
 <li>
-<p>Rust is one of the best languages to implement the oci-runtime spec. Many very nice container tools are currently written in Go. However, the container runtime requires the use of system calls, which requires a bit of special handling when implemented in Go. This is too tricky (e.g. <em>namespaces(7)</em>, <em>fork(2)</em>); with Rust, it's not that tricky. And, unlike in C, Rust provides the benefit of memory safety. While Rust is not yet a major player in the container field, it has the potential to contribute a lot: something this project attempts to exemplify.</p>
+<p>Rust is one of the best languages to implement the oci-runtime spec. Many very nice container tools are currently written in Go. However, the container runtime requires the use of system calls, which requires a bit of special handling when implemented in Go. This is too tricky (e.g. <em>namespaces(7)</em>, <em>fork(2)</em>); with Rust, it’s not that tricky. And, unlike in C, Rust provides the benefit of memory safety. While Rust is not yet a major player in the container field, it has the potential to contribute a lot: something this project attempts to exemplify.</p>
 </li>
 <li>
 <p>youki has the potential to be faster and use less memory than runc, and therefore work in environments with tight memory usage requirements. Here is a simple benchmark of a container from creation to deletion.</p>
-<div class="table-wrapper"><table><thead><tr><th style="text-align: center">Runtime</th><th style="text-align: center">Time (mean ± σ)</th><th style="text-align: center">Range (min … max)</th></tr></thead><tbody>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: center">Runtime</th><th style="text-align: center">Time (mean ± σ)</th><th style="text-align: center">Range (min … max)</th></tr>
+</thead>
+<tbody>
 <tr><td style="text-align: center">youki</td><td style="text-align: center">198.4 ms ± 52.1 ms</td><td style="text-align: center">97.2 ms … 296.1 ms</td></tr>
 <tr><td style="text-align: center">runc</td><td style="text-align: center">352.3 ms ± 53.3 ms</td><td style="text-align: center">248.3 ms … 772.2 ms</td></tr>
 <tr><td style="text-align: center">crun</td><td style="text-align: center">153.5 ms ± 21.6 ms</td><td style="text-align: center">80.9 ms … 196.6 ms</td></tr>
-</tbody></table>
-</div><details>
+</tbody>
+</table>
+</div>
+<details>
 <summary>Details about the benchmark</summary>
 <ul>
 <li>A command used for the benchmark
@@ -216,7 +223,8 @@ youki is named after the Japanese word 'youki', which means 'a container'. In Ja
 <p>I have fun implementing this. In fact, this may be the most important.</p>
 </li>
 </ul>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="user-documentation"><a class="header" href="#user-documentation">User Documentation</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="user-documentation"><a class="header" href="#user-documentation">User Documentation</a></h1>
 <p>This section provides documentation of youki and the sub crates that the youki repo contains for the users. So if you are using youki as a low level container runtime, or using any of the crates in youki workspace as dependencies for your own project, this section might be helpful for you.</p>
 <p>This is divided into following sub-sections :</p>
 <ul>
@@ -232,13 +240,14 @@ youki is named after the Japanese word 'youki', which means 'a container'. In Ja
 </li>
 <li>Webassembly : This explains how to use webassembly module with youki.</li>
 </ul>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="basic-setup"><a class="header" href="#basic-setup">Basic Setup</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="basic-setup"><a class="header" href="#basic-setup">Basic Setup</a></h1>
 <p>This explains the requirements to use youki as a low-level container runtime, or to depend once of its crates as dependency for your own project.</p>
 <p>Youki currently only supports Linux Platform, and to use it on other platform you will need to use some kind of virtualization.</p>
 <p>Also note that youki currently only supports and expects systemd as init system, and would not work on other systems. There is currently work on-going to put systemd dependent features behind a feature flag, but till then you will need a systemd enabled system to work with youki.</p>
 <h2 id="getting-started"><a class="header" href="#getting-started">Getting Started</a></h2>
 <h3 id="runtime-requirements"><a class="header" href="#runtime-requirements">Runtime requirements</a></h3>
-<p>The static binary (musl) builds of youki have no additional runtime requirements. Otherwise you need to install the runtime requirements using your distribution's package manager:</p>
+<p>The static binary (musl) builds of youki have no additional runtime requirements. Otherwise you need to install the runtime requirements using your distribution’s package manager:</p>
 <h4 id="debian-ubuntu-and-related-distributions"><a class="header" href="#debian-ubuntu-and-related-distributions">Debian, Ubuntu and related distributions</a></h4>
 <pre><code class="language-console">sudo apt-get install libseccomp2
 </code></pre>
@@ -270,11 +279,11 @@ sudo systemctl reload docker
 <p>Once configured, you can run a container using youki like this:</p>
 <pre><code class="language-console">docker run --rm --runtime youki hello-world
 </code></pre>
-<p>For more details, see <a href="user/./basic_usage.html">Basic Usage</a>.</p>
-<hr />
+<p>For more details, see <a href="#basic-usage">Basic Usage</a>.</p>
+<hr>
 <h2 id="installing-youki-from-source"><a class="header" href="#installing-youki-from-source">Installing youki from source</a></h2>
 <h3 id="build-requirements"><a class="header" href="#build-requirements">Build Requirements</a></h3>
-<p>As youki is written in Rust, you will need to install and setup Rust toolchain to compile it. The instructions for that can be found on Rust's official site <a href="https://www.rust-lang.org/tools/install">here</a>.
+<p>As youki is written in Rust, you will need to install and setup Rust toolchain to compile it. The instructions for that can be found on Rust’s official site <a href="https://www.rust-lang.org/tools/install">here</a>.
 If you installed it using rustup, the correct compiler version will be setup automatically from <code>rust-toolchain.toml</code> in the repo root.</p>
 <h3 id="build-with-cross-rs"><a class="header" href="#build-with-cross-rs">Build with cross-rs</a></h3>
 <p>You can compile youki using <a href="https://github.com/cross-rs/cross">cross-rs</a>, which provides:</p>
@@ -290,7 +299,7 @@ If you installed it using rustup, the correct compiler version will be setup aut
 <p>Install the build dependencies and then run:</p>
 <pre><code class="language-console">just youki-dev # or youki-release
 </code></pre>
-<p>Install the build dependencies using your distribution's package manger</p>
+<p>Install the build dependencies using your distribution’s package manger</p>
 <h4 id="debian-ubuntu-and-related-distributions-1"><a class="header" href="#debian-ubuntu-and-related-distributions-1">Debian, Ubuntu and related distributions</a></h4>
 <pre><code class="language-console">sudo apt-get install    \
       pkg-config        \
@@ -324,7 +333,7 @@ just youki-dev # or youki-release
 ./youki -h # get information about youki command
 </code></pre>
 <p>This will build the youki binary, and put it at the root level of the cloned directory, that is in the youki/ .</p>
-<hr />
+<hr>
 <h3 id="using-sub-crates-as-dependency"><a class="header" href="#using-sub-crates-as-dependency">Using sub-crates as dependency</a></h3>
 <p>To use any of the sub-crate as a dependency in your own project, you can specify the dependency as follows,</p>
 <pre><code class="language-toml">[dependencies]
@@ -336,7 +345,7 @@ liboci-cli = { git = "https://github.com/youki-dev/youki.git" }
 <p>Then you can use it in your source as</p>
 <pre><code>use liboci_cli::{...}
 </code></pre>
-<hr />
+<hr>
 <h3 id="using-vagrant-to-run-youki-on-non-linux-platform"><a class="header" href="#using-vagrant-to-run-youki-on-non-linux-platform">Using Vagrant to run youki on non-Linux Platform</a></h3>
 <p>As explained before, youki only support Linux, and to build/use it on non-Linux Platforms, you will need to use some kind of virtualization. The repo provides a Vagrantfile to do the required VM setup using Vagrant, which can be installed from <a href="https://www.vagrantup.com/docs/installation">here</a>.</p>
 <p>Once installed and setup, you can run vagrant commands in the cloned directory to run youki inside the VM created by vagrant :</p>
@@ -354,7 +363,8 @@ vagrant ssh rootful
 cd youki
 just youki-dev # or youki-release
 </code></pre>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="basic-usage"><a class="header" href="#basic-usage">Basic Usage</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="basic-usage"><a class="header" href="#basic-usage">Basic Usage</a></h1>
 <p>This explains using Youki as a low-level container runtime. Youki can be used by itself to create, start and run containers, but doing so can be tedious, and thus you might want to use a higher-level runtime with Youki set as its runtime, so that you can get a convenient and easy interface.</p>
 <p>You can use Youki with Docker, or Podman, but for the purpose of the examples, we will illustrate using Docker.</p>
 <p>Youki can run in two modes, namely rootful mode, and rootless mode. The primary difference from the user-perspective in these is that as the name suggests, rootless mode does not require root/admin permissions, while rootful mode needs the root permissions. Both of these are shown in the examples below.</p>
@@ -371,7 +381,7 @@ just youki-dev # or youki-release
 <pre><code class="language-console">dockerd --experimental --add-runtime="youki=$(pwd)/youki" # run in the youki/scripts directory
 </code></pre>
 <p>This will start the daemon and hang up the console. You can either start this as a background process to continue using the same terminal, or use another terminal, which will make it easier to stop the docker daemon later.</p>
-<p>In case you don't stop the original daemon, you can get an error message after previous command</p>
+<p>In case you don’t stop the original daemon, you can get an error message after previous command</p>
 <pre><code class="language-console">failed to start daemon: pid file found, ensure docker is not running or delete /var/run/docker.pid
 </code></pre>
 <p>Now that the docker daemon is running, you can use docker normally as you will, but you will be able to specify Youki as its low-level runtime to actually create, start and stop the containers.</p>
@@ -450,7 +460,7 @@ sudo ./youki list
 # delete the container
 sudo ./youki delete tutorial_container
 </code></pre>
-<p>The example above shows how to run Youki in a 'rootful' way. To run it without root permissions, that is, in rootless mode, few changes are required.</p>
+<p>The example above shows how to run Youki in a ‘rootful’ way. To run it without root permissions, that is, in rootless mode, few changes are required.</p>
 <p>First, after exporting the rootfs from docker, while generating the config, you will need to pass the rootless flag. This will generate the config withe the options needed for rootless operation of the container.</p>
 <pre><code class="language-console">../youki spec --rootless
 </code></pre>
@@ -469,11 +479,13 @@ set the log-level. For least amount of log, we recommend using the <code>error</
 level. For the most spammy logging, we have a <code>trace</code> level.</p>
 <p>For compatibility with <code>runc</code> and <code>crun</code>, we have a <code>--debug</code> flag to set the
 log level to <code>debug</code>. This flag is ignored if <code>--log-level</code> is also set.</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="crates-provided"><a class="header" href="#crates-provided">Crates provided</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="crates-provided"><a class="header" href="#crates-provided">Crates provided</a></h1>
 <p>Youki repo itself is a Cargo workspace, comprising of several sub-crates, each one for some specific functionality. The youki binary depends on this to provide the low-level functionality, and you can use these crate as a dependency for your own projects as well.</p>
-<p>For more information on how to add a sub-crate as a dependency in your project, see <a href="user/./basic_usage.html">Basic Usage</a>.</p>
+<p>For more information on how to add a sub-crate as a dependency in your project, see <a href="#basic-usage">Basic Usage</a>.</p>
 <p>The subsection in this part briefly explains some of the crates, and some of the functionality they expose. This should be good enough to get a general idea of each crate. To get detailed information about the structs, functions and modules each crate exposes, unfortunately, for the time being, you will need to go through the source itself, but we are working on creating better docs.</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="libcgroups"><a class="header" href="#libcgroups">libcgroups</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="libcgroups"><a class="header" href="#libcgroups">libcgroups</a></h1>
 <p>libcgroups is the crate that contains functionality to work with Linux cgroups. This provide an easy to use interface over reading and writing cgroups files, as well as various structs that represent the cgroups data.</p>
 <p>The modules that it exposes are :</p>
 <ul>
@@ -512,7 +524,7 @@ log level to <code>debug</code>. This flag is ignored if <code>--log-level</code
 <p>function <code>get_cgroup_setup</code> which returns setup of cgroups (v1,v2, hybrid) on the system with default cgroup root path <code>/sys/fs/cgroup</code></p>
 </li>
 <li>
-<p>function <code>create_cgroup_manager_with_root</code> which returns corresponding cgroup manager on the system with specified cgroup root path, if the passed <code>root_path</code> argument is <code>None</code>, then it's same as function <code>create_cgroup_manager</code></p>
+<p>function <code>create_cgroup_manager_with_root</code> which returns corresponding cgroup manager on the system with specified cgroup root path, if the passed <code>root_path</code> argument is <code>None</code>, then it’s same as function <code>create_cgroup_manager</code></p>
 </li>
 <li>
 <p>function <code>create_cgroup_manager</code> which returns corresponding cgroup manager on the system with default cgroup root path <code>/sys/fs/cgroup</code></p>
@@ -584,7 +596,8 @@ log level to <code>debug</code>. This flag is ignored if <code>--log-level</code
 <h3 id="v1-and-v2"><a class="header" href="#v1-and-v2">v1 and v2</a></h3>
 <p>These two modules contains functionalities specific to cgroups version 1 and version 2. Both of these expose respective cgroup managers, which can be used to manage that type of cgroup, as well as some utility functions related to respective cgroup version, such as <code>get_mount_points</code> (for v1 and v2), <code>get_subsystem_mount points</code> (for v1), and <code>get_available_controllers</code> (for v2) etc.</p>
 <p>The v2 module also exposes devices module, which provides functionality for working with bpf, such as load a bpf program, query info of a bpf program, attach and detach a bpf program to a cgroup, etc.</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="libcontainer"><a class="header" href="#libcontainer">libcontainer</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="libcontainer"><a class="header" href="#libcontainer">libcontainer</a></h1>
 <p>This crate provides functionality for creating and managing containers. Youki itself uses this crate to manage and control the containers.</p>
 <p>This exposes several modules, each dealing with a specific aspect of working with containers.</p>
 <ul>
@@ -634,10 +647,16 @@ log level to <code>debug</code>. This flag is ignored if <code>--log-level</code
 <p><code>utils</code> : provides various utility functions, such as <code>parse_env</code> to parse the env variables, <code>get_cgroups_path</code>, <code>create_dir_all_with_mode</code> etc.</p>
 </li>
 </ul>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="liboci-cli"><a class="header" href="#liboci-cli">liboci-cli</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="liboci-cli"><a class="header" href="#liboci-cli">liboci-cli</a></h1>
 <p>This module provides the structs for command line arguments for OCI container runtimes as specified in the OCI Runtime Command Line Interface. The exposed structures derive <code>clap::Parser</code>, so that they can be directly used for parsing oci-commandline arguments.</p>
 <h3 id="implemented-subcommands"><a class="header" href="#implemented-subcommands">Implemented subcommands</a></h3>
-<div class="table-wrapper"><table><thead><tr><th style="text-align: center">Command</th><th style="text-align: center">liboci-cli</th><th style="text-align: center">CLI Specification</th><th style="text-align: center">runc</th><th style="text-align: center">crun</th><th style="text-align: center">youki</th></tr></thead><tbody>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: center">Command</th><th style="text-align: center">liboci-cli</th><th style="text-align: center">CLI Specification</th><th style="text-align: center">runc</th><th style="text-align: center">crun</th><th style="text-align: center">youki</th></tr>
+</thead>
+<tbody>
 <tr><td style="text-align: center">create</td><td style="text-align: center">✅</td><td style="text-align: center">✅</td><td style="text-align: center">✅</td><td style="text-align: center">✅</td><td style="text-align: center">✅</td></tr>
 <tr><td style="text-align: center">start</td><td style="text-align: center">✅</td><td style="text-align: center">✅</td><td style="text-align: center">✅</td><td style="text-align: center">✅</td><td style="text-align: center">✅</td></tr>
 <tr><td style="text-align: center">state</td><td style="text-align: center">✅</td><td style="text-align: center">✅</td><td style="text-align: center">✅</td><td style="text-align: center">✅</td><td style="text-align: center">✅</td></tr>
@@ -654,10 +673,14 @@ log level to <code>debug</code>. This flag is ignored if <code>--log-level</code
 <tr><td style="text-align: center">run</td><td style="text-align: center">✅</td><td style="text-align: center"></td><td style="text-align: center">✅</td><td style="text-align: center">✅</td><td style="text-align: center">✅</td></tr>
 <tr><td style="text-align: center">spec</td><td style="text-align: center">✅</td><td style="text-align: center"></td><td style="text-align: center">✅</td><td style="text-align: center">✅</td><td style="text-align: center">✅</td></tr>
 <tr><td style="text-align: center">update</td><td style="text-align: center"></td><td style="text-align: center"></td><td style="text-align: center">✅</td><td style="text-align: center">✅</td><td style="text-align: center"></td></tr>
-</tbody></table>
-</div><div style="break-before: page; page-break-before: always;"></div><h1 id="libseccomp"><a class="header" href="#libseccomp">libseccomp</a></h1>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="libseccomp"><a class="header" href="#libseccomp">libseccomp</a></h1>
 <p>This crate provides Rust FFI bindings to <a href="https://github.com/seccomp/libseccomp">libseccomp</a>. This is adapted from code generated using rust-bindgen from a C header file. This also manually fixes some of the issues that occur as rust-bindgen has some issues when dealing with C function macros.</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="webassembly"><a class="header" href="#webassembly">Webassembly</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="webassembly"><a class="header" href="#webassembly">Webassembly</a></h1>
 <p>There are 3 things you need to do to run a WebAssembly module with youki.</p>
 <ol>
 <li>Build youki with wasm-wasmer feature flag enabled</li>
@@ -683,7 +706,7 @@ log level to <code>debug</code>. This flag is ignored if <code>--log-level</code
 </li>
 </ul>
 <h2 id="build-a-container-image-with-the-webassembly-module"><a class="header" href="#build-a-container-image-with-the-webassembly-module">Build a container image with the WebAssembly module</a></h2>
-<p>If you want to run a webassembly module with youki, your config.json has to include either <strong>runc.oci.handler</strong> or <strong>module.wasm.image/variant=compat"</strong>.</p>
+<p>If you want to run a webassembly module with youki, your config.json has to include either <strong>runc.oci.handler</strong> or <strong>module.wasm.image/variant=compat“</strong>.</p>
 <p>It also needs to specify a valid .wasm (webassembly binary) or .wat (webassembly test) module as entrypoint for the container. If a wat module is specified it will be compiled to a wasm module by youki before it is executed. The module also needs to be available in the root filesystem of the container obviously.</p>
 <pre><code class="language-json">"ociVersion": "1.0.2-dev",
 "annotations": {
@@ -706,7 +729,7 @@ cargo new wasm-module --bin
 cd ./wasm-module
 vi src/main.rs
 </code></pre>
-<pre><pre class="playground"><code class="language-rust">fn main() {
+<pre class="playground"><code class="language-rust">fn main() {
     println!("Printing args");
     for arg in std::env::args().skip(1) {
         println!("{}", arg);
@@ -716,7 +739,7 @@ vi src/main.rs
     for envs in std::env::vars() {
         println!("{:?}", envs);
     }  
-}</code></pre></pre>
+}</code></pre>
 <p>Then compile the program to WASI.</p>
 <pre><code class="language-console">cargo build --target wasm32-wasi
 </code></pre>
@@ -736,18 +759,27 @@ ENTRYPOINT ["wasm-module.wasm"]
 <pre><code class="language-bash">sudo podman --runtime /PATH/WHARE/YOU/BUILT/WITH/WASM-WASMER/youki run localhost/wasm-module 1 2 3
 </code></pre>
 <hr>
-<ol class="footnote-definition"><li id="footnote-1">
+<ol class="footnote-definition">
+<li id="footnote-1">
 <p>You might need <code>sudo</code> because of <a href="https://github.com/youki-dev/youki/issues/719">#719</a>. <a href="#fr-1-1">↩</a> <a href="#fr-1-2">↩2</a></p>
 </li>
-</ol><div style="break-before: page; page-break-before: always;"></div><h1 id="community"><a class="header" href="#community">Community</a></h1>
+</ol>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="community"><a class="header" href="#community">Community</a></h1>
 <ul>
-<li><a href="community/./maintainer.html">Maintainer</a></li>
-<li><a href="community/./goversance.html">Governance</a></li>
-<li><a href="community/./contributing.html">Contributing</a></li>
-<li><a href="community/./chat.html">Chat</a></li>
+<li><a href="#current-maintainers">Maintainer</a></li>
+<li><a href="community/goversance.html">Governance</a></li>
+<li><a href="#contributing">Contributing</a></li>
+<li><a href="#chat">Chat</a></li>
 </ul>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="current-maintainers"><a class="header" href="#current-maintainers">Current Maintainers</a></h1>
-<div class="table-wrapper"><table><thead><tr><th>Name</th><th>Role</th><th>GitHub ID</th><th>Affiliation</th></tr></thead><tbody>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="current-maintainers"><a class="header" href="#current-maintainers">Current Maintainers</a></h1>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Name</th><th>Role</th><th>GitHub ID</th><th>Affiliation</th></tr>
+</thead>
+<tbody>
 <tr><td>Toru Komatsu</td><td>Committer</td><td><a href="https://github.com/utam0k">@utam0k</a></td><td>Preferred Networks</td></tr>
 <tr><td>Thomas Schubart</td><td>Committer</td><td><a href="https://github.com/Furisto">@Furisto</a></td><td>Gitpod</td></tr>
 <tr><td>Yashodhan</td><td>Committer</td><td><a href="https://github.com/YJDoc2">@YJDoc2</a></td><td>Independent</td></tr>
@@ -755,24 +787,25 @@ ENTRYPOINT ["wasm-module.wasm"]
 <tr><td>Sascha Grunert</td><td>Committer</td><td><a href="https://github.com/saschagrunert">@saschagrunert</a></td><td>Red Hat</td></tr>
 <tr><td>Jorge Prendes</td><td>Committer</td><td><a href="https://github.com/jprendes">@jprendes</a></td><td>Microsoft</td></tr>
 <tr><td>Yusuke Sakurai</td><td>Reviewer</td><td><a href="https://github.com/saku3">@saku3</a></td><td>3-shake</td></tr>
-</tbody></table>
-</div><div style="break-before: page; page-break-before: always;"></div><h1 id="code-of-conduct"><a class="header" href="#code-of-conduct">Code of Conduct</a></h1>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="code-of-conduct"><a class="header" href="#code-of-conduct">Code of Conduct</a></h1>
 <p>Youki follows the <a href="https://github.com/cncf/foundation/blob/main/code-of-conduct.md">CNCF Code of Conduct</a>.</p>
 <h1 id="maintainership"><a class="header" href="#maintainership">Maintainership</a></h1>
 <p>Youki is governed by Maintainers who are elected from active contributors.
 Youki will remain <a href="https://contribute.cncf.io/maintainers/community/vendor-neutrality/">vendor-neutral</a>.
-Maintainers are <a href="community/./maintainer.html">here</a>.</p>
+Maintainers are <a href="#current-maintainers">here</a>.</p>
 <h2 id="roles"><a class="header" href="#roles">Roles</a></h2>
 <p>Maintainers consist of the following roles:</p>
 <ul>
 <li>
-<p>Committer (Full maintainership)<br />
-Committers have full write accesses to repos.
+<p>Committer (Full maintainership)<br>Committers have full write accesses to repos.
 Committers’ commits should still be made via GitHub pull requests (except for urgent security fixes), and should not be pushed directly to the default branch.</p>
 </li>
 <li>
-<p>Reviewer (Limited maintainership)<br />
-Reviewers may moderate GitHub issues and pull requests (such as adding labels and cleaning up spams), but they do not have any access to merge pull requests nor push commits.
+<p>Reviewer (Limited maintainership)<br>Reviewers may moderate GitHub issues and pull requests (such as adding labels and cleaning up spams), but they do not have any access to merge pull requests nor push commits.
 A Reviewer is considered as a candidate to become a Committer.</p>
 </li>
 </ul>
@@ -791,7 +824,8 @@ Voting needs a minimum of 2 approvals. The proposer can vote too. Votes from the
 <p>A proposal should be made via a GitHub pull request to the file containing the list of Maintainer defined above.
 In the special case of removing a harmful Maintainer, this process can take place via a private discussion.
 Before submitting the pull request, the proposer should reach out to the Committers to check their willingness.</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="contributing"><a class="header" href="#contributing">Contributing</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="contributing"><a class="header" href="#contributing">Contributing</a></h1>
 <h2 id="developer-certificate-of-origin"><a class="header" href="#developer-certificate-of-origin">Developer Certificate of Origin</a></h2>
 <p>Every commit must be signed off with the <code>Signed-off-by: REAL NAME &lt;email@example.com&gt;</code> line.
 Use the <code>git commit -s</code> command to add the Signed-off-by line.</p>
@@ -802,14 +836,16 @@ Use the <code>git commit -s</code> command to add the Signed-off-by line.</p>
 <h2 id="merging-pull-requests"><a class="header" href="#merging-pull-requests">Merging pull requests</a></h2>
 <p>Committers can merge pull requests.
 A Committer shouldn’t merge their own pull requests without approval by at least one other Committer.</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="chat"><a class="header" href="#chat">Chat</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="chat"><a class="header" href="#chat">Chat</a></h1>
 <p>Please join our chat find help or discuss issues:</p>
 <ul>
 <li><a href="https://discord.gg/zHnyXKSQFD">Discord invite</a></li>
 </ul>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="developer-documentation"><a class="header" href="#developer-documentation">Developer Documentation</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="developer-documentation"><a class="header" href="#developer-documentation">Developer Documentation</a></h1>
 <p>This section of the documentation is more oriented towards those who wish to contribute to youki, and contains more information and resources about the working and implementation of it. So if you are thinking of helping, this is a great place to start with.</p>
-<p>Also, Thank you! If you have any issues or doubts, you can ask them on youki's discord server <a href="https://discord.gg/h7R3HgWUct">here</a>.</p>
+<p>Also, Thank you! If you have any issues or doubts, you can ask them on youki’s discord server <a href="https://discord.gg/h7R3HgWUct">here</a>.</p>
 <p>This section is split into following parts</p>
 <ul>
 <li>
@@ -826,11 +862,12 @@ A Committer shouldn’t merge their own pull requests without approval by at lea
 </li>
 </ul>
 <p>Happy Contributing!</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="basics"><a class="header" href="#basics">Basics</a></h1>
-<p>This section has the general information and resources needed to work with any part of youki. As youki is written in Rust, you should know some basic Rust before. If you don't yet, some good resources for that can be found on the Rust's <a href="https://www.rust-lang.org/learn">official site</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="basics"><a class="header" href="#basics">Basics</a></h1>
+<p>This section has the general information and resources needed to work with any part of youki. As youki is written in Rust, you should know some basic Rust before. If you don’t yet, some good resources for that can be found on the Rust’s <a href="https://www.rust-lang.org/learn">official site</a>.</p>
 <h2 id="youki-1"><a class="header" href="#youki-1">Youki</a></h2>
 <p>Youki is a low level container runtime, which deals with the creation and management of Linux containers. Some of other such low-level runtimes are <a href="https://github.com/opencontainers/runc">runc</a> and <a href="https://github.com/containers/crun">crun</a>. These are usually used by a higher-level runtime such as Docker or Podman to actually create and manage containers, where the higher level runtime provides a much easier interface for users.</p>
-<p>Before you start working on developing youki, you should go through <a href="developer/../user/introduction.html">the User documentation</a> as it specifies the requirements and setup for running youki. For developing youki, you will need to install the dependencies and clone the repo, as specified in the <a href="developer/../user/basic_setup.html">Basic Setup</a> and <a href="developer/../user/basic_usage.html">Basic Usage</a> sections.</p>
+<p>Before you start working on developing youki, you should go through <a href="#user-documentation">the User documentation</a> as it specifies the requirements and setup for running youki. For developing youki, you will need to install the dependencies and clone the repo, as specified in the <a href="#basic-setup">Basic Setup</a> and <a href="#basic-usage">Basic Usage</a> sections.</p>
 <h2 id="testing-while-developing"><a class="header" href="#testing-while-developing">Testing while developing</a></h2>
 <p>While developing youki, you might need to compile and test the code from time to time, to make sure it is working and and something is not accidentally broken. Currently there are two ways to verify that:</p>
 <ul>
@@ -841,7 +878,7 @@ A Committer shouldn’t merge their own pull requests without approval by at lea
 <ul>
 <li>test: The unit tests</li>
 <li>oci-integration-test: The integration tests provided by OCI, these are the current standard to make sure youki is OCI compliant.</li>
-<li>integration-test: This is the Rust port of the OCI runtime tests, as there are some issues in the OCI tests. See <a href="developer/./integration_test.html">integration_test</a> page.</li>
+<li>integration-test: This is the Rust port of the OCI runtime tests, as there are some issues in the OCI tests. See <a href="developer/integration_test.html">integration_test</a> page.</li>
 </ul>
 <p>All three can be run by using <code>make test-all</code>, or you can run the individual command to run specific tests.</p>
 <h2 id="resources"><a class="header" href="#resources">Resources</a></h2>
@@ -850,7 +887,8 @@ A Committer shouldn’t merge their own pull requests without approval by at lea
 <p>Their main GitHub page is at <a href="https://github.com/opencontainers">https://github.com/opencontainers</a>, and more information about the runtime specifications can be found at <a href="https://github.com/opencontainers/runtime-spec/blob/master/runtime.md">https://github.com/opencontainers/runtime-spec/blob/master/runtime.md</a>.</p>
 <p>As youki needs to deal with a lot of low level programming interfaces of Linux Kernel, another good place know is the online man pages project, which can be found at <a href="https://man7.org/">https://man7.org/</a>. Man pages provide detailed information about the programming interfaces of various features of Linux Kernel. You can simply search <code>man &lt;feature-name&gt;</code> using a search engine, or you can search at the site itself, at <a href="https://man7.org/linux/man-pages/index.html">https://man7.org/linux/man-pages/index.html</a>. These can be very helpful to know about the behavior and usage of and reasoning behind various kernel features used throughout youki.</p>
 <p>Happy developing!!!</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="unwritten-rule"><a class="header" href="#unwritten-rule">Unwritten Rule</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="unwritten-rule"><a class="header" href="#unwritten-rule">Unwritten Rule</a></h1>
 <p>This is the place to write down rules or conventions that were discussed in PRs, so that newcomers can easily find them, without having to go through the PR history. So if you decide on any convention to follow for the project, please make sure to add them here.</p>
 <h2 id="conventions-to-follow"><a class="header" href="#conventions-to-follow">Conventions to follow</a></h2>
 <h4 id="errors"><a class="header" href="#errors">Errors</a></h4>
@@ -864,24 +902,25 @@ A Committer shouldn’t merge their own pull requests without approval by at lea
 <p>In any script, any makefile etc, make sure to <code>set -e</code> at the start. This will abort the script after any command fails, rather than continuing with incorrect state and creating knock-on errors.</p>
 <h4 id="update-this-documentation"><a class="header" href="#update-this-documentation">Update This Documentation</a></h4>
 <p>Keep this Documentation updated! Make sure you add any relevant doc-links and resources to this that you found helpful or contains background information required to understand the code, so that it can help newcomers as well as others to find the resources in one single place.</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="good-places-to-start"><a class="header" href="#good-places-to-start">Good places to start</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="good-places-to-start"><a class="header" href="#good-places-to-start">Good places to start</a></h1>
 <p>First of all, welcome to youki! Hope you have fun while developing and contributing :)</p>
 <p>This lists some of the known places that are long-running and would be useful for beginners. But as the things under development can change any time, the best place to check are the issues on the <a href="https://github.com/youki-dev/youki/issues">GitHub repo</a>. You can find issues with labels <code>good first issue</code> or <code>help wanted</code> and start working on them.</p>
 <p>You can also search for <code>TODO</code> or <code>FIXME</code> comments in the source, and try working on them, but not all of them are easy places to start, and some of them can be particularly tricky to fix.</p>
-<hr />
+<hr>
 <p>This lists known parts of youki that can be good for beginners at the time of the writing. Please update as things change.</p>
 <h4 id="documentation-comments"><a class="header" href="#documentation-comments">Documentation Comments</a></h4>
 <p>Currently youki is decently commented, and those explain most of the public facing API and structs. But there are still places which can use more doc comments, and examples showing usage, so people can use the docs generated by <code>cargo doc</code> as a guide.</p>
-<p>If you don't know much about container runtime or low level system working, then this can be a good place to start. While going through the code and documenting it, you can learn about it. Make sure that you update this documentation with useful links that you found while commenting some code if it has some peculiar behavior, or it is hard to understand without knowing some background.</p>
+<p>If you don’t know much about container runtime or low level system working, then this can be a good place to start. While going through the code and documenting it, you can learn about it. Make sure that you update this documentation with useful links that you found while commenting some code if it has some peculiar behavior, or it is hard to understand without knowing some background.</p>
 <h4 id="integration-tests"><a class="header" href="#integration-tests">Integration Tests</a></h4>
 <p>You can find more detailed information about this in the <code>integration_test</code> crate, but in brief, we currently use <a href="https://github.com/opencontainers/runtime-tools">OCI-runtime-tools</a> provided integration tests to validate that youki is OCI spec compliant. But those are written in Go, which makes the developer depend on two language env to compile youki and test it. These tests also have some issues which makes them hard to use on some system setups.</p>
 <p>Thus we are porting those test to Rust, so that it can be a Rust implementation of OCI-runtime integration tests, as well as be easy to run on local systems for testing. If you know Go and Rust this can be a great place to start. Check out the <a href="https://github.com/youki-dev/youki/issues/361">tracking issue</a>.</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="this-documentation"><a class="header" href="#this-documentation">This Documentation</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="this-documentation"><a class="header" href="#this-documentation">This Documentation</a></h1>
 <p>This documentation is created using mdbook and aims to provide a concise reference for users and developers of youki. For more information on mdbook itself, you can check out the <a href="https://rust-lang.github.io/mdBook/">mdbook documentation</a>.</p>
 <p>Please make sure that you update this documentation along with newly added features and resources that you found helpful while developing, so that it will be helpful for newcomers.</p>
 <p>Currently this documentation is hosted at <a href="https://youki-dev.github.io/youki/">https://youki-dev.github.io/youki/</a>, using GitHub pages. GitHub CI actions are used to automatically check if any files are changed in /docs on each push / PR merge to main branch, and if there are any changes, the mdbook is build and deployed to gh-pages. We use <a href="https://github.com/peaceiris/actions-mdbook">https://github.com/peaceiris/actions-mdbook</a> to build and then <a href="https://github.com/peaceiris/actions-gh-pages">https://github.com/peaceiris/actions-gh-pages</a> GitHub action to deploy the mdbook.</p>
-<p>When testing locally you can manually test the changes by running <code>mdbook serve</code> in the docs directory (after installing mdbook), which will temporarily serve the mdbook at <code>localhost:3000</code> by default. You can check the mdbook documentation for more information.<br />
-(If you are running inside a Dev Container, use <code>mdbook serve -n 0.0.0.0</code> instead)</p>
+<p>When testing locally you can manually test the changes by running <code>mdbook serve</code> in the docs directory (after installing mdbook), which will temporarily serve the mdbook at <code>localhost:3000</code> by default. You can check the mdbook documentation for more information.<br>(If you are running inside a Dev Container, use <code>mdbook serve -n 0.0.0.0</code> instead)</p>
 <p>If you want to test it using gh-pages on your own fork, you can use following steps in the docs directory.</p>
 <pre><code class="language-console">git worktree prune
 # Do this if you are running this command first time after booting,
@@ -896,23 +935,25 @@ git commit 'new book message'
 git push -f origin gh-pages
 cd -
 </code></pre>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="repository-structure"><a class="header" href="#repository-structure">Repository Structure</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="repository-structure"><a class="header" href="#repository-structure">Repository Structure</a></h1>
 <p>This page might be the one that gets most easily outdated, as the structure might change at any time! Thus make sure to update this whenever there are any changes in the overall structure of the whole repo. For the same reason, this does not list the structure in detail but instead describes only the main directories.</p>
 <h3 id="github"><a class="header" href="#github">.github</a></h3>
 <p>Contains workflows and files needed by those workflows.</p>
 <h3 id="crates"><a class="header" href="#crates">crates</a></h3>
 <p>This is the core of youki. This contains various libraries that are developed alongside of youki and the youki binary itself.</p>
 <h3 id="docs"><a class="header" href="#docs">docs</a></h3>
-<p>The directory where the source of this documentation resides. The source is also divided into two parts, for developers and users. Please see <a href="developer/./documentation_mdbook.html">Documentation documentation</a> for more information.</p>
+<p>The directory where the source of this documentation resides. The source is also divided into two parts, for developers and users. Please see <a href="#this-documentation">Documentation documentation</a> for more information.</p>
 <h3 id="hack"><a class="header" href="#hack">hack</a></h3>
 <p>As the name suggests, contains hack scripts for patching some issues which are currently not solvable in a straightforward way or solving issues for which we have no idea of why they occur.</p>
 <h3 id="scripts-1"><a class="header" href="#scripts-1">Scripts</a></h3>
 <p>Contains scripts for various purposes, such as building youki, running integration tests etc. These might be small scripts called from many other scripts, big scripts that perform a complex task or helper scripts for the main makefile.</p>
 <h3 id="tests"><a class="header" href="#tests">tests</a></h3>
 <p>This contains all the integration tests for validating youki. Note that these are integration tests for start-to-end testing of youki commands. Unit tests for individual parts are in their respective source files in crates.</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="debugging"><a class="header" href="#debugging">Debugging</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="debugging"><a class="header" href="#debugging">Debugging</a></h1>
 <p>Since Youki uses pipe and double-fork in the creating phase, it is hard to debug what happened.
-You might encounter the error message, "Broken pipe ..." Unfortunately,
+You might encounter the error message, “Broken pipe …” Unfortunately,
 this error message has only information that a child process exists with an error for some reason.</p>
 <p>This section will give some tips to debug youki to know what happens in the child processes.</p>
 <h1 id="bpftrace"><a class="header" href="#bpftrace">bpftrace</a></h1>
@@ -994,10 +1035,12 @@ TIME                 COMMAND PID      EVENT     CONTENT
 </code></pre>
 </li>
 </ol>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="crate-specific-information"><a class="header" href="#crate-specific-information">Crate Specific Information</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="crate-specific-information"><a class="header" href="#crate-specific-information">Crate Specific Information</a></h1>
 <p>This section contains subsections for each individual crate in the youki workspace. Each of the subsection will have information and resources on that particular crate.</p>
 <p>In case you are working with some specific crate, you can find resources about it in its section. Also make sure you add any resources that you find when working on them as well.</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="libcgroups-1"><a class="header" href="#libcgroups-1">libcgroups</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="libcgroups-1"><a class="header" href="#libcgroups-1">libcgroups</a></h1>
 <p>This crate provides an interface for working with cgroups in Linux. cgroups or control groups is a Linux kernel feature which can be used to fine-control resources and permissions given to a particular process or a group of processes. You can read more about them on the <a href="https://man7.org/linux/man-pages/man7/cgroups.7.html">cgroups man page</a>.</p>
 <p>The initial version of cgroups is called the version 1 was implemented in kernel 2.6.24, and later in kernel version 4.5, a new version of cgroups was released, aimed to solve issues with v1, the version v2.</p>
 <p>This crates exposes several functions and modules that can be used to work with cgroups :</p>
@@ -1044,14 +1087,15 @@ TIME                 COMMAND PID      EVENT     CONTENT
 <code>dbus-codegen-rust -s -g -m None -d org.freedesktop.systemd1 -p /org/freedesktop/systemd1</code>, see https://github.com/diwic/dbus-rs</p>
 </li>
 </ul>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="libcontainer-1"><a class="header" href="#libcontainer-1">libcontainer</a></h1>
-<p>This crate is one of the core crates of the youki workspace, and has functions and structs that deal with the actual craetion and management of the container processes.</p>
-<p>Remember, in the end, a container is just another process in Linux, which has control groups, namespaces, pivot_root and other mechanisms applied to it. The program executing has the impression that is is running on a complete system, but from the host system's perspective, it is just another process, and has attributes such as pid, file descriptors, etc. associated with it like any other process.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="libcontainer-1"><a class="header" href="#libcontainer-1">libcontainer</a></h1>
+<p>This crate is one of the core crates of the youki workspace, and has functions and structs that deal with the actual creation and management of the container processes.</p>
+<p>Remember, in the end, a container is just another process in Linux, which has control groups, namespaces, pivot_root and other mechanisms applied to it. The program executing has the impression that it is running on a complete system, but from the host system’s perspective, it is just another process, and has attributes such as pid, file descriptors, etc. associated with it like any other process.</p>
 <p>Along with the container related functions, this crate also provides Youki Config, a subset of the OCI spec config. This config contains only the essential data required for running the containers, and due to its smaller size, parsing it and passing it around is more efficient than the complete OCI spec config struct.</p>
 <p>Other than that, this crate also provides a wrapper over basic Linux sockets, which are then used internally as well as by youki to communicate between the main youki process and the forked container process as well as the intermediate process.</p>
 <p>This crate also provides an interface for Apparmor which is another Linux Kernel module allowing to apply security profiles on a per-program basis. More information about it can be found at <a href="https://apparmor.net/">https://apparmor.net/</a>.</p>
 <h3 id="notes"><a class="header" href="#notes">Notes</a></h3>
-<h4 id="some-other-modules-expose-by-this-crate-are"><a class="header" href="#some-other-modules-expose-by-this-crate-are">Some other modules expose by this crate are</a></h4>
+<h4 id="some-other-modules-exposed-by-this-crate-are"><a class="header" href="#some-other-modules-exposed-by-this-crate-are">Some other modules exposed by this crate are</a></h4>
 <ul>
 <li>rootfs, which is a ramfs like simple filesystem used by kernel during initialization</li>
 <li>hooks, which allow running of specified program at certain points in the container lifecycle, such as before and after creation, start etc.</li>
@@ -1062,7 +1106,7 @@ TIME                 COMMAND PID      EVENT     CONTENT
 <li><a href="https://man7.org/linux/man-pages/man7/capabilities.7.html">man page for capabilities</a></li>
 </ul>
 </li>
-<li>tty module which daels with providing terminal interface to the container process
+<li>tty module which deals with providing terminal interface to the container process
 <ul>
 <li><a href="https://man7.org/linux/man-pages/man7/pty.7.html">pseudoterminal man page</a> : Information about the pseudoterminal system, useful to understand console_socket parameter in create subcommand</li>
 </ul>
@@ -1078,7 +1122,7 @@ instead. The executor will run at the end of the container init process.</p>
 <p>The API accepts only a single executor, so when using multiple executors, (try
 wasm first, then defaults to running a binary), the users should compose
 multiple executors into a single executor. The executor will return an error
-when the executor can't handle the workload.</p>
+when the executor can’t handle the workload.</p>
 <h4 id="namespaces--namespaces-provide-isolation-of-resources-such-as-filesystem-process-ids-networks-etc-on-kernel-level-this-module-contains-structs-and-functions-related-to-applying-or-un-applying-namespaces-to-the-calling-process"><a class="header" href="#namespaces--namespaces-provide-isolation-of-resources-such-as-filesystem-process-ids-networks-etc-on-kernel-level-this-module-contains-structs-and-functions-related-to-applying-or-un-applying-namespaces-to-the-calling-process">Namespaces : namespaces provide isolation of resources such as filesystem, process ids networks etc on kernel level. This module contains structs and functions related to applying or un-applying namespaces to the calling process</a></h4>
 <ul>
 <li><a href="https://man7.org/linux/man-pages/man7/pid_namespaces.7.html">pid namespace man page</a></li>
@@ -1107,19 +1151,23 @@ when the executor can't handle the workload.</p>
 <li><a href="https://man7.org/linux/man-pages/man7/unix.7.html">Unix Sockets man page</a> : Useful to understand sockets</li>
 <li><a href="https://man7.org/linux/man-pages/man2/prctl.2.html">prctl man page</a> : Process control man pages</li>
 </ul>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="liboci-cli-1"><a class="header" href="#liboci-cli-1">liboci-cli</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="liboci-cli-1"><a class="header" href="#liboci-cli-1">liboci-cli</a></h1>
 <p>This crate was separated from original youki crate, and now contains a standalone implementation of structs needed for parsing commandline arguments for OCI-spec compliant runtime commandline interface. This is in turn used by youki to parse the command line arguments passed to it, but can be used in any other projects where there is need to parse OCI spec based commandline arguments.</p>
 <p>This primarily uses the <a href="https://docs.rs/clap/latest/clap/index.html">crate clap-v3</a> for parsing the actual commandline arguments given to the runtime.</p>
 <p>You can refer to <a href="https://github.com/opencontainers/runtime-tools/blob/master/docs/command-line-interface.md">OCI Commandline interface guide</a> to know more about the exact specification.</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="libseccomp-1"><a class="header" href="#libseccomp-1">libseccomp</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="libseccomp-1"><a class="header" href="#libseccomp-1">libseccomp</a></h1>
 <p>Seccomp is a linux kernel feature that allows a process a one-way transition into secure mode, where restrictions are applied to the syscalls the process can make, as well as restrictions on the file descriptors. Specifically, it can exit, sigreturn and read/write already open file descriptors. This way the process can be isolated and restricted on how it interacts with rest of the system on a kernel level.</p>
 <p>This crate does not actually implement any particular feature, but provides Rust FFI bindings for seccomp module. These are primarily generated by using rsut-bindgen on seccomp C header file, and then manually fixed where any issues were found. More information about seccomp can be found in its <a href="https://man7.org/linux/man-pages/man2/seccomp.2.html">man page</a>.</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="youki-2"><a class="header" href="#youki-2">youki</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="youki-2"><a class="header" href="#youki-2">youki</a></h1>
 <p>This is the core crate that contains the youki binary itself. This provides the user interface, as well as binds the other crates together to actually perform the work of creation and management of containers. Thus, this provides implementation of all the commands supported by youki.</p>
 <p>The simple control flow of youki can be explained as :</p>
 <p align="center">
-  <img src="developer/../assets/control_flow.drawio.svg">
+  <img src="assets/control_flow.drawio.svg">
 </p>
+
 <p>When given the create command, Youki will load the specification, configuration, sockets etc., and use clone syscall to create an intermediate process. This process will set the cgroups and capabilities, and then fork to the init process. Reason to create this intermediate process is that the clone syscall cannot enter into existing pid namespace that has been created for the container. Thus first we need to make a transition to that namespace in the intermediate process and fork that to the container process. After that the main youki process is requested the uid and gid mappings, and after receiving them the intermediate process sets these mapping, fork the init process and return pid of this init process to the main youki process before exiting.</p>
 <p>The init process then transition completely into the new namespace setup for the container (the init process only transitions the pid namespace). It changes the root mountpoint for the process using <a href="https://man7.org/linux/man-pages/man2/pivot_root.2.html">pivot_root</a>, so that the container process can get impression that it has a complete root path access. After that the init process sets up the capabilities and seccomp, and sends the seccomp notify fd to the main youki process. When the seccomp agent running on the host system sets up the seccomp profile, it notifies the init process, after which it can execute the programto be executed inside the container. Thus the init process then sends ready notification to the main youki process, and waits for the start signal.</p>
 <p>The main youki process which started creating the container, when receives the ready signals update the pid file of the container process and exits. This concludes the creation of the container.</p>
@@ -1127,25 +1175,27 @@ when the executor can't handle the workload.</p>
 <p>When the init process receives the start signal, it execs the program to be run in the container, and then exits.</p>
 <h3 id="notes-1"><a class="header" href="#notes-1">Notes</a></h3>
 <p>The main youki process will set up pipes used as message passing and synchronization mechanism with the init process. The reason youki needs to create/fork two process instead of one is due to the user and pid namespaces. In rootless container, we need to first enter user namespace, since all other namespaces requires CAP_SYSADMIN. When unshare or set_ns into pid namespace, only the children of the current process will enter into a different pid namespace. As a result, we must first fork a process to enter into user namespace, call unshare or set_ns for pid namespace, then fork again to enter into the correct pid namespace.</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="e2e-tests"><a class="header" href="#e2e-tests">e2e tests</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="e2e-tests"><a class="header" href="#e2e-tests">e2e tests</a></h1>
 <p>There are various e2e tests:</p>
 <ul>
 <li>
-<p><a href="developer/e2e/./rust_oci_test.html">rust oci tests</a></p>
-<p>This is youki's original integration to verify the behavior of the low-level container runtime.</p>
+<p><a href="#contest">rust oci tests</a></p>
+<p>This is youki’s original integration to verify the behavior of the low-level container runtime.</p>
 </li>
 <li>
-<p><a href="developer/e2e/./containerd_integration_test_using_youki.html">containerd integration test</a></p>
-<p>This is the method that containerd's integration test runs with youki.</p>
+<p><a href="#containerd-integration-test-using-youki">containerd integration test</a></p>
+<p>This is the method that containerd’s integration test runs with youki.</p>
 </li>
 <li>
-<p><a href="developer/e2e/./runtime_tools.html">runtime tools</a></p>
+<p><a href="#runtime-tools">runtime tools</a></p>
 <p>This is the method to run the runtime tools that OCI manages as a test tool to verify meeting the OCI Runtime Spec</p>
 </li>
 </ul>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="contest"><a class="header" href="#contest">Contest</a></h1>
-<p>This is youki's original integration to verify the behavior of the low-level container runtime.</p>
-<p><img src="developer/e2e/../../assets/rust_oci_tests.png" alt="Overview" /></p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="contest"><a class="header" href="#contest">Contest</a></h1>
+<p>This is youki’s original integration to verify the behavior of the low-level container runtime.</p>
+<p><img src="assets/rust_oci_tests.png" alt="Overview"></p>
 <h1 id="how-to-run"><a class="header" href="#how-to-run">How to run</a></h1>
 <pre><code class="language-console">just test-contest
 </code></pre>
@@ -1196,11 +1246,12 @@ pub fn get_example_test() -&gt; TestGroup {
 }
 ////////// ANCHOR_END: get_example_test</code></pre>
 </p>
+
 </details>
 <ol>
 <li>
 <p>Build the OCI Runtime Spec you want to verify</p>
-<p>This testing framework automatically places <a href="developer/e2e/./runtimetest.html">runtimetest</a> in the container.
+<p>This testing framework automatically places <a href="#runtime-test">runtimetest</a> in the container.
 In other words, you can test the processes you want to execute within a container by writing them in runtimetest.
 Therefore, it is common practice here to write an OCI Runtime Spec that executes <code>runtimetest</code>.</p>
 </li>
@@ -1259,7 +1310,8 @@ Therefore, it is common practice here to write an OCI Runtime Spec that executes
 <pre><code class="language-rust no_run noplayground">pub fn hello_world(_spec: &amp;Spec) {
     println!("Hello world");
 }</code></pre>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="integration_test"><a class="header" href="#integration_test">integration_test</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="integration_test"><a class="header" href="#integration_test">integration_test</a></h1>
 <p><strong>Note</strong> that these tests resides in <code>/tests/integration_test/</code> at the time of writing.</p>
 <p>This crate contains the Rust port of OCI-runtime tools integration tests, which are used to test if the runtime works as per the OCI spec or not. Initially youki used the original implementation of these test provided in the OCI repository <a href="https://github.com/opencontainers/runtime-tools/tree/master/validation">here</a>. But those tests are written in Go, which made the developers depend on two language environments Rust and Go to compile youki and test it. The Validation tests themselves also have an optional dependency on node js to parse their output, which can make it a third language dependency.</p>
 <p>Other than that, those tests also showed some issues while running on some local systems, and thus running the tests would be difficult on local system. As the runtime is a complex piece of software, it becomes useful to have a set of tests that can be run with changes in code, so one can verify that change in one part of youki has not accidentally broken some other part of youki.</p>
@@ -1267,21 +1319,23 @@ Therefore, it is common practice here to write an OCI Runtime Spec that executes
 <p>As these tests are under development, these are validated on a standard runtime such as runc in the GitHub CI, so validate the tests themselves.</p>
 <h2 id="notes-2"><a class="header" href="#notes-2">Notes</a></h2>
 <h3 id="about-the-create-container-function"><a class="header" href="#about-the-create-container-function">About the create container function</a></h3>
-<p>The test_utils provides a <code>create_container</code> function which can be used to run the <code>youki create</code> command. It returns the child process struct, which can be either <code>wait()</code> or <code>wait_with_output()</code> to wait for it finishing. Unless you know what are you doing, it is recommended to call <code>wait()</code> on it, as otherwise the process will hang. As explained in the <a href="developer/e2e/../youki.html">youki docs</a> , the <code>youki create</code> process, after starting forks, and the forked process keeps waiting for another youki process to send it the <code>start</code> signal , and after receiving it, that forked process execs the container program. If you are simply trying to create a container, such as in case of <code>test_outside_runtime</code> then calling <code>wait_with_output()</code> will cause it to hang. If you are actually going to start a container, and need output from the container process, then you must keep the <code>Child struct</code> returned by <code>create</code> function and call <code>wait_with_output()</code> on it <strong>AFTER</strong> you have called the start command on that container, which will give you the <code>stdout</code> and <code>stderr</code> of the process running inside the container.</p>
-<p>To understand how this works, take a look at <a href="https://github.com/opencontainers/runc/blob/master/docs/terminals.md">handling stdio</a> of the runc, specially the <a href="https://github.com/opencontainers/runc/blob/master/docs/terminals.md#detached-pass-through">detached pass-through mode</a> section. As explained in it, we setup the stdio for the original youki process in <code>youki create</code> by setting the stdio to <code>Stdio::piped()</code> in the <code>create</code> function. Then we set the <code>terminal</code> option to <code>false</code> (which is the default anyway) in the spec, which makes it run in the pass-through mode. Then when the create process is done its work, and its forked process is waiting for the start signal, it uses the same stdio pipes. Thus calling <code>wait_with_output()</code> without starting will keep it hanged up, and after calling start, stdio of the program to be run inside the container can be obtained from the <code>youki create</code>'s process.</p>
+<p>The test_utils provides a <code>create_container</code> function which can be used to run the <code>youki create</code> command. It returns the child process struct, which can be either <code>wait()</code> or <code>wait_with_output()</code> to wait for it finishing. Unless you know what are you doing, it is recommended to call <code>wait()</code> on it, as otherwise the process will hang. As explained in the <a href="#youki-2">youki docs</a> , the <code>youki create</code> process, after starting forks, and the forked process keeps waiting for another youki process to send it the <code>start</code> signal , and after receiving it, that forked process execs the container program. If you are simply trying to create a container, such as in case of <code>test_outside_runtime</code> then calling <code>wait_with_output()</code> will cause it to hang. If you are actually going to start a container, and need output from the container process, then you must keep the <code>Child struct</code> returned by <code>create</code> function and call <code>wait_with_output()</code> on it <strong>AFTER</strong> you have called the start command on that container, which will give you the <code>stdout</code> and <code>stderr</code> of the process running inside the container.</p>
+<p>To understand how this works, take a look at <a href="https://github.com/opencontainers/runc/blob/master/docs/terminals.md">handling stdio</a> of the runc, specially the <a href="https://github.com/opencontainers/runc/blob/master/docs/terminals.md#detached-pass-through">detached pass-through mode</a> section. As explained in it, we setup the stdio for the original youki process in <code>youki create</code> by setting the stdio to <code>Stdio::piped()</code> in the <code>create</code> function. Then we set the <code>terminal</code> option to <code>false</code> (which is the default anyway) in the spec, which makes it run in the pass-through mode. Then when the create process is done its work, and its forked process is waiting for the start signal, it uses the same stdio pipes. Thus calling <code>wait_with_output()</code> without starting will keep it hanged up, and after calling start, stdio of the program to be run inside the container can be obtained from the <code>youki create</code>’s process.</p>
 <h3 id="how-test-inside-container-works"><a class="header" href="#how-test-inside-container-works">How test inside container works</a></h3>
 <p>We use <code>test_inside_container</code> for making sure that the restrictions and constraints are uphold from inside the container process.
 For that, first whichever integration test needs to use it, must define the runtimetest as the container process in the spec, and then use <code>test_inside_container</code> function. It requires a function which will do the necessary setup for the tests that are to be run inside. Then the counterpart for the test should be added to the <code>runtimetest</code> crate, which will run inside the container and if there is any error, print it to the <code>stderr</code>. The <code>test_inside_container</code> function will wait for the tests to be over and then check the <code>stderr</code> to be empty. If it is not, the test is assumed to fail.</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="test_framework"><a class="header" href="#test_framework">test_framework</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="test_framework"><a class="header" href="#test_framework">test_framework</a></h1>
 <p><strong>Note</strong> that these tests resides in /tests/test_framework at the time of writing.</p>
 <p>This crate contains the testing framework specifically developed for porting the OCI integration test to rust. This contains structs to represent the individual tests, group of tests and a test manager that has responsibility to run tests. This Also exposes traits which can be used to implement custom test structs or test group structs if needed.</p>
 <p>By default the test groups are run in parallel using the <a href="https://www.crates.io/crates/crossbeam">crossbeam crate</a>, and the default test_group implementation also runs individual tests parallelly.</p>
 <p>Sometimes you might need to run the tests in a test group serially or in certain order, for example in case of testing container lifecycle, a container must be created and started before stopping it. In such cases, you will need to implement the respective traits on your own structs, so that you can have fine control over the running of tests. Check the readme of the test_framework crate to see the struct and trait documentation <a href="https://github.com/youki-dev/youki/tree/main/crates/test_framework">here</a>.</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="runtime-test"><a class="header" href="#runtime-test">Runtime Test</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="runtime-test"><a class="header" href="#runtime-test">Runtime Test</a></h1>
 <p><strong>Note</strong> that these tests resides in /tests/runtimetest at the time of writing.</p>
 <p>This crate provides a binary which is used by integration tests to verify that the restrictions and constraints applied to the container are upheld by the container process, from inside the container process. This runs the tests one-by-one, and the failing test prints the error to the stderr.</p>
 <h2 id="notes-3"><a class="header" href="#notes-3">Notes</a></h2>
-<p>This binary must be compiled with the option of static linking to crt0 given to the rustc. If compiled without it, it will add a linking to /lib64/ld-linux-x86-64.so . The binary compiled this way cannot be run inside the container process, as they do not have access to /lib64/... Thus the runtime test must be statically linked to crt0.</p>
+<p>This binary must be compiled with the option of static linking to crt0 given to the rustc. If compiled without it, it will add a linking to /lib64/ld-linux-x86-64.so . The binary compiled this way cannot be run inside the container process, as they do not have access to /lib64/… Thus the runtime test must be statically linked to crt0.</p>
 <p>While developing, originally this was added to the common workspace of all crates in youki. But then it was realized that this was quite inefficient because :</p>
 <ul>
 <li>All packages except runtimetest will be compiled with dynamic linking</li>
@@ -1308,11 +1362,13 @@ For that, first whichever integration test needs to use it, must define the runt
 <li><a href="https://superuser.com/questions/248512/why-do-i-get-command-not-found-when-the-binary-file-exists">understanding the error which dynamically linked library gives</a></li>
 <li><a href="https://doc.rust-lang.org/cargo/reference/config.html">Rust cargo config for rustflags</a></li>
 </ul>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="containerd-integration-test-using-youki"><a class="header" href="#containerd-integration-test-using-youki">containerd integration test using youki</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="containerd-integration-test-using-youki"><a class="header" href="#containerd-integration-test-using-youki">containerd integration test using youki</a></h1>
 <h2 id="local"><a class="header" href="#local">local</a></h2>
 <pre><code class="language-console">just containerd-test
 </code></pre>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="runtime-tools"><a class="header" href="#runtime-tools">runtime tools</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="runtime-tools"><a class="header" href="#runtime-tools">runtime tools</a></h1>
 <h2 id="local-1"><a class="header" href="#local-1">local</a></h2>
 <pre><code class="language-console">$ git submodule update --init --recursive
 $ just test-oci
@@ -1335,6 +1391,11 @@ $ just test-oci
 
         </div>
 
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
 
 
 
@@ -1343,13 +1404,13 @@ $ just test-oci
         </script>
 
 
-        <script src="elasticlunr.min.js"></script>
-        <script src="mark.min.js"></script>
-        <script src="searcher.js"></script>
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
 
-        <script src="clipboard.min.js"></script>
-        <script src="highlight.js"></script>
-        <script src="book.js"></script>
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
 
