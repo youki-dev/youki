@@ -2,6 +2,6 @@
     vPrefix = true
     releaseBranch = main
     versionFile = -
-    command = just version-up 0.5.8
+    command = just version-up 0.5.9
     release = false
     changelog = true
