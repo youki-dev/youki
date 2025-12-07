@@ -29,7 +29,7 @@ use crate::syscall::syscall::create_syscall;
 use crate::user_ns::UserNamespaceConfig;
 use crate::{tty, utils};
 
-const NAMESPACE_TYPES: &[&str] = &["ipc", "uts", "net", "pid", "mnt", "cgroup"];
+const NAMESPACE_TYPES: &[&str] = &["ipc", "uts", "net", "pid", "mnt", "cgroup", "time"];
 const TENANT_NOTIFY: &str = "tenant-notify-";
 const TENANT_TTY: &str = "tenant-tty-";
 
@@ -508,6 +508,10 @@ impl TenantContainerBuilder {
 
         if let Some(personality) = spec_linux.personality() {
             linux_builder = linux_builder.personality(personality.clone());
+        }
+
+        if let Some(time_offsets) = spec_linux.time_offsets() {
+            linux_builder = linux_builder.time_offsets(time_offsets.clone());
         }
 
         let linux = linux_builder.build()?;
