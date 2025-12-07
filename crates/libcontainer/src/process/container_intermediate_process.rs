@@ -124,11 +124,6 @@ pub fn container_intermediate_process(
         }
     }
 
-    // Pid namespace requires an extra fork to enter, so we enter pid namespace now.
-    if let Some(pid_namespace) = namespaces.get(LinuxNamespaceType::Pid)? {
-        namespaces.unshare_or_setns(pid_namespace)?;
-    }
-
     if let Some(time_namespace) = namespaces.get(LinuxNamespaceType::Time)? {
         // Try to enter the time namespace. In rootless containers, setns(CLONE_NEWTIME)
         // will fail with EPERM. We can skip EPERM the time namespace will be inherited
@@ -150,6 +145,11 @@ pub fn container_intermediate_process(
             }
             Err(e) => return Err(e.into()),
         }
+    }
+
+    // Pid namespace requires an extra fork to enter, so we enter pid namespace now.
+    if let Some(pid_namespace) = namespaces.get(LinuxNamespaceType::Pid)? {
+        namespaces.unshare_or_setns(pid_namespace)?;
     }
 
     let cb: CloneCb = {
