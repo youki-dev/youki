@@ -17,6 +17,10 @@ use oci_spec::runtime::{LinuxNamespace, LinuxNamespaceType};
 use crate::syscall::Syscall;
 use crate::syscall::syscall::create_syscall;
 
+// NOTE: CloneFlags in nix does not currently define CLONE_NEWTIME,
+pub const CLONE_NEWTIME_FLAG: CloneFlags =
+    CloneFlags::from_bits_retain(LinuxNamespaceType::Time as i32);
+
 type Result<T> = std::result::Result<T, NamespaceError>;
 
 #[derive(Debug, thiserror::Error)]
@@ -39,8 +43,7 @@ static ORDERED_NAMESPACES: &[CloneFlags] = &[
     CloneFlags::CLONE_NEWNET,
     CloneFlags::CLONE_NEWCGROUP,
     CloneFlags::CLONE_NEWNS,
-    // CLONE_NEWTIME
-    CloneFlags::from_bits_retain(LinuxNamespaceType::Time as i32),
+    CLONE_NEWTIME_FLAG,
 ];
 
 /// Holds information about namespaces
@@ -58,7 +61,7 @@ fn get_clone_flag(namespace_type: LinuxNamespaceType) -> Result<CloneFlags> {
         LinuxNamespaceType::Network => CloneFlags::CLONE_NEWNET,
         LinuxNamespaceType::Cgroup => CloneFlags::CLONE_NEWCGROUP,
         LinuxNamespaceType::Mount => CloneFlags::CLONE_NEWNS,
-        LinuxNamespaceType::Time => CloneFlags::from_bits_retain(LinuxNamespaceType::Time as i32),
+        LinuxNamespaceType::Time => CLONE_NEWTIME_FLAG,
     };
 
     Ok(flag)

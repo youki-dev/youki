@@ -590,7 +590,7 @@ fn apply_rest_namespaces(
         .apply_namespaces(|ns_type| -> bool {
             ns_type != CloneFlags::CLONE_NEWUSER
                 && ns_type != CloneFlags::CLONE_NEWPID
-                && ns_type != CloneFlags::from_bits_retain(LinuxNamespaceType::Time as i32)
+                && ns_type != crate::namespaces::CLONE_NEWTIME_FLAG
         })
         .map_err(|err| {
             tracing::error!(
