@@ -77,6 +77,12 @@ fn create_spec_for_set_times_plus_userns() -> Result<Spec> {
             .to_owned(),
     );
 
+    default_namespaces.push(
+        LinuxNamespace::default()
+            .set_typ(LinuxNamespaceType::User)
+            .to_owned(),
+    );
+
     let id_mapping = LinuxIdMappingBuilder::default()
         .host_id(100000_u32)
         .container_id(0_u32)
