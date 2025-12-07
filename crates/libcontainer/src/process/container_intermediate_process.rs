@@ -130,10 +130,25 @@ pub fn container_intermediate_process(
     }
 
     if let Some(time_namespace) = namespaces.get(LinuxNamespaceType::Time)? {
-        namespaces.unshare_or_setns(time_namespace)?;
-
-        if time_namespace.path().is_none() && args.time_offsets.is_some() {
-            setup_time_offsets(main_sender, inter_receiver)?;
+        // Try to enter the time namespace. In rootless containers, setns(CLONE_NEWTIME)
+        // will fail with EPERM. We can skip EPERM the time namespace will be inherited
+        // automatically from the parent process.
+        // https://github.com/opencontainers/runc/blob/main/libcontainer/nsenter/nsexec.c#L543
+        match namespaces.unshare_or_setns(time_namespace) {
+            Ok(()) => {
+                if time_namespace.path().is_none() && args.time_offsets.is_some() {
+                    setup_time_offsets(main_sender, inter_receiver)?;
+                }
+            }
+            Err(crate::namespaces::NamespaceError::Syscall(ref e))
+                if matches!(
+                    e,
+                    crate::syscall::SyscallError::Nix(nix::errno::Errno::EPERM)
+                ) && time_namespace.path().is_some() =>
+            {
+                tracing::debug!("Skipping time namespace setns due to EPERM (rootless container)");
+            }
+            Err(e) => return Err(e.into()),
         }
     }
 
