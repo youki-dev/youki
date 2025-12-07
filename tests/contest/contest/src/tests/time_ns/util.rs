@@ -2,25 +2,27 @@ use std::collections::HashMap;
 
 use oci_spec::runtime::LinuxTimeOffset;
 
-pub fn create_time_offset(
-    boottime_secs: i64,
-    boottime_nanosecs: u32,
-    monotonic_secs: i64,
-    monotonic_nanosecs: u32,
-) -> HashMap<String, LinuxTimeOffset> {
+pub struct TimeOffsets {
+    pub boottime_secs: i64,
+    pub boottime_nanosecs: u32,
+    pub monotonic_secs: i64,
+    pub monotonic_nanosecs: u32,
+}
+
+pub fn create_time_offset(time_offsets: &TimeOffsets) -> HashMap<String, LinuxTimeOffset> {
     [
         (
             "boottime".to_owned(),
             LinuxTimeOffset::default()
-                .set_secs(Some(boottime_secs))
-                .set_nanosecs(Some(boottime_nanosecs))
+                .set_secs(Some(time_offsets.boottime_secs))
+                .set_nanosecs(Some(time_offsets.boottime_nanosecs))
                 .to_owned(),
         ),
         (
             "monotonic".to_owned(),
             LinuxTimeOffset::default()
-                .set_secs(Some(monotonic_secs))
-                .set_nanosecs(Some(monotonic_nanosecs))
+                .set_secs(Some(time_offsets.monotonic_secs))
+                .set_nanosecs(Some(time_offsets.monotonic_nanosecs))
                 .to_owned(),
         ),
     ]

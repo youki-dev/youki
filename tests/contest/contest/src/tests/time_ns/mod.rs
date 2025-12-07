@@ -6,7 +6,7 @@ use oci_spec::runtime::{
 use test_framework::{Test, TestGroup, TestResult, test_result};
 
 mod util;
-use crate::tests::time_ns::util::create_time_offset;
+use crate::tests::time_ns::util::{TimeOffsets, create_time_offset};
 use crate::utils::test_inside_container;
 use crate::utils::test_utils::CreateOptions;
 
@@ -18,7 +18,12 @@ fn create_spec_for_set_times() -> Result<Spec> {
             .to_owned(),
     );
 
-    let time_offsets = create_time_offset(1337, 3141519, 7881, 2718281);
+    let time_offsets = create_time_offset(&TimeOffsets {
+        boottime_secs: 1337,
+        boottime_nanosecs: 3141519,
+        monotonic_secs: 7881,
+        monotonic_nanosecs: 2718281,
+    });
 
     SpecBuilder::default()
         .process(
@@ -97,7 +102,12 @@ fn create_spec_for_set_times_plus_userns() -> Result<Spec> {
         .build()
         .expect("error in building LinuxIdMapping");
 
-    let time_offsets = create_time_offset(1337, 3141519, 7881, 2718281);
+    let time_offsets = create_time_offset(&TimeOffsets {
+        boottime_secs: 1337,
+        boottime_nanosecs: 3141519,
+        monotonic_secs: 7881,
+        monotonic_nanosecs: 2718281,
+    });
 
     SpecBuilder::default()
         .process(
