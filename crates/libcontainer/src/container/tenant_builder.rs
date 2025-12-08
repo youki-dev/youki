@@ -425,6 +425,10 @@ impl TenantContainerBuilder {
             }
         }
 
+        if let Some(mounts) = spec.mounts() {
+            utils::validate_mount_options(mounts)?;
+        }
+
         let syscall = create_syscall();
         utils::validate_spec_for_new_user_ns(spec, &*syscall)?;
         utils::validate_spec_for_net_devices(spec, &*syscall)
