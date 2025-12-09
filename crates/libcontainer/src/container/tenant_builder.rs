@@ -429,6 +429,7 @@ impl TenantContainerBuilder {
         utils::validate_spec_for_new_user_ns(spec, &*syscall)?;
         utils::validate_spec_for_net_devices(spec, &*syscall)
             .map_err(LibcontainerError::NetDevicesError)?;
+        utils::validate_time_namespace(spec)?;
 
         Ok(())
     }

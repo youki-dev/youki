@@ -365,6 +365,29 @@ fn dev_valid_name(name: &str) -> bool {
     true
 }
 
+// Validates time namespace configuration
+pub fn validate_time_namespace(spec: &Spec) -> Result<(), LibcontainerError> {
+    let linux = match spec.linux() {
+        Some(l) => l,
+        None => return Ok(()),
+    };
+
+    match linux.time_offsets() {
+        Some(s) if !s.is_empty() => s,
+        _ => return Ok(()),
+    };
+
+    linux
+        .namespaces()
+        .as_ref()
+        .and_then(|nss| nss.iter().find(|ns| ns.typ() == LinuxNamespaceType::Time))
+        .ok_or_else(|| {
+            LibcontainerError::InvalidSpec(crate::error::ErrInvalidSpec::TimeNamespace)
+        })?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use core::panic;
