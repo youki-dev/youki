@@ -381,9 +381,9 @@ pub fn validate_time_namespace(spec: &Spec) -> Result<(), LibcontainerError> {
         .namespaces()
         .as_ref()
         .and_then(|nss| nss.iter().find(|ns| ns.typ() == LinuxNamespaceType::Time))
-        .ok_or_else(|| {
-            LibcontainerError::InvalidSpec(crate::error::ErrInvalidSpec::TimeNamespace)
-        })?;
+        .ok_or(LibcontainerError::InvalidSpec(
+            crate::error::ErrInvalidSpec::TimeNamespace,
+        ))?;
 
     Ok(())
 }
