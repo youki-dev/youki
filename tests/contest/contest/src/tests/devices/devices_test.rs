@@ -61,11 +61,49 @@ fn devices_test() -> TestResult {
     test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
+fn create_spec_default_permissions() -> Result<Spec> {
+    let device = LinuxDeviceBuilder::default()
+        .path("/dev/kmsg")
+        .typ(LinuxDeviceType::C)
+        .major(1)
+        .minor(11)
+        .build()
+        .context("failed to create device")?;
+
+    let spec = SpecBuilder::default()
+        .process(
+            ProcessBuilder::default()
+                .args(vec!["runtimetest".to_string(), "devices".to_string()])
+                .build()
+                .expect("error in creating process config"),
+        )
+        .linux(
+            LinuxBuilder::default()
+                .devices(vec![device])
+                .build()
+                .context("failed to build linux spec")?,
+        )
+        .build()
+        .context("failed to build spec")?;
+
+    Ok(spec)
+}
+
+fn devices_default_permissions_test() -> TestResult {
+    let spec = test_result!(create_spec_default_permissions());
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
+}
+
 pub fn get_devices_test() -> TestGroup {
     let mut device_test_group = TestGroup::new("devices");
 
     let test = Test::new("device_test", Box::new(devices_test));
-    device_test_group.add(vec![Box::new(test)]);
+    let test_default_permissions = Test::new(
+        "device_default_permissions",
+        Box::new(devices_default_permissions_test),
+    );
+
+    device_test_group.add(vec![Box::new(test), Box::new(test_default_permissions)]);
 
     device_test_group
 }

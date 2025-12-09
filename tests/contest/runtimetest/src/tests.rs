@@ -480,14 +480,12 @@ fn validate_device(device: &LinuxDevice, description: &str) {
         }
     }
 
-    let expected_permissions = device.file_mode();
-    if let Some(expected) = expected_permissions {
-        let actual_permissions = file_data.permissions().mode() & 0o777;
-        if actual_permissions != expected {
-            eprintln!(
-                "error due to device file mode want {expected:?}, got {actual_permissions:?}"
-            );
-        }
+    let expected_permissions = device.file_mode().unwrap_or(0o666);
+    let actual_permissions = file_data.permissions().mode() & 0o777;
+    if actual_permissions != expected_permissions {
+        eprintln!(
+            "error due to device file mode want {expected_permissions:?}, got {actual_permissions:?}"
+        );
     }
 
     if description == "/dev/console (default device)" {
