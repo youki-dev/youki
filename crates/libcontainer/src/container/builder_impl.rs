@@ -144,9 +144,6 @@ impl ContainerBuilderImpl {
             })?;
         }
 
-        // Extract time namespace offsets from spec
-        let time_offsets = Self::extract_time_offsets(self.spec.linux().as_ref())?;
-
         // This container_args will be passed to the container processes,
         // therefore we will have to move all the variable by value. Since self
         // is a shared reference, we have to clone these variables here.
@@ -168,7 +165,6 @@ impl ContainerBuilderImpl {
             stdout: self.stdout.as_ref().map(|x| x.as_raw_fd()),
             stderr: self.stderr.as_ref().map(|x| x.as_raw_fd()),
             as_sibling: self.as_sibling,
-            time_offsets,
             pid_file: self.pid_file.to_owned(),
         };
 
@@ -234,50 +230,5 @@ impl ContainerBuilderImpl {
         }
 
         Ok(())
-    }
-
-    fn extract_time_offsets(
-        linux: Option<&oci_spec::runtime::Linux>,
-    ) -> Result<Option<String>, LibcontainerError> {
-        let linux = match linux {
-            Some(l) => l,
-            None => return Ok(None),
-        };
-
-        let spec = match linux.time_offsets() {
-            Some(s) if !s.is_empty() => s,
-            _ => return Ok(None),
-        };
-
-        let time_ns = linux
-            .namespaces()
-            .as_ref()
-            .and_then(|nss| {
-                nss.iter()
-                    .find(|ns| ns.typ() == oci_spec::runtime::LinuxNamespaceType::Time)
-            })
-            .ok_or_else(|| {
-                LibcontainerError::Other(
-                    "time namespace offsets specified, but time namespace isn't enabled in the config"
-                        .to_string(),
-                )
-            })?;
-
-        // Only set offsets if we're creating a NEW time namespace (no `path`)
-        if time_ns.path().is_some() {
-            return Ok(None);
-        }
-
-        let s = spec
-            .iter()
-            .map(|(clock_type, offset)| {
-                let secs = offset.secs().unwrap_or(0);
-                let nanos = offset.nanosecs().unwrap_or(0);
-                format!("{clock_type} {secs} {nanos}")
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        Ok((!s.is_empty()).then_some(s))
     }
 }

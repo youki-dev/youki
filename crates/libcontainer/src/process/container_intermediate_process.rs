@@ -131,7 +131,7 @@ pub fn container_intermediate_process(
         // https://github.com/opencontainers/runc/blob/main/libcontainer/nsenter/nsexec.c#L543
         match namespaces.unshare_or_setns(time_namespace) {
             Ok(()) => {
-                if time_namespace.path().is_none() && args.time_offsets.is_some() {
+                if time_namespace.path().is_none() && linux.time_offsets().is_some() {
                     setup_time_offsets(main_sender, inter_receiver)?;
                 }
             }
