@@ -53,7 +53,7 @@ thiserror = "2.0.17"
 tracing = { version = "0.1.43", features = ["attributes"] }
 safe-path = "0.1.0"
 nc = "0.9.7"
-netlink-packet-route = "0.25.1"
+netlink-packet-route = "0.26.0"
 netlink-sys = "0.8.5"
 netlink-packet-core = "0.8.1"
 pathrs = "0.2.2"
