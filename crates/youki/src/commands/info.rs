@@ -9,6 +9,8 @@ use clap::Parser;
 #[cfg(feature = "v2")]
 use libcgroups::{common::CgroupSetup, v2::controller_type::ControllerType};
 use libcontainer::user_ns;
+#[cfg(feature = "seccomp")]
+use libseccomp;
 use procfs::{CpuInfo, Current, Meminfo};
 /// Show information about the system
 #[derive(Parser, Debug)]
@@ -26,8 +28,8 @@ pub fn info(_: Info) -> Result<()> {
     Ok(())
 }
 
-/// print Version of Youki in Moby compatible format
-/// https://github.com/moby/moby/blob/65cc84abc522a564699bb171ca54ea1857256d10/daemon/info_unix.go#L280
+/// print_youki prints the version of youki compatible with runc --version output.
+/// See https://github.com/opencontainers/runc/blob/v1.4.0/main.go#L37-L51
 pub fn print_youki() {
     println!("youki version: {}", env!("CARGO_PKG_VERSION"));
     println!(
@@ -35,6 +37,12 @@ pub fn print_youki() {
         env!("CARGO_PKG_VERSION"),
         env!("VERGEN_GIT_SHA")
     );
+    println!("spec: {}", oci_spec::runtime::VERSION);
+    println!("rustc: {}", env!("RUSTC_VERSION"));
+    #[cfg(feature = "seccomp")]
+    if let Ok(version) = libseccomp::ScmpVersion::current() {
+        println!("libseccomp: {}", version);
+    }
 }
 
 /// Print Kernel Release, Version and Architecture

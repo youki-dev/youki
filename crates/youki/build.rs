@@ -12,5 +12,18 @@ pub fn main() -> Result<()> {
         // what failed, and what needs to be added
         println!("cargo:rustc-env=VERGEN_GIT_SHA=unknown");
     }
+
+    // Embed rustc version at build time (format: "rust1.75.0" like Go's "go1.21.0")
+    let rustc_version = std::process::Command::new("rustc")
+        .arg("-V")
+        .output()
+        .ok()
+        .and_then(|o| {
+            let s = String::from_utf8_lossy(&o.stdout);
+            s.split_whitespace().nth(1).map(|v| format!("rust{}", v))
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rustc-env=RUSTC_VERSION={}", rustc_version);
+
     Ok(())
 }
