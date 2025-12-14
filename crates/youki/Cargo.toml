@@ -16,7 +16,7 @@ systemd = ["libcgroups/systemd", "libcontainer/systemd", "v2"]
 v2 = ["libcgroups/v2", "libcontainer/v2"]
 v1 = ["libcgroups/v1", "libcontainer/v1"]
 cgroupsv2_devices = ["libcgroups/cgroupsv2_devices", "libcontainer/cgroupsv2_devices"]
-seccomp = ["libcontainer/libseccomp", "dep:libseccomp"]
+seccomp = ["libcontainer/libseccomp"]
 
 wasm-wasmer = ["wasmer", "wasmer-wasix"]
 wasm-wasmedge = ["wasmedge-sdk/standalone", "wasmedge-sdk/static"]
@@ -48,7 +48,6 @@ wasi-common = { version = "35.0.0", optional = true }
 tracing = { version = "0.1.43", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.22", features = ["json", "env-filter"] }
 tracing-journald = "0.3.2"
-libseccomp = { version = "0.4.0", optional = true }
 oci-spec = { version = "0.8.3", features = ["runtime"] }
 
 [dev-dependencies]
@@ -58,4 +57,5 @@ scopeguard = "1.2.0"
 
 [build-dependencies]
 anyhow = "1.0.100"
-vergen-gitcl = { version = "1.0.8", features = ["build"] }
+vergen-gitcl = { version = "1.0.8", features = ["build", "rustc"] }
+pkg-config = "0.3.32"

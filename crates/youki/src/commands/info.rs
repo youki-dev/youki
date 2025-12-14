@@ -9,8 +9,6 @@ use clap::Parser;
 #[cfg(feature = "v2")]
 use libcgroups::{common::CgroupSetup, v2::controller_type::ControllerType};
 use libcontainer::user_ns;
-#[cfg(feature = "seccomp")]
-use libseccomp;
 use procfs::{CpuInfo, Current, Meminfo};
 /// Show information about the system
 #[derive(Parser, Debug)]
@@ -40,12 +38,13 @@ pub fn print_youki() {
     println!("spec: {}", oci_spec::runtime::VERSION);
     println!(
         "rustc: {}",
-        option_env!("RUSTC_VERSION").unwrap_or("unknown")
+        option_env!("VERGEN_RUSTC_SEMVER").unwrap_or("unknown")
     );
     #[cfg(feature = "seccomp")]
-    if let Ok(version) = libseccomp::ScmpVersion::current() {
-        println!("libseccomp: {}", version);
-    }
+    println!(
+        "libseccomp: {}",
+        option_env!("LIBSECCOMP_VERSION").unwrap_or("unknown")
+    );
 }
 
 /// Print Kernel Release, Version and Architecture
