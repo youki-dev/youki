@@ -26,8 +26,11 @@ pub fn info(_: Info) -> Result<()> {
     Ok(())
 }
 
-/// print_youki prints the version of youki compatible with runc --version output.
-/// See https://github.com/opencontainers/runc/blob/v1.4.0/main.go#L37-L51
+/// Prints the version of youki in a format compatible with `runc --version` and Moby.
+///
+/// See:
+/// - <https://github.com/opencontainers/runc/blob/v1.4.0/main.go#L37-L51>
+/// - <https://github.com/moby/moby/blob/65cc84abc522a564699bb171ca54ea1857256d10/daemon/info_unix.go#L280>
 pub fn print_youki() {
     println!("youki version: {}", env!("CARGO_PKG_VERSION"));
     println!(
