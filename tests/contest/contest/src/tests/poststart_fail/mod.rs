@@ -5,7 +5,7 @@ use anyhow::anyhow;
 use oci_spec::runtime::{
     HookBuilder, HooksBuilder, ProcessBuilder, RootBuilder, Spec, SpecBuilder,
 };
-use test_framework::{Test, TestGroup, TestResult};
+use test_framework::{ConditionalTest, TestGroup, TestResult};
 
 use crate::utils::test_utils::CreateOptions;
 use crate::utils::{
@@ -13,14 +13,14 @@ use crate::utils::{
     start_container,
 };
 
-const CONTAINER_OUTPUT_FILE: &str = "output";
+const HOOK_OUTPUT_FILE: &str = "output";
 
 fn get_output_file_path(bundle: &tempfile::TempDir) -> PathBuf {
     bundle
         .as_ref()
         .join("bundle")
         .join("rootfs")
-        .join(CONTAINER_OUTPUT_FILE)
+        .join(HOOK_OUTPUT_FILE)
 }
 
 fn delete_output_file(path: &PathBuf) {
@@ -90,11 +90,12 @@ fn get_spec(host_output_file: &str) -> Spec {
 /// Tests that when a poststart hook fails, subsequent hooks are not executed.
 ///
 /// Validates that the runtime stops executing remaining poststart hooks after one fails,
-/// and returns an error (exit code 1). This test creates 3 hooks where hook_2 fails,
-/// then verifies that hook_1 and hook_2 ran but hook_3 did not.
-fn get_test(test_name: &'static str) -> Test {
-    Test::new(
+/// and returns an error (exit code 1). This test creates 3 hooks where `hook_2` fails,
+/// then verifies that `hook_1` and `hook_2` ran but `hook_3` did not.
+fn get_test(test_name: &'static str) -> ConditionalTest {
+    ConditionalTest::new(
         test_name,
+        Box::new(|| !is_runtime_runc()),
         Box::new(move || {
             let id = generate_uuid().to_string();
             let bundle = prepare_bundle().unwrap();
@@ -113,9 +114,7 @@ fn get_test(test_name: &'static str) -> Test {
                 _ => false,
             };
 
-            // runc doesn't follow spec and runs hooks at the create stage
-            // https://github.com/opencontainers/runc/issues/4347
-            if create_failed && !is_runtime_runc() {
+            if create_failed {
                 let _ = delete_container(&id, &bundle);
                 delete_output_file(&host_output_file);
                 return TestResult::Failed(anyhow!("runtime failed at create"));
@@ -132,11 +131,7 @@ fn get_test(test_name: &'static str) -> Test {
                 }
             }
 
-            let result = if !host_output_file.exists() {
-                TestResult::Failed(anyhow!(
-                    "no poststart hooks ran (output file doesn't exist)"
-                ))
-            } else {
+            let result = if host_output_file.exists() {
                 let content =
                     fs::read_to_string(&host_output_file).expect("failed to read output file");
 
@@ -151,6 +146,10 @@ fn get_test(test_name: &'static str) -> Test {
                 } else {
                     TestResult::Passed
                 }
+            } else {
+                TestResult::Failed(anyhow!(
+                    "no poststart hooks ran (output file doesn't exist)"
+                ))
             };
 
             let _ = delete_container(&id, &bundle);
