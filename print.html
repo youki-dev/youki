@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d24fbc1d.js";
+            window.path_to_searchindex_js = "searchindex-bbd779ce.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-d31ef357.js"></script>
+        <script src="toc-12d6d51d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1372,6 +1372,19 @@ For that, first whichever integration test needs to use it, must define the runt
 <h2 id="local-1"><a class="header" href="#local-1">local</a></h2>
 <pre><code class="language-console">$ git submodule update --init --recursive
 $ just test-oci
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="runc-compatibility-test"><a class="header" href="#runc-compatibility-test">runc compatibility test</a></h1>
+<h2 id="notes-4"><a class="header" href="#notes-4">Notes</a></h2>
+<p>This test verifies compatibility with runc by running runc’s
+<a href="https://github.com/opencontainers/runc/tree/main/tests/integration">integration tests</a>
+against the youki binary.</p>
+<p>The list of tests to run is defined in <code>tests/runc/runc_test_pattern</code>.
+Each line must match the test name in runc’s Bats test files (the string in <code>@test "..."</code>).
+Prefix a line with <code>[skip]</code> to skip that test.</p>
+<h2 id="local-2"><a class="header" href="#local-2">Local</a></h2>
+<pre><code class="language-console">$ git submodule update --init --recursive
+$ just test-runc-comp
 </code></pre>
 
                     </main>
