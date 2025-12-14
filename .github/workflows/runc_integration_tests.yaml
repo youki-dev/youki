@@ -46,4 +46,4 @@ jobs:
         run: |
           sed "s;^profile runc /usr/sbin/;profile runc-test $(pwd)/tests/runc/src/github.com/opencontainers/runc/;" < /etc/apparmor.d/runc | sudo apparmor_parser
       - name: Runc integration test
-        run: tests/runc/runc_integration_test.sh
+        run: just test-runc-comp

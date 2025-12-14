@@ -5,6 +5,12 @@ ROOT=$(git rev-parse --show-toplevel)
 RUNC_DIR="${ROOT}/tests/runc/src/github.com/opencontainers/runc"
 PATTERN_FILE="${ROOT}/${2:-tests/runc/runc_test_pattern}"
 
+if [[ ! -f "$RUNC_DIR/Makefile" ]]; then
+  echo "error: Makefile not found under: $RUNC_DIR" >&2
+  echo "please run: git submodule update --init --recursive" >&2
+  exit 1
+fi
+
 if [[ ! -x "$RUNTIME" ]]; then
   echo "$RUNTIME binary not found"
   exit 1
