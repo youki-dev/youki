@@ -38,7 +38,10 @@ pub fn print_youki() {
         env!("VERGEN_GIT_SHA")
     );
     println!("spec: {}", oci_spec::runtime::VERSION);
-    println!("rustc: {}", option_env!("RUSTC_VERSION").unwrap_or("unknown"));
+    println!(
+        "rustc: {}",
+        option_env!("RUSTC_VERSION").unwrap_or("unknown")
+    );
     #[cfg(feature = "seccomp")]
     if let Ok(version) = libseccomp::ScmpVersion::current() {
         println!("libseccomp: {}", version);
