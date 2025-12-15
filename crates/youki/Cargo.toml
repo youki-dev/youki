@@ -48,6 +48,7 @@ wasi-common = { version = "35.0.0", optional = true }
 tracing = { version = "0.1.43", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.22", features = ["json", "env-filter"] }
 tracing-journald = "0.3.2"
+oci-spec = { version = "0.8.3", features = ["runtime"] }
 
 [dev-dependencies]
 serial_test = "3.1.1"
@@ -56,4 +57,5 @@ scopeguard = "1.2.0"
 
 [build-dependencies]
 anyhow = "1.0.100"
-vergen-gitcl = { version = "1.0.8", features = ["build"] }
+vergen-gitcl = { version = "1.0.8", features = ["build", "rustc"] }
+pkg-config = "0.3.32"
