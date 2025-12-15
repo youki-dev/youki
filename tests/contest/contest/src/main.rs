@@ -23,6 +23,7 @@ use crate::tests::kill::get_kill_test;
 use crate::tests::lifecycle::{ContainerCreate, ContainerLifecycle};
 use crate::tests::linux_masked_paths::get_linux_masked_paths_tests;
 use crate::tests::linux_ns_itype::get_ns_itype_tests;
+use crate::tests::linux_ns_path::get_ns_path_test;
 use crate::tests::misc_props::get_misc_props_test;
 use crate::tests::mounts_recursive::get_mounts_recursive_test;
 use crate::tests::net_devices::get_net_devices_test;
@@ -115,6 +116,7 @@ fn main() -> Result<()> {
     let huge_tlb = get_tlb_test();
     let pidfile = get_pidfile_test();
     let ns_itype = get_ns_itype_tests();
+    let ns_path = get_ns_path_test();
     let hooks = get_hooks_tests();
     let poststart = get_poststart_tests();
     let cgroup_v1_pids = cgroups::pids::get_test_group();
@@ -160,6 +162,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(huge_tlb));
     tm.add_test_group(Box::new(pidfile));
     tm.add_test_group(Box::new(ns_itype));
+    tm.add_test_group(Box::new(ns_path));
     tm.add_test_group(Box::new(hooks));
     tm.add_test_group(Box::new(poststart));
     tm.add_test_group(Box::new(cgroup_v1_pids));
