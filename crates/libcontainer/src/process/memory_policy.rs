@@ -305,10 +305,6 @@ fn parse_node_string(nodes: &str) -> Result<Vec<u32>> {
         if range.is_empty() {
             continue; // Skip empty entries caused by multiple commas
         }
-        let range = range.trim();
-        if range.is_empty() {
-            continue;
-        }
 
         if let Some(dash_pos) = range.find('-') {
             // Range format: "node1-node2"
