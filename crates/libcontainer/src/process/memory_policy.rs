@@ -97,6 +97,27 @@ fn validate_memory_policy(
 
     let base_mode = MemoryPolicyMode::from(policy.mode());
 
+    let (flags_value, has_static, has_relative) = policy
+        .flags()
+        .as_ref()
+        .map(|flags| {
+            flags
+                .iter()
+                .fold((0u32, false, false), |(val, s, r), flag| match flag {
+                    MemoryPolicyFlagType::MpolFNumaBalancing => {
+                        (val | u32::from(MemoryPolicyFlag::NumaBalancing), s, r)
+                    }
+                    MemoryPolicyFlagType::MpolFStaticNodes => {
+                        (val | u32::from(MemoryPolicyFlag::StaticNodes), true, r)
+                    }
+                    MemoryPolicyFlagType::MpolFRelativeNodes => {
+                        (val | u32::from(MemoryPolicyFlag::RelativeNodes), s, true)
+                    }
+                })
+        })
+        .unwrap_or((0, false, false));
+
+    // Validate flags
     if let Some(flags) = policy.flags() {
         if flags.contains(&MemoryPolicyFlagType::MpolFNumaBalancing)
             && base_mode != MemoryPolicyMode::Bind
@@ -105,28 +126,13 @@ fn validate_memory_policy(
                 "MPOL_F_NUMA_BALANCING can only be used with MPOL_BIND".to_string(),
             ));
         }
-
-        let has_static = flags.contains(&MemoryPolicyFlagType::MpolFStaticNodes);
-        let has_relative = flags.contains(&MemoryPolicyFlagType::MpolFRelativeNodes);
-        if has_static && has_relative {
-            return Err(MemoryPolicyError::MutuallyExclusiveFlags(
-                "MPOL_F_STATIC_NODES and MPOL_F_RELATIVE_NODES are mutually exclusive".to_string(),
-            ));
-        }
     }
 
-    let (flags_value, has_static, has_relative) = policy
-        .flags()
-        .map(|flags| {
-            flags
-                .iter()
-                .fold((0u32, false, false), |(val, s, r), flag| match flag {
-                    MpolFNumaBalancing => (val | MPOL_F_NUMA_BALANCING, s, r),
-                    MpolFStaticNodes => (val | MPOL_F_STATIC_NODES, true, r),
-                    MpolFRelativeNodes => (val | MPOL_F_RELATIVE_NODES, s, true),
-                })
-        })
-        .unwrap_or((0, false, false));
+    if has_static && has_relative {
+        return Err(MemoryPolicyError::MutuallyExclusiveFlags(
+            "MPOL_F_STATIC_NODES and MPOL_F_RELATIVE_NODES are mutually exclusive".to_string(),
+        ));
+    }
 
     let mode_with_flags = i32::from(base_mode) | (flags_value as i32);
 
