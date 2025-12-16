@@ -27,7 +27,7 @@ use crate::network::link::LinkClient;
 use crate::network::network_device::{resolve_device_name, setup_addresses_in_network_namespace};
 use crate::network::wrapper::create_network_client;
 use crate::process::args::{ContainerArgs, ContainerType};
-use crate::process::channel;
+use crate::process::{channel, memory_policy};
 use crate::rootfs::RootFS;
 use crate::rootfs::device::{open_device_fd, verify_dev_null};
 #[cfg(feature = "libseccomp")]
@@ -53,6 +53,8 @@ pub fn container_init_process(
     set_io_priority(ctx.syscall.as_ref(), ctx.process.io_priority())?;
 
     setup_scheduler(ctx.process.scheduler())?;
+
+    memory_policy::setup_memory_policy(ctx.linux.memory_policy(), ctx.syscall.as_ref())?;
 
     // set up tty if specified
     if let Some(csocketfd) = args.console_socket {

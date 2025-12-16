@@ -1,5 +1,6 @@
 use crate::namespaces::NamespaceError;
 use crate::process::channel;
+use crate::process::memory_policy::MemoryPolicyError;
 use crate::rootfs::device::DeviceError;
 #[cfg(feature = "libseccomp")]
 use crate::seccomp;
@@ -64,6 +65,8 @@ pub enum InitProcessError {
     IoPriorityClass(String),
     #[error("call exec sched_setattr error: {0}")]
     SchedSetattr(String),
+    #[error(transparent)]
+    MemoryPolicy(#[from] MemoryPolicyError),
     #[error(transparent)]
     Network(#[from] crate::network::NetworkError),
     #[error("failed to verify if current working directory is safe")]
