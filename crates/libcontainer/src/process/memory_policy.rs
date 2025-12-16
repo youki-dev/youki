@@ -54,6 +54,20 @@ impl From<MemoryPolicyModeType> for MemoryPolicyMode {
     }
 }
 
+impl ToString for MemoryPolicyMode {
+    fn to_string(&self) -> String {
+        match self {
+            MemoryPolicyMode::Default => "MPOL_DEFAULT".to_string(),
+            MemoryPolicyMode::Preferred => "MPOL_PREFERRED".to_string(),
+            MemoryPolicyMode::Bind => "MPOL_BIND".to_string(),
+            MemoryPolicyMode::Interleave => "MPOL_INTERLEAVE".to_string(),
+            MemoryPolicyMode::Local => "MPOL_LOCAL".to_string(),
+            MemoryPolicyMode::PreferredMany => "MPOL_PREFERRED_MANY".to_string(),
+            MemoryPolicyMode::WeightedInterleave => "MPOL_WEIGHTED_INTERLEAVE".to_string(),
+        }
+    }
+}
+
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MemoryPolicyFlag {
@@ -101,29 +115,24 @@ fn validate_memory_policy(
         }
     }
 
-  let (flags_value, has_static, has_relative) = policy
-      .flags()
-      .map(|flags| {
-          flags.iter().fold((0u32, false, false), |(val, s, r), flag| {
-              match flag {
-                  MpolFNumaBalancing => (val | MPOL_F_NUMA_BALANCING, s, r),
-                  MpolFStaticNodes => (val | MPOL_F_STATIC_NODES, true, r),
-                  MpolFRelativeNodes => (val | MPOL_F_RELATIVE_NODES, s, true),
-              }
-          })
-      })
-      .unwrap_or((0, false, false));
-
+    let (flags_value, has_static, has_relative) = policy
+        .flags()
+        .map(|flags| {
+            flags
+                .iter()
+                .fold((0u32, false, false), |(val, s, r), flag| match flag {
+                    MpolFNumaBalancing => (val | MPOL_F_NUMA_BALANCING, s, r),
+                    MpolFStaticNodes => (val | MPOL_F_STATIC_NODES, true, r),
+                    MpolFRelativeNodes => (val | MPOL_F_RELATIVE_NODES, s, true),
+                })
+        })
+        .unwrap_or((0, false, false));
 
     let mode_with_flags = i32::from(base_mode) | (flags_value as i32);
 
     match base_mode {
         MemoryPolicyMode::Default | MemoryPolicyMode::Local => {
-            let mode_name = if base_mode == MemoryPolicyMode::Default {
-                "MPOL_DEFAULT"
-            } else {
-                "MPOL_LOCAL"
-            };
+            let mode_name = base_mode.to_string();
 
             if let Some(nodes) = policy.nodes() {
                 if !nodes.trim().is_empty() {
@@ -196,15 +205,7 @@ fn validate_memory_policy(
             }
         }
         _ => {
-            let mode_name = match policy.mode() {
-                MemoryPolicyModeType::MpolDefault => "MPOL_DEFAULT",
-                MemoryPolicyModeType::MpolPreferred => "MPOL_PREFERRED",
-                MemoryPolicyModeType::MpolBind => "MPOL_BIND",
-                MemoryPolicyModeType::MpolInterleave => "MPOL_INTERLEAVE",
-                MemoryPolicyModeType::MpolLocal => "MPOL_LOCAL",
-                MemoryPolicyModeType::MpolPreferredMany => "MPOL_PREFERRED_MANY",
-                MemoryPolicyModeType::MpolWeightedInterleave => "MPOL_WEIGHTED_INTERLEAVE",
-            };
+            let mode_name = base_mode.to_string();
             let nodes = match policy.nodes() {
                 None => {
                     return Err(MemoryPolicyError::InvalidNodes(format!(
