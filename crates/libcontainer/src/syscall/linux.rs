@@ -950,8 +950,8 @@ impl Syscall for LinuxSyscall {
             )
         } {
             0 => Ok(()),
-            -1 => Err(nix::Error::last()),
-            _ => Err(nix::Error::UnknownErrno),
+            -1 => Err(SyscallError::Nix(nix::Error::last())),
+            _ => Err(SyscallError::Nix(nix::Error::UnknownErrno)),
         }
     }
 
