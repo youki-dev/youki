@@ -65,8 +65,6 @@ pub enum InitProcessError {
     IoPriorityClass(String),
     #[error("call exec sched_setattr error: {0}")]
     SchedSetattr(String),
-    #[error("invalid memory policy: {0}")]
-    InvalidMemoryPolicy(String),
     #[error(transparent)]
     MemoryPolicy(#[from] MemoryPolicyError),
     #[error(transparent)]
