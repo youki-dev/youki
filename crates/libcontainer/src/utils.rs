@@ -347,6 +347,27 @@ pub fn validate_spec_for_net_devices(
     Ok(())
 }
 
+/// Validates mount destinations and warns about deprecated relative paths.
+/// Follows the OCI Runtime Spec requirement that mount destinations SHOULD be absolute.
+/// Relative paths are deprecated but still accepted for backward compatibility.
+pub fn validate_mount_options(
+    mounts: &[oci_spec::runtime::Mount],
+) -> Result<(), LibcontainerError> {
+    mounts
+        .iter()
+        .filter(|mount| !mount.destination().is_absolute())
+        .for_each(|mount| {
+            tracing::warn!(
+                "mount destination {:?} is not absolute. \
+                Relative paths are deprecated in OCI Runtime Spec and may not be supported in future versions. \
+                The path will be interpreted as relative to '/'.",
+                mount.destination()
+            );
+        });
+
+    Ok(())
+}
+
 // https://elixir.bootlin.com/linux/v6.12/source/net/core/dev.c#L1066
 fn dev_valid_name(name: &str) -> bool {
     if name.is_empty() || name.len() > IFNAMSIZ {
