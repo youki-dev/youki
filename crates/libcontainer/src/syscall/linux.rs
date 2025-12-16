@@ -952,8 +952,7 @@ impl Syscall for LinuxSyscall {
             0 => Ok(()),
             -1 => Err(nix::Error::last()),
             _ => Err(nix::Error::UnknownErrno),
-        }?;
-        Ok(())
+        }
     }
 
     fn umount2(&self, target: &Path, flags: MntFlags) -> Result<()> {
