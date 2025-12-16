@@ -1,3 +1,5 @@
+use std::fmt;
+
 use oci_spec::runtime::{MemoryPolicyFlagType, MemoryPolicyModeType};
 
 use crate::syscall::{Syscall, SyscallError};
@@ -54,17 +56,18 @@ impl From<MemoryPolicyModeType> for MemoryPolicyMode {
     }
 }
 
-impl ToString for MemoryPolicyMode {
-    fn to_string(&self) -> String {
-        match self {
-            MemoryPolicyMode::Default => "MPOL_DEFAULT".to_string(),
-            MemoryPolicyMode::Preferred => "MPOL_PREFERRED".to_string(),
-            MemoryPolicyMode::Bind => "MPOL_BIND".to_string(),
-            MemoryPolicyMode::Interleave => "MPOL_INTERLEAVE".to_string(),
-            MemoryPolicyMode::Local => "MPOL_LOCAL".to_string(),
-            MemoryPolicyMode::PreferredMany => "MPOL_PREFERRED_MANY".to_string(),
-            MemoryPolicyMode::WeightedInterleave => "MPOL_WEIGHTED_INTERLEAVE".to_string(),
-        }
+impl fmt::Display for MemoryPolicyMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            MemoryPolicyMode::Default => "MPOL_DEFAULT",
+            MemoryPolicyMode::Preferred => "MPOL_PREFERRED",
+            MemoryPolicyMode::Bind => "MPOL_BIND",
+            MemoryPolicyMode::Interleave => "MPOL_INTERLEAVE",
+            MemoryPolicyMode::Local => "MPOL_LOCAL",
+            MemoryPolicyMode::PreferredMany => "MPOL_PREFERRED_MANY",
+            MemoryPolicyMode::WeightedInterleave => "MPOL_WEIGHTED_INTERLEAVE",
+        };
+        write!(f, "{}", s)
     }
 }
 
