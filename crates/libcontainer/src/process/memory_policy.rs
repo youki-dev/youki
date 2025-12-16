@@ -101,22 +101,19 @@ fn validate_memory_policy(
         }
     }
 
-    let mut flags_value: u32 = 0;
-    if let Some(flags) = policy.flags() {
-        for flag in flags {
-            match flag {
-                MemoryPolicyFlagType::MpolFNumaBalancing => {
-                    flags_value |= u32::from(MemoryPolicyFlag::NumaBalancing);
-                }
-                MemoryPolicyFlagType::MpolFRelativeNodes => {
-                    flags_value |= u32::from(MemoryPolicyFlag::RelativeNodes);
-                }
-                MemoryPolicyFlagType::MpolFStaticNodes => {
-                    flags_value |= u32::from(MemoryPolicyFlag::StaticNodes);
-                }
-            }
-        }
-    }
+  let (flags_value, has_static, has_relative) = policy
+      .flags()
+      .map(|flags| {
+          flags.iter().fold((0u32, false, false), |(val, s, r), flag| {
+              match flag {
+                  MpolFNumaBalancing => (val | MPOL_F_NUMA_BALANCING, s, r),
+                  MpolFStaticNodes => (val | MPOL_F_STATIC_NODES, true, r),
+                  MpolFRelativeNodes => (val | MPOL_F_RELATIVE_NODES, s, true),
+              }
+          })
+      })
+      .unwrap_or((0, false, false));
+
 
     let mode_with_flags = i32::from(base_mode) | (flags_value as i32);
 
