@@ -163,13 +163,19 @@ fn validate_memory_policy(
         MemoryPolicyMode::Preferred => {
             let relative_or_static: u32 = u32::from(MemoryPolicyFlag::RelativeNodes)
                 | u32::from(MemoryPolicyFlag::StaticNodes);
+
+            let check_empty_nodes_flags = |flags_value: u32| -> Result<()> {
+                if flags_value & relative_or_static != 0u32 {
+                    return Err(MemoryPolicyError::IncompatibleFlagMode(
+                        "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
+                    ));
+                }
+                Ok(())
+            };
+
             match policy.nodes() {
                 None => {
-                    if flags_value & relative_or_static != 0u32 {
-                        return Err(MemoryPolicyError::IncompatibleFlagMode(
-                            "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
-                        ));
-                    }
+                    check_empty_nodes_flags(flags_value)?;
                     Ok(Some(ValidatedMemoryPolicy {
                         mode_with_flags,
                         nodemask: Vec::new(),
@@ -177,11 +183,7 @@ fn validate_memory_policy(
                     }))
                 }
                 Some(nodes) if nodes.trim().is_empty() => {
-                    if flags_value & relative_or_static != 0u32 {
-                        return Err(MemoryPolicyError::IncompatibleFlagMode(
-                            "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
-                        ));
-                    }
+                    check_empty_nodes_flags(flags_value)?;
                     Ok(Some(ValidatedMemoryPolicy {
                         mode_with_flags,
                         nodemask: Vec::new(),
@@ -191,11 +193,7 @@ fn validate_memory_policy(
                 Some(nodes) => {
                     let (nodemask, maxnode) = build_nodemask(nodes)?;
                     if maxnode == 0 {
-                        if flags_value & relative_or_static != 0u32 {
-                            return Err(MemoryPolicyError::IncompatibleFlagMode(
-                                "MPOL_PREFERRED with empty nodes cannot use MPOL_F_STATIC_NODES or MPOL_F_RELATIVE_NODES flags".to_string(),
-                            ));
-                        }
+                        check_empty_nodes_flags(flags_value)?;
                         return Ok(Some(ValidatedMemoryPolicy {
                             mode_with_flags,
                             nodemask: Vec::new(),
