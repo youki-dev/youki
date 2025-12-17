@@ -44,6 +44,7 @@ fn main() {
         "io_priority_class_rt" => tests::test_io_priority_class(&spec, IoprioClassRt),
         "io_priority_class_be" => tests::test_io_priority_class(&spec, IoprioClassBe),
         "io_priority_class_idle" => tests::test_io_priority_class(&spec, IoprioClassIdle),
+        "memory_policy" => tests::validate_memory_policy(&spec),
         "devices" => tests::validate_devices(&spec),
         "root_readonly" => tests::test_validate_root_readonly(&spec),
         "process" => tests::validate_process(&spec),
@@ -54,6 +55,7 @@ fn main() {
         "fd_control" => tests::validate_fd_control(&spec),
         "rootfs_propagation" => tests::validate_rootfs_propagation(&spec),
         "uid_mappings" => tests::validate_uid_mappings(&spec),
+        "net_devices" => tests::validate_net_devices(&spec),
         _ => eprintln!("error due to unexpected execute test name: {execute_test}"),
     }
 }

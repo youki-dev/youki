@@ -1,8 +1,10 @@
+use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 
+use libc;
 use nix::fcntl::{OFlag, open};
 use nix::mount::MsFlags;
-use nix::sys::stat::{Mode, umask};
+use nix::sys::stat::{FileStat, Mode, fstat, umask};
 use nix::unistd::{Gid, Uid, close};
 use oci_spec::runtime::LinuxDevice;
 
@@ -26,6 +28,35 @@ pub enum DeviceError {
 }
 
 type Result<T> = std::result::Result<T, DeviceError>;
+
+pub(crate) fn open_device_fd(dev_path: &Path) -> nix::Result<(OwnedFd, FileStat)> {
+    let fd = open(
+        dev_path,
+        OFlag::O_PATH | OFlag::O_CLOEXEC,
+        Mode::from_bits_truncate(0o000),
+    )?;
+    let owned = unsafe { OwnedFd::from_raw_fd(fd) };
+    let stat = fstat(owned.as_raw_fd())?;
+    Ok((owned, stat))
+}
+
+pub(crate) fn verify_dev_null(stat: &FileStat) -> Result<()> {
+    if stat.st_mode & libc::S_IFMT != libc::S_IFCHR {
+        return Err(DeviceError::Custom(
+            "device is not a character device".to_string(),
+        ));
+    }
+
+    let actual_major = libc::major(stat.st_rdev) as i64;
+    let actual_minor = libc::minor(stat.st_rdev) as i64;
+    if actual_major != 1 || actual_minor != 3 {
+        return Err(DeviceError::Custom(format!(
+            "device dev null major/minor mismatch: expected 1/3, actual {}/{}",
+            actual_major, actual_minor
+        )));
+    }
+    Ok(())
+}
 
 pub struct Device {
     syscall: Box<dyn Syscall>,
@@ -126,7 +157,7 @@ impl Device {
             .mknod(
                 &full_container_path,
                 to_sflag(dev.typ()),
-                Mode::from_bits_truncate(dev.file_mode().unwrap_or(0)),
+                Mode::from_bits_truncate(dev.file_mode().unwrap_or(0o666)),
                 makedev(dev.major(), dev.minor()),
             )
             .map_err(|err| {
@@ -202,7 +233,7 @@ mod tests {
     use oci_spec::runtime::{LinuxDeviceBuilder, LinuxDeviceType};
 
     use super::*;
-    use crate::syscall::test::{ChownArgs, MknodArgs, MountArgs, TestHelperSyscall};
+    use crate::syscall::test::{ChownArgs, MknodArgs, TestHelperSyscall};
 
     #[test]
     fn test_bind_dev() -> Result<()> {
@@ -213,27 +244,25 @@ mod tests {
                 .bind_dev(
                     tmp_dir.path(),
                     &LinuxDeviceBuilder::default()
-                        .path(PathBuf::from("/null"))
+                        .path(PathBuf::from("/dev/null"))
                         .build()
                         .unwrap(),
                 )
                 .is_ok()
         );
 
-        let want = MountArgs {
-            source: Some(PathBuf::from("/null")),
-            target: tmp_dir.path().join("null"),
-            fstype: Some("bind".to_string()),
-            flags: MsFlags::MS_BIND,
-            data: None,
-        };
-        let got = &device
+        let helper = device
             .syscall
             .as_any()
             .downcast_ref::<TestHelperSyscall>()
-            .unwrap()
-            .get_mount_args()[0];
-        assert_eq!(want, *got);
+            .unwrap();
+        let mount_args = helper.get_mount_args();
+        assert_eq!(1, mount_args.len());
+        let got = &mount_args[0];
+        assert_eq!(Some(PathBuf::from("/dev/null")), got.source);
+        assert_eq!(tmp_dir.path().join("dev").join("null"), got.target);
+        assert_eq!(MsFlags::MS_BIND, got.flags);
+        assert!(got.data.is_none());
         Ok(())
     }
 
@@ -313,20 +342,18 @@ mod tests {
                 .is_ok()
         );
 
-        let want = MountArgs {
-            source: Some(PathBuf::from("/dev/null")),
-            target: tmp_dir.path().join("dev/null"),
-            fstype: Some("bind".to_string()),
-            flags: MsFlags::MS_BIND,
-            data: None,
-        };
-        let got = &device
+        let mount_args = device
             .syscall
             .as_any()
             .downcast_ref::<TestHelperSyscall>()
             .unwrap()
-            .get_mount_args()[0];
-        assert_eq!(want, *got);
+            .get_mount_args();
+        assert_eq!(1, mount_args.len());
+        let bind = &mount_args[0];
+        assert_eq!(Some(PathBuf::from("/dev/null")), bind.source);
+        assert_eq!(tmp_dir.path().join("dev/null"), bind.target);
+        assert_eq!(MsFlags::MS_BIND, bind.flags);
+        assert!(bind.data.is_none());
 
         assert!(
             device

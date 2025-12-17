@@ -7,6 +7,12 @@ use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::Path;
 
 use anyhow::{Result, bail};
+use netlink_packet_core::{NLM_F_DUMP, NLM_F_REQUEST, NetlinkMessage, NetlinkPayload};
+use netlink_packet_route::RouteNetlinkMessage;
+use netlink_packet_route::address::AddressMessage;
+use netlink_packet_route::link::{LinkAttribute, LinkMessage};
+use netlink_sys::Socket;
+use netlink_sys::protocols::NETLINK_ROUTE;
 use nix::errno::Errno;
 use nix::libc;
 use nix::mount::{MsFlags, mount};
@@ -15,9 +21,10 @@ use nix::sys::stat::{Mode, umask};
 use nix::sys::utsname;
 use nix::unistd::{Gid, Uid, getcwd, getgid, getgroups, getuid};
 use oci_spec::runtime::IOPriorityClass::{self, IoprioClassBe, IoprioClassIdle, IoprioClassRt};
+use oci_spec::runtime::MemoryPolicyFlagType::*;
 use oci_spec::runtime::{
-    LinuxDevice, LinuxDeviceType, LinuxIdMapping, LinuxSchedulerPolicy, PosixRlimit,
-    PosixRlimitType, Spec,
+    LinuxDevice, LinuxDeviceType, LinuxIdMapping, LinuxSchedulerPolicy, MemoryPolicyModeType,
+    PosixRlimit, PosixRlimitType, Spec,
 };
 use tempfile::Builder;
 
@@ -474,14 +481,12 @@ fn validate_device(device: &LinuxDevice, description: &str) {
         }
     }
 
-    let expected_permissions = device.file_mode();
-    if let Some(expected) = expected_permissions {
-        let actual_permissions = file_data.permissions().mode() & 0o777;
-        if actual_permissions != expected {
-            eprintln!(
-                "error due to device file mode want {expected:?}, got {actual_permissions:?}"
-            );
-        }
+    let expected_permissions = device.file_mode().unwrap_or(0o666);
+    let actual_permissions = file_data.permissions().mode() & 0o777;
+    if actual_permissions != expected_permissions {
+        eprintln!(
+            "error due to device file mode want {expected_permissions:?}, got {actual_permissions:?}"
+        );
     }
 
     if description == "/dev/console (default device)" {
@@ -558,6 +563,269 @@ pub fn test_io_priority_class(spec: &Spec, io_priority_class: IOPriorityClass) {
     };
     if priority != expected_priority {
         eprintln!("error ioprio_get expected priority {expected_priority:?}, got {priority}")
+    }
+}
+
+fn parse_node_string(nodes: &str) -> Vec<u32> {
+    let mut out = Vec::new();
+    let s = nodes.trim();
+    if s.is_empty() {
+        return out;
+    }
+    for part in s.split(',') {
+        let p = part.trim();
+        if p.is_empty() {
+            continue;
+        }
+        if let Some(dash) = p.find('-') {
+            let start = p[..dash].trim().parse::<u32>();
+            let end = p[dash + 1..].trim().parse::<u32>();
+            match (start, end) {
+                (Ok(a), Ok(b)) if a <= b => {
+                    for n in a..=b {
+                        out.push(n);
+                    }
+                }
+                _ => {
+                    // invalid token, ignore
+                }
+            }
+        } else if let Ok(n) = p.parse::<u32>() {
+            out.push(n);
+        }
+    }
+    out
+}
+
+fn mems_allowed_list() -> Option<Vec<u32>> {
+    let s = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = s.lines().find(|l| l.starts_with("Mems_allowed_list:"))?;
+    let list = line.split_once(':')?.1.trim();
+    let mut nodes = parse_node_string(list);
+    nodes.sort_unstable();
+    nodes.dedup();
+    Some(nodes)
+}
+
+struct ExpectedNodeSets {
+    physical_from_spec: Vec<u32>,
+    effective_allowed: Vec<u32>,
+}
+
+fn expected_node_sets(spec: &Spec) -> Option<ExpectedNodeSets> {
+    let linux = spec.linux().as_ref()?;
+    let mp = linux.memory_policy().as_ref()?;
+    let nodes_spec = mp.nodes().as_deref().unwrap_or("").trim();
+    let nodes = parse_node_string(nodes_spec);
+
+    let mut relative = false;
+    let mut _static = false;
+    if let Some(flags) = mp.flags() {
+        for f in flags {
+            match f {
+                MpolFRelativeNodes => relative = true,
+                MpolFStaticNodes => _static = true,
+                _ => {}
+            }
+        }
+    }
+
+    let mems = mems_allowed_list().unwrap_or_default();
+
+    let physical_from_spec: Vec<u32> = if relative {
+        nodes
+            .into_iter()
+            .filter_map(|i| mems.get(i as usize).copied())
+            .collect()
+    } else {
+        nodes
+    };
+
+    let mut effective: Vec<u32> = physical_from_spec
+        .iter()
+        .copied()
+        .filter(|n| mems.contains(n))
+        .collect();
+
+    effective.sort_unstable();
+    effective.dedup();
+
+    Some(ExpectedNodeSets {
+        physical_from_spec,
+        effective_allowed: effective,
+    })
+}
+
+fn nodes_in_numa_maps_policy(policy_field: &str) -> Vec<u32> {
+    if let Some((_, nodes_spec)) = policy_field.rsplit_once(':') {
+        let mut v = parse_node_string(nodes_spec);
+        v.sort_unstable();
+        v.dedup();
+        return v;
+    }
+    Vec::new()
+}
+
+pub fn validate_memory_policy(spec: &Spec) {
+    let linux = spec.linux().as_ref().unwrap();
+    let memory_policy = linux.memory_policy();
+    let expected_mode = memory_policy.as_ref().map(|p| p.mode());
+
+    let numa_maps_content = match fs::read_to_string("/proc/self/numa_maps") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("failed to read /proc/self/numa_maps: {}", e);
+            return;
+        }
+    };
+
+    let policy_entries: Vec<(&str, &str)> = numa_maps_content
+        .lines()
+        .filter_map(|line| {
+            if line.trim().is_empty() {
+                return None;
+            }
+            let mut parts = line.split_whitespace();
+            parts.next()?;
+            let policy_field = parts.next()?;
+            Some((policy_field, line))
+        })
+        .collect();
+
+    if policy_entries.is_empty() {
+        eprintln!("no parsable entries found in /proc/self/numa_maps");
+        return;
+    }
+
+    let fallback_entry = policy_entries[0];
+    let default_policy_field = fallback_entry.0;
+    let find_with_substring = |needle: &str| -> (&str, &str) {
+        policy_entries
+            .iter()
+            .copied()
+            .find(|(policy, _)| policy.contains(needle))
+            .unwrap_or(fallback_entry)
+    };
+
+    let (nodes_is_empty, has_static_flag, has_relative_flag) = if let Some(p) = memory_policy {
+        let nodes_is_empty = p.nodes().as_ref().is_none_or(|n| n.trim().is_empty());
+        let mut has_static = false;
+        let mut has_relative = false;
+        if let Some(flags) = p.flags() {
+            for f in flags {
+                match f {
+                    MpolFStaticNodes => has_static = true,
+                    MpolFRelativeNodes => has_relative = true,
+                    _ => {}
+                }
+            }
+        }
+        (nodes_is_empty, has_static, has_relative)
+    } else {
+        (true, false, false)
+    };
+
+    match expected_mode {
+        Some(MemoryPolicyModeType::MpolDefault) => {
+            let (policy_field, _) = find_with_substring("default");
+            if !policy_field.contains("default") {
+                eprintln!("expected default policy, but found: {}", policy_field);
+            }
+        }
+        Some(MemoryPolicyModeType::MpolInterleave) => {
+            let (policy_field, full_line) = find_with_substring("interleave");
+            if !policy_field.contains("interleave") {
+                eprintln!("expected interleave policy, but found: {}", policy_field);
+            }
+            if let Some(expect) = expected_node_sets(spec) {
+                let got_nodes = nodes_in_numa_maps_policy(policy_field);
+                if got_nodes != expect.effective_allowed {
+                    eprintln!(
+                        "expected interleave nodes {:?}, got {:?} (line: {})",
+                        expect.effective_allowed, got_nodes, full_line
+                    );
+                }
+            }
+        }
+        Some(MemoryPolicyModeType::MpolBind) => {
+            let (policy_field, full_line) = find_with_substring("bind");
+            if !policy_field.contains("bind") {
+                eprintln!("expected bind policy, but found: {}", policy_field);
+            }
+            if has_static_flag && !policy_field.contains("static") {
+                eprintln!("expected bind static, but found: {}", policy_field);
+            }
+            if let Some(expect) = expected_node_sets(spec) {
+                let got_nodes = nodes_in_numa_maps_policy(policy_field);
+                if got_nodes != expect.effective_allowed {
+                    eprintln!(
+                        "expected bind nodes {:?}, got {:?} (line: {})",
+                        expect.effective_allowed, got_nodes, full_line
+                    );
+                }
+            }
+        }
+        Some(MemoryPolicyModeType::MpolPreferred) => {
+            if nodes_is_empty {
+                let (policy_field, _) = find_with_substring("local");
+                if !policy_field.contains("local") {
+                    eprintln!(
+                        "expected preferred(empty)->local, but found: {}",
+                        policy_field
+                    );
+                }
+            } else {
+                let (policy_field, full_line) = find_with_substring("prefer");
+                if let Some(expect) = expected_node_sets(spec) {
+                    let prefer = expect.physical_from_spec.first().copied();
+                    let mems = mems_allowed_list().unwrap_or_default();
+                    if let Some(prefer_node) = prefer {
+                        if mems.contains(&prefer_node) {
+                            let got_nodes = nodes_in_numa_maps_policy(policy_field);
+                            if !(policy_field.contains("prefer") && got_nodes == vec![prefer_node])
+                            {
+                                eprintln!(
+                                    "expected prefer {} within mems_allowed, got {} (line: {})",
+                                    prefer_node, policy_field, full_line
+                                );
+                            }
+                        } else if !policy_field.contains("local") {
+                            eprintln!(
+                                "expected local fallback (preferred disallowed), got {} (line: {})",
+                                policy_field, full_line
+                            );
+                        }
+                    }
+                } else if !policy_field.contains("prefer") {
+                    eprintln!("expected preferred policy, but found: {}", policy_field);
+                }
+                if has_relative_flag && !policy_field.contains("relative") {
+                    eprintln!("expected preferred relative, but found: {}", policy_field);
+                }
+            }
+        }
+        Some(MemoryPolicyModeType::MpolLocal) => {
+            let (policy_field, _) = find_with_substring("local");
+            if !policy_field.contains("local") {
+                eprintln!("expected local policy, but found: {}", policy_field);
+            }
+        }
+        Some(_) => {
+            println!(
+                "memory policy {} applied (non-strict check)",
+                default_policy_field
+            );
+        }
+        None => {
+            if !policy_entries.iter().any(|(policy_field, _)| {
+                policy_field.contains("default") || policy_field.contains("local")
+            }) {
+                eprintln!(
+                    "expected default/local with no expected policy, got: {}",
+                    default_policy_field
+                );
+            }
+        }
     }
 }
 
@@ -1019,4 +1287,75 @@ pub fn validate_uid_mappings(spec: &Spec) {
 
     let expected_gid_mappings = linux.gid_mappings().as_ref().unwrap();
     validate_id_mappings(expected_gid_mappings, "/proc/self/gid_map", "gid_mappings");
+}
+
+pub fn validate_net_devices(spec: &Spec) {
+    let mut socket = Socket::new(NETLINK_ROUTE).unwrap();
+    socket.bind_auto().unwrap();
+    let linux = spec.linux().as_ref().unwrap();
+    if let Some(net_devices) = linux.net_devices() {
+        for (name, net_device) in net_devices {
+            let net_device_name = net_device
+                .name()
+                .as_ref()
+                .filter(|d| !d.is_empty())
+                .map_or(name.clone(), |d| d.to_string());
+
+            let mut message = LinkMessage::default();
+            message
+                .attributes
+                .push(LinkAttribute::IfName(net_device_name.clone()));
+
+            let mut req = NetlinkMessage::from(RouteNetlinkMessage::GetLink(message));
+            req.header.flags = NLM_F_REQUEST;
+            req.finalize();
+
+            let mut send_buf = vec![0; req.header.length as usize];
+            req.serialize(&mut send_buf[..]);
+            socket.send(&send_buf[..], 0).unwrap();
+
+            let mut receive_buf = vec![0u8; 4096];
+            let n_received = socket.recv(&mut &mut receive_buf[..], 0).unwrap();
+            let bytes = &receive_buf[..n_received];
+            let rx_packet = <NetlinkMessage<RouteNetlinkMessage>>::deserialize(bytes).unwrap();
+
+            let index = match rx_packet.payload {
+                NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewLink(link)) => {
+                    println!("network device {} is present", net_device_name);
+                    link.header.index
+                }
+                _ => {
+                    eprintln!("network device {} is not present", net_device_name);
+                    continue;
+                }
+            };
+
+            let mut message = AddressMessage::default();
+            message.header.index = index;
+            let mut req = NetlinkMessage::from(RouteNetlinkMessage::GetAddress(message));
+            req.header.flags = NLM_F_REQUEST | NLM_F_DUMP;
+            req.finalize();
+
+            let mut send_buf = vec![0; req.header.length as usize];
+            req.serialize(&mut send_buf[..]);
+            socket.send(&send_buf[..], 0).unwrap();
+
+            let mut receive_buf = vec![0u8; 4096];
+            let n_received = socket.recv(&mut &mut receive_buf[..], 0).unwrap();
+            let bytes = &receive_buf[..n_received];
+            let rx_packet = <NetlinkMessage<RouteNetlinkMessage>>::deserialize(bytes).unwrap();
+
+            match rx_packet.payload {
+                NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewAddress(_address)) => {
+                    println!("address is present for network device {}", net_device_name);
+                }
+                _ => {
+                    eprintln!(
+                        "address is not present for network device {}",
+                        net_device_name
+                    );
+                }
+            }
+        }
+    }
 }

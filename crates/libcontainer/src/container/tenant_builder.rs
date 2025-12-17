@@ -26,6 +26,7 @@ use crate::container::builder_impl::ContainerBuilderImpl;
 use crate::error::{ErrInvalidSpec, LibcontainerError, MissingSpecError};
 use crate::notify_socket::NotifySocket;
 use crate::process::args::ContainerType;
+use crate::syscall::syscall::create_syscall;
 use crate::user_ns::UserNamespaceConfig;
 use crate::{tty, utils};
 
@@ -466,7 +467,14 @@ impl TenantContainerBuilder {
             }
         }
 
-        utils::validate_spec_for_new_user_ns(spec)?;
+        if let Some(mounts) = spec.mounts() {
+            utils::validate_mount_options(mounts)?;
+        }
+
+        let syscall = create_syscall();
+        utils::validate_spec_for_new_user_ns(spec, &*syscall)?;
+        utils::validate_spec_for_net_devices(spec, &*syscall)
+            .map_err(LibcontainerError::NetDevicesError)?;
 
         Ok(())
     }

@@ -20,7 +20,7 @@ jobs:
       - name: Install skopeo and podman requirements
         run: |
           sudo apt-get install -y pkg-config libsystemd-dev libelf-dev libseccomp-dev libgpgme-dev libassuan-dev libbtrfs-dev libdevmapper-dev bats socat protobuf-compiler jq conmon
-          cargo install netavark aardvark-dns
+          cargo install netavark aardvark-dns --locked
       
       - name: Copy binaries
         run: |

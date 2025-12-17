@@ -16,8 +16,8 @@ use crate::process::intel_rdt::delete_resctrl_subdirectory;
 use crate::process::{self};
 use crate::syscall::syscall::SyscallType;
 use crate::user_ns::UserNamespaceConfig;
+use crate::utils;
 use crate::workload::Executor;
-use crate::{hooks, utils};
 
 pub(super) struct ContainerBuilderImpl {
     /// Flag indicating if an init or a tenant container should be created
@@ -200,6 +200,7 @@ impl ContainerBuilderImpl {
             stdout: self.stdout.as_ref().map(|x| x.as_raw_fd()),
             stderr: self.stderr.as_ref().map(|x| x.as_raw_fd()),
             as_sibling: self.as_sibling,
+            pid_file: self.pid_file.to_owned(),
         };
 
         let (init_pid, need_to_clean_up_intel_rdt_dir) =
@@ -210,14 +211,6 @@ impl ContainerBuilderImpl {
                 },
             )?;
 
-        // if file to write the pid to is specified, write pid of the child
-        if let Some(pid_file) = &self.pid_file {
-            fs::write(pid_file, format!("{init_pid}")).map_err(|err| {
-                tracing::error!("failed to write pid to file: {}", err);
-                LibcontainerError::OtherIO(err)
-            })?;
-        }
-
         if let Some(container) = &mut self.container {
             // update status and pid of the container process
             container
@@ -226,16 +219,6 @@ impl ContainerBuilderImpl {
                 .set_pid(init_pid.as_raw())
                 .set_clean_up_intel_rdt_directory(need_to_clean_up_intel_rdt_dir)
                 .save()?;
-        }
-
-        if matches!(self.container_type, ContainerType::InitContainer) {
-            if let Some(hooks) = self.spec.hooks() {
-                hooks::run_hooks(
-                    hooks.create_runtime().as_ref(),
-                    self.container.as_ref(),
-                    None,
-                )?
-            }
         }
 
         Ok(init_pid)

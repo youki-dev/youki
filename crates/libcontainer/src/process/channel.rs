@@ -1,8 +1,10 @@
+use std::collections::HashMap;
 use std::os::unix::prelude::{AsRawFd, RawFd};
 
 use nix::unistd::Pid;
 
 use crate::channel::{Receiver, Sender, channel};
+use crate::network::cidr::CidrAddress;
 use crate::process::message::Message;
 
 #[derive(Debug, thiserror::Error)]
@@ -65,6 +67,13 @@ impl MainSender {
         Ok(())
     }
 
+    pub fn network_setup_ready(&mut self) -> Result<(), ChannelError> {
+        tracing::debug!("notify network setup ready");
+        self.sender.send(Message::SetupNetworkDeviceReady)?;
+
+        Ok(())
+    }
+
     pub fn intermediate_ready(&mut self, pid: Pid) -> Result<(), ChannelError> {
         // Send over the IntermediateReady follow by the pid.
         tracing::debug!("sending init pid ({:?})", pid);
@@ -86,6 +95,11 @@ impl MainSender {
 
     pub fn send_error(&mut self, err: String) -> Result<(), ChannelError> {
         self.sender.send(Message::OtherError(err))?;
+        Ok(())
+    }
+
+    pub fn hook_request(&mut self) -> Result<(), ChannelError> {
+        self.sender.send(Message::HookRequest)?;
         Ok(())
     }
 
@@ -169,6 +183,23 @@ impl MainReceiver {
         }
     }
 
+    pub fn wait_for_network_setup_ready(&mut self) -> Result<(), ChannelError> {
+        let msg = self
+            .receiver
+            .recv()
+            .map_err(|err| ChannelError::ReceiveError {
+                msg: "waiting for init ready".to_string(),
+                source: err,
+            })?;
+        match msg {
+            Message::SetupNetworkDeviceReady => Ok(()),
+            msg => Err(ChannelError::UnexpectedMessage {
+                expected: Message::SetupNetworkDeviceReady,
+                received: msg,
+            }),
+        }
+    }
+
     /// Waits for associated init process to send ready message
     /// and return the pid of init process which is forked by init process
     pub fn wait_for_init_ready(&mut self) -> Result<(), ChannelError> {
@@ -187,6 +218,23 @@ impl MainReceiver {
             ))),
             msg => Err(ChannelError::UnexpectedMessage {
                 expected: Message::InitReady,
+                received: msg,
+            }),
+        }
+    }
+
+    pub fn wait_for_hook_request(&mut self) -> Result<(), ChannelError> {
+        let msg = self
+            .receiver
+            .recv()
+            .map_err(|err| ChannelError::ReceiveError {
+                msg: "waiting for hook request".to_string(),
+                source: err,
+            })?;
+        match msg {
+            Message::HookRequest => Ok(()),
+            msg => Err(ChannelError::UnexpectedMessage {
+                expected: Message::HookRequest,
                 received: msg,
             }),
         }
@@ -273,6 +321,20 @@ impl InitSender {
         Ok(())
     }
 
+    pub fn hook_done(&mut self) -> Result<(), ChannelError> {
+        self.sender.send(Message::HookDone)?;
+        Ok(())
+    }
+
+    pub fn move_network_device(
+        &mut self,
+        addrs: HashMap<String, Vec<CidrAddress>>,
+    ) -> Result<(), ChannelError> {
+        self.sender.send(Message::MoveNetworkDevice(addrs))?;
+
+        Ok(())
+    }
+
     pub fn close(&self) -> Result<(), ChannelError> {
         self.sender.close()?;
 
@@ -298,6 +360,42 @@ impl InitReceiver {
             Message::SeccompNotifyDone => Ok(()),
             msg => Err(ChannelError::UnexpectedMessage {
                 expected: Message::SeccompNotifyDone,
+                received: msg,
+            }),
+        }
+    }
+
+    pub fn wait_for_move_network_device(
+        &mut self,
+    ) -> Result<HashMap<String, Vec<CidrAddress>>, ChannelError> {
+        let msg = self
+            .receiver
+            .recv()
+            .map_err(|err| ChannelError::ReceiveError {
+                msg: "waiting for mapping request".to_string(),
+                source: err,
+            })?;
+        match msg {
+            Message::MoveNetworkDevice(addr) => Ok(addr),
+            msg => Err(ChannelError::UnexpectedMessage {
+                expected: Message::WriteMapping,
+                received: msg,
+            }),
+        }
+    }
+
+    pub fn wait_for_hook_request_done(&mut self) -> Result<(), ChannelError> {
+        let msg = self
+            .receiver
+            .recv()
+            .map_err(|err| ChannelError::ReceiveError {
+                msg: "waiting for hook done".to_string(),
+                source: err,
+            })?;
+        match msg {
+            Message::HookDone => Ok(()),
+            msg => Err(ChannelError::UnexpectedMessage {
+                expected: Message::HookDone,
                 received: msg,
             }),
         }
@@ -453,6 +551,76 @@ mod tests {
             }
             unistd::ForkResult::Child => {
                 receiver.close()?;
+                std::process::exit(0);
+            }
+        };
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_move_network_device_message() -> Result<()> {
+        use crate::network::cidr::CidrAddress;
+
+        let device_name = "dummy".to_string();
+        let ip = "10.0.0.1".parse().unwrap();
+        let addr = CidrAddress {
+            prefix_len: 24,
+            address: ip,
+        };
+        let mut addrs = HashMap::new();
+        addrs.insert(device_name.clone(), vec![addr.clone()]);
+
+        let (sender, receiver) = &mut init_channel()?;
+
+        match unsafe { unistd::fork()? } {
+            unistd::ForkResult::Parent { child } => {
+                sender.move_network_device(addrs)?;
+                sender.close().context("failed to close sender")?;
+                let status = wait::waitpid(child, None)?;
+                if let nix::sys::wait::WaitStatus::Exited(_, code) = status {
+                    assert_eq!(code, 0, "Child process failed assertions");
+                } else {
+                    panic!("Child did not exit normally: {:?}", status);
+                }
+            }
+            unistd::ForkResult::Child => {
+                let received_addrs = receiver.wait_for_move_network_device()?;
+                receiver.close()?;
+                if let Some(received_addr) = received_addrs.get(&device_name) {
+                    if !(received_addr[0].prefix_len == addr.prefix_len
+                        && received_addr[0].address == addr.address)
+                    {
+                        eprintln!("assertion failed in child");
+                        std::process::exit(1);
+                    }
+                } else {
+                    eprintln!("assertion failed in child");
+                    std::process::exit(1);
+                }
+                std::process::exit(0);
+            }
+        };
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_network_setup_ready() -> Result<()> {
+        let (sender, receiver) = &mut main_channel()?;
+        match unsafe { unistd::fork()? } {
+            unistd::ForkResult::Parent { child } => {
+                wait::waitpid(child, None)?;
+                receiver.wait_for_network_setup_ready()?;
+                receiver.close()?;
+            }
+            unistd::ForkResult::Child => {
+                sender
+                    .network_setup_ready()
+                    .with_context(|| "Failed to send network setup ready")?;
+                sender.close()?;
                 std::process::exit(0);
             }
         };

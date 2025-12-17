@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::{Read, Write};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::{env, fs, mem};
@@ -9,9 +10,11 @@ use nix::sched::CloneFlags;
 use nix::sys::stat::Mode;
 use nix::unistd::{self, Gid, Uid, close, dup2, setsid};
 use oci_spec::runtime::{
-    IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxPersonalityDomain,
+    IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxNetDevice, LinuxPersonalityDomain,
     LinuxSchedulerFlag, LinuxSchedulerPolicy, Scheduler, Spec, User,
 };
+use pathrs::flags::OpenFlags;
+use pathrs::procfs::{ProcfsBase, ProcfsHandle, ProcfsHandleBuilder};
 
 use super::Result;
 use super::context::InitContext;
@@ -19,9 +22,14 @@ use super::error::InitProcessError;
 use crate::config::PersonalityDomain;
 use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
+use crate::network::address::AddressClient;
+use crate::network::link::LinkClient;
+use crate::network::network_device::{resolve_device_name, setup_addresses_in_network_namespace};
+use crate::network::wrapper::create_network_client;
 use crate::process::args::{ContainerArgs, ContainerType};
-use crate::process::channel;
+use crate::process::{channel, memory_policy};
 use crate::rootfs::RootFS;
+use crate::rootfs::device::{open_device_fd, verify_dev_null};
 #[cfg(feature = "libseccomp")]
 use crate::seccomp;
 use crate::syscall::{Syscall, SyscallError};
@@ -45,6 +53,8 @@ pub fn container_init_process(
     set_io_priority(ctx.syscall.as_ref(), ctx.process.io_priority())?;
 
     setup_scheduler(ctx.process.scheduler())?;
+
+    memory_policy::setup_memory_policy(ctx.linux.memory_policy(), ctx.syscall.as_ref())?;
 
     // set up tty if specified
     if let Some(csocketfd) = args.console_socket {
@@ -74,16 +84,6 @@ pub fn container_init_process(
     }
 
     if matches!(args.container_type, ContainerType::InitContainer) {
-        // create_container hook needs to be called after the namespace setup, but
-        // before pivot_root is called. This runs in the container namespaces.
-        if let Some(hooks) = ctx.hooks {
-            hooks::run_hooks(hooks.create_container().as_ref(), ctx.container, None).map_err(
-                |err| {
-                    tracing::error!(?err, "failed to run create container hooks");
-                    InitProcessError::Hooks(err)
-                },
-            )?;
-        }
         let in_user_ns = utils::is_in_new_userns().map_err(InitProcessError::Io)?;
         let bind_service = ctx.ns.get(LinuxNamespaceType::User)?.is_some() || in_user_ns;
         let rootfs = RootFS::new();
@@ -98,6 +98,22 @@ pub fn container_init_process(
                 tracing::error!(?err, "failed to prepare rootfs");
                 InitProcessError::RootFS(err)
             })?;
+
+        if let Some(hooks) = ctx.hooks {
+            // send a request to the main process to run prestart and create_runtime hooks.
+            // prestart and create_runtime hook needs to be called after the namespace setup, but
+            // before pivot_root is called. This runs in the runtime(not container) namespaces.
+            main_sender.hook_request()?;
+            init_receiver.wait_for_hook_request_done()?;
+
+            // create_container hook needs to be called after the namespace setup, but
+            // before pivot_root is called. This runs in the container namespaces.
+            hooks::run_hooks(hooks.create_container().as_ref(), ctx.container, None, None)
+                .map_err(|err| {
+                    tracing::error!(?err, "failed to run create container hooks");
+                    InitProcessError::Hooks(err)
+                })?;
+        }
 
         // Entering into the rootfs jail. If mount namespace is specified, then
         // we use pivot_root, but if we are on the host mount namespace, we will
@@ -190,18 +206,11 @@ pub fn container_init_process(
     }
 
     if let Some(paths) = ctx.linux.masked_paths() {
-        // mount masked path
-        for path in paths {
-            masked_path(
-                Path::new(path),
-                ctx.linux.mount_label(),
-                ctx.syscall.as_ref(),
-            )
-            .map_err(|err| {
-                tracing::error!(?err, ?path, "failed to set masked path");
-                err
-            })?;
-        }
+        // mount masked paths
+        masked_paths(paths, ctx.linux.mount_label(), ctx.syscall.as_ref()).map_err(|err| {
+            tracing::error!(?err, "failed to set masked paths");
+            err
+        })?;
     }
 
     let cwd = format!("{}", ctx.process.cwd().display());
@@ -296,6 +305,18 @@ pub fn container_init_process(
         tracing::error!(?err, "failed to cleanup extra fds");
         InitProcessError::SyscallOther(err)
     })?;
+
+    // Setup some operations in the network namespace.
+    // This is done here before dropping capabilities because we need to be able to add IP addresses to the device
+    // and set up the device.
+    if let Some(network_devices) = ctx.linux.net_devices() {
+        configure_container_network_devices(network_devices, main_sender, init_receiver).map_err(
+            |err| {
+                tracing::error!(?err, "failed to setup net_device");
+                err
+            },
+        )?;
+    }
 
     // Without no new privileges, seccomp is a privileged operation. We have to
     // do this before dropping capabilities. Otherwise, we should do it later,
@@ -408,7 +429,7 @@ pub fn container_init_process(
     // before pivot_root is called. This runs in the container namespaces.
     if matches!(args.container_type, ContainerType::InitContainer) {
         if let Some(hooks) = ctx.hooks {
-            hooks::run_hooks(hooks.start_container().as_ref(), ctx.container, None).map_err(
+            hooks::run_hooks(hooks.start_container().as_ref(), ctx.container, None, None).map_err(
                 |err| {
                     tracing::error!(?err, "failed to run start container hooks");
                     err
@@ -434,15 +455,22 @@ pub fn container_init_process(
 }
 
 fn sysctl(kernel_params: &HashMap<String, String>) -> Result<()> {
-    let sys = PathBuf::from("/proc/sys");
+    let procfs = ProcfsHandleBuilder::new().unmasked().build()?;
+    let sys = PathBuf::from("sys");
     for (kernel_param, value) in kernel_params {
-        let path = sys.join(kernel_param.replace('.', "/"));
         tracing::debug!(
             "apply value {} to kernel parameter {}.",
             value,
             kernel_param
         );
-        fs::write(path, value.as_bytes()).map_err(|err| {
+
+        let subpath = sys.join(kernel_param.replace('.', "/"));
+        let mut f = procfs.open(
+            ProcfsBase::ProcRoot,
+            subpath,
+            OpenFlags::O_WRONLY | OpenFlags::O_CLOEXEC,
+        )?;
+        f.write_all(value.as_bytes()).map_err(|err| {
             tracing::error!("failed to set sysctl {kernel_param}={value}: {err}");
             InitProcessError::Sysctl(err)
         })?;
@@ -498,44 +526,53 @@ fn readonly_path(path: &Path, syscall: &dyn Syscall) -> Result<()> {
 
 // For files, bind mounts /dev/null over the top of the specified path.
 // For directories, mounts read-only tmpfs over the top of the specified path.
-fn masked_path(path: &Path, mount_label: &Option<String>, syscall: &dyn Syscall) -> Result<()> {
-    if let Err(err) = syscall.mount(
-        Some(Path::new("/dev/null")),
-        path,
-        None,
-        MsFlags::MS_BIND,
-        None,
-    ) {
-        match err {
-            SyscallError::Nix(nix::errno::Errno::ENOENT) => {
-                // ignore error if path is not exist.
-            }
-            SyscallError::Nix(nix::errno::Errno::ENOTDIR) => {
-                let label = match mount_label {
-                    Some(l) => format!("context=\"{l}\""),
-                    None => "".to_string(),
-                };
-                syscall
-                    .mount(
-                        Some(Path::new("tmpfs")),
-                        path,
-                        Some("tmpfs"),
-                        MsFlags::MS_RDONLY,
-                        Some(label.as_str()),
-                    )
-                    .map_err(|err| {
-                        tracing::error!(?path, ?err, "failed to mount path as masked using tempfs");
-                        InitProcessError::MountPathMasked(err)
-                    })?;
-            }
-            _ => {
+fn masked_paths(
+    paths: &Vec<String>,
+    mount_label: &Option<String>,
+    syscall: &dyn Syscall,
+) -> Result<()> {
+    let (dev_null_fd, dev_null_stat) =
+        open_device_fd(Path::new("/dev/null")).map_err(InitProcessError::NixOther)?;
+    verify_dev_null(&dev_null_stat).map_err(|err| {
+        tracing::error!(?err, "invalid /dev/null device");
+        InitProcessError::Device(err)
+    })?;
+
+    for path_str in paths {
+        let path = Path::new(path_str);
+        if !path.exists() {
+            // Skip if the path does not exist.
+            continue;
+        }
+
+        if path.is_dir() {
+            // Destination is a directory, mount a read-only tmpfs over the top of it.
+            let label = match mount_label {
+                Some(l) => format!("context=\"{l}\""),
+                None => "".to_string(),
+            };
+            syscall
+                .mount(
+                    Some(Path::new("tmpfs")),
+                    path,
+                    Some("tmpfs"),
+                    MsFlags::MS_RDONLY,
+                    Some(label.as_str()),
+                )
+                .map_err(|err| {
+                    tracing::error!(?path, ?err, "failed to mount path as masked using tempfs");
+                    InitProcessError::MountPathMasked(err)
+                })?;
+        } else {
+            // Destination is a file, bind mount /dev/null over the top of it.
+            syscall.mount_from_fd(&dev_null_fd, path).map_err(|err| {
                 tracing::error!(
                     ?path,
                     ?err,
                     "failed to mount path as masked using /dev/null"
                 );
-                return Err(InitProcessError::MountPathMasked(err));
-            }
+                InitProcessError::MountPathMasked(err)
+            })?;
         }
     }
 
@@ -588,7 +625,6 @@ fn reopen_dev_null() -> Result<()> {
     // At this point we should be inside of the container and now
     // we can re-open /dev/null if it is in use to the /dev/null
     // in the container.
-
     let dev_null = fs::File::open("/dev/null").map_err(|err| {
         tracing::error!(?err, "failed to open /dev/null inside the container");
         InitProcessError::ReopenDevNull(err)
@@ -596,6 +632,10 @@ fn reopen_dev_null() -> Result<()> {
     let dev_null_fstat_info = nix::sys::stat::fstat(dev_null.as_raw_fd()).map_err(|err| {
         tracing::error!(?err, "failed to fstat /dev/null inside the container");
         InitProcessError::NixOther(err)
+    })?;
+    verify_dev_null(&dev_null_fstat_info).map_err(|err| {
+        tracing::error!(?err, "invalid /dev/null device inside the container");
+        InitProcessError::Device(err)
     })?;
 
     // Check if stdin, stdout or stderr point to /dev/null
@@ -722,10 +762,15 @@ fn set_supplementary_gids(
             return Ok(());
         }
 
-        let setgroups = fs::read_to_string("/proc/self/setgroups").map_err(|err| {
-            tracing::error!(?err, "failed to read setgroups");
-            InitProcessError::Io(err)
-        })?;
+        let mut setgroups = String::new();
+        ProcfsHandle::new()?
+            .open(ProcfsBase::ProcSelf, "setgroups", OpenFlags::O_RDONLY)?
+            .read_to_string(&mut setgroups)
+            .map_err(|err| {
+                tracing::error!(?err, "failed to read setgroups");
+                InitProcessError::Io(err)
+            })?;
+
         if setgroups.trim() == "deny" {
             tracing::error!("cannot set supplementary gids, setgroup is disabled");
             return Err(InitProcessError::SetGroupDisabled);
@@ -879,6 +924,62 @@ fn sync_seccomp(
     Ok(())
 }
 
+fn configure_container_network_devices(
+    net_device: &HashMap<String, LinuxNetDevice>,
+    main_sender: &mut channel::MainSender,
+    init_receiver: &mut channel::InitReceiver,
+) -> Result<()> {
+    if net_device.is_empty() {
+        return Ok(());
+    }
+
+    main_sender.network_setup_ready()?;
+
+    let addrs_map = init_receiver.wait_for_move_network_device()?;
+    for (name, net_dev) in net_device {
+        if let Some(cidr_addrs) = addrs_map.get(name) {
+            // Get the device's final name (use configured name if provided, otherwise use original name)
+            let new_name = resolve_device_name(net_dev, name.as_str());
+
+            // Create network clients
+            let mut link_client = LinkClient::new(create_network_client()).map_err(|err| {
+                tracing::error!(?err, "failed to create link client");
+                err
+            })?;
+            let mut addr_client = AddressClient::new(create_network_client()).map_err(|err| {
+                tracing::error!(?err, "failed to create address client");
+                err
+            })?;
+
+            // Get the device index
+            let ns_link = link_client.get_by_name(new_name).map_err(|err| {
+                tracing::error!(?err, "failed to get device by name: {}", new_name);
+                err
+            })?;
+
+            // Assign IP addresses to the device
+            setup_addresses_in_network_namespace(
+                cidr_addrs,
+                ns_link.header.index,
+                new_name,
+                &mut addr_client,
+            )
+            .map_err(|err| {
+                tracing::error!(?err, "failed to setup addresses for device: {}", new_name);
+                err
+            })?;
+
+            // Bring the device up
+            link_client.set_up(ns_link.header.index).map_err(|err| {
+                tracing::error!(?err, "failed to bring up device: {}", new_name);
+                err
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
 // verifyCwd ensures that the current directory is actually inside the mount
 // namespace root of the current process.
 // Please refer to https://github.com/opencontainers/runc/security/advisories/GHSA-xr7r-f8xq-vfvv for more details.
@@ -904,6 +1005,7 @@ fn verify_cwd() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::Path;
 
     use anyhow::Result;
     #[cfg(feature = "libseccomp")]
@@ -1092,13 +1194,31 @@ mod tests {
             .as_any()
             .downcast_ref::<TestHelperSyscall>()
             .unwrap();
-        mocks.set_ret_err(ArgName::Mount, || {
-            Err(SyscallError::Nix(nix::errno::Errno::ENOENT))
-        });
 
-        assert!(masked_path(Path::new("/proc/self"), &None, syscall.as_ref()).is_ok());
+        let paths = vec!["/doesnotexist".to_string()];
+        assert!(super::masked_paths(&paths, &None, syscall.as_ref()).is_ok());
+        let got = mocks.get_mount_from_fd_args();
+        assert_eq!(0, got.len());
         let got = mocks.get_mount_args();
         assert_eq!(0, got.len());
+    }
+
+    #[test]
+    fn test_masked_path_mounts_via_fd() -> Result<()> {
+        let syscall = create_syscall();
+        let paths = vec!["/proc/sys/kernel/core_pattern".to_string()];
+        super::masked_paths(&paths, &None, syscall.as_ref()).map_err(anyhow::Error::from)?;
+
+        let got = syscall
+            .as_any()
+            .downcast_ref::<TestHelperSyscall>()
+            .unwrap()
+            .get_mount_from_fd_args();
+        assert_eq!(1, got.len());
+        let arg = &got[0];
+        assert!(arg.fd >= 0);
+        assert_eq!(PathBuf::from("/proc/sys/kernel/core_pattern"), arg.target);
+        Ok(())
     }
 
     #[test]
@@ -1108,11 +1228,12 @@ mod tests {
             .as_any()
             .downcast_ref::<TestHelperSyscall>()
             .unwrap();
-        mocks.set_ret_err(ArgName::Mount, || {
+        mocks.set_ret_err(ArgName::MountFromFd, || {
             Err(SyscallError::Nix(nix::errno::Errno::ENOTDIR))
         });
 
-        assert!(masked_path(Path::new("/proc/self"), &None, syscall.as_ref()).is_ok());
+        let paths = vec!["/proc/self".to_string()];
+        assert!(super::masked_paths(&paths, &None, syscall.as_ref()).is_ok());
 
         let got = mocks.get_mount_args();
         let want = MountArgs {
@@ -1133,17 +1254,13 @@ mod tests {
             .as_any()
             .downcast_ref::<TestHelperSyscall>()
             .unwrap();
-        mocks.set_ret_err(ArgName::Mount, || {
+        mocks.set_ret_err(ArgName::MountFromFd, || {
             Err(SyscallError::Nix(nix::errno::Errno::ENOTDIR))
         });
 
+        let paths = vec!["/proc/self".to_string()];
         assert!(
-            masked_path(
-                Path::new("/proc/self"),
-                &Some("default".to_string()),
-                syscall.as_ref()
-            )
-            .is_ok()
+            super::masked_paths(&paths, &Some("default".to_string()), syscall.as_ref()).is_ok()
         );
 
         let got = mocks.get_mount_args();
@@ -1165,11 +1282,20 @@ mod tests {
             .as_any()
             .downcast_ref::<TestHelperSyscall>()
             .unwrap();
-        mocks.set_ret_err(ArgName::Mount, || {
+        mocks.set_ret_err(ArgName::MountFromFd, || {
             Err(SyscallError::Nix(nix::errno::Errno::UnknownErrno))
         });
 
-        assert!(masked_path(Path::new("/proc/self"), &None, syscall.as_ref()).is_err());
+        let paths = vec!["/proc/self/exe".to_string()];
+        assert!(super::masked_paths(&paths, &None, syscall.as_ref()).is_err());
+        let got = mocks.get_mount_args();
+        assert_eq!(0, got.len());
+
+        mocks.set_ret_err(ArgName::Mount, || {
+            Err(SyscallError::Nix(nix::errno::Errno::UnknownErrno))
+        });
+        let paths = vec!["/proc/self".to_string()];
+        assert!(super::masked_paths(&paths, &None, syscall.as_ref()).is_err());
         let got = mocks.get_mount_args();
         assert_eq!(0, got.len());
     }

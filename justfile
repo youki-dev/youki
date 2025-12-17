@@ -73,6 +73,10 @@ test-rootless-podman:
 test-dind:
     {{ cwd }}/tests/dind/run.sh
 
+# test runc compatibility
+test-runc-comp *RUNTIME_BINARY:
+    {{ cwd }}/tests/runc/runc_integration_test.sh {{RUNTIME_BINARY}}
+
 # run containerd integration tests
 containerd-test: youki-dev
     vagrant up containerd2youki

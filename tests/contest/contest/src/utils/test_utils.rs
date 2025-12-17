@@ -191,10 +191,11 @@ pub fn test_outside_container(
     // we manually unmount the rootfs so tmpdir deletion can succeed and cleanup is done.
     let ns = spec.linux().as_ref().and_then(|l| l.namespaces().clone());
     if let Some(ns) = ns
-        && !ns.into_iter().any(|n| n.typ() == LinuxNamespaceType::Mount)
+        && !ns.iter().any(|n| n.typ() == LinuxNamespaceType::Mount)
     {
         umount2(&bundle.path().join("bundle/rootfs"), MntFlags::MNT_DETACH).unwrap();
     }
+
     kill_container(&id_str, &bundle).unwrap().wait().unwrap();
     delete_container(&id_str, &bundle).unwrap().wait().unwrap();
     test_result

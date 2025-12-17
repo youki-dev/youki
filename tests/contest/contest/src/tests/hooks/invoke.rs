@@ -46,6 +46,18 @@ fn get_spec() -> Spec {
                     write_log_hook("pre-start1 called"),
                     write_log_hook("pre-start2 called"),
                 ])
+                .create_runtime(vec![
+                    write_log_hook("create-runtime1 called"),
+                    write_log_hook("create-runtime2 called"),
+                ])
+                .create_container(vec![
+                    write_log_hook("create-container1 called"),
+                    write_log_hook("create-container2 called"),
+                ])
+                .start_container(vec![
+                    write_log_hook("start-container1 called"),
+                    write_log_hook("start-container2 called"),
+                ])
                 .poststart(vec![
                     write_log_hook("post-start1 called"),
                     write_log_hook("post-start2 called"),
@@ -86,11 +98,21 @@ fn get_test(test_name: &'static str) -> Test {
                 log
             };
             delete_hook_output_file();
-            if log
-                != "pre-start1 called\npre-start2 called\npost-start1 called\npost-start2 called\npost-stop1 called\npost-stop2 called\n"
-            {
+            let expected = "pre-start1 called\n\
+                    pre-start2 called\n\
+                    create-runtime1 called\n\
+                    create-runtime2 called\n\
+                    create-container1 called\n\
+                    create-container2 called\n\
+                    post-start1 called\n\
+                    post-start2 called\n\
+                    post-stop1 called\n\
+                    post-stop2 called\n";
+            if log != expected {
                 return TestResult::Failed(anyhow!(
-                    "error : hooks must be called in the listed order, {log:?}"
+                    "error: hooks must be called in the listed order.\n\
+                    got:\n{log}\n\
+                    expected:\n{expected}"
                 ));
             }
             TestResult::Passed

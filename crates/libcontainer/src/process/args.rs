@@ -52,4 +52,7 @@ pub struct ContainerArgs {
     pub stderr: Option<RawFd>,
     // Indicate if the init process should be a sibling of the main process.
     pub as_sibling: bool,
+    /// File path used to communicate the PID of the
+    /// container process to the higher-level runtime.
+    pub pid_file: Option<PathBuf>,
 }

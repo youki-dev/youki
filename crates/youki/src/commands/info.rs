@@ -26,14 +26,27 @@ pub fn info(_: Info) -> Result<()> {
     Ok(())
 }
 
-/// print Version of Youki in Moby compatible format
-/// https://github.com/moby/moby/blob/65cc84abc522a564699bb171ca54ea1857256d10/daemon/info_unix.go#L280
+/// Prints the version of youki in a format compatible with `runc --version` and Moby.
+///
+/// See:
+/// - <https://github.com/opencontainers/runc/blob/v1.4.0/main.go#L37-L51>
+/// - <https://github.com/moby/moby/blob/65cc84abc522a564699bb171ca54ea1857256d10/daemon/info_unix.go#L280>
 pub fn print_youki() {
     println!("youki version: {}", env!("CARGO_PKG_VERSION"));
     println!(
         "commit: {}-{}",
         env!("CARGO_PKG_VERSION"),
         env!("VERGEN_GIT_SHA")
+    );
+    println!("spec: {}", oci_spec::runtime::VERSION);
+    println!(
+        "rustc: {}",
+        option_env!("VERGEN_RUSTC_SEMVER").unwrap_or("unknown")
+    );
+    #[cfg(feature = "seccomp")]
+    println!(
+        "libseccomp: {}",
+        option_env!("LIBSECCOMP_VERSION").unwrap_or("unknown")
     );
 }
 

@@ -31,7 +31,7 @@ test_cases=(
   # This test case requires that an apparmor profile named 'acme_secure_profile' has been installed on the system. It needs to allow the capabilities
   # validated by runtime-tools otherwise the test case will fail despite the profile being available.
   # "linux_process_apparmor_profile/linux_process_apparmor_profile.t"
-  # "misc_props/misc_props.t" runc also fails this, check out https://github.com/containers/youki/pull/1347#issuecomment-1315332775
+  # "misc_props/misc_props.t" runc also fails this, check out https://github.com/youki-dev/youki/pull/1347#issuecomment-1315332775
   "mounts/mounts.t"
   "poststart/poststart.t"
   "poststart_fail/poststart_fail.t"
@@ -40,7 +40,7 @@ test_cases=(
   "prestart/prestart.t"
   "prestart_fail/prestart_fail.t"
   "process_capabilities/process_capabilities.t"
-  # Record the tests that runc also fails to pass below, maybe we will fix this by origin integration test, issue: https://github.com/containers/youki/issues/56
+  # Record the tests that runc also fails to pass below, maybe we will fix this by origin integration test, issue: https://github.com/youki-dev/youki/issues/56
   # "start/start.t"
   "state/state.t"
 
