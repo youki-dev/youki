@@ -1,18 +1,18 @@
 use std::env;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 use oci_spec::runtime::{Process, Spec};
-use once_cell::sync::OnceCell;
 use rand::Rng;
 use tar::Archive;
 use tempfile::TempDir;
 use uuid::Uuid;
 
-static RUNTIME_PATH: OnceCell<PathBuf> = OnceCell::new();
-static RUNTIMETEST_PATH: OnceCell<PathBuf> = OnceCell::new();
+static RUNTIME_PATH: OnceLock<PathBuf> = OnceLock::new();
+static RUNTIMETEST_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 pub fn set_runtime_path(path: &Path) {
     RUNTIME_PATH.set(path.to_owned()).unwrap();

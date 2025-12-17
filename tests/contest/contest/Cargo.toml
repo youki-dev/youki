@@ -11,7 +11,6 @@ libcontainer = { path = "../../../crates/libcontainer" }
 nix = "0.29.0"
 num_cpus = "1.17"
 oci-spec = { version = "0.8.3", features = ["runtime"] }
-once_cell = "1.21.3"
 pnet_datalink = "0.35.0"
 procfs = "0.17.0"
 rand = "0.9.2"
