@@ -13,3 +13,7 @@ There are various e2e tests:
 - [runtime tools](./runtime_tools.md)
 
   This is the method to run the runtime tools that OCI manages as a test tool to verify meeting the OCI Runtime Spec
+
+- [k8s test](./k8s_test.md)
+
+  This test verifies youki works as a Kubernetes container runtime using Kind.
