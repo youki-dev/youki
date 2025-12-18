@@ -87,9 +87,8 @@ pub fn recv_seccomp_listener(seccomp_listener: &Path) -> SeccompAgentResult {
 
     buf.truncate(msg_bytes);
 
-    let container_process_state: ContainerProcessState =
-        serde_json::from_slice(&buf[..])
-            .context("failed to parse the received message as container process state")?;
+    let container_process_state: ContainerProcessState = serde_json::from_slice(&buf[..])
+        .context("failed to parse the received message as container process state")?;
 
     Ok((container_process_state, fd))
 }

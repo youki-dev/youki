@@ -42,6 +42,8 @@ pub enum ProcessError {
     SyscallOther(#[source] SyscallError),
     #[error("failed hooks {0}")]
     Hooks(#[from] crate::hooks::HookError),
+    #[error("failed to build OCI state: {0}")]
+    OciStateBuild(String),
 }
 
 type Result<T> = std::result::Result<T, ProcessError>;
@@ -203,7 +205,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                 .bundle(container.state.bundle.clone())
                 .annotations(container.state.annotations.clone().unwrap_or_default())
                 .build()
-                .expect("failed to build OCI state");
+                .map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
 
             let state = oci_spec::runtime::ContainerProcessStateBuilder::default()
                 .version(container_args.spec.version().to_string())
@@ -212,7 +214,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                 .metadata(seccomp.listener_metadata().clone().unwrap_or_default())
                 .state(oci_state)
                 .build()
-                .expect("failed to build container process state");
+                .map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
             crate::process::seccomp_listener::sync_seccomp(
                 seccomp,
                 &state,
