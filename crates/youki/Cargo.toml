@@ -48,7 +48,7 @@ wasi-common = { version = "35.0.0", optional = true }
 tracing = { version = "0.1.43", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.22", features = ["json", "env-filter"] }
 tracing-journald = "0.3.2"
-oci-spec = { version = "0.8.3", features = ["runtime"] }
+oci-spec = { version = "0.8.4", features = ["runtime"] }
 
 [dev-dependencies]
 serial_test = "3.1.1"
