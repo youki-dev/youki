@@ -183,19 +183,36 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
 
         #[cfg(feature = "libseccomp")]
         if let Some(seccomp) = linux.seccomp() {
-            let state = crate::container::ContainerProcessState {
-                oci_version: container_args.spec.version().to_string(),
-                // runc hardcode the `seccompFd` name for fds.
-                fds: vec![String::from("seccompFd")],
-                pid: init_pid.as_raw(),
-                metadata: seccomp.listener_metadata().to_owned().unwrap_or_default(),
-                state: container_args
-                    .container
-                    .as_ref()
-                    .ok_or(ProcessError::ContainerStateRequired)?
-                    .state
-                    .clone(),
+            let container = container_args
+                .container
+                .as_ref()
+                .ok_or(ProcessError::ContainerStateRequired)?;
+
+            // Determine OCI status based on container type (matching runc behavior)
+            let oci_status = match container_args.container_type {
+                ContainerType::InitContainer => oci_spec::runtime::ContainerState::Creating,
+                ContainerType::TenantContainer { .. } => oci_spec::runtime::ContainerState::Running,
             };
+
+            // Build OCI-compliant ContainerProcessState using builder pattern
+            let oci_state = oci_spec::runtime::StateBuilder::default()
+                .version(container.state.oci_version.clone())
+                .id(container.state.id.clone())
+                .status(oci_status)
+                .pid(init_pid.as_raw())
+                .bundle(container.state.bundle.clone())
+                .annotations(container.state.annotations.clone().unwrap_or_default())
+                .build()
+                .expect("failed to build OCI state");
+
+            let state = oci_spec::runtime::ContainerProcessStateBuilder::default()
+                .version(container_args.spec.version().to_string())
+                .fds(vec![oci_spec::runtime::SECCOMP_FD_NAME.to_string()])
+                .pid(init_pid.as_raw())
+                .metadata(seccomp.listener_metadata().clone().unwrap_or_default())
+                .state(oci_state)
+                .build()
+                .expect("failed to build container process state");
             crate::process::seccomp_listener::sync_seccomp(
                 seccomp,
                 &state,
