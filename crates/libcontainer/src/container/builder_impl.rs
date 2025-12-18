@@ -88,7 +88,8 @@ impl ContainerBuilderImpl {
         let cgroups_path = utils::get_cgroup_path(linux.cgroups_path(), &self.container_id);
         let cgroup_config = libcgroups::common::CgroupConfig {
             cgroup_path: cgroups_path,
-            systemd_cgroup: self.use_systemd || self.user_ns_config.is_some(),
+            systemd_cgroup: self.use_systemd,
+            rootless_container: self.user_ns_config.is_some(),
             container_name: self.container_id.to_owned(),
         };
         let process = self
@@ -195,15 +196,18 @@ impl ContainerBuilderImpl {
         let cmanager =
             libcgroups::common::create_cgroup_manager(libcgroups::common::CgroupConfig {
                 cgroup_path: cgroups_path,
-                systemd_cgroup: self.use_systemd || self.user_ns_config.is_some(),
+                systemd_cgroup: self.use_systemd,
+                rootless_container: self.user_ns_config.is_some(),
                 container_name: self.container_id.to_string(),
             })?;
 
         let mut errors = Vec::new();
 
-        if let Err(e) = cmanager.remove() {
-            tracing::error!(error = ?e, "failed to remove cgroup manager");
-            errors.push(e.to_string());
+        if let Some(cmanager) = cmanager {
+            if let Err(e) = cmanager.remove() {
+                tracing::error!(error = ?e, "failed to remove cgroup manager");
+                errors.push(e.to_string());
+            }
         }
 
         if let Some(container) = &self.container {

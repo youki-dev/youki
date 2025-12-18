@@ -130,6 +130,15 @@ impl Container {
         self
     }
 
+    pub fn rootless(&self) -> bool {
+        self.state.is_rootless
+    }
+
+    pub fn set_rootless(&mut self, is_rootless: bool) -> &mut Self {
+        self.state.is_rootless = is_rootless;
+        self
+    }
+
     pub fn set_clean_up_intel_rdt_directory(&mut self, clean_up: bool) -> &mut Self {
         self.state.clean_up_intel_rdt_subdirectory = Some(clean_up);
         self
