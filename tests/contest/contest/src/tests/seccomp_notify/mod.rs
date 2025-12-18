@@ -82,11 +82,11 @@ fn test_seccomp_notify() -> Result<()> {
             None => return TestResult::Failed(anyhow!("state command returned error")),
         };
 
-        if &state.id != container_process_state.state().id() {
+        if state.id != *container_process_state.state().id() {
             return TestResult::Failed(anyhow!("container id doesn't match"));
         }
 
-        if &state.pid.unwrap() != container_process_state.pid() {
+        if state.pid.unwrap() != *container_process_state.pid() {
             return TestResult::Failed(anyhow!("container process id doesn't match"));
         }
 
