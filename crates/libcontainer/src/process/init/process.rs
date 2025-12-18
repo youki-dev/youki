@@ -1017,12 +1017,8 @@ fn set_home_from_path(envs: &mut HashMap<String, String>, dir_home: &Path) {
 mod tests {
     use std::ffi::OsStr;
     use std::fs;
-<<<<<<< HEAD
-    use std::path::Path;
-=======
     use std::os::unix::ffi::OsStrExt;
-    use std::path::PathBuf;
->>>>>>> 4dcdadc6 (Edit the commented content)
+    use std::path::{Path, PathBuf};
 
     use anyhow::Result;
     #[cfg(feature = "libseccomp")]
@@ -1369,14 +1365,19 @@ mod tests {
         let mut envs = HashMap::new();
         envs.insert("HOME".to_owned(), "".to_owned());
 
-        let current_uid = Uid::current();
-        let expected = NixUser::from_uid(current_uid)
+        // Make TEST_NON_ROOT_UID configurable to run tests on GitHub Actions runners.
+        let test_uid = env::var("TEST_NON_ROOT_UID")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .map(Uid::from_raw)
+            .unwrap_or_else(Uid::current);
+        let expected = NixUser::from_uid(test_uid)
             .ok()
             .flatten()
             .and_then(|user| user.dir.to_str().map(|s| s.to_owned()))
             .unwrap_or_default();
 
-        set_home_env_if_not_exists(&mut envs, current_uid);
+        set_home_env_if_not_exists(&mut envs, test_uid);
         assert_eq!(envs.get("HOME"), Some(&expected));
     }
 
@@ -1392,14 +1393,19 @@ mod tests {
     fn test_set_home_env_if_not_exists_not_set_non_root() {
         let mut envs = HashMap::new();
 
-        let current_uid = Uid::current();
-        let expected = NixUser::from_uid(current_uid)
+        // Make TEST_NON_ROOT_UID configurable to run tests on GitHub Actions runners.
+        let test_uid = env::var("TEST_NON_ROOT_UID")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .map(Uid::from_raw)
+            .unwrap_or_else(Uid::current);
+        let expected = NixUser::from_uid(test_uid)
             .ok()
             .flatten()
             .and_then(|user| user.dir.to_str().map(|s| s.to_owned()))
             .unwrap_or_default();
 
-        set_home_env_if_not_exists(&mut envs, current_uid);
+        set_home_env_if_not_exists(&mut envs, test_uid);
         assert_eq!(envs.get("HOME"), Some(&expected));
     }
 
