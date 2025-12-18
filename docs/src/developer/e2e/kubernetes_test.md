@@ -1,4 +1,4 @@
-# k8s test
+# Kubernetes test
 
 ## Notes
 
