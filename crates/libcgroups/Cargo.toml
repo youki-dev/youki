@@ -31,7 +31,7 @@ libbpf-sys = { version = "1.6.2", optional = true }
 errno = { version = "0.3.14", optional = true }
 libc = { version = "0.2.178", optional = true }
 thiserror = "2.0.17"
-tracing = { version = "0.1.43", features = ["attributes"] }
+tracing = { version = "0.1.44", features = ["attributes"] }
 
 [dev-dependencies]
 anyhow = "1.0"
