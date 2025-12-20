@@ -157,7 +157,7 @@ impl Device {
             .mknod(
                 &full_container_path,
                 to_sflag(dev.typ()),
-                Mode::from_bits_truncate(dev.file_mode().unwrap_or(0)),
+                Mode::from_bits_truncate(dev.file_mode().unwrap_or(0o666)),
                 makedev(dev.major(), dev.minor()),
             )
             .map_err(|err| {

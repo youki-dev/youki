@@ -507,6 +507,21 @@ impl Syscall for LinuxSyscall {
                     caps::drop(None, CapSet::Bounding, *c)?
                 }
             }
+            CapSet::Ambient => {
+                // check specifically for ambient, as those might not always be available
+                //
+                // Ambient capabilities are applied from an unordered HashSet, and if any
+                // set_capability() call fails, Youki stops applying the rest. This causes
+                // inconsistent CapAmb results between runs and diverges from runc, which
+                // continues applying all ambient caps even after a failure. The same flawed
+                // ambient-cap logic also causes exec-path capability test failures.
+                caps::clear(None, CapSet::Ambient)?;
+                for c in value {
+                    if let Err(e) = caps::raise(None, CapSet::Ambient, *c) {
+                        tracing::warn!(?e, ?c, "can't raise ambient capability");
+                    }
+                }
+            }
             _ => {
                 caps::set(None, cset, value)?;
             }
@@ -930,6 +945,29 @@ impl Syscall for LinuxSyscall {
             _ => Err(nix::Error::UnknownErrno),
         }?;
         Ok(())
+    }
+
+    fn set_mempolicy(&self, mode: i32, nodemask: &[libc::c_ulong], maxnode: u64) -> Result<()> {
+        // Convert Rust types to libc types
+        let libc_nodemask = if nodemask.is_empty() {
+            std::ptr::null()
+        } else {
+            nodemask.as_ptr()
+        };
+        let libc_maxnode = maxnode as libc::c_ulong;
+
+        match unsafe {
+            libc::syscall(
+                libc::SYS_set_mempolicy,
+                mode as libc::c_long,
+                libc_nodemask,
+                libc_maxnode,
+            )
+        } {
+            0 => Ok(()),
+            -1 => Err(SyscallError::Nix(nix::Error::last())),
+            _ => Err(SyscallError::Nix(nix::Error::UnknownErrno)),
+        }
     }
 
     fn umount2(&self, target: &Path, flags: MntFlags) -> Result<()> {

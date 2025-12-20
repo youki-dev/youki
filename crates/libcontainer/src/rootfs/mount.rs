@@ -69,6 +69,38 @@ pub enum MountError {
 
 type Result<T> = std::result::Result<T, MountError>;
 
+pub trait MountInfoProvider {
+    fn mountinfo(&self) -> Result<Vec<MountInfo>>;
+}
+
+/// Default provider that reads mountinfo from /proc via procfs.
+pub struct ProcMountInfoProvider;
+
+impl ProcMountInfoProvider {
+    pub fn new() -> Self {
+        ProcMountInfoProvider
+    }
+}
+
+impl MountInfoProvider for ProcMountInfoProvider {
+    fn mountinfo(&self) -> Result<Vec<MountInfo>> {
+        let reader = BufReader::new(ProcfsHandle::new()?.open(
+            ProcfsBase::ProcSelf,
+            "mountinfo",
+            OpenFlags::O_RDONLY | OpenFlags::O_CLOEXEC,
+        )?);
+
+        let mount_infos: Vec<MountInfo> = reader
+            .lines()
+            .map(|lr| {
+                lr.map_err(MountError::from)
+                    .and_then(|s| MountInfo::from_line(&s).map_err(MountError::from))
+            })
+            .collect::<Result<_>>()?;
+        Ok(mount_infos)
+    }
+}
+
 #[derive(Debug)]
 pub struct MountOptions<'a> {
     pub root: &'a Path,
@@ -79,6 +111,7 @@ pub struct MountOptions<'a> {
 
 pub struct Mount {
     syscall: Box<dyn Syscall>,
+    mountinfo_provider: Box<dyn MountInfoProvider>,
 }
 
 impl Default for Mount {
@@ -91,7 +124,13 @@ impl Mount {
     pub fn new() -> Mount {
         Mount {
             syscall: create_syscall(),
+            mountinfo_provider: Box::new(ProcMountInfoProvider::new()),
         }
+    }
+
+    pub fn with_mountinfo_provider<P: MountInfoProvider + 'static>(mut self, provider: P) -> Self {
+        self.mountinfo_provider = Box::new(provider);
+        self
     }
 
     pub fn setup_mount(&self, mount: &SpecMount, options: &MountOptions) -> Result<()> {
@@ -504,21 +543,8 @@ impl Mount {
 
     /// Make parent mount of rootfs private if it was shared, which is required by pivot_root.
     /// It also makes sure following bind mount does not propagate in other namespaces.
-    pub fn make_parent_mount_private(&self, rootfs: &Path) -> Result<Option<MountInfo>> {
-        let reader = BufReader::new(ProcfsHandle::new()?.open(
-            ProcfsBase::ProcSelf,
-            "mountinfo",
-            OpenFlags::O_RDONLY | OpenFlags::O_CLOEXEC,
-        )?);
-
-        let mount_infos: Vec<MountInfo> = reader
-            .lines()
-            .map(|lr| {
-                lr.map_err(MountError::from)
-                    .and_then(|s| MountInfo::from_line(&s).map_err(MountError::from))
-            })
-            .collect::<Result<_>>()?;
-
+    pub fn make_parent_mount_private(&self, rootfs: &Path) -> Result<MountInfo> {
+        let mount_infos = self.mountinfo_provider.mountinfo()?;
         let parent_mount = find_parent_mount(rootfs, mount_infos)?;
 
         // check parent mount has 'shared' propagation type
@@ -534,10 +560,8 @@ impl Mount {
                 MsFlags::MS_PRIVATE,
                 None,
             )?;
-            Ok(Some(parent_mount))
-        } else {
-            Ok(None)
         }
+        Ok(parent_mount)
     }
 
     fn mount_into_container(
@@ -990,6 +1014,7 @@ mod tests {
     use std::fs;
     use std::fs::OpenOptions;
     use std::os::unix::fs::symlink;
+    use std::str::FromStr;
 
     use anyhow::{Context, Ok, Result};
 
@@ -1195,33 +1220,89 @@ mod tests {
         Ok(())
     }
 
+    struct FakeMountInfo {
+        entries: Vec<MountInfo>,
+    }
+    impl MountInfoProvider for FakeMountInfo {
+        fn mountinfo(&self) -> std::result::Result<Vec<MountInfo>, MountError> {
+            std::result::Result::Ok(self.entries.clone())
+        }
+    }
+
     #[test]
     fn test_make_parent_mount_private() -> Result<()> {
-        let tmp_dir = tempfile::tempdir()?;
-        let m = Mount::new();
-        let result = m.make_parent_mount_private(tmp_dir.path())?;
-        assert!(result.is_some());
+        let tmp_dir = PathBuf::from_str("/tmp/mydir")?;
 
-        if result.is_some() {
-            let set = m
-                .syscall
-                .as_any()
-                .downcast_ref::<TestHelperSyscall>()
-                .unwrap()
-                .get_mount_args();
+        let parent = tmp_dir.as_path().parent().unwrap().to_path_buf();
+        let fake = FakeMountInfo {
+            entries: vec![MountInfo {
+                mnt_id: 1,
+                pid: 0,
+                majmin: "".to_string(),
+                root: "/".to_string(),
+                mount_point: parent.clone(),
+                mount_options: Default::default(),
+                opt_fields: vec![MountOptFields::Shared(1)],
+                fs_type: "tmpfs".to_string(),
+                mount_source: None,
+                super_options: Default::default(),
+            }],
+        };
 
-            assert_eq!(set.len(), 1);
+        let m = Mount::new().with_mountinfo_provider(fake);
+        m.make_parent_mount_private(tmp_dir.as_path())?;
 
-            let got = &set[0];
-            assert_eq!(got.source, None);
-            assert_eq!(got.fstype, None);
-            assert_eq!(got.flags, MsFlags::MS_PRIVATE);
-            assert_eq!(got.data, None);
+        let set = m
+            .syscall
+            .as_any()
+            .downcast_ref::<TestHelperSyscall>()
+            .unwrap()
+            .get_mount_args();
 
-            // This can be either depending on the system, some systems mount tmpfs at /tmp others it's
-            // a plain directory. See https://github.com/youki-dev/youki/issues/471
-            assert!(got.target == PathBuf::from("/") || got.target == PathBuf::from("/tmp"));
-        }
+        assert_eq!(set.len(), 1);
+
+        let got = &set[0];
+        assert_eq!(got.source, None);
+        assert_eq!(got.fstype, None);
+        assert_eq!(got.flags, MsFlags::MS_PRIVATE);
+        assert_eq!(got.data, None);
+
+        assert_eq!(got.target, parent);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_not_make_parent_mount_private_if_already_private() -> Result<()> {
+        let tmp_dir = PathBuf::from_str("/tmp/mydir")?;
+
+        let parent = tmp_dir.as_path().parent().unwrap().to_path_buf();
+        let fake = FakeMountInfo {
+            entries: vec![MountInfo {
+                mnt_id: 1,
+                pid: 0,
+                majmin: "".to_string(),
+                root: "/".to_string(),
+                mount_point: parent.clone(),
+                mount_options: Default::default(),
+                opt_fields: vec![],
+                fs_type: "tmpfs".to_string(),
+                mount_source: None,
+                super_options: Default::default(),
+            }],
+        };
+
+        let m = Mount::new().with_mountinfo_provider(fake);
+        m.make_parent_mount_private(tmp_dir.as_path())?;
+
+        let set = m
+            .syscall
+            .as_any()
+            .downcast_ref::<TestHelperSyscall>()
+            .unwrap()
+            .get_mount_args();
+
+        assert_eq!(set.len(), 0);
 
         Ok(())
     }

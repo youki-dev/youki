@@ -10,7 +10,7 @@ use nix::sched::CloneFlags;
 use nix::sys::stat::Mode;
 use nix::unistd::{self, Gid, Uid, close, dup2, setsid};
 use oci_spec::runtime::{
-    IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxPersonalityDomain,
+    IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxNetDevice, LinuxPersonalityDomain,
     LinuxSchedulerFlag, LinuxSchedulerPolicy, Scheduler, Spec, User,
 };
 use pathrs::flags::OpenFlags;
@@ -22,8 +22,12 @@ use super::error::InitProcessError;
 use crate::config::PersonalityDomain;
 use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
+use crate::network::address::AddressClient;
+use crate::network::link::LinkClient;
+use crate::network::network_device::{resolve_device_name, setup_addresses_in_network_namespace};
+use crate::network::wrapper::create_network_client;
 use crate::process::args::{ContainerArgs, ContainerType};
-use crate::process::channel;
+use crate::process::{channel, memory_policy};
 use crate::rootfs::RootFS;
 use crate::rootfs::device::{open_device_fd, verify_dev_null};
 #[cfg(feature = "libseccomp")]
@@ -49,6 +53,8 @@ pub fn container_init_process(
     set_io_priority(ctx.syscall.as_ref(), ctx.process.io_priority())?;
 
     setup_scheduler(ctx.process.scheduler())?;
+
+    memory_policy::setup_memory_policy(ctx.linux.memory_policy(), ctx.syscall.as_ref())?;
 
     // set up tty if specified
     if let Some(csocketfd) = args.console_socket {
@@ -78,16 +84,6 @@ pub fn container_init_process(
     }
 
     if matches!(args.container_type, ContainerType::InitContainer) {
-        // create_container hook needs to be called after the namespace setup, but
-        // before pivot_root is called. This runs in the container namespaces.
-        if let Some(hooks) = ctx.hooks {
-            hooks::run_hooks(hooks.create_container().as_ref(), ctx.container, None).map_err(
-                |err| {
-                    tracing::error!(?err, "failed to run create container hooks");
-                    InitProcessError::Hooks(err)
-                },
-            )?;
-        }
         let in_user_ns = utils::is_in_new_userns().map_err(InitProcessError::Io)?;
         let bind_service = ctx.ns.get(LinuxNamespaceType::User)?.is_some() || in_user_ns;
         let rootfs = RootFS::new();
@@ -102,6 +98,22 @@ pub fn container_init_process(
                 tracing::error!(?err, "failed to prepare rootfs");
                 InitProcessError::RootFS(err)
             })?;
+
+        if let Some(hooks) = ctx.hooks {
+            // send a request to the main process to run prestart and create_runtime hooks.
+            // prestart and create_runtime hook needs to be called after the namespace setup, but
+            // before pivot_root is called. This runs in the runtime(not container) namespaces.
+            main_sender.hook_request()?;
+            init_receiver.wait_for_hook_request_done()?;
+
+            // create_container hook needs to be called after the namespace setup, but
+            // before pivot_root is called. This runs in the container namespaces.
+            hooks::run_hooks(hooks.create_container().as_ref(), ctx.container, None, None)
+                .map_err(|err| {
+                    tracing::error!(?err, "failed to run create container hooks");
+                    InitProcessError::Hooks(err)
+                })?;
+        }
 
         // Entering into the rootfs jail. If mount namespace is specified, then
         // we use pivot_root, but if we are on the host mount namespace, we will
@@ -294,6 +306,18 @@ pub fn container_init_process(
         InitProcessError::SyscallOther(err)
     })?;
 
+    // Setup some operations in the network namespace.
+    // This is done here before dropping capabilities because we need to be able to add IP addresses to the device
+    // and set up the device.
+    if let Some(network_devices) = ctx.linux.net_devices() {
+        configure_container_network_devices(network_devices, main_sender, init_receiver).map_err(
+            |err| {
+                tracing::error!(?err, "failed to setup net_device");
+                err
+            },
+        )?;
+    }
+
     // Without no new privileges, seccomp is a privileged operation. We have to
     // do this before dropping capabilities. Otherwise, we should do it later,
     // as close to exec as possible.
@@ -405,7 +429,7 @@ pub fn container_init_process(
     // before pivot_root is called. This runs in the container namespaces.
     if matches!(args.container_type, ContainerType::InitContainer) {
         if let Some(hooks) = ctx.hooks {
-            hooks::run_hooks(hooks.start_container().as_ref(), ctx.container, None).map_err(
+            hooks::run_hooks(hooks.start_container().as_ref(), ctx.container, None, None).map_err(
                 |err| {
                     tracing::error!(?err, "failed to run start container hooks");
                     err
@@ -895,6 +919,62 @@ fn sync_seccomp(
         // it. The fd is now duplicated to the main process and sent to seccomp
         // listener.
         let _ = unistd::close(fd);
+    }
+
+    Ok(())
+}
+
+fn configure_container_network_devices(
+    net_device: &HashMap<String, LinuxNetDevice>,
+    main_sender: &mut channel::MainSender,
+    init_receiver: &mut channel::InitReceiver,
+) -> Result<()> {
+    if net_device.is_empty() {
+        return Ok(());
+    }
+
+    main_sender.network_setup_ready()?;
+
+    let addrs_map = init_receiver.wait_for_move_network_device()?;
+    for (name, net_dev) in net_device {
+        if let Some(cidr_addrs) = addrs_map.get(name) {
+            // Get the device's final name (use configured name if provided, otherwise use original name)
+            let new_name = resolve_device_name(net_dev, name.as_str());
+
+            // Create network clients
+            let mut link_client = LinkClient::new(create_network_client()).map_err(|err| {
+                tracing::error!(?err, "failed to create link client");
+                err
+            })?;
+            let mut addr_client = AddressClient::new(create_network_client()).map_err(|err| {
+                tracing::error!(?err, "failed to create address client");
+                err
+            })?;
+
+            // Get the device index
+            let ns_link = link_client.get_by_name(new_name).map_err(|err| {
+                tracing::error!(?err, "failed to get device by name: {}", new_name);
+                err
+            })?;
+
+            // Assign IP addresses to the device
+            setup_addresses_in_network_namespace(
+                cidr_addrs,
+                ns_link.header.index,
+                new_name,
+                &mut addr_client,
+            )
+            .map_err(|err| {
+                tracing::error!(?err, "failed to setup addresses for device: {}", new_name);
+                err
+            })?;
+
+            // Bring the device up
+            link_client.set_up(ns_link.header.index).map_err(|err| {
+                tracing::error!(?err, "failed to bring up device: {}", new_name);
+                err
+            })?;
+        }
     }
 
     Ok(())

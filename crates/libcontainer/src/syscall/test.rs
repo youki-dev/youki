@@ -69,6 +69,13 @@ pub struct IoPriorityArgs {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MemPolicyArgs {
+    pub mode: i32,
+    pub nodemask: Vec<libc::c_ulong>, // Store the nodemask vector for testing
+    pub maxnode: u64,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct UMount2Args {
     pub target: PathBuf,
     pub flags: MntFlags,
@@ -95,6 +102,7 @@ pub enum ArgName {
     Groups,
     Capability,
     IoPriority,
+    MemPolicy,
     UMount2,
     MoveMount,
     Fsopen,
@@ -115,6 +123,7 @@ impl ArgName {
             ArgName::Groups,
             ArgName::Capability,
             ArgName::IoPriority,
+            ArgName::MemPolicy,
             ArgName::MoveMount,
         ]
         .iter()
@@ -377,6 +386,17 @@ impl Syscall for TestHelperSyscall {
         )
     }
 
+    fn set_mempolicy(&self, mode: i32, nodemask: &[libc::c_ulong], maxnode: u64) -> Result<()> {
+        self.mocks.act(
+            ArgName::MemPolicy,
+            Box::new(MemPolicyArgs {
+                mode,
+                nodemask: nodemask.to_vec(),
+                maxnode,
+            }),
+        )
+    }
+
     fn umount2(&self, target: &Path, flags: MntFlags) -> Result<()> {
         self.mocks.act(
             ArgName::UMount2,
@@ -524,6 +544,15 @@ impl TestHelperSyscall {
             .iter()
             .map(|x| x.downcast_ref::<IoPriorityArgs>().unwrap().clone())
             .collect::<Vec<IoPriorityArgs>>()
+    }
+
+    pub fn get_mempolicy_args(&self) -> Vec<MemPolicyArgs> {
+        self.mocks
+            .fetch(ArgName::MemPolicy)
+            .values
+            .iter()
+            .map(|x| x.downcast_ref::<MemPolicyArgs>().unwrap().clone())
+            .collect::<Vec<MemPolicyArgs>>()
     }
 
     pub fn get_umount_args(&self) -> Vec<UMount2Args> {
