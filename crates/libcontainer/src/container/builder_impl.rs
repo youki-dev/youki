@@ -17,6 +17,7 @@ use crate::process::{self};
 use crate::syscall::syscall::SyscallType;
 use crate::user_ns::UserNamespaceConfig;
 use crate::utils;
+use crate::utils::PathBufExt;
 use crate::workload::Executor;
 
 pub(super) struct ContainerBuilderImpl {
@@ -97,19 +98,7 @@ impl ContainerBuilderImpl {
         if let Some(sub_cgroup_path) = &self.sub_cgroup_path {
             if sub_cgroup_path != "/" {
                 let potential_path = final_cgroups_path.join(sub_cgroup_path);
-                let normalized =
-                    potential_path
-                        .components()
-                        .fold(PathBuf::new(), |mut acc, comp| {
-                            match comp {
-                                std::path::Component::ParentDir => {
-                                    acc.pop();
-                                }
-                                std::path::Component::CurDir => { /* skip */ }
-                                other => acc.push(other),
-                            }
-                            acc
-                        });
+                let normalized = potential_path.normalize();
 
                 if !normalized.starts_with(&final_cgroups_path) {
                     return Err(LibcontainerError::OtherCgroup(format!(
