@@ -34,6 +34,10 @@ pub enum SeccompError {
     Apply(String),
     #[error("valid indices are 0–5")]
     InvalidArgumentSize,
+    #[error("Cant ScmpActNotify to default action")]
+    InvalidDefaultAction,
+    #[error("Cant filter to write system call")]
+    InvalidSystemCall,
 }
 
 pub struct Seccomp {
@@ -269,7 +273,7 @@ impl From<LinuxSeccompOperator> for SeccompCompareOp {
     }
 }
 
-fn check_seccomp(seccomp: &LinuxSeccomp) -> Result<()> {
+fn check_seccomp(seccomp: &LinuxSeccomp) -> Result<(), SeccompError> {
     // We don't support notify as default action. After the seccomp filter is
     // created with notify, the container process will have to communicate the
     // returned fd to another process. Therefore, we need the write syscall or
@@ -282,7 +286,7 @@ fn check_seccomp(seccomp: &LinuxSeccomp) -> Result<()> {
     // expected.
     if seccomp.default_action() == LinuxSeccompAction::ScmpActNotify {
         // Todo: consider need to porting SeccompError
-        return Err(anyhow!("Cant ScmpActNotify to default action"));
+        return Err(SeccompError::InvalidDefaultAction)
     }
 
     if let Some(syscalls) = seccomp.syscalls() {
@@ -290,7 +294,7 @@ fn check_seccomp(seccomp: &LinuxSeccomp) -> Result<()> {
             if syscall.action() == LinuxSeccompAction::ScmpActNotify {
                 for name in syscall.names() {
                     if name == "write" {
-                        return Err(anyhow!("Cant filter to write system call"));
+                        return Err(SeccompError::InvalidSystemCall);
                     }
                 }
             }
@@ -369,11 +373,13 @@ impl TryFrom<SeccompProgramPlan> for Vec<Instruction> {
     }
 }
 
-impl SeccompProgramPlan {
-    pub fn from_linux_seccomp(seccomp: &LinuxSeccomp) -> Result<Self> {
+impl TryFrom<LinuxSeccomp> for SeccompProgramPlan {
+    type Error = SeccompError;
+
+    fn try_from(seccomp: LinuxSeccomp) -> Result<Self, SeccompError>{
         let mut data: SeccompProgramPlan = Default::default();
 
-        check_seccomp(seccomp)?;
+        check_seccomp(&seccomp)?;
         data.def_action = u32::from(seccomp.default_action());
         if let Some(ret) = seccomp.default_errno_ret() {
             data.def_errno_ret = ret
@@ -425,7 +431,7 @@ impl SeccompProgramPlan {
                     match syscall.args() {
                         Some(args) => {
                             if syscall.args().iter().len() > 6 {
-                                return Err(anyhow!(SeccompError::InvalidArgumentSize));
+                                return Err(SeccompError::InvalidArgumentSize);
                             }
                             data.rule
                                 .check_arg_syscall

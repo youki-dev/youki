@@ -1,8 +1,5 @@
 use crate::seccomp::{SeccompProgramPlan, Seccomp};
-use oci_spec::runtime::{
-    Arch as OciSpecArch, LinuxSeccompAction, LinuxSeccompArg, LinuxSeccompArgBuilder,
-    LinuxSeccompBuilder, LinuxSeccompOperator, LinuxSyscall, LinuxSyscallBuilder,
-};
+use oci_spec::runtime::{Arch as OciSpecArch, LinuxSeccompAction, LinuxSeccompArg, LinuxSeccompArgBuilder, LinuxSeccompBuilder, LinuxSeccompOperator, LinuxSyscall, LinuxSyscallBuilder};
 use serde::Deserialize;
 use std::fs;
 use std::io;
@@ -127,7 +124,7 @@ pub fn generate_seccomp_instruction(file_path: &Path) -> anyhow::Result<()> {
             .syscalls(vec![build_syscall])
             .build()?;
 
-        let inst_data = SeccompProgramPlan::from_linux_seccomp(&spec_seccomp)?;
+        let inst_data = SeccompProgramPlan::try_from(spec_seccomp)?;
         let mut seccomp = Seccomp::new();
         if !inst_data.flags.is_empty() {
             seccomp.set_flags(inst_data.flags.clone());
