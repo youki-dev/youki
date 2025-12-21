@@ -301,7 +301,7 @@ fn check_seccomp(seccomp: &LinuxSeccomp) -> Result<()> {
 }
 
 #[derive(Debug, Default)]
-pub struct InstructionData {
+pub struct SeccompProgramPlan {
     pub arc: Arch,
     pub def_action: u32,
     pub def_errno_ret: u32,
@@ -309,9 +309,9 @@ pub struct InstructionData {
     pub rule: Rule,
 }
 
-impl TryFrom<InstructionData> for Vec<Instruction> {
+impl TryFrom<SeccompProgramPlan> for Vec<Instruction> {
     type Error = SeccompError;
-    fn try_from(inst_data: InstructionData) -> Result<Self, SeccompError> {
+    fn try_from(inst_data: SeccompProgramPlan) -> Result<Self, SeccompError> {
         let mut bpf_prog = vec![];
         let mut jump_num = inst_data.rule.syscall.len();
         if jump_num <= 255 {
@@ -369,9 +369,9 @@ impl TryFrom<InstructionData> for Vec<Instruction> {
     }
 }
 
-impl InstructionData {
+impl SeccompProgramPlan {
     pub fn from_linux_seccomp(seccomp: &LinuxSeccomp) -> Result<Self> {
-        let mut data: InstructionData = Default::default();
+        let mut data: SeccompProgramPlan = Default::default();
 
         check_seccomp(seccomp)?;
         data.def_action = u32::from(seccomp.default_action());

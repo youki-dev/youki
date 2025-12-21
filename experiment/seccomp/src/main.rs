@@ -22,7 +22,7 @@ use oci_spec::runtime::{
     Arch as OciSpecArch, LinuxSeccompAction, LinuxSeccompArgBuilder, LinuxSeccompBuilder,
     LinuxSeccompOperator, LinuxSyscallBuilder,
 };
-use seccomp::seccomp::InstructionData;
+use seccomp::seccomp::SeccompProgramPlan;
 use seccomp::testutil::*;
 use syscall_numbers::x86_64;
 
@@ -138,7 +138,7 @@ async fn sub() -> Result<()> {
         .syscalls(vec![_personality])
         .build()?;
 
-    let inst_data = InstructionData::from_linux_seccomp(&spec_seccomp)?;
+    let inst_data = SeccompProgramPlan::from_linux_seccomp(&spec_seccomp)?;
     let mut seccomp = Seccomp::new();
     if !inst_data.flags.is_empty() {
         seccomp.set_flags(inst_data.flags.clone());
