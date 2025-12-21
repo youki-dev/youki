@@ -6,6 +6,7 @@ use oci_spec::runtime::{
 use serde::Deserialize;
 use std::fs;
 use std::io;
+use std::path::Path;
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -93,13 +94,13 @@ pub struct SeccompData {
     syscalls: Vec<Syscall>,
 }
 
-pub fn read_seccomp_testdata(file_path: &str) -> Result<SeccompData, io::Error> {
+pub fn read_seccomp_testdata(file_path: &Path) -> Result<SeccompData, io::Error> {
     let contents = fs::read_to_string(file_path)?;
     let config: SeccompData = serde_json::from_str(&contents)?;
     Ok(config)
 }
 
-pub fn generate_seccomp_instruction(file_path: &str) -> anyhow::Result<()> {
+pub fn generate_seccomp_instruction(file_path: &Path) -> anyhow::Result<()> {
     let seccomp = read_seccomp_testdata(file_path)?;
     let mut cnt = 0;
     #[allow(clippy::explicit_counter_loop)]
