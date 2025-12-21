@@ -7,6 +7,7 @@ use serde::Deserialize;
 use std::fs;
 use std::io;
 use std::path::Path;
+use anyhow::{anyhow, Error};
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -51,36 +52,35 @@ pub struct Syscall {
     comment: Option<String>,
 }
 
-pub fn convert_operation(op_str: &str) -> Option<LinuxSeccompOperator> {
+pub fn convert_operation(op_str: &str) -> Result<LinuxSeccompOperator, Error> {
     match op_str {
-        "SCMP_CMP_EQ" => Some(LinuxSeccompOperator::ScmpCmpEq),
-        "SCMP_CMP_NE" => Some(LinuxSeccompOperator::ScmpCmpNe),
-        "SCMP_CMP_MASKED_EQ" => Some(LinuxSeccompOperator::ScmpCmpMaskedEq),
-        _ => None,
+        "SCMP_CMP_EQ" => Ok(LinuxSeccompOperator::ScmpCmpEq),
+        "SCMP_CMP_NE" => Ok(LinuxSeccompOperator::ScmpCmpNe),
+        "SCMP_CMP_MASKED_EQ" => Ok(LinuxSeccompOperator::ScmpCmpMaskedEq),
+        _ => Err(anyhow!("Cant match seccomp operator: {}", op_str)),
     }
 }
 
-pub fn convert_argument(args: Vec<Argument>) -> Result<Vec<LinuxSeccompArg>, String> {
+pub fn convert_argument(args: Vec<Argument>) -> Result<Vec<LinuxSeccompArg>, Error> {
     let mut seccomp_args: Vec<LinuxSeccompArg> = vec![];
     for arg in args {
         let op =
-            convert_operation(&arg.op).ok_or_else(|| format!("Invalid operation: {}", arg.op))?;
+            convert_operation(&arg.op)?;
         let seccomp_arg = LinuxSeccompArgBuilder::default()
             .index(arg.index as usize)
             .value(arg.value)
             .op(op)
-            .build()
-            .map_err(|e| format!("Failed to build LinuxSeccompArg: {}", e))?;
+            .build()?;
         seccomp_args.push(seccomp_arg);
     }
     Ok(seccomp_args)
 }
 
-pub fn convert_action(action_str: &str) -> Option<LinuxSeccompAction> {
+pub fn convert_action(action_str: &str) -> Result<LinuxSeccompAction, Error> {
     match action_str {
-        "SCMP_ACT_ALLOW" => Some(LinuxSeccompAction::ScmpActAllow),
-        "SCMP_ACT_ERRNO" => Some(LinuxSeccompAction::ScmpActErrno),
-        _ => None,
+        "SCMP_ACT_ALLOW" => Ok(LinuxSeccompAction::ScmpActAllow),
+        "SCMP_ACT_ERRNO" => Ok(LinuxSeccompAction::ScmpActErrno),
+        _ => Err(anyhow!("Cant match action: {}", action_str)),
     }
 }
 
@@ -105,13 +105,13 @@ pub fn generate_seccomp_instruction(file_path: &Path) -> anyhow::Result<()> {
     let mut cnt = 0;
     #[allow(clippy::explicit_counter_loop)]
     for syscall in seccomp.syscalls {
-        let action = convert_action(&syscall.action).unwrap();
+        let action = convert_action(&syscall.action)?;
 
-        let build_syscall: LinuxSyscall = if syscall.args.is_some() {
+        let build_syscall: LinuxSyscall = if let Some(args) = syscall.args {
             LinuxSyscallBuilder::default()
                 .names(syscall.names)
                 .action(action)
-                .args(convert_argument(syscall.args.unwrap()).unwrap())
+                .args(convert_argument(args)?)
                 .build()?
         } else {
             LinuxSyscallBuilder::default()
@@ -122,7 +122,7 @@ pub fn generate_seccomp_instruction(file_path: &Path) -> anyhow::Result<()> {
 
         let spec_seccomp = LinuxSeccompBuilder::default()
             .architectures(vec![OciSpecArch::ScmpArchX86_64])
-            .default_action(convert_action(&seccomp.default_action).unwrap())
+            .default_action(convert_action(&seccomp.default_action)?)
             .default_errno_ret(seccomp.default_errno_ret as u32)
             .syscalls(vec![build_syscall])
             .build()?;
