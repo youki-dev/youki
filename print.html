@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-bbd779ce.js";
+            window.path_to_searchindex_js = "searchindex-9d24c0f4.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-12d6d51d.js"></script>
+        <script src="toc-c02ff5a4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1191,6 +1191,10 @@ when the executor can’t handle the workload.</p>
 <p><a href="#runtime-tools">runtime tools</a></p>
 <p>This is the method to run the runtime tools that OCI manages as a test tool to verify meeting the OCI Runtime Spec</p>
 </li>
+<li>
+<p><a href="#kubernetes-test">Kubernetes test</a></p>
+<p>This test verifies youki works as a Kubernetes container runtime using Kind.</p>
+</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="contest"><a class="header" href="#contest">Contest</a></h1>
@@ -1385,6 +1389,17 @@ Prefix a line with <code>[skip]</code> to skip that test.</p>
 <h2 id="local-2"><a class="header" href="#local-2">Local</a></h2>
 <pre><code class="language-console">$ git submodule update --init --recursive
 $ just test-runc-comp
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="kubernetes-test"><a class="header" href="#kubernetes-test">Kubernetes test</a></h1>
+<h2 id="notes-5"><a class="header" href="#notes-5">Notes</a></h2>
+<p>This test verifies that youki works correctly as a container runtime in a Kubernetes environment using <a href="https://kind.sigs.k8s.io/">Kind</a> (Kubernetes in Docker).</p>
+<p>The test builds a custom Kind node image with youki, creates a cluster, and deploys nginx pods using a RuntimeClass that specifies youki as the runtime.</p>
+<h2 id="local-3"><a class="header" href="#local-3">Local</a></h2>
+<pre><code class="language-console">$ just test-kind
+</code></pre>
+<p>To clean up an existing Kind cluster first:</p>
+<pre><code class="language-console">$ just clean-test-kind
 </code></pre>
 
                     </main>
