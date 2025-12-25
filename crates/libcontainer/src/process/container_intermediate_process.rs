@@ -124,6 +124,29 @@ pub fn container_intermediate_process(
         }
     }
 
+    if let Some(time_namespace) = namespaces.get(LinuxNamespaceType::Time)? {
+        // Try to enter the time namespace. In rootless containers, setns(CLONE_NEWTIME)
+        // will fail with EPERM. We can skip EPERM the time namespace will be inherited
+        // automatically from the parent process.
+        // https://github.com/opencontainers/runc/blob/main/libcontainer/nsenter/nsexec.c#L543
+        match namespaces.unshare_or_setns(time_namespace) {
+            Ok(()) => {
+                if time_namespace.path().is_none() && linux.time_offsets().is_some() {
+                    setup_time_offsets(main_sender, inter_receiver)?;
+                }
+            }
+            Err(crate::namespaces::NamespaceError::Syscall(ref e))
+                if matches!(
+                    e,
+                    crate::syscall::SyscallError::Nix(nix::errno::Errno::EPERM)
+                ) && time_namespace.path().is_some() =>
+            {
+                tracing::debug!("Skipping time namespace setns due to EPERM (rootless container)");
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
     // Pid namespace requires an extra fork to enter, so we enter pid namespace now.
     if let Some(pid_namespace) = namespaces.get(LinuxNamespaceType::Pid)? {
         namespaces.unshare_or_setns(pid_namespace)?;
@@ -252,6 +275,36 @@ fn setup_userns(
             nix::errno::Errno::from_raw(e)
         ))
     })?;
+    Ok(())
+}
+
+fn setup_time_offsets(sender: &mut MainSender, receiver: &mut IntermediateReceiver) -> Result<()> {
+    tracing::debug!("requesting parent to write time namespace offsets");
+
+    prctl::set_dumpable(true).map_err(|e| {
+        IntermediateProcessError::Other(format!(
+            "error in setting dumpable to true for time offsets: {}",
+            nix::errno::Errno::from_raw(e)
+        ))
+    })?;
+
+    sender.time_offset_request().map_err(|err| {
+        tracing::error!("failed to send time offset request: {}", err);
+        err
+    })?;
+
+    receiver.wait_for_time_offsets_ack().map_err(|err| {
+        tracing::error!("failed to receive time offsets ack: {}", err);
+        err
+    })?;
+
+    prctl::set_dumpable(false).map_err(|e| {
+        IntermediateProcessError::Other(format!(
+            "error in setting dumpable to false after time offsets: {}",
+            nix::errno::Errno::from_raw(e)
+        ))
+    })?;
+
     Ok(())
 }
 

@@ -590,7 +590,9 @@ fn apply_rest_namespaces(
 ) -> Result<()> {
     namespaces
         .apply_namespaces(|ns_type| -> bool {
-            ns_type != CloneFlags::CLONE_NEWUSER && ns_type != CloneFlags::CLONE_NEWPID
+            ns_type != CloneFlags::CLONE_NEWUSER
+                && ns_type != CloneFlags::CLONE_NEWPID
+                && ns_type != crate::namespaces::CLONE_NEWTIME_FLAG
         })
         .map_err(|err| {
             tracing::error!(
