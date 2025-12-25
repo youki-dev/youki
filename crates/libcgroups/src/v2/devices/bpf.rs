@@ -41,6 +41,7 @@ pub mod prog {
         let insns_cnt = insns.len() / std::mem::size_of::<bpf_insn>();
         let insns = insns as *const _ as *const bpf_insn;
         let mut opts = libbpf_sys::bpf_prog_load_opts {
+            sz: std::mem::size_of::<libbpf_sys::bpf_prog_load_opts>() as libbpf_sys::size_t,
             kern_version: 0,
             log_buf: ptr::null_mut::<::std::os::raw::c_char>(),
             log_size: 0,
