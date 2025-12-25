@@ -4,9 +4,9 @@ use std::os::unix::prelude::RawFd;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use libcontainer::container::ContainerProcessState;
 use nix::sys::socket::{self, Backlog, UnixAddr};
 use nix::unistd;
+use oci_spec::runtime::ContainerProcessState;
 
 const DEFAULT_BUFFER_SIZE: usize = 4096;
 
@@ -87,9 +87,8 @@ pub fn recv_seccomp_listener(seccomp_listener: &Path) -> SeccompAgentResult {
 
     buf.truncate(msg_bytes);
 
-    let container_process_state: libcontainer::container::ContainerProcessState =
-        serde_json::from_slice(&buf[..])
-            .context("failed to parse the received message as container process state")?;
+    let container_process_state: ContainerProcessState = serde_json::from_slice(&buf[..])
+        .context("failed to parse the received message as container process state")?;
 
     Ok((container_process_state, fd))
 }
