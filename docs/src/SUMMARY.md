@@ -45,3 +45,4 @@
       - [containerd integration test](./developer/e2e/containerd_integration_test_using_youki.md)
       - [runtime tools](./developer/e2e/runtime_tools.md)
       - [runc compatibility test](./developer/e2e/runc_compatibility_test.md)
+      - [Kubernetes test](./developer/e2e/kubernetes_test.md)
