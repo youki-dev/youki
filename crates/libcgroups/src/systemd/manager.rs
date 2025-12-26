@@ -23,7 +23,8 @@ use crate::common::{
     PathBufExt, WrapIoResult, WrappedIoError,
 };
 use crate::stats::Stats;
-use crate::systemd::dbus_native::serialize::Variant;
+use crate::systemd::dbus_native::message::MessageType;
+use crate::systemd::dbus_native::serialize::{DbusSerialize, Variant};
 use crate::systemd::unified::Unified;
 use crate::v2::manager::{Manager as FsManager, V2ManagerError};
 
@@ -341,6 +342,41 @@ impl Manager {
         ))
     }
 
+    fn wait_for_remove_job_signal(&self) -> Result<(), SystemdManagerError> {
+        let start = Instant::now();
+        while start.elapsed() < self.cgroup_wait_timeout_duration {
+            let messages = self.client.read_messages()?;
+            for message in messages {
+                if message.preamble.mtype != MessageType::Signal {
+                    continue;
+                }
+                let body = &message.body[..];
+                let mut ctr: usize = 0;
+                // id, don't need this
+                u32::deserialize(body, &mut ctr)?;
+                // job object path, don't need this
+                String::deserialize(body, &mut ctr)?;
+                let name = String::deserialize(body, &mut ctr)?;
+                let result = String::deserialize(body, &mut ctr)?;
+                tracing::debug!(
+                    "JobRemoved signal received for unit {} with result {}",
+                    name,
+                    result
+                );
+
+                if self.unit_name == name && result == "done" {
+                    tracing::debug!("Correct JobRemoved signal received for unit {:?}", name);
+                    return Ok(());
+                }
+            }
+        }
+
+        Err(SystemdManagerError::WaitForProcessInCgroupTimeout(format!(
+            "Timeout waiting for RemoveJobSignal. Unit : {}",
+            self.unit_name
+        )))
+    }
+
     fn get_available_controllers<P: AsRef<Path>>(
         &self,
         cgroups_path: P,
@@ -387,12 +423,22 @@ impl CgroupManager for Manager {
         if pid.as_raw() == -1 {
             return Ok(());
         }
+
         if self.client.transient_unit_exists(&self.unit_name) {
             tracing::debug!("Transient unit {:?} already exists", self.unit_name);
             self.client
                 .add_process_to_unit(&self.unit_name, "", pid.as_raw() as u32)?;
             return Ok(());
         }
+
+        // subscribe to systemd JobRemoved signal to ensure that the transient unit is removed
+        self.client.dbus_add_match(
+            "signal",
+            "org.freedesktop.systemd1",
+            "org.freedesktop.systemd1.Manager",
+            "JobRemoved",
+        )?;
+        self.client.subscribe_job_remove_signal()?;
 
         tracing::debug!("Starting {:?}", self.unit_name);
         self.client.start_transient_unit(
@@ -402,8 +448,12 @@ impl CgroupManager for Manager {
             &self.unit_name,
         )?;
 
-        // There is a chance that the intermediate process ends before systemd gets the dbus message to add it to transit unit.
-        self.wait_for_process_in_cgroup(pid)?;
+        // wait for the RemoveJob signal. Fall back to pid check if needed
+        if let Err(_e) = self.wait_for_remove_job_signal() {
+            self.wait_for_process_in_cgroup(pid)?
+        };
+
+        self.client.unsubscribe_job_remove_signal()?;
 
         Ok(())
     }
@@ -525,6 +575,24 @@ mod tests {
             _subcgroup: &str,
             _pid: u32,
         ) -> Result<(), SystemdClientError> {
+            Ok(())
+        }
+
+        fn subscribe_job_remove_signal(&self) -> std::result::Result<(), SystemdClientError> {
+            Ok(())
+        }
+
+        fn dbus_add_match(
+            &self,
+            _filter_type: &str,
+            _sender: &str,
+            _interface: &str,
+            _member: &str,
+        ) -> std::result::Result<(), SystemdClientError> {
+            Ok(())
+        }
+
+        fn unsubscribe_job_remove_signal(&self) -> std::result::Result<(), SystemdClientError> {
             Ok(())
         }
     }

@@ -36,4 +36,16 @@ pub trait SystemdClient {
         subcgroup: &str,
         pid: u32,
     ) -> Result<(), SystemdClientError>;
+
+    fn subscribe_job_remove_signal(&self) -> Result<(), SystemdClientError>;
+
+    fn dbus_add_match(
+        &self,
+        filter_type: &str,
+        sender: &str,
+        interface: &str,
+        member: &str,
+    ) -> Result<(), SystemdClientError>;
+
+    fn unsubscribe_job_remove_signal(&self) -> Result<(), SystemdClientError>;
 }
