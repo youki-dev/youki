@@ -1,8 +1,11 @@
-use crate::{tests::lifecycle::ContainerLifecycle, utils::get_state};
+use std::time::Duration;
+
 use anyhow::{Context, Result, anyhow};
 use oci_spec::runtime::{ProcessBuilder, Spec, SpecBuilder};
-use std::time::Duration;
 use test_framework::{Test, TestGroup, TestResult};
+
+use crate::tests::lifecycle::ContainerLifecycle;
+use crate::utils::get_state;
 
 fn create_spec(args: &[&str]) -> Result<Spec> {
     let args_vec: Vec<String> = args.iter().map(|&a| a.into()).collect();
