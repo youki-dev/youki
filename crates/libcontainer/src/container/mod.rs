@@ -20,4 +20,6 @@ pub mod state;
 pub mod tenant_builder;
 pub use container::{CheckpointOptions, Container};
 pub use container_checkpoint::CheckpointError;
+#[allow(deprecated)]
+pub use state::ContainerProcessState;
 pub use state::{ContainerStatus, State};

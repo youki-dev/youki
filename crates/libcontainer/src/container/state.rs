@@ -233,6 +233,11 @@ impl State {
     }
 }
 
+/// Deprecated: Use [`oci_spec::runtime::ContainerProcessState`] instead.
+#[deprecated(
+    since = "0.6.0",
+    note = "Use oci_spec::runtime::ContainerProcessState instead"
+)]
 #[derive(Serialize, Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ContainerProcessState {
