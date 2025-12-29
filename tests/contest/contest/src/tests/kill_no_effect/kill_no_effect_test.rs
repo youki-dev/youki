@@ -34,14 +34,14 @@ fn failed_and_delete(text: String, container: ContainerLifecycle) -> TestResult 
     }
 }
 
-//This test MUST ensure that attempting to send a signal to a container that is neither created nor running has no effect on the container and generates an error.
+// This test MUST ensure that attempting to send a signal to a container that is neither created nor running has no effect on the container and generates an error.
 fn kill_no_effect_test() -> TestResult {
     let container = ContainerLifecycle::new();
     let spec = create_spec(&["sleep", "1"]).unwrap();
 
     match container.create_with_spec(spec) {
         TestResult::Passed => {}
-        _ => return failed_and_delete("Failed to recreate container".to_string(), container),
+        _ => return failed_and_delete("Failed to create container".to_string(), container),
     }
 
     match container.start() {
@@ -55,9 +55,11 @@ fn kill_no_effect_test() -> TestResult {
     let (before_stdout, before_stderr) =
         match get_state(container.get_id(), container.get_project_path()) {
             Ok(v) => v,
-            _ => return failed_and_delete(("Failed to start container").to_string(), container),
+            _ => {
+                return failed_and_delete(("Failed to get container state").to_string(), container);
+            }
         };
-    if before_stderr.contains("Error") || before_stderr.contains("error") {
+    if !before_stderr.is_empty() {
         return failed_and_delete(("Failed to get container state").to_string(), container);
     }
 
@@ -77,15 +79,21 @@ fn kill_no_effect_test() -> TestResult {
     let (after_stdout, after_stderr) =
         match get_state(container.get_id(), container.get_project_path()) {
             Ok(v) => v,
-            _ => return failed_and_delete(("Failed to start container").to_string(), container),
+            _ => {
+                return failed_and_delete(("Failed to get container state").to_string(), container);
+            }
         };
-    if after_stderr.contains("Error") || after_stderr.contains("error") {
+    if !after_stderr.is_empty() {
         return failed_and_delete(("Failed to get container state").to_string(), container);
     }
 
     // state before and after kill should be the same
     if before_stdout != after_stdout {
-        return TestResult::Failed(anyhow!("container state changed after kill signal"));
+        return TestResult::Failed(anyhow!(
+            "container state changed after kill signal state before kill: {}\nstate after kill: {}",
+            before_stdout,
+            after_stdout
+        ));
     }
 
     //delete container after test
@@ -98,7 +106,7 @@ fn kill_no_effect_test() -> TestResult {
 }
 
 pub fn get_kill_no_effect_test() -> TestGroup {
-    let mut test_group = TestGroup::new("kill_container_no_effect");
+    let mut test_group = TestGroup::new("kill_no_effect");
     let kill_no_effect_test = Test::new("kill_no_effect_test", Box::new(kill_no_effect_test));
     test_group.add(vec![Box::new(kill_no_effect_test)]);
     test_group
