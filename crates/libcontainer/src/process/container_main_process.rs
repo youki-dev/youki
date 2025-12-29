@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use nix::sys::wait::{WaitStatus, waitpid};
 use nix::unistd::Pid;
-use oci_spec::runtime::{Linux, LinuxNamespaceType};
+use oci_spec::runtime::{Linux, LinuxNamespaceType, VERSION as OCI_VERSION};
 
 use crate::hooks;
 use crate::network::network_device::dev_change_net_namespace;
@@ -198,7 +198,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
 
             // Build OCI-compliant ContainerProcessState using builder pattern
             let oci_state = oci_spec::runtime::StateBuilder::default()
-                .version(container.state.oci_version.clone())
+                .version(OCI_VERSION)
                 .id(container.state.id.clone())
                 .status(oci_status)
                 .pid(init_pid.as_raw())
@@ -208,7 +208,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                 .map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
 
             let state = oci_spec::runtime::ContainerProcessStateBuilder::default()
-                .version(container_args.spec.version().to_string())
+                .version(OCI_VERSION)
                 .fds(vec![oci_spec::runtime::SECCOMP_FD_NAME.to_string()])
                 .pid(init_pid.as_raw())
                 .metadata(seccomp.listener_metadata().clone().unwrap_or_default())
