@@ -92,6 +92,10 @@ fn get_spec(host_output_file: &str) -> Spec {
 /// Validates that the runtime stops executing remaining poststart hooks after one fails,
 /// and returns an error (exit code 1). This test creates 3 hooks where `hook_2` fails,
 /// then verifies that `hook_1` and `hook_2` ran but `hook_3` did not.
+///
+/// The test is skipped for runc, because the runc behaviour is incorrect and doesn't match the
+/// OCI spec behaviour which is implemented in youki
+/// <https://github.com/opencontainers/runc/issues/4347>
 fn get_test(test_name: &'static str) -> ConditionalTest {
     ConditionalTest::new(
         test_name,
