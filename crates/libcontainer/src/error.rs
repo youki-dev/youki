@@ -102,6 +102,8 @@ pub enum ErrInvalidSpec {
     IoPriority,
     #[error("invalid scheduler config for process")]
     Scheduler,
+    #[error("time namespace offsets specified, but time namespace isn't enabled in the config")]
+    TimeNamespace,
 }
 
 #[derive(Debug, thiserror::Error)]

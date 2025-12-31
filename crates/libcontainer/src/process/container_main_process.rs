@@ -42,6 +42,8 @@ pub enum ProcessError {
     SyscallOther(#[source] SyscallError),
     #[error("failed hooks {0}")]
     Hooks(#[from] crate::hooks::HookError),
+    #[error("{0}")]
+    InvalidTimeNamespace(String),
 }
 
 type Result<T> = std::result::Result<T, ProcessError>;
@@ -117,6 +119,16 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
         setup_mapping(config, intermediate_pid)?;
         inter_sender.mapping_written()?;
     }
+
+    // If creating a container with time namespace and offsets are specified,
+    // the intermediate process will ask the main process to write the time offsets.
+    let time_offsets = extract_time_offsets(container_args.spec.linux().as_ref())?;
+    // This must be done from the parent process since CAP_SYS_TIME is required.
+    if let Some(time_offsets) = time_offsets {
+        main_receiver.wait_for_time_offset_request()?;
+        setup_time_offsets(&time_offsets, intermediate_pid)?;
+        inter_sender.time_offsets_written()?;
+    };
 
     // At this point, we don't need to send any message to intermediate process anymore,
     // so we want to close this sender at the earliest point.
@@ -280,6 +292,58 @@ fn setup_mapping(config: &UserNamespaceConfig, pid: Pid) -> Result<()> {
     Ok(())
 }
 
+fn extract_time_offsets(linux: Option<&oci_spec::runtime::Linux>) -> Result<Option<String>> {
+    let linux = match linux {
+        Some(l) => l,
+        None => return Ok(None),
+    };
+
+    let spec = match linux.time_offsets() {
+        Some(s) if !s.is_empty() => s,
+        _ => return Ok(None),
+    };
+
+    let time_ns = linux
+        .namespaces()
+        .as_ref()
+        .and_then(|nss| {
+            nss.iter()
+                .find(|ns| ns.typ() == oci_spec::runtime::LinuxNamespaceType::Time)
+        })
+        .ok_or_else(|| {
+            ProcessError::InvalidTimeNamespace(
+                "time namespace offsets specified, but time namespace isn't enabled in the config"
+                    .to_string(),
+            )
+        })?;
+
+    // Only set offsets if we're creating a NEW time namespace (no `path`)
+    if time_ns.path().is_some() {
+        return Ok(None);
+    }
+
+    let s = spec
+        .iter()
+        .map(|(clock_type, offset)| {
+            let secs = offset.secs().unwrap_or(0);
+            let nanos = offset.nanosecs().unwrap_or(0);
+            format!("{clock_type} {secs} {nanos}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    Ok((!s.is_empty()).then_some(s))
+}
+
+fn setup_time_offsets(offsets: &str, pid: Pid) -> Result<()> {
+    tracing::debug!("write time offsets for pid {:?}: '{}'", pid, offsets);
+
+    std::fs::write(format!("/proc/{pid}/timens_offsets"), offsets).map_err(|err| {
+        tracing::error!("failed to write timens_offsets for pid {:?}: {}", pid, err);
+        ProcessError::SyscallOther(SyscallError::IO(err))
+    })?;
+    Ok(())
+}
 /// Moves configured network devices from the host to the container's network namespace.
 /// This function waits for the init process to join its namespace, then transfers each
 /// configured device while preserving network addresses. Returns early if the container
