@@ -36,6 +36,7 @@ fn main() {
         "masked_paths" => tests::validate_masked_paths(&spec),
         "set_host_name" => tests::validate_hostname(&spec),
         "mounts_recursive" => tests::validate_mounts_recursive(&spec),
+        "mounts_recursive_rbind_ro" => tests::validate_mounts_recursive_rbind_ro(),
         "domainname_test" => tests::validate_domainname(&spec),
         "seccomp" => tests::validate_seccomp(&spec),
         "sysctl" => tests::validate_sysctl(&spec),

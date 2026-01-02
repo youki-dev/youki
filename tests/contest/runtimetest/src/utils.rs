@@ -1,5 +1,5 @@
 use std::fs;
-use std::fs::{OpenOptions, metadata, symlink_metadata};
+use std::fs::{OpenOptions, symlink_metadata};
 use std::io::Read;
 use std::os::unix::prelude::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -158,20 +158,7 @@ pub fn test_dir_not_update_access_time(path: &str) -> Result<(), std::io::Error>
 }
 
 pub fn test_device_access(path: &str) -> Result<(), std::io::Error> {
-    let _ = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(PathBuf::from(path).join("null"))?;
-    Ok(())
-}
-
-pub fn test_device_unaccess(path: &str) -> Result<(), std::io::Error> {
-    let _ = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(PathBuf::from(path).join("null"))?;
+    OpenOptions::new().read(true).open(path)?;
     Ok(())
 }
 
@@ -228,7 +215,7 @@ pub fn test_mount_releatime_option(path: &str) -> Result<(), std::io::Error> {
 // 1. create test.txt file, get one atime
 // 2. cat a.txt, get two atime; check atime whether update
 // 3. cat a.txt, get three atime, check now two atime whether equal three atime
-pub fn test_mount_noreleatime_option(path: &str) -> Result<(), std::io::Error> {
+pub fn test_mount_norelatime_option(path: &str) -> Result<(), std::io::Error> {
     let test_file_path = PathBuf::from(path).join("noreleatime.txt");
     Command::new("touch")
         .arg(test_file_path.to_str().unwrap())
@@ -258,9 +245,9 @@ pub fn test_mount_noreleatime_option(path: &str) -> Result<(), std::io::Error> {
         .expect("execute cat command error");
     let three_metadata = fs::metadata(test_file_path.clone())?;
 
-    if two_metadata.atime() != three_metadata.atime() {
+    if two_metadata.atime() == three_metadata.atime() {
         return Err(std::io::Error::other(format!(
-            "update access time for file {:?}",
+            "not update access time for file {:?}",
             test_file_path.to_str()
         )));
     }
@@ -329,68 +316,46 @@ pub fn test_mount_rstrictatime_option(path: &str) -> Result<(), std::io::Error> 
 
     if two_metadata.atime() == three_metadata.atime() {
         return Err(std::io::Error::other(format!(
-            "update access time for file {:?}",
+            "not update access time for file {:?}",
             test_file_path.to_str()
         )));
     }
     Ok(())
 }
 
-pub fn test_mount_rnosymfollow_option(path: &str) -> Result<(), std::io::Error> {
-    let path = format!("{}/{}", path, "link");
-    let metadata = match symlink_metadata(path.clone()) {
-        Ok(metadata) => metadata,
-        Err(e) => {
-            return Err(std::io::Error::other(format!(
-                "get file symlink_metadata err {path:?}, {e}"
-            )));
-        }
-    };
-    // check symbolic is followed
-    if metadata.file_type().is_symlink() && metadata.mode() & 0o777 == 0o777 {
-        Ok(())
-    } else {
-        Err(std::io::Error::other(format!(
-            "get file symlink_metadata err {path:?}"
-        )))
+pub fn test_mount_rnosymfollow_option(dir: &str) -> Result<(), std::io::Error> {
+    let link = format!("{}/link", dir);
+
+    let md = symlink_metadata(&link)?;
+    if !md.file_type().is_symlink() {
+        return Err(std::io::Error::other("link is not a symlink"));
+    }
+
+    match fs::metadata(&link) {
+        Ok(_) => Err(std::io::Error::other(
+            "expected ELOOP (nosymfollow), but symlink was followed",
+        )),
+        Err(e) if e.raw_os_error() == Some(libc::ELOOP) => Ok(()),
+        Err(e) => Err(std::io::Error::other(format!(
+            "expected ELOOP, but got: {e}"
+        ))),
     }
 }
 
-pub fn test_mount_rsymfollow_option(path: &str) -> Result<(), std::io::Error> {
-    let path = format!("{}/{}", path, "link");
-    let metadata = match symlink_metadata(path.clone()) {
-        Ok(metadata) => metadata,
-        Err(e) => {
-            return Err(std::io::Error::other(format!(
-                "get file symlink_metadata err {path:?}, {e}"
-            )));
-        }
-    };
-    // check symbolic is followed
-    if metadata.file_type().is_symlink() && metadata.mode() & 0o777 == 0o777 {
-        Ok(())
-    } else {
-        Err(std::io::Error::other(format!(
-            "get file symlink_metadata err {path:?}"
-        )))
+pub fn test_mount_rsymfollow_option(dir: &str) -> Result<(), std::io::Error> {
+    let link = format!("{}/link", dir);
+
+    let md = symlink_metadata(&link)?;
+    if !md.file_type().is_symlink() {
+        return Err(std::io::Error::other("link is not a symlink"));
     }
-}
 
-pub fn test_mount_rsuid_option(path: &str) -> Result<(), std::io::Error> {
-    let path = PathBuf::from(path).join("file");
-
-    let metadata = match metadata(path.clone()) {
-        Ok(metadata) => metadata,
-        Err(e) => {
-            return Err(std::io::Error::other(e));
+    match fs::metadata(&link) {
+        Ok(_) => Ok(()),
+        Err(e) if e.raw_os_error() == Some(libc::ELOOP) => {
+            Err(std::io::Error::other(format!("unexpected ELOOP: {e}")))
         }
-    };
-    // check suid and sgid
-    let suid = metadata.mode() & 0o4000 == 0o4000;
-    let sgid = metadata.mode() & 0o2000 == 0o2000;
-
-    if suid && sgid {
-        return Ok(());
+        // Any error other than ELOOP indicates that nosymfollow is not being enforced, so we consider the result OK.
+        Err(_) => Ok(()),
     }
-    Err(std::io::Error::other(format!("rsuid error {path:?}")))
 }
