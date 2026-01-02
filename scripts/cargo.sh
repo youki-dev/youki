@@ -63,7 +63,7 @@ if [ "$CARGO" == "cross" ]; then
     # run with user same as the invoking user, so that the dbus is connected with correct user
     # we want pid ns of host, because we will be connecting to the host dbus, and it needs task pid from host
     # finally we need to mount the cgroup as read-only, as we need that to check if the tasks are correctly added
-    export CROSS_CONTAINER_OPTS="--privileged --user `id -u`:`id -g` --pid=host -v /sys/fs/cgroup:/sys/fs/cgroup:ro -v/run:/run --mount=type=bind,source=/tmp,destination=/tmp,bind-propagation=shared"
+    export CROSS_CONTAINER_OPTS="--privileged --user `id -u`:`id -g` --pid=host -v /sys/fs/cgroup:/sys/fs/cgroup:ro -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro -v /run:/run --mount=type=bind,source=/tmp,destination=/tmp,bind-propagation=shared"
 fi
 
 if [ "$1" == "--print-target-dir" ]; then
