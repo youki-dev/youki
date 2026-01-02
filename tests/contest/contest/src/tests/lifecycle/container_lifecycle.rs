@@ -44,7 +44,7 @@ impl ContainerLifecycle {
     }
 
     pub fn get_project_path(&self) -> &path::Path {
-        &self.project_path.path()
+        self.project_path.path()
     }
 
     pub fn create(&self) -> TestResult {
