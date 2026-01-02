@@ -1,4 +1,16 @@
 //! tty (teletype) for user-system interaction
+//!
+//! This module handles console/TTY setup for containers.
+//!
+//! Console setup is done AFTER pivot_root (following runc's approach).
+//! This follows runc's approach in prepareRootfs():
+//! 1. pivot_root is called first
+//! 2. Create PTY pair from /dev/pts/ptmx (container's devpts)
+//! 3. Mount PTY slave onto /dev/console
+//! 4. Send PTY master to console socket
+//! 5. Set controlling terminal and connect stdio
+//!
+//! See: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/rootfs_linux.go
 
 use std::env;
 use std::io::IoSlice;
@@ -8,8 +20,11 @@ use std::os::unix::io::AsRawFd;
 use std::os::unix::prelude::RawFd;
 use std::path::{Path, PathBuf};
 
+use nix::mount::MsFlags;
 use nix::sys::socket::{self, UnixAddr};
 use nix::unistd::{close, dup2};
+
+use crate::syscall::Syscall;
 
 #[derive(Debug)]
 pub enum StdIO {
@@ -66,6 +81,12 @@ pub enum TTYError {
     SendPtyMaster { source: nix::Error },
     #[error("could not close console socket")]
     CloseConsoleSocket { source: nix::Error },
+    #[error("failed to create /dev/console")]
+    CreateDevConsole { source: std::io::Error },
+    #[error("failed to mount pty on /dev/console")]
+    MountConsole {
+        source: crate::syscall::SyscallError,
+    },
 }
 
 type Result<T> = std::result::Result<T, TTYError>;
@@ -120,31 +141,125 @@ pub fn setup_console_socket(
     Ok(csocketfd)
 }
 
-pub fn setup_console(console_fd: RawFd) -> Result<()> {
-    // You can also access pty master, but it is better to use the API.
-    // ref. https://github.com/containerd/containerd/blob/261c107ffc4ff681bc73988f64e3f60c32233b37/vendor/github.com/containerd/go-runc/console.go#L139-L154
+/// Setup console AFTER pivot_root.
+///
+/// This function should be called AFTER pivot_root. This follows runc's approach:
+/// setupConsole is called after pivotRoot in prepareRootfs.
+///
+/// The process:
+/// 1. Create PTY pair from /dev/pts/ptmx (we're already in the container)
+/// 2. Optionally mount PTY slave on /dev/console (bind mount) - only for init
+/// 3. Send PTY master to console socket
+/// 4. Set controlling terminal
+/// 5. Connect stdio to PTY slave
+///
+/// # Arguments
+/// * `console_fd` - The console socket file descriptor
+/// * `mount` - Whether to mount PTY slave on /dev/console (true for init, false for exec)
+///
+/// By creating PTY from container's devpts, the PTY belongs to a mount that
+/// exists within the container's namespace, which is required for CRIU checkpoint.
+///
+/// See: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/rootfs_linux.go
+pub fn setup_console(syscall: &dyn Syscall, console_fd: RawFd, mount: bool) -> Result<()> {
+    // Create PTY pair from /dev/pts/ptmx
+    // After pivot_root, /dev/pts points to the container's devpts
     let openpty_result = nix::pty::openpty(None, None)
         .map_err(|err| TTYError::CreatePseudoTerminal { source: err })?;
+
+    let master = openpty_result.master.as_raw_fd();
+    let slave = openpty_result.slave.as_raw_fd();
+
+    // Mount PTY slave on /dev/console (only for init container)
+    if mount {
+        if let Err(err) = mount_console(syscall, slave) {
+            tracing::warn!(
+                ?err,
+                "failed to mount /dev/console, CRIU checkpoint may not work"
+            );
+        }
+    }
+
+    // Send PTY master to console socket
     let pty_name: &[u8] = b"/dev/ptmx";
     let iov = [IoSlice::new(pty_name)];
-
-    let [master, slave] = [openpty_result.master, openpty_result.slave];
-    // Use ManuallyDrop to keep FDs open.
-    let master = std::mem::ManuallyDrop::new(master);
-    let slave = std::mem::ManuallyDrop::new(slave);
-
-    let fds = [master.as_raw_fd()];
+    let fds = [master];
     let cmsg = socket::ControlMessage::ScmRights(&fds);
     socket::sendmsg::<UnixAddr>(console_fd, &iov, &[cmsg], socket::MsgFlags::empty(), None)
         .map_err(|err| TTYError::SendPtyMaster { source: err })?;
 
-    if unsafe { libc::ioctl(slave.as_raw_fd(), libc::TIOCSCTTY) } < 0 {
+    // Set controlling terminal
+    if unsafe { libc::ioctl(slave, libc::TIOCSCTTY) } < 0 {
         tracing::warn!("could not TIOCSCTTY");
     };
-    let slave = slave.as_raw_fd();
+
+    // Connect stdio to PTY slave
     connect_stdio(&slave, &slave, &slave)?;
+
+    // Close console socket
     close(console_fd).map_err(|err| TTYError::CloseConsoleSocket { source: err })?;
 
+    Ok(())
+}
+
+/// Mount PTY slave on /dev/console.
+///
+/// This bind-mounts the PTY slave device onto /dev/console so programs
+/// that operate on /dev/console use the container's PTY.
+///
+/// This is called AFTER pivot_root, so we mount onto /dev/console directly.
+///
+/// See: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/rootfs_linux.go
+fn mount_console(syscall: &dyn Syscall, slave_fd: RawFd) -> Result<()> {
+    use std::fs::OpenOptions;
+
+    // Get the tty name (e.g., /dev/pts/0)
+    let mut buf = [0u8; 256];
+    let ret =
+        unsafe { libc::ttyname_r(slave_fd, buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
+    if ret != 0 {
+        tracing::warn!(
+            errno = ret,
+            "failed to get tty name, skipping /dev/console mount"
+        );
+        return Ok(());
+    }
+
+    let slave_path = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr() as *const libc::c_char) }
+        .to_string_lossy()
+        .into_owned();
+
+    // After pivot_root, the target is /dev/console
+    let console_path = Path::new("/dev/console");
+
+    tracing::debug!(slave_path = %slave_path, console_path = ?console_path, "mounting PTY on /dev/console");
+
+    // Create /dev/console if it doesn't exist
+    OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(console_path)
+        .map_err(|err| {
+            tracing::error!(?err, ?console_path, "failed to create /dev/console");
+            TTYError::CreateDevConsole { source: err }
+        })?;
+
+    // Bind mount the PTY slave onto /dev/console
+    syscall
+        .mount(
+            Some(Path::new(&slave_path)),
+            console_path,
+            None,
+            MsFlags::MS_BIND,
+            None,
+        )
+        .map_err(|err| {
+            tracing::error!(?err, %slave_path, ?console_path, "failed to bind mount pty on /dev/console");
+            TTYError::MountConsole { source: err }
+        })?;
+
+    tracing::debug!(%slave_path, ?console_path, "mounted PTY on /dev/console");
     Ok(())
 }
 
@@ -218,8 +333,11 @@ mod tests {
     #[test]
     #[serial]
     fn test_setup_console() -> Result<()> {
+        use crate::syscall::syscall::create_syscall;
+
         let testdir = tempfile::tempdir()?;
         let socket_path = Path::join(testdir.path(), "test-socket");
+
         // duplicate the existing std* fds
         // we need to restore them later, and we cannot simply store them
         // as they themselves get modified in setup_console
@@ -230,7 +348,12 @@ mod tests {
         let lis = UnixListener::bind(&socket_path);
         assert!(lis.is_ok());
         let fd = setup_console_socket(testdir.path(), &socket_path, CONSOLE_SOCKET)?;
-        let status = setup_console(fd.into_raw_fd());
+        // Note: setup_console expects to run after pivot_root, so this test
+        // just verifies the function can be called. The /dev/console mount
+        // may fail outside a real container environment.
+        // mount=false to skip /dev/console mount in test environment
+        let syscall = create_syscall();
+        let status = setup_console(syscall.as_ref(), fd.into_raw_fd(), false);
 
         // restore the original std* before doing final assert
         dup2(old_stdin, StdIO::Stdin.into())?;

@@ -56,13 +56,8 @@ pub fn container_init_process(
 
     memory_policy::setup_memory_policy(ctx.linux.memory_policy(), ctx.syscall.as_ref())?;
 
-    // set up tty if specified
-    if let Some(csocketfd) = args.console_socket {
-        tty::setup_console(csocketfd).map_err(|err| {
-            tracing::error!(?err, "failed to set up tty");
-            InitProcessError::Tty(err)
-        })?;
-    } else {
+    // If no console socket, set up stdio now
+    if args.console_socket.is_none() {
         if let Some(stdin) = args.stdin {
             dup2(stdin, 0).map_err(InitProcessError::NixOther)?;
             close(stdin).map_err(InitProcessError::NixOther)?;
@@ -140,6 +135,22 @@ pub fn container_init_process(
         if let Some(kernel_params) = ctx.linux.sysctl() {
             sysctl(kernel_params)?;
         }
+    }
+
+    // Setup console AFTER reopen_dev_null (for init) or at start (for exec).
+    // This follows runc's order:
+    //   - standard_init_linux.go: setupConsole() is called after prepareRootfs()
+    //     (which includes pivotRoot and reOpenDevNull)
+    //   - setns_init_linux.go: setupConsole() is called early
+    // mount=true for init (mount /dev/console), false for exec (already mounted)
+    // See: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/standard_init_linux.go
+    // See: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/setns_init_linux.go
+    if let Some(csocketfd) = args.console_socket {
+        let mount_console = matches!(args.container_type, ContainerType::InitContainer);
+        tty::setup_console(ctx.syscall.as_ref(), csocketfd, mount_console).map_err(|err| {
+            tracing::error!(?err, "failed to set up tty");
+            InitProcessError::Tty(err)
+        })?;
     }
 
     if let Some(personality) = ctx.linux.personality() {
