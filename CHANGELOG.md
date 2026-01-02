@@ -1,5 +1,46 @@
 # Changelog
 
+## [v0.6.0](https://github.com/youki-dev/youki/compare/v0.5.7...v0.6.0) - 2026-01-02
+### 💪 Improvements
+- Add net device feature by @nayuta723 in https://github.com/youki-dev/youki/pull/3163
+- feat(info): add rustc, spec, and libseccomp version by @nayuta723 in https://github.com/youki-dev/youki/pull/3318
+- Implement Linux memory policy by @n4mlz in https://github.com/youki-dev/youki/pull/3230
+- feat: add io limits controller for systemd by @gokulmaxi in https://github.com/youki-dev/youki/pull/3235
+### 💥 Breaking Changes
+- fix hooks order by @saku3 in https://github.com/youki-dev/youki/pull/3256
+- mount info provider by @CheatCodeSam in https://github.com/youki-dev/youki/pull/3280
+- Use oci spec container process state for seccomp by @nayuta723 in https://github.com/youki-dev/youki/pull/3330
+### 🐛 Bug Fixes
+- Implement mount destination validation to ensure absolute paths in OCI Runtime Spec by @nayuta723 in https://github.com/youki-dev/youki/pull/3315
+- Fix default filemode for device creation by @you-matsuura in https://github.com/youki-dev/youki/pull/3276
+- fix(3293) Ambient capabilities are not applied as expected by @tommady in https://github.com/youki-dev/youki/pull/3294
+- fix(libcgroups): set `sz` field in `bpf_prog_load_opts` by @sou1118 in https://github.com/youki-dev/youki/pull/3340
+### 📖 Documentation improvements
+- chore: fix docs mdbook toml by @YJDoc2 in https://github.com/youki-dev/youki/pull/3307
+- Doc: delete redundant statement on youki.md in dev doc by @logica0419 in https://github.com/youki-dev/youki/pull/3310
+### 🧪 Test improvements and Misc Fixes
+- Update netlink-packet dependencies to versions 0.8.1 and 0.25.1 in Cargo.toml and Cargo.lock by @nayuta723 in https://github.com/youki-dev/youki/pull/3297
+- Fixed minor spelling errors in libcontainer documentation. by @CheatCodeSam in https://github.com/youki-dev/youki/pull/3305
+- Add poststart hook test by @fspv in https://github.com/youki-dev/youki/pull/3292
+- Update/runc 1.4.0 by @nayuta723 in https://github.com/youki-dev/youki/pull/3304
+- chore: runc compatibility test improvements by @saku3 in https://github.com/youki-dev/youki/pull/3319
+- Replace once_cell with stdlib OnceLock/LazyLock by @yan-ace62 in https://github.com/youki-dev/youki/pull/3323
+- Update Kind and Kubernetes versions for k8s e2e tests by @IrvingMg in https://github.com/youki-dev/youki/pull/3328
+### Other Changes
+- chore(deps): bump which from 7.0.2 to 8.0.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3287
+- (auto merged) chore(deps): bump the patch group across 1 directory with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3302
+- (auto merged) chore(deps): bump tracing-journald from 0.3.1 to 0.3.2 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3303
+- (auto merged) chore(deps): bump the patch group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3306
+- chore(deps): bump mockall from 0.13.1 to 0.14.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3301
+- chore(deps): bump wasmtime from 31.0.0 to 35.0.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3288
+- (auto merged) chore(deps): bump libc from 0.2.177 to 0.2.178 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3308
+- chore(deps): bump netlink-packet-route from 0.25.1 to 0.26.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3316
+- (auto merged) chore(deps): bump oci-spec from 0.8.3 to 0.8.4 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3329
+- (auto merged) chore(deps): bump tracing from 0.1.43 to 0.1.44 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3331
+- (auto merged) chore(deps): bump serde_json from 1.0.145 to 1.0.146 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3334
+- (auto merged) chore(deps): bump serde_json from 1.0.146 to 1.0.147 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3337
+- (auto merged) chore(deps): bump serde_json from 1.0.147 to 1.0.148 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3341
+
 ## [v0.5.7](https://github.com/youki-dev/youki/compare/v0.5.6...v0.5.7) - 2025-11-05
 ### 💪 Improvements
 - Drop cgroup v1 in github workflows by @utam0k in https://github.com/youki-dev/youki/pull/3284
