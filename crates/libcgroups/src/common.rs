@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt::{Debug, Display};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
@@ -485,6 +486,128 @@ where
         }
     }
     Ok(())
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ParseProcCgroupError {
+    #[error("io error: {0}")]
+    WrappedIo(#[from] WrappedIoError),
+    #[error("malformed fields")]
+    MalformedFields,
+}
+
+// parse_proc_cgroup_file parses the given cgroup file, typically /proc/self/cgroup
+// or /proc/<pid>/cgroup, into a map of subsystems to cgroup paths, e.g.
+//
+//	"cpu": "/user.slice/user-1000.slice"
+//	"pids": "/user.slice/user-1000.slice"
+//
+// etc.
+//
+// Note that for cgroup v2 unified hierarchy, there are no per-controller
+// cgroup paths, so the resulting map will have a single element where the key
+// is empty string ("") and the value is the cgroup path the <pid> is in.
+//
+// ref: https://github.com/opencontainers/cgroups/blob/main/utils.go#L171-L219
+pub fn parse_proc_cgroup_file(path: &str) -> Result<HashMap<String, String>, ParseProcCgroupError> {
+    tracing::debug!("parse process cgroup info from file: {:?}", path);
+
+    let r = BufReader::new(File::open(&path).wrap_open(&path)?);
+    parse_proc_cgroup_from_reader(r)
+}
+
+// Helper function for parse_proc_cgroup_file to make testing easier
+fn parse_proc_cgroup_from_reader<T: std::io::Read>(
+    r: BufReader<T>,
+) -> Result<HashMap<String, String>, ParseProcCgroupError> {
+    let mut result = HashMap::new();
+
+    // from cgroups(7):
+    // /proc/[pid]/cgroup
+    // ...
+    // For each cgroup hierarchy ... there is one entry
+    // containing three colon-separated fields of the form:
+    //     hierarchy-ID:subsystem-list:cgroup-path
+    for line in r.lines().map_while(Result::ok) {
+        let parts: Vec<&str> = line.splitn(3, ":").collect();
+        if parts.len() != 3 {
+            return Err(ParseProcCgroupError::MalformedFields);
+        }
+
+        for subsystem in parts[1].split(',') {
+            result.insert(subsystem.to_string(), parts[2].to_string());
+        }
+    }
+
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_proc_cgroup_from_reader_ok() {
+        let values: Vec<(&str, HashMap<String, String>)> = vec![
+            (
+                r#"9:blkio:/
+8:freezer:/
+7:perf_event:/
+6:devices:/system.slice/system-sshd.slice
+5:cpuset:/
+4:cpu,cpuacct:/system.slice/system-sshd.slice/sshd@126-10.240.0.15:22-xxx.yyy.zzz.aaa:33678.service
+3:net_cls,net_prio:/
+2:memory:/system.slice/system-sshd.slice/sshd@126-10.240.0.15:22-xxx.yyy.zzz.aaa:33678.service
+1:name=systemd:/system.slice/system-sshd.slice/sshd@126-10.240.0.15:22-xxx.yyy.zzz.aaa:33678.service"#,
+                HashMap::from([
+                    (
+                        "name=systemd".to_string(),
+                        "/system.slice/system-sshd.slice/sshd@126-10.240.0.15:22-xxx.yyy.zzz.aaa:33678.service".to_string(),
+                    ),
+                    ("blkio".to_string(), "/".to_string()),
+                    ("freezer".to_string(), "/".to_string()),
+                    ("perf_event".to_string(), "/".to_string()),
+                    ("devices".to_string(), "/system.slice/system-sshd.slice".to_string()),
+                    ("cpuset".to_string(), "/".to_string()),
+                    (
+                        "cpu".to_string(),
+                        "/system.slice/system-sshd.slice/sshd@126-10.240.0.15:22-xxx.yyy.zzz.aaa:33678.service".to_string(),
+                    ),
+                    (
+                        "cpuacct".to_string(),
+                        "/system.slice/system-sshd.slice/sshd@126-10.240.0.15:22-xxx.yyy.zzz.aaa:33678.service".to_string(),
+                    ),
+                    ("net_cls".to_string(), "/".to_string()),
+                    ("net_prio".to_string(), "/".to_string()),
+                    (
+                        "memory".to_string(),
+                        "/system.slice/system-sshd.slice/sshd@126-10.240.0.15:22-xxx.yyy.zzz.aaa:33678.service".to_string(),
+                    ),
+                ]),
+            ),
+            (
+                "0::/system.slice/docker-xyz.scope",
+                HashMap::from([("".to_string(), "/system.slice/docker-xyz.scope".to_string())]),
+            ),
+        ];
+
+        for (reservation, expected) in values {
+            let read = std::io::Cursor::new(reservation.as_bytes());
+            assert_eq!(
+                parse_proc_cgroup_from_reader(BufReader::new(read)).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_proc_cgroup_from_reader_err() {
+        let read = std::io::Cursor::new("malformed input".as_bytes());
+        assert!(
+            parse_proc_cgroup_from_reader(BufReader::new(read)).is_err(),
+            "malformed input should fail"
+        )
+    }
 }
 
 pub(crate) trait PathBufExt {
