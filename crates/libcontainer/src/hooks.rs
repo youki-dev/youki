@@ -38,17 +38,23 @@ pub enum HookError {
 
 type Result<T> = std::result::Result<T, HookError>;
 
-fn to_oci_state(state: &State) -> Result<OciState> {
+/// Convert internal State to OCI-compliant State for hooks.
+///
+/// Based on runc's implementation:
+/// <https://github.com/opencontainers/runc/blob/v2.2.1/libcontainer/container_linux.go#L961>
+fn to_oci_state(state: &State, pid: Option<i32>) -> Result<OciState> {
     let status = to_oci_status_for_hooks(state.status)?;
 
-    let oci_state = OciStateBuilder::default()
+    let mut oci_state = OciStateBuilder::default()
         .version(state.oci_version.clone())
         .id(state.id.clone())
         .status(status)
-        .pid(state.pid.unwrap_or_default())
         .bundle(state.bundle.clone())
         .annotations(state.annotations.clone().unwrap_or_default())
         .build()?;
+
+    oci_state.set_pid(pid);
+
     Ok(oci_state)
 }
 
@@ -72,17 +78,15 @@ pub fn run_hooks(
 ) -> Result<()> {
     let base_state = &(container.ok_or(HookError::MissingContainerState)?.state);
 
+    // The `effective_pid` parameter allows overriding the PID in the state. This is needed because
+    // high-level container runtimes like containerd set the PID separately for certain hooks.
+    // Ref: https://github.com/containerd/containerd/blob/main/cmd/containerd/command/oci-hook.go#L90
+    let effective_pid = pid.map(|p| p.as_raw()).or(base_state.pid);
+
     // High-level container runtimes use OCI state to pass the container state to the hooks.
     // So we need to convert the container state to OCI state.
     // Ref: https://github.com/containerd/containerd/blob/v2.2.1/cmd/containerd/command/oci-hook.go#L82
-    let mut oci_state = to_oci_state(base_state)?;
-
-    // When using the createRuntime hook in a high-level container runtime (such as containerd),
-    // the PID needs to be set in the container state.
-    // Ref: https://github.com/containerd/containerd/blob/main/cmd/containerd/command/oci-hook.go#L90
-    if let Some(pid) = pid {
-        oci_state.set_pid(Some(pid.as_raw()));
-    }
+    let oci_state = to_oci_state(base_state, effective_pid)?;
 
     if let Some(hooks) = hooks {
         for hook in hooks {
