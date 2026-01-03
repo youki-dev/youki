@@ -331,6 +331,7 @@ pub struct CgroupConfig {
     pub cgroup_path: PathBuf,
     pub systemd_cgroup: bool,
     pub container_name: String,
+    pub parent_init_pid: Option<Pid>,
 }
 
 // Create any cgroup manager with customize root path. If root_path provided
@@ -360,10 +361,13 @@ pub fn create_cgroup_manager_with_root(
             if cgroup_path.is_absolute() || !config.systemd_cgroup {
                 return Ok(create_v2_cgroup_manager(root, cgroup_path)?.any());
             }
-            Ok(
-                create_systemd_cgroup_manager(root, cgroup_path, config.container_name.as_str())?
-                    .any(),
-            )
+            Ok(create_systemd_cgroup_manager(
+                root,
+                cgroup_path,
+                config.container_name.as_str(),
+                config.parent_init_pid,
+            )?
+            .any())
         }
     }
 }
@@ -411,6 +415,7 @@ fn create_systemd_cgroup_manager(
     root_path: &Path,
     cgroup_path: &Path,
     container_name: &str,
+    parent_init_pid: Option<Pid>,
 ) -> Result<systemd::manager::Manager, systemd::manager::SystemdManagerError> {
     use crate::systemd::manager::PROCESS_IN_CGROUP_TIMEOUT_DURATION;
 
@@ -430,6 +435,7 @@ fn create_systemd_cgroup_manager(
         root_path.into(),
         cgroup_path.to_owned(),
         container_name.into(),
+        parent_init_pid,
         use_system,
         PROCESS_IN_CGROUP_TIMEOUT_DURATION,
     )

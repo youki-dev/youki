@@ -59,6 +59,8 @@ pub(super) struct ContainerBuilderImpl {
     pub stderr: Option<OwnedFd>,
     // Indicate if the init process should be a sibling of the main process.
     pub as_sibling: bool,
+    // The init process PID of the parent container if the container is created as a tenant.
+    pub parent_init_pid: Option<Pid>,
 }
 
 impl ContainerBuilderImpl {
@@ -90,6 +92,7 @@ impl ContainerBuilderImpl {
             cgroup_path: cgroups_path,
             systemd_cgroup: self.use_systemd || self.user_ns_config.is_some(),
             container_name: self.container_id.to_owned(),
+            parent_init_pid: self.parent_init_pid,
         };
         let process = self
             .spec
@@ -197,6 +200,7 @@ impl ContainerBuilderImpl {
                 cgroup_path: cgroups_path,
                 systemd_cgroup: self.use_systemd || self.user_ns_config.is_some(),
                 container_name: self.container_id.to_string(),
+                parent_init_pid: None,
             })?;
 
         let mut errors = Vec::new();

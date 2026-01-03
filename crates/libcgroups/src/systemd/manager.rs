@@ -53,6 +53,8 @@ pub struct Manager {
     delegation_boundary: PathBuf,
     /// Duration to wait for a specific PID to be added to a cgroup
     cgroup_wait_timeout_duration: Duration,
+    /// The init process PID of the parent container if the container is created as a tenant.
+    parent_init_pid: Option<Pid>,
 }
 
 /// Represents the systemd cgroups path:
@@ -180,6 +182,7 @@ impl Manager {
         root_path: PathBuf,
         cgroups_path: PathBuf,
         container_name: String,
+        parent_init_pid: Option<Pid>,
         use_system: bool,
         cgroup_wait_timeout_duration: Duration,
     ) -> Result<Self, SystemdManagerError> {
@@ -207,6 +210,7 @@ impl Manager {
             fs_manager,
             delegation_boundary,
             cgroup_wait_timeout_duration,
+            parent_init_pid,
         })
     }
 
