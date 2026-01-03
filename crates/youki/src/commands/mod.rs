@@ -62,6 +62,7 @@ fn create_cgroup_manager<P: AsRef<Path>>(
             cgroup_path: container.spec()?.cgroup_path,
             systemd_cgroup: container.systemd(),
             container_name: container.id().to_string(),
+            parent_init_pid: None,
         },
     )?)
 }

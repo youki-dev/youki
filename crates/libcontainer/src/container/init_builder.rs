@@ -117,6 +117,7 @@ impl InitContainerBuilder {
             stdout: self.base.stdout,
             stderr: self.base.stderr,
             as_sibling: self.as_sibling,
+            parent_init_pid: None,
         };
 
         builder_impl.create()?;

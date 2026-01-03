@@ -37,6 +37,7 @@ impl Container {
                 cgroup_path: self.spec()?.cgroup_path,
                 systemd_cgroup: self.systemd(),
                 container_name: self.id().to_string(),
+                parent_init_pid: None,
             })?;
         cmanager.freeze(FreezerState::Frozen)?;
 

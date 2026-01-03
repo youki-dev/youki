@@ -90,6 +90,7 @@ impl Container {
                             cgroup_path: config.cgroup_path.to_owned(),
                             systemd_cgroup: self.systemd(),
                             container_name: self.id().to_string(),
+                            parent_init_pid: None,
                         },
                     )?;
                     cmanager.remove().map_err(|err| {

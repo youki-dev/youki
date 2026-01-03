@@ -272,6 +272,7 @@ impl TenantContainerBuilder {
             stdout: self.base.stdout,
             stderr: self.base.stderr,
             as_sibling: self.as_sibling,
+            parent_init_pid: container.pid(),
         };
 
         let pid = builder_impl.create()?;
