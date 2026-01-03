@@ -7,6 +7,7 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
+use oci_spec::runtime::VERSION as OCI_RUNTIME_VERSION;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
@@ -128,7 +129,7 @@ impl State {
         bundle: PathBuf,
     ) -> Self {
         Self {
-            oci_version: "v1.0.2".to_string(),
+            oci_version: OCI_RUNTIME_VERSION.to_string(),
             id: container_id.to_string(),
             status,
             pid,
@@ -233,6 +234,11 @@ impl State {
     }
 }
 
+/// Deprecated: Use [`oci_spec::runtime::ContainerProcessState`] instead.
+#[deprecated(
+    since = "0.6.0",
+    note = "Use oci_spec::runtime::ContainerProcessState instead"
+)]
 #[derive(Serialize, Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ContainerProcessState {

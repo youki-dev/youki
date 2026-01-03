@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use nix::unistd::Pid;
 use oci_spec::runtime::LinuxIntelRdt;
-use once_cell::sync::Lazy;
 use pathrs::flags::OpenFlags;
 use pathrs::procfs::{ProcfsBase, ProcfsHandle};
 use procfs::process::MountInfo;
@@ -212,11 +212,12 @@ struct ParsedLine {
 fn parse_mb_line(line: &str) -> std::result::Result<HashMap<String, String>, ParseLineError> {
     let mut token_map = HashMap::new();
 
-    static MB_VALIDATE_RE: Lazy<Regex> = Lazy::new(|| {
+    static MB_VALIDATE_RE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"^MB:(?:\s|;)*(?:\w+\s*=\s*\w+)?(?:(?:\s*;+\s*)+\w+\s*=\s*\w+)*(?:\s|;)*$")
             .unwrap()
     });
-    static MB_CAPTURE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(\w+)\s*=\s*(\w+)").unwrap());
+    static MB_CAPTURE_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(\w+)\s*=\s*(\w+)").unwrap());
 
     if !MB_VALIDATE_RE.is_match(line) {
         return Err(ParseLineError::MBLine);
@@ -238,11 +239,11 @@ fn parse_mb_line(line: &str) -> std::result::Result<HashMap<String, String>, Par
 fn parse_l3_line(line: &str) -> std::result::Result<HashMap<String, String>, ParseLineError> {
     let mut token_map = HashMap::new();
 
-    static L3_VALIDATE_RE: Lazy<Regex> = Lazy::new(|| {
+    static L3_VALIDATE_RE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"^(?:L3|L3DATA|L3CODE):(?:\s|;)*(?:\w+\s*=\s*[[:xdigit:]]+)?(?:(?:\s*;+\s*)+\w+\s*=\s*[[:xdigit:]]+)*(?:\s|;)*$").unwrap()
     });
-    static L3_CAPTURE_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(\w+)\s*=\s*0*([[:xdigit:]]+)").unwrap());
+    static L3_CAPTURE_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(\w+)\s*=\s*0*([[:xdigit:]]+)").unwrap());
     //                                        ^
     //                          +-------------+
     //                          |
