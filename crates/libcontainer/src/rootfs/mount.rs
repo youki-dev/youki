@@ -210,7 +210,7 @@ impl Mount {
                     })?;
             }
             _ => {
-                if *mount.destination() == PathBuf::from("/dev") {
+                if mount.destination() == Path::new("/dev") {
                     mount_option_config.flags &= !MsFlags::MS_RDONLY;
                     self.mount_into_container(
                         mount,
