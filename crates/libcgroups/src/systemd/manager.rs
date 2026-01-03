@@ -19,8 +19,8 @@ use super::dbus_native::utils::SystemdClientError;
 use super::memory::Memory;
 use super::pids::Pids;
 use crate::common::{
-    self, AnyCgroupManager, CgroupManager, ControllerOpt, FreezerState, JoinSafelyError,
-    PathBufExt, WrapIoResult, WrappedIoError,
+    self, AnyCgroupManager, CGROUP_PROCS, CgroupManager, ControllerOpt, FreezerState,
+    JoinSafelyError, ParseProcCgroupError, PathBufExt, WrapIoResult, WrappedIoError,
 };
 use crate::stats::Stats;
 use crate::systemd::dbus_native::serialize::Variant;
@@ -147,6 +147,8 @@ impl Debug for Manager {
 pub enum SystemdManagerError {
     #[error("io error: {0}")]
     WrappedIo(#[from] WrappedIoError),
+    #[error(transparent)]
+    ParseProcCgroup(#[from] ParseProcCgroupError),
     #[error("failed to destructure cgroups path: {0}")]
     CgroupsPath(#[from] CgroupsPathError),
     #[error("invalid slice name: {0}")]
@@ -393,9 +395,35 @@ impl CgroupManager for Manager {
         }
         if self.client.transient_unit_exists(&self.unit_name) {
             tracing::debug!("Transient unit {:?} already exists", self.unit_name);
-            self.client
-                .add_process_to_unit(&self.unit_name, "", pid.as_raw() as u32)?;
-            return Ok(());
+            match self
+                .client
+                .add_process_to_unit(&self.unit_name, "", pid.as_raw() as u32)
+            {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    // If adding the process to the cgroup fails due to a "Device or resource busy" error,
+                    // manager tries to join the cgroup of the init process of the tenant container.
+                    if e.to_string().contains("Device or resource busy")
+                        && let Some(tenant_init_pid) = self.parent_init_pid
+                        && let Some(tenant_init_proc_cgroup) = common::parse_proc_cgroup_file(
+                            &format!("/proc/{}/cgroup", &tenant_init_pid),
+                        )?
+                        .get("")
+                        && let Some(parent_init_proc_cgroup) =
+                            tenant_init_proc_cgroup.strip_prefix("/")
+                    {
+                        common::write_cgroup_file(
+                            self.root_path
+                                .join(parent_init_proc_cgroup)
+                                .join(CGROUP_PROCS),
+                            pid,
+                        )?;
+                        return Ok(());
+                    }
+
+                    return Err(e.into());
+                }
+            }
         }
 
         tracing::debug!("Starting {:?}", self.unit_name);
@@ -592,6 +620,7 @@ mod tests {
             DEFAULT_CGROUP_ROOT.into(),
             ":youki:test".into(),
             "youki_test_container".into(),
+            None,
             false,
             PROCESS_IN_CGROUP_TIMEOUT_DURATION,
         )
@@ -626,6 +655,7 @@ mod tests {
             DEFAULT_CGROUP_ROOT.into(),
             ":youki:test".into(),
             "youki_test_container".into(),
+            None,
             false,
             Duration::from_secs(1),
         )
