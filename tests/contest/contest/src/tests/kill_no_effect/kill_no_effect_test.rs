@@ -39,14 +39,12 @@ fn kill_no_effect_test() -> TestResult {
     let container = ContainerLifecycle::new();
     let spec = create_spec(&["sleep", "1"]).unwrap();
 
-    match container.create_with_spec(spec) {
-        TestResult::Passed => {}
-        _ => return failed_and_delete("Failed to create container".to_string(), container),
+    if !matches!(container.create_with_spec(spec), TestResult::Passed) {
+        return failed_and_delete("Failed to create container".to_string(), container);
     }
 
-    match container.start() {
-        TestResult::Passed => {}
-        _ => return failed_and_delete(("Failed to start container").to_string(), container),
+    if !matches!(container.start(), TestResult::Passed) {
+        return failed_and_delete("Failed to start container".to_string(), container);
     }
 
     container.wait_for_state("stopped", Duration::from_secs(5));
@@ -97,9 +95,8 @@ fn kill_no_effect_test() -> TestResult {
     }
 
     //delete container after test
-    match container.delete() {
-        TestResult::Passed => {}
-        _ => return failed_and_delete("Failed to delete container".to_string(), container),
+    if !matches!(container.delete(), TestResult::Passed) {
+        return failed_and_delete("Failed to delete container".to_string(), container);
     }
 
     TestResult::Passed
