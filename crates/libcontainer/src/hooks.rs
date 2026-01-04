@@ -6,12 +6,9 @@ use std::{process, thread, time};
 
 use nix::sys::signal;
 use nix::unistd::Pid;
-use oci_spec::OciSpecError;
-use oci_spec::runtime::{
-    ContainerState as OciContainerState, Hook, State as OciState, StateBuilder as OciStateBuilder,
-};
+use oci_spec::runtime::{Hook, State as OciState};
 
-use crate::container::{Container, ContainerStatus, State};
+use crate::container::{Container, StateConversionError};
 use crate::utils;
 
 #[derive(Debug, thiserror::Error)]
@@ -30,44 +27,11 @@ pub enum HookError {
     MissingContainerState,
     #[error("failed to write container state to stdin")]
     WriteContainerState(#[source] std::io::Error),
-    #[error("failed to build OCI state: {0}")]
-    OciStateBuild(#[from] OciSpecError),
-    #[error("invalid container status: {0}")]
-    InvalidStatus(ContainerStatus),
+    #[error("failed to convert state to OCI format")]
+    StateConversion(#[from] StateConversionError),
 }
 
 type Result<T> = std::result::Result<T, HookError>;
-
-/// Convert internal State to OCI-compliant State for hooks.
-///
-/// Based on runc's implementation:
-/// <https://github.com/opencontainers/runc/blob/v2.2.1/libcontainer/container_linux.go#L961>
-fn to_oci_state(state: &State, pid: Option<i32>) -> Result<OciState> {
-    let status = to_oci_status_for_hooks(state.status)?;
-
-    let mut oci_state = OciStateBuilder::default()
-        .version(state.oci_version.clone())
-        .id(state.id.clone())
-        .status(status)
-        .bundle(state.bundle.clone())
-        .annotations(state.annotations.clone().unwrap_or_default())
-        .build()?;
-
-    oci_state.set_pid(pid);
-
-    Ok(oci_state)
-}
-
-fn to_oci_status_for_hooks(status: ContainerStatus) -> Result<OciContainerState> {
-    match status {
-        ContainerStatus::Creating => Ok(OciContainerState::Creating),
-        ContainerStatus::Created => Ok(OciContainerState::Created),
-        ContainerStatus::Running => Ok(OciContainerState::Running),
-        ContainerStatus::Stopped => Ok(OciContainerState::Stopped),
-        // Paused is not defined in the OCI spec and no hooks are triggered during pause/resume.
-        ContainerStatus::Paused => Err(HookError::InvalidStatus(status)),
-    }
-}
 
 pub fn run_hooks(
     hooks: Option<&Vec<Hook>>,
@@ -76,17 +40,23 @@ pub fn run_hooks(
     cwd: Option<&Path>,
     pid: Option<Pid>,
 ) -> Result<()> {
-    let base_state = &(container.ok_or(HookError::MissingContainerState)?.state);
-
-    // The `effective_pid` parameter allows overriding the PID in the state. This is needed because
-    // high-level container runtimes like containerd set the PID separately for certain hooks.
-    // Ref: https://github.com/containerd/containerd/blob/main/cmd/containerd/command/oci-hook.go#L90
-    let effective_pid = pid.map(|p| p.as_raw()).or(base_state.pid);
+    // TODO: Avoid clone() by passing State by value to run_hooks instead of &Container.
+    let base_state = container
+        .ok_or(HookError::MissingContainerState)?
+        .state
+        .clone();
 
     // High-level container runtimes use OCI state to pass the container state to the hooks.
     // So we need to convert the container state to OCI state.
     // Ref: https://github.com/containerd/containerd/blob/v2.2.1/cmd/containerd/command/oci-hook.go#L82
-    let oci_state = to_oci_state(base_state, effective_pid)?;
+    let mut oci_state = OciState::try_from(base_state)?;
+
+    // The `pid` parameter allows overriding the PID in the state. This is needed because
+    // high-level container runtimes like containerd set the PID separately for certain hooks.
+    // Ref: https://github.com/containerd/containerd/blob/main/cmd/containerd/command/oci-hook.go#L90
+    if let Some(override_pid) = pid {
+        oci_state.set_pid(Some(override_pid.as_raw()));
+    }
 
     if let Some(hooks) = hooks {
         for hook in hooks {
