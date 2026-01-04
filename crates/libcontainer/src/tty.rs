@@ -21,8 +21,8 @@ use std::os::unix::prelude::RawFd;
 use std::path::{Path, PathBuf};
 
 use nix::sys::socket::{self, UnixAddr};
-use nix::sys::stat::{fstat, major, minor, SFlag};
-use nix::sys::statfs::{fstatfs, FsType, Statfs};
+use nix::sys::stat::{SFlag, fstat, major, minor};
+use nix::sys::statfs::{FsType, Statfs, fstatfs};
 use nix::unistd::{close, dup2};
 
 use crate::syscall::Syscall;
@@ -262,7 +262,12 @@ fn verify_pty_slave(slave: &OwnedFd) -> Result<()> {
             });
         }
 
-        tracing::debug!(fd, major = dev_major, minor = minor(stat.st_rdev), "verified PTY slave");
+        tracing::debug!(
+            fd,
+            major = dev_major,
+            minor = minor(stat.st_rdev),
+            "verified PTY slave"
+        );
         Ok(())
     })
 }
@@ -518,6 +523,7 @@ mod tests {
     fn test_verify_ptmx_handle_with_regular_file() {
         use std::fs::File;
         use std::os::fd::AsFd;
+
         use tempfile::tempfile;
 
         // Create a regular file
@@ -526,7 +532,10 @@ mod tests {
 
         // Verify should fail for regular file
         let result = verify_ptmx_handle(&fd);
-        assert!(result.is_err(), "verify_ptmx_handle should fail for regular file");
+        assert!(
+            result.is_err(),
+            "verify_ptmx_handle should fail for regular file"
+        );
 
         if let Err(TTYError::InvalidPty { reason }) = result {
             assert!(
@@ -541,6 +550,7 @@ mod tests {
     fn test_verify_pty_slave_with_regular_file() {
         use std::fs::File;
         use std::os::fd::AsFd;
+
         use tempfile::tempfile;
 
         // Create a regular file
@@ -549,7 +559,10 @@ mod tests {
 
         // Verify should fail for regular file
         let result = verify_pty_slave(&fd);
-        assert!(result.is_err(), "verify_pty_slave should fail for regular file");
+        assert!(
+            result.is_err(),
+            "verify_pty_slave should fail for regular file"
+        );
 
         if let Err(TTYError::InvalidPty { reason }) = result {
             assert!(
