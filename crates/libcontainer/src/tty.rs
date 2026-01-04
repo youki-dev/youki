@@ -15,12 +15,11 @@
 use std::env;
 use std::io::IoSlice;
 use std::os::fd::OwnedFd;
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{OpenOptionsExt, symlink};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::prelude::RawFd;
 use std::path::{Path, PathBuf};
 
-use nix::mount::MsFlags;
 use nix::sys::socket::{self, UnixAddr};
 use nix::unistd::{close, dup2};
 
@@ -167,8 +166,8 @@ pub fn setup_console(syscall: &dyn Syscall, console_fd: RawFd, mount: bool) -> R
     let openpty_result = nix::pty::openpty(None, None)
         .map_err(|err| TTYError::CreatePseudoTerminal { source: err })?;
 
-    let master = openpty_result.master.as_raw_fd();
-    let slave = openpty_result.slave.as_raw_fd();
+    let master = &openpty_result.master;
+    let slave = &openpty_result.slave;
 
     // Mount PTY slave on /dev/console (only for init container)
     if mount {
@@ -183,18 +182,18 @@ pub fn setup_console(syscall: &dyn Syscall, console_fd: RawFd, mount: bool) -> R
     // Send PTY master to console socket
     let pty_name: &[u8] = b"/dev/ptmx";
     let iov = [IoSlice::new(pty_name)];
-    let fds = [master];
+    let fds = [master.as_raw_fd()];
     let cmsg = socket::ControlMessage::ScmRights(&fds);
     socket::sendmsg::<UnixAddr>(console_fd, &iov, &[cmsg], socket::MsgFlags::empty(), None)
         .map_err(|err| TTYError::SendPtyMaster { source: err })?;
 
     // Set controlling terminal
-    if unsafe { libc::ioctl(slave, libc::TIOCSCTTY) } < 0 {
+    if unsafe { libc::ioctl(slave.as_raw_fd(), libc::TIOCSCTTY) } < 0 {
         tracing::warn!("could not TIOCSCTTY");
     };
 
     // Connect stdio to PTY slave
-    connect_stdio(&slave, &slave, &slave)?;
+    connect_stdio(&slave.as_raw_fd(), &slave.as_raw_fd(), &slave.as_raw_fd())?;
 
     // Close console socket
     close(console_fd).map_err(|err| TTYError::CloseConsoleSocket { source: err })?;
@@ -208,58 +207,53 @@ pub fn setup_console(syscall: &dyn Syscall, console_fd: RawFd, mount: bool) -> R
 /// that operate on /dev/console use the container's PTY.
 ///
 /// This is called AFTER pivot_root, so we mount onto /dev/console directly.
+/// Uses FD-based mounting to avoid path resolution vulnerabilities (CVE-2025-52565).
 ///
 /// See: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/rootfs_linux.go
-fn mount_console(syscall: &dyn Syscall, slave_fd: RawFd) -> Result<()> {
+fn mount_console(syscall: &dyn Syscall, slave: &OwnedFd) -> Result<()> {
     use std::fs::OpenOptions;
-
-    // Get the tty name (e.g., /dev/pts/0)
-    let mut buf = [0u8; 256];
-    let ret =
-        unsafe { libc::ttyname_r(slave_fd, buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
-    if ret != 0 {
-        tracing::warn!(
-            errno = ret,
-            "failed to get tty name, skipping /dev/console mount"
-        );
-        return Ok(());
-    }
-
-    let slave_path = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr() as *const libc::c_char) }
-        .to_string_lossy()
-        .into_owned();
 
     // After pivot_root, the target is /dev/console
     let console_path = Path::new("/dev/console");
 
-    tracing::debug!(slave_path = %slave_path, console_path = ?console_path, "mounting PTY on /dev/console");
+    tracing::debug!(
+        slave_fd = slave.as_raw_fd(),
+        ?console_path,
+        "mounting PTY on /dev/console"
+    );
 
-    // Create /dev/console if it doesn't exist
+    // Create /dev/console mount target.
+    // O_NOFOLLOW: prevent symlink attacks (CVE-2025-52565)
+    // O_CLOEXEC: close on exec
+    // Ref: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/rootfs_linux.go
     OpenOptions::new()
         .create(true)
         .write(true)
-        .truncate(false)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .mode(0o666)
         .open(console_path)
         .map_err(|err| {
             tracing::error!(?err, ?console_path, "failed to create /dev/console");
             TTYError::CreateDevConsole { source: err }
         })?;
 
-    // Bind mount the PTY slave onto /dev/console
-    syscall
-        .mount(
-            Some(Path::new(&slave_path)),
-            console_path,
-            None,
-            MsFlags::MS_BIND,
-            None,
-        )
-        .map_err(|err| {
-            tracing::error!(?err, %slave_path, ?console_path, "failed to bind mount pty on /dev/console");
-            TTYError::MountConsole { source: err }
-        })?;
+    // Bind mount the PTY slave onto /dev/console using FD-based mounting.
+    // This avoids path resolution vulnerabilities (CVE-2025-52565).
+    syscall.mount_from_fd(slave, console_path).map_err(|err| {
+        tracing::error!(
+            ?err,
+            slave_fd = slave.as_raw_fd(),
+            ?console_path,
+            "failed to bind mount pty on /dev/console"
+        );
+        TTYError::MountConsole { source: err }
+    })?;
 
-    tracing::debug!(%slave_path, ?console_path, "mounted PTY on /dev/console");
+    tracing::debug!(
+        slave_fd = slave.as_raw_fd(),
+        ?console_path,
+        "mounted PTY on /dev/console"
+    );
     Ok(())
 }
 
