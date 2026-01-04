@@ -154,6 +154,12 @@ const PTMX_INO: u64 = 2;
 /// PTY slave major number
 const PTY_SLAVE_MAJOR: u64 = 136;
 /// DEVPTS_SUPER_MAGIC from <linux/magic.h>
+/// Note: Using libc::DEVPTS_SUPER_MAGIC is not available, so we define it here.
+/// The type must match nix::sys::statfs::FsType's inner type (fs_type_t),
+/// which is i64 on glibc and u64 on musl.
+#[cfg(target_env = "musl")]
+const DEVPTS_SUPER_MAGIC: u64 = 0x1cd1;
+#[cfg(not(target_env = "musl"))]
 const DEVPTS_SUPER_MAGIC: i64 = 0x1cd1;
 
 /// Verify file descriptor using stat and statfs, similar to runc's VerifyInode.
