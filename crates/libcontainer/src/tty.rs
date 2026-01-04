@@ -21,6 +21,8 @@ use std::os::unix::prelude::RawFd;
 use std::path::{Path, PathBuf};
 
 use nix::sys::socket::{self, UnixAddr};
+use nix::sys::stat::{fstat, major, minor, SFlag};
+use nix::sys::statfs::{fstatfs, FsType, Statfs};
 use nix::unistd::{close, dup2};
 
 use crate::syscall::Syscall;
@@ -86,6 +88,8 @@ pub enum TTYError {
     MountConsole {
         source: crate::syscall::SyscallError,
     },
+    #[error("invalid PTY device: {reason}")]
+    InvalidPty { reason: String },
 }
 
 type Result<T> = std::result::Result<T, TTYError>;
@@ -140,6 +144,129 @@ pub fn setup_console_socket(
     Ok(csocketfd)
 }
 
+/// Device numbers from Linux kernel headers.
+/// TTYAUX_MAJOR from <linux/major.h>
+const PTMX_MAJOR: u64 = 5;
+/// From mknod_ptmx in fs/devpts/inode.c
+const PTMX_MINOR: u64 = 2;
+/// From mknod_ptmx in fs/devpts/inode.c
+const PTMX_INO: u64 = 2;
+/// PTY slave major number
+const PTY_SLAVE_MAJOR: u64 = 136;
+/// DEVPTS_SUPER_MAGIC from <linux/magic.h>
+const DEVPTS_SUPER_MAGIC: i64 = 0x1cd1;
+
+/// Verify file descriptor using stat and statfs, similar to runc's VerifyInode.
+///
+/// This is a helper function that gets stat/statfs for a file descriptor and
+/// calls the provided verification function with the results.
+///
+/// Ref: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/system/linux.go
+fn verify_inode<F>(fd: &OwnedFd, verify: F) -> Result<()>
+where
+    F: FnOnce(&libc::stat, &Statfs) -> Result<()>,
+{
+    let stat = fstat(fd.as_raw_fd()).map_err(|e| TTYError::InvalidPty {
+        reason: format!("fstat failed: {}", e),
+    })?;
+
+    let fs_stat = fstatfs(fd).map_err(|e| TTYError::InvalidPty {
+        reason: format!("fstatfs failed: {}", e),
+    })?;
+
+    verify(&stat, &fs_stat)
+}
+
+/// Verify that the ptmx handle points to a real /dev/pts/ptmx device.
+///
+/// This follows runc's checkPtmxHandle pattern (CVE-2025-52565 mitigation):
+/// - Must be on a real devpts mount
+/// - Must have the correct inode number (2)
+/// - Must be a character device with major:minor = 5:2
+///
+/// Ref: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/console_linux.go
+fn verify_ptmx_handle(ptmx: &OwnedFd) -> Result<()> {
+    let fd = ptmx.as_raw_fd();
+
+    verify_inode(ptmx, |stat, fs_stat| {
+        // 1. Check filesystem type is devpts
+        if fs_stat.filesystem_type() != FsType(DEVPTS_SUPER_MAGIC) {
+            return Err(TTYError::InvalidPty {
+                reason: format!(
+                    "ptmx handle is not on a real devpts mount: super magic is {:#x}",
+                    fs_stat.filesystem_type().0
+                ),
+            });
+        }
+
+        // 2. Check inode number
+        if stat.st_ino != PTMX_INO {
+            return Err(TTYError::InvalidPty {
+                reason: format!("ptmx handle has wrong inode number: {}", stat.st_ino),
+            });
+        }
+
+        // 3. Check it's a character device with correct major:minor
+        let mode_type = SFlag::from_bits_truncate(stat.st_mode) & SFlag::S_IFMT;
+        let dev_major = major(stat.st_rdev);
+        let dev_minor = minor(stat.st_rdev);
+
+        if mode_type != SFlag::S_IFCHR || dev_major != PTMX_MAJOR || dev_minor != PTMX_MINOR {
+            return Err(TTYError::InvalidPty {
+                reason: format!(
+                    "ptmx handle is not a real char ptmx device: ftype {:#x} {}:{}",
+                    mode_type.bits(),
+                    dev_major,
+                    dev_minor
+                ),
+            });
+        }
+
+        tracing::debug!(fd, ino = stat.st_ino, "verified ptmx handle");
+        Ok(())
+    })
+}
+
+/// Verify that the slave handle points to a real PTY slave device.
+///
+/// This validates (CVE-2025-52565 mitigation):
+/// - Must be on a real devpts mount
+/// - Must be a character device with PTY slave major number (136)
+///
+/// Ref: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/console_linux.go
+fn verify_pty_slave(slave: &OwnedFd) -> Result<()> {
+    let fd = slave.as_raw_fd();
+
+    verify_inode(slave, |stat, fs_stat| {
+        // 1. Check filesystem type is devpts
+        if fs_stat.filesystem_type() != FsType(DEVPTS_SUPER_MAGIC) {
+            return Err(TTYError::InvalidPty {
+                reason: format!(
+                    "slave handle is not on a real devpts mount: super magic is {:#x}",
+                    fs_stat.filesystem_type().0
+                ),
+            });
+        }
+
+        // 2. Check it's a character device with PTY slave major number
+        let mode_type = SFlag::from_bits_truncate(stat.st_mode) & SFlag::S_IFMT;
+        let dev_major = major(stat.st_rdev);
+
+        if mode_type != SFlag::S_IFCHR || dev_major != PTY_SLAVE_MAJOR {
+            return Err(TTYError::InvalidPty {
+                reason: format!(
+                    "slave handle is not a real PTY slave device: ftype {:#x} major {}",
+                    mode_type.bits(),
+                    dev_major
+                ),
+            });
+        }
+
+        tracing::debug!(fd, major = dev_major, minor = minor(stat.st_rdev), "verified PTY slave");
+        Ok(())
+    })
+}
+
 /// Setup console AFTER pivot_root.
 ///
 /// This function should be called AFTER pivot_root. This follows runc's approach:
@@ -168,6 +295,10 @@ pub fn setup_console(syscall: &dyn Syscall, console_fd: RawFd, mount: bool) -> R
 
     let master = &openpty_result.master;
     let slave = &openpty_result.slave;
+
+    // Verify both master and slave are real PTY devices (CVE-2025-52565 mitigation)
+    verify_ptmx_handle(master)?;
+    verify_pty_slave(slave)?;
 
     // Mount PTY slave on /dev/console (only for init container)
     if mount {
@@ -276,6 +407,17 @@ fn connect_stdio(stdin: &RawFd, stdout: &RawFd, stderr: &RawFd) -> Result<()> {
     Ok(())
 }
 
+/// Tests for PTY verification and console setup.
+///
+/// Note on `verify_ptmx_handle` success test:
+/// The success case for `verify_ptmx_handle` cannot be reliably tested in unit tests
+/// because on host systems, `/dev/ptmx` is typically on tmpfs (not devpts).
+/// The function is designed to work inside containers after `pivot_root`,
+/// where `/dev/pts/ptmx` is on a proper devpts mount.
+/// The success path is covered by integration tests that run inside containers.
+///
+/// The `verify_pty_slave` success test works on host because the PTY slave
+/// is always allocated on `/dev/pts/`, which is a devpts mount.
 #[cfg(test)]
 mod tests {
     use std::fs::File;
@@ -357,5 +499,64 @@ mod tests {
         assert!(status.is_ok());
 
         Ok(())
+    }
+
+    #[test]
+    fn test_verify_pty_slave_with_real_pty() -> Result<()> {
+        // Allocate a real PTY pair
+        let openpty_result = nix::pty::openpty(None, None)
+            .map_err(|e| TTYError::CreatePseudoTerminal { source: e })?;
+
+        // Verify slave handle should succeed
+        let result = verify_pty_slave(&openpty_result.slave);
+        assert!(result.is_ok(), "verify_pty_slave failed: {:?}", result);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_verify_ptmx_handle_with_regular_file() {
+        use std::fs::File;
+        use std::os::fd::AsFd;
+        use tempfile::tempfile;
+
+        // Create a regular file
+        let file: File = tempfile().expect("failed to create tempfile");
+        let fd = file.as_fd().try_clone_to_owned().unwrap();
+
+        // Verify should fail for regular file
+        let result = verify_ptmx_handle(&fd);
+        assert!(result.is_err(), "verify_ptmx_handle should fail for regular file");
+
+        if let Err(TTYError::InvalidPty { reason }) = result {
+            assert!(
+                reason.contains("devpts") || reason.contains("inode") || reason.contains("device"),
+                "unexpected error reason: {}",
+                reason
+            );
+        }
+    }
+
+    #[test]
+    fn test_verify_pty_slave_with_regular_file() {
+        use std::fs::File;
+        use std::os::fd::AsFd;
+        use tempfile::tempfile;
+
+        // Create a regular file
+        let file: File = tempfile().expect("failed to create tempfile");
+        let fd = file.as_fd().try_clone_to_owned().unwrap();
+
+        // Verify should fail for regular file
+        let result = verify_pty_slave(&fd);
+        assert!(result.is_err(), "verify_pty_slave should fail for regular file");
+
+        if let Err(TTYError::InvalidPty { reason }) = result {
+            assert!(
+                reason.contains("devpts") || reason.contains("device"),
+                "unexpected error reason: {}",
+                reason
+            );
+        }
     }
 }
