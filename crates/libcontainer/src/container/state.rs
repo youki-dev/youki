@@ -250,7 +250,7 @@ pub enum StateConversionError {
 /// Convert internal State to OCI-compliant State (by value, no cloning).
 ///
 /// Based on runc's implementation:
-/// <https://github.com/opencontainers/runc/blob/v2.2.1/libcontainer/container_linux.go#L961>
+/// https://github.com/opencontainers/runc/blob/v2.2.1/libcontainer/container_linux.go#L961
 impl TryFrom<State> for OciState {
     type Error = StateConversionError;
 
