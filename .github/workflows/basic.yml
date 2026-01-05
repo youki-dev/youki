@@ -127,6 +127,7 @@ jobs:
       - name: Install cross-rs
         run: RUSTFLAGS="" cargo install cross --git https://github.com/cross-rs/cross
       - name: Create test user
+        # Create user and home directory for tests that require them
         run: sudo useradd -m -d /tmp/testuser testuser
       - name: Setup environment variables
         run: |
