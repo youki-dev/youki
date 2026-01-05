@@ -7,7 +7,11 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
-use oci_spec::runtime::VERSION as OCI_RUNTIME_VERSION;
+use oci_spec::OciSpecError;
+use oci_spec::runtime::{
+    ContainerState as OciContainerState, State as OciState, StateBuilder as OciStateBuilder,
+    VERSION as OCI_RUNTIME_VERSION,
+};
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
@@ -231,6 +235,58 @@ impl State {
     /// ```
     pub fn file_path(container_root: &Path) -> PathBuf {
         container_root.join(Self::STATE_FILE_PATH)
+    }
+}
+
+/// Error type for state conversion failures.
+#[derive(Debug, thiserror::Error)]
+pub enum StateConversionError {
+    #[error("failed to build OCI state: {0}")]
+    OciStateBuild(#[from] OciSpecError),
+    #[error("invalid container status for OCI conversion: {0}")]
+    InvalidStatus(ContainerStatus),
+}
+
+/// Convert internal State to OCI-compliant State (by value, no cloning).
+///
+/// Based on runc's implementation:
+/// https://github.com/opencontainers/runc/blob/v2.2.1/libcontainer/container_linux.go#L961
+impl TryFrom<State> for OciState {
+    type Error = StateConversionError;
+
+    fn try_from(state: State) -> std::result::Result<Self, Self::Error> {
+        let status = OciContainerState::try_from(state.status)?;
+
+        let mut builder = OciStateBuilder::default()
+            .version(state.oci_version)
+            .id(state.id)
+            .status(status)
+            .bundle(state.bundle);
+
+        // Preserve None vs empty map distinction per OCI spec
+        if let Some(annotations) = state.annotations {
+            builder = builder.annotations(annotations);
+        }
+        if let Some(pid) = state.pid {
+            builder = builder.pid(pid);
+        }
+
+        Ok(builder.build()?)
+    }
+}
+
+impl TryFrom<ContainerStatus> for OciContainerState {
+    type Error = StateConversionError;
+
+    fn try_from(status: ContainerStatus) -> std::result::Result<Self, Self::Error> {
+        match status {
+            ContainerStatus::Creating => Ok(OciContainerState::Creating),
+            ContainerStatus::Created => Ok(OciContainerState::Created),
+            ContainerStatus::Running => Ok(OciContainerState::Running),
+            ContainerStatus::Stopped => Ok(OciContainerState::Stopped),
+            // Paused is not defined in the OCI spec.
+            ContainerStatus::Paused => Err(StateConversionError::InvalidStatus(status)),
+        }
     }
 }
 
