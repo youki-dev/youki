@@ -1,11 +1,10 @@
-use std::{os::fd::FromRawFd, path::Path};
+use std::os::fd::FromRawFd;
+use std::path::Path;
 
 use nix::unistd::{Gid, Pid, Uid, close, getpid, write};
 use oci_spec::runtime::{LinuxNamespace, LinuxNamespaceType, LinuxResources};
-use pathrs::{
-    flags::OpenFlags,
-    procfs::{ProcfsBase, ProcfsHandle},
-};
+use pathrs::flags::OpenFlags;
+use pathrs::procfs::{ProcfsBase, ProcfsHandle};
 use procfs::{FromRead, ProcessCGroups};
 
 use super::args::{ContainerArgs, ContainerType};
