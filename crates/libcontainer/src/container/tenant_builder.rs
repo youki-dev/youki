@@ -253,6 +253,7 @@ impl TenantContainerBuilder {
         let mut builder_impl = ContainerBuilderImpl {
             container_type: ContainerType::TenantContainer {
                 exec_notify_fd: write_end.as_raw_fd(),
+                parent_init_pid: container.pid(),
             },
             syscall: self.base.syscall,
             container_id: self.base.container_id,
