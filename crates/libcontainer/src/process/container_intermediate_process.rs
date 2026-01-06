@@ -1,8 +1,12 @@
-use std::os::fd::FromRawFd;
+use std::{os::fd::FromRawFd, path::Path};
 
-use libcgroups::common::CgroupManager;
 use nix::unistd::{Gid, Pid, Uid, close, getpid, write};
 use oci_spec::runtime::{LinuxNamespace, LinuxNamespaceType, LinuxResources};
+use pathrs::{
+    flags::OpenFlags,
+    procfs::{ProcfsBase, ProcfsHandle},
+};
+use procfs::{FromRead, ProcessCGroups};
 
 use super::args::{ContainerArgs, ContainerType};
 use super::channel::{IntermediateReceiver, MainSender};
@@ -26,6 +30,8 @@ pub enum IntermediateProcessError {
     Cgroup(String),
     #[error(transparent)]
     Procfs(#[from] procfs::ProcError),
+    #[error(transparent)]
+    Pathrs(#[from] pathrs::error::Error),
     #[error("exec notify failed")]
     ExecNotify(#[source] nix::Error),
     #[error(transparent)]
@@ -81,7 +87,7 @@ pub fn container_intermediate_process(
     apply_cgroups(
         &cgroup_manager,
         linux.resources().as_ref(),
-        matches!(args.container_type, ContainerType::InitContainer),
+        args.container_type,
     )?;
 
     // setting CPU affinity for tenant container after cgroup move
@@ -154,7 +160,9 @@ pub fn container_intermediate_process(
                     if let Err(err) = main_sender.exec_failed(e.to_string()) {
                         tracing::error!(?err, "failed sending error to main sender");
                     }
-                    if let ContainerType::TenantContainer { exec_notify_fd } = args.container_type {
+                    if let ContainerType::TenantContainer { exec_notify_fd, .. } =
+                        args.container_type
+                    {
                         let buf = format!("{e}");
                         let exec_notify_fd =
                             unsafe { std::os::fd::OwnedFd::from_raw_fd(exec_notify_fd) };
@@ -186,7 +194,7 @@ pub fn container_intermediate_process(
     })?;
 
     // Close the exec_notify_fd in this process
-    if let ContainerType::TenantContainer { exec_notify_fd } = args.container_type {
+    if let ContainerType::TenantContainer { exec_notify_fd, .. } = args.container_type {
         close(exec_notify_fd).map_err(|err| {
             tracing::error!("failed to close exec notify fd: {}", err);
             IntermediateProcessError::ExecNotify(err)
@@ -256,18 +264,53 @@ fn setup_userns(
 }
 
 fn apply_cgroups<
-    C: CgroupManager<Error = E> + ?Sized,
+    C: libcgroups::common::CgroupManager<Error = E> + ?Sized,
     E: std::error::Error + Send + Sync + 'static,
 >(
     cmanager: &C,
     resources: Option<&LinuxResources>,
-    init: bool,
+    container_type: ContainerType,
 ) -> Result<()> {
+    let init = matches!(container_type, ContainerType::InitContainer);
+
     let pid = getpid();
-    cmanager.add_task(pid).map_err(|err| {
+    if let Err(err) = cmanager.add_task(pid) {
+        if !init && err.to_string().contains("Device or resource busy") {
+            // If adding the process to the cgroup fails due to a "Device or resource busy" error,
+            // manager tries to join the cgroup of the init process of the parent container.
+            tracing::debug!(
+                "failed to add task to cgroup, trying to join parent's init process cgroup"
+            );
+
+            if let ContainerType::TenantContainer {
+                exec_notify_fd: _,
+                parent_init_pid,
+            } = container_type
+                && let Some(parent_init_pid) = parent_init_pid
+                && let Some(parent_proc_cgroup) =
+                    ProcessCGroups::from_read(ProcfsHandle::new()?.open(
+                        ProcfsBase::ProcPid(parent_init_pid.as_raw() as u32),
+                        "cgroup",
+                        OpenFlags::O_RDONLY | OpenFlags::O_CLOEXEC,
+                    )?)?
+                    .into_iter()
+                    .find(|c| c.controllers.is_empty())
+                && let Some(parent_init_cgroup) = parent_proc_cgroup.pathname.strip_prefix("/")
+            {
+                libcgroups::common::write_cgroup_file(
+                    Path::new(libcgroups::common::DEFAULT_CGROUP_ROOT)
+                        .join(Path::new(parent_init_cgroup))
+                        .join(libcgroups::common::CGROUP_PROCS),
+                    pid,
+                )
+                .map_err(|err| IntermediateProcessError::Cgroup(err.to_string()))?;
+                return Ok(());
+            }
+        }
+
         tracing::error!(?pid, ?err, ?init, "failed to add task to cgroup");
-        IntermediateProcessError::Cgroup(err.to_string())
-    })?;
+        return Err(IntermediateProcessError::Cgroup(err.to_string()));
+    }
 
     if let Some(resources) = resources {
         if init {
@@ -305,7 +348,7 @@ mod tests {
         let resources = LinuxResources::default();
 
         // act
-        apply_cgroups(&cmanager, Some(&resources), true)?;
+        apply_cgroups(&cmanager, Some(&resources), ContainerType::InitContainer)?;
 
         // assert
         assert!(cmanager.get_add_task_args().len() == 1);
@@ -324,7 +367,14 @@ mod tests {
         let resources = LinuxResources::default();
 
         // act
-        apply_cgroups(&cmanager, Some(&resources), false)?;
+        apply_cgroups(
+            &cmanager,
+            Some(&resources),
+            ContainerType::TenantContainer {
+                exec_notify_fd: 0,
+                parent_init_pid: None,
+            },
+        )?;
 
         // assert
         assert_eq!(
@@ -341,7 +391,7 @@ mod tests {
         let cmanager = TestManager::default();
 
         // act
-        apply_cgroups(&cmanager, None, true)?;
+        apply_cgroups(&cmanager, None, ContainerType::InitContainer)?;
         // assert
         assert_eq!(
             cmanager.get_add_task_args()[0],
