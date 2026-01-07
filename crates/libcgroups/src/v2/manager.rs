@@ -167,7 +167,7 @@ impl CgroupManager for Manager {
         }
 
         #[cfg(feature = "cgroupsv2_devices")]
-        Devices::apply(controller_opt, &self.cgroup_path)?;
+        Devices::apply(controller_opt, &self.full_path)?;
 
         for pseudoctlr in PSEUDO_CONTROLLER_TYPES {
             if let PseudoControllerType::Unified = pseudoctlr {
