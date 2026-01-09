@@ -1378,3 +1378,42 @@ pub fn validate_net_devices(spec: &Spec) {
         }
     }
 }
+
+/// Validates that user-defined device cgroup rules take precedence over defaults.
+/// This test expects /dev/zero write to be denied by a user-defined rule.
+pub fn validate_devices_cgroup_rule_precedence() {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
+    let path = "/dev/zero";
+
+    // Try to write to /dev/zero - this should be denied if user rule takes precedence
+    let result = OpenOptions::new().write(true).open(path);
+
+    match result {
+        Ok(mut file) => {
+            // File opened, try to write
+            match file.write_all(b"test") {
+                Ok(_) => {
+                    // Write succeeded - this means user-defined deny rule was NOT applied
+                    eprintln!(
+                        "error: write to {} succeeded, but should have been denied by user-defined cgroup rule",
+                        path
+                    );
+                }
+                Err(e) if e.raw_os_error() == Some(libc::EPERM) => {
+                    // Permission denied during write - correct behavior
+                }
+                Err(e) => {
+                    eprintln!("error: unexpected error during write to {}: {}", path, e);
+                }
+            }
+        }
+        Err(e) if e.raw_os_error() == Some(libc::EPERM) => {
+            // Permission denied during open - correct behavior
+        }
+        Err(e) => {
+            eprintln!("error: unexpected error opening {}: {}", path, e);
+        }
+    }
+}
