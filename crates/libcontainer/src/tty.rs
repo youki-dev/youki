@@ -192,8 +192,6 @@ where
 ///
 /// Ref: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/console_linux.go
 fn verify_ptmx_handle(ptmx: &OwnedFd) -> Result<()> {
-    let fd = ptmx.as_raw_fd();
-
     verify_inode(ptmx, |stat, fs_stat| {
         // 1. Check filesystem type is devpts
         if fs_stat.filesystem_type() != FsType(DEVPTS_SUPER_MAGIC) {
@@ -228,7 +226,11 @@ fn verify_ptmx_handle(ptmx: &OwnedFd) -> Result<()> {
             });
         }
 
-        tracing::debug!(fd, ino = stat.st_ino, "verified ptmx handle");
+        tracing::debug!(
+            ptmx_fd = ptmx.as_raw_fd(),
+            ino = stat.st_ino,
+            "verified ptmx handle"
+        );
         Ok(())
     })
 }
@@ -241,8 +243,6 @@ fn verify_ptmx_handle(ptmx: &OwnedFd) -> Result<()> {
 ///
 /// Ref: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/console_linux.go
 fn verify_pty_slave(slave: &OwnedFd) -> Result<()> {
-    let fd = slave.as_raw_fd();
-
     verify_inode(slave, |stat, fs_stat| {
         // 1. Check filesystem type is devpts
         if fs_stat.filesystem_type() != FsType(DEVPTS_SUPER_MAGIC) {
@@ -269,7 +269,7 @@ fn verify_pty_slave(slave: &OwnedFd) -> Result<()> {
         }
 
         tracing::debug!(
-            fd,
+            slave_fd = slave.as_raw_fd(),
             major = dev_major,
             minor = minor(stat.st_rdev),
             "verified PTY slave"
@@ -418,17 +418,6 @@ fn connect_stdio(stdin: &RawFd, stdout: &RawFd, stderr: &RawFd) -> Result<()> {
     Ok(())
 }
 
-/// Tests for PTY verification and console setup.
-///
-/// Note on `verify_ptmx_handle` success test:
-/// The success case for `verify_ptmx_handle` cannot be reliably tested in unit tests
-/// because on host systems, `/dev/ptmx` is typically on tmpfs (not devpts).
-/// The function is designed to work inside containers after `pivot_root`,
-/// where `/dev/pts/ptmx` is on a proper devpts mount.
-/// The success path is covered by integration tests that run inside containers.
-///
-/// The `verify_pty_slave` success test works on host because the PTY slave
-/// is always allocated on `/dev/pts/`, which is a devpts mount.
 #[cfg(test)]
 mod tests {
     use std::fs::File;
@@ -500,7 +489,7 @@ mod tests {
         // may fail outside a real container environment.
         // mount=false to skip /dev/console mount in test environment
         let syscall = create_syscall();
-        let status = setup_console(syscall.as_ref(), fd.into_raw_fd(), false);
+        let status = setup_console(syscall.as_ref(), fd.into_raw_fd(), true);
 
         // restore the original std* before doing final assert
         dup2(old_stdin, StdIO::Stdin.into())?;
@@ -521,6 +510,19 @@ mod tests {
         // Verify slave handle should succeed
         let result = verify_pty_slave(&openpty_result.slave);
         assert!(result.is_ok(), "verify_pty_slave failed: {:?}", result);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_verify_ptmx_handle_with_real_pty() -> Result<()> {
+        // Allocate a real PTY pair
+        let openpty_result = nix::pty::openpty(None, None)
+            .map_err(|e| TTYError::CreatePseudoTerminal { source: e })?;
+
+        // Verify ptmx handle should succeed
+        let result = verify_ptmx_handle(&openpty_result.master);
+        assert!(result.is_ok(), "verify_ptmx_handle failed: {:?}", result);
 
         Ok(())
     }
