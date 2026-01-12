@@ -391,6 +391,8 @@ impl Mount {
             flags: MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
             data: vec![data.into_owned()],
             rec_attr: None,
+            apply_idmap: false,
+            apply_recursive_idmap: false,
         };
 
         self.mount_into_container(

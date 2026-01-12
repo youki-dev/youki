@@ -579,7 +579,7 @@ dependencies = [
  "libcontainer",
  "nix 0.29.0",
  "num_cpus",
- "oci-spec",
+ "oci-spec 0.8.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "pnet_datalink",
  "procfs",
  "rand 0.9.2",
@@ -2250,7 +2250,7 @@ dependencies = [
  "libc",
  "mockall",
  "nix 0.29.0",
- "oci-spec",
+ "oci-spec 0.8.4 (git+https://github.com/youki-dev/oci-spec-rs?rev=d21e23b70876e47b8dacb10844c9a39ff77054cb)",
  "pathrs",
  "procfs",
  "quickcheck",
@@ -2279,7 +2279,7 @@ dependencies = [
  "netlink-packet-route",
  "netlink-sys",
  "nix 0.29.0",
- "oci-spec",
+ "oci-spec 0.8.4 (git+https://github.com/youki-dev/oci-spec-rs?rev=d21e23b70876e47b8dacb10844c9a39ff77054cb)",
  "pathrs",
  "prctl",
  "procfs",
@@ -2742,7 +2742,22 @@ dependencies = [
  "const_format",
  "derive_builder 0.20.2",
  "getset",
- "quickcheck",
+ "regex",
+ "serde",
+ "serde_json",
+ "strum",
+ "strum_macros",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "oci-spec"
+version = "0.8.4"
+source = "git+https://github.com/youki-dev/oci-spec-rs?rev=d21e23b70876e47b8dacb10844c9a39ff77054cb#d21e23b70876e47b8dacb10844c9a39ff77054cb"
+dependencies = [
+ "const_format",
+ "derive_builder 0.20.2",
+ "getset",
  "regex",
  "serde",
  "serde_json",
@@ -3638,7 +3653,7 @@ dependencies = [
  "netlink-packet-route",
  "netlink-sys",
  "nix 0.29.0",
- "oci-spec",
+ "oci-spec 0.8.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "tempfile",
 ]
 
@@ -6618,7 +6633,7 @@ dependencies = [
  "libcontainer",
  "liboci-cli",
  "nix 0.29.0",
- "oci-spec",
+ "oci-spec 0.8.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "pentacle",
  "pkg-config",
  "procfs",

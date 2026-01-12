@@ -38,7 +38,8 @@ nix = { version = "0.29.0", features = [
     "hostname",
     "personality",
 ] }
-oci-spec = { version = "0.8.4", features = ["runtime"] }
+# oci-spec = { version = "0.8.4", features = ["runtime"] }
+oci-spec = { git = "https://github.com/youki-dev/oci-spec-rs", rev = "d21e23b70876e47b8dacb10844c9a39ff77054cb" }
 procfs = "0.17.0"
 prctl = "1.0.0"
 protobuf = "= 3.2.0" # https://github.com/checkpoint-restore/rust-criu/issues/19
@@ -61,7 +62,8 @@ netlink-packet-core = "0.8.1"
 pathrs = "0.2.2"
 
 [dev-dependencies]
-oci-spec = { version = "~0.8.4", features = ["proptests", "runtime"] }
+# oci-spec = { version = "~0.8.4", features = ["proptests", "runtime"] }
+oci-spec = { git = "https://github.com/youki-dev/oci-spec-rs", rev = "d21e23b70876e47b8dacb10844c9a39ff77054cb" }
 quickcheck = "1"
 serial_test = "3.3.1"
 tempfile = "3"

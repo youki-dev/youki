@@ -212,6 +212,22 @@ impl InitContainerBuilder {
             utils::validate_mount_options(mounts)?;
         }
 
+        // TODO: check validation rule
+        if let Some(mounts) = spec.mounts() {
+            for mount in mounts {
+                let uid_mappings = mount.uid_mappings().as_ref().filter(|v| !v.is_empty());
+                let gid_mappings = mount.gid_mappings().as_ref().filter(|v| !v.is_empty());
+
+                if uid_mappings.is_some() != gid_mappings.is_some() {
+                    tracing::error!(
+                        destination = ?mount.destination(),
+                        "uidMappings/gidMappings must be specified together"
+                    );
+                    Err(ErrInvalidSpec::MountIdmapMappingsMissing)?;
+                }
+            }
+        }
+
         let syscall = create_syscall();
         utils::validate_spec_for_new_user_ns(spec, &*syscall)?;
         utils::validate_spec_for_net_devices(spec, &*syscall)
