@@ -126,10 +126,14 @@ jobs:
         uses: taiki-e/install-action@just
       - name: Install cross-rs
         run: RUSTFLAGS="" cargo install cross --git https://github.com/cross-rs/cross
-      - name: Setup target
+      - name: Create test user
+        # Create user and home directory for tests that require them
+        run: sudo useradd -m -d /tmp/testuser testuser
+      - name: Setup environment variables
         run: |
           echo "CARGO=cross" >> ${GITHUB_ENV}
           echo "TARGET=${{ matrix.arch }}-unknown-linux-${{ matrix.libc }}" >> ${GITHUB_ENV}
+          echo "TEST_NON_ROOT_UID=$(id -u testuser)" >> ${GITHUB_ENV}
       - name: Disable AppArmor restrictions
         run: echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
       - name: Run tests
