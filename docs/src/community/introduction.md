@@ -1,6 +1,6 @@
 # Community
 
 - [Maintainer](./maintainer.md)
-- [Governance](./goversance.md)
+- [Governance](./governance.md)
 - [Contributing](./contributing.md)
 - [Chat](./chat.md)

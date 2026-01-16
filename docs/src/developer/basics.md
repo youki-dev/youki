@@ -19,7 +19,7 @@ As the steps to run these tests can be a bit tedious, a makefile in project the 
 
 - test: The unit tests
 - oci-integration-test: The integration tests provided by OCI, these are the current standard to make sure youki is OCI compliant.
-- integration-test: This is the Rust port of the OCI runtime tests, as there are some issues in the OCI tests. See [integration_test](./integration_test.md) page.
+- integration-test: This is the Rust port of the OCI runtime tests, as there are some issues in the OCI tests. See [integration_test](./e2e/integration_test.md) page.
 
 All three can be run by using `make test-all`, or you can run the individual command to run specific tests.
 
