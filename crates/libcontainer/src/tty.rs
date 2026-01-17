@@ -296,12 +296,7 @@ pub fn setup_console(syscall: &dyn Syscall, console_fd: RawFd, mount: bool) -> R
 
     // Mount PTY slave on /dev/console (only for init container)
     if mount {
-        if let Err(err) = mount_console(syscall, slave) {
-            tracing::warn!(
-                ?err,
-                "failed to mount /dev/console, CRIU checkpoint may not work"
-            );
-        }
+        mount_console(syscall, slave)?;
     }
 
     // Send PTY master to console socket
@@ -467,19 +462,18 @@ mod tests {
         let lis = UnixListener::bind(&socket_path);
         assert!(lis.is_ok());
         let fd = setup_console_socket(testdir.path(), &socket_path, CONSOLE_SOCKET)?;
-        // Note: setup_console expects to run after pivot_root, so this test
-        // just verifies the function can be called. The /dev/console mount
-        // may fail outside a real container environment.
-        // mount=false to skip /dev/console mount in test environment
+        // This test verifies PTY setup behavior that occurs after pivot_root.
+        // mount=false because mounting /dev/console requires an actual container
+        // environment with proper namespace setup (pivot_root completed).
         let syscall = create_syscall();
-        let status = setup_console(syscall.as_ref(), fd.into_raw_fd(), true);
+        let status = setup_console(syscall.as_ref(), fd.into_raw_fd(), false);
 
         // restore the original std* before doing final assert
         dup2(old_stdin, StdIO::Stdin.into())?;
         dup2(old_stdout, StdIO::Stdout.into())?;
         dup2(old_stderr, StdIO::Stderr.into())?;
 
-        assert!(status.is_ok());
+        assert!(status.is_ok(), "setup_console failed: {:?}", status);
 
         Ok(())
     }
