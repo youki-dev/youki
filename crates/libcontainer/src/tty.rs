@@ -21,11 +21,12 @@ use std::os::unix::prelude::RawFd;
 use std::path::{Path, PathBuf};
 
 use nix::sys::socket::{self, UnixAddr};
-use nix::sys::stat::{SFlag, fstat, major, minor};
-use nix::sys::statfs::{FsType, Statfs, fstatfs};
+use nix::sys::stat::{SFlag, major, minor};
+use nix::sys::statfs::FsType;
 use nix::unistd::{close, dup2};
 
 use crate::syscall::Syscall;
+use crate::utils::{VerifyInodeError, verify_inode};
 
 #[derive(Debug)]
 pub enum StdIO {
@@ -90,6 +91,8 @@ pub enum TTYError {
     },
     #[error("invalid PTY device: {reason}")]
     InvalidPty { reason: String },
+    #[error("stat operation failed")]
+    Stat(#[from] nix::Error),
 }
 
 type Result<T> = std::result::Result<T, TTYError>;
@@ -161,27 +164,8 @@ const PTY_SLAVE_MAJOR: u64 = 136;
 const DEVPTS_SUPER_MAGIC: u64 = 0x1cd1;
 #[cfg(not(target_env = "musl"))]
 const DEVPTS_SUPER_MAGIC: i64 = 0x1cd1;
-
-/// Verify file descriptor using stat and statfs, similar to runc's VerifyInode.
-///
-/// This is a helper function that gets stat/statfs for a file descriptor and
-/// calls the provided verification function with the results.
-///
-/// Ref: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/system/linux.go
-fn verify_inode<F>(fd: &OwnedFd, verify: F) -> Result<()>
-where
-    F: FnOnce(&libc::stat, &Statfs) -> Result<()>,
-{
-    let stat = fstat(fd.as_raw_fd()).map_err(|e| TTYError::InvalidPty {
-        reason: format!("fstat failed: {}", e),
-    })?;
-
-    let fs_stat = fstatfs(fd).map_err(|e| TTYError::InvalidPty {
-        reason: format!("fstatfs failed: {}", e),
-    })?;
-
-    verify(&stat, &fs_stat)
-}
+/// Path to the PTY master device
+const PTMX_PATH: &[u8] = b"/dev/ptmx";
 
 /// Verify that the ptmx handle points to a real /dev/pts/ptmx device.
 ///
@@ -195,19 +179,18 @@ fn verify_ptmx_handle(ptmx: &OwnedFd) -> Result<()> {
     verify_inode(ptmx, |stat, fs_stat| {
         // 1. Check filesystem type is devpts
         if fs_stat.filesystem_type() != FsType(DEVPTS_SUPER_MAGIC) {
-            return Err(TTYError::InvalidPty {
-                reason: format!(
-                    "ptmx handle is not on a real devpts mount: super magic is {:#x}",
-                    fs_stat.filesystem_type().0
-                ),
-            });
+            return Err(VerifyInodeError::Verification(format!(
+                "ptmx handle is not on a real devpts mount: super magic is {:#x}",
+                fs_stat.filesystem_type().0
+            )));
         }
 
         // 2. Check inode number
         if stat.st_ino != PTMX_INO {
-            return Err(TTYError::InvalidPty {
-                reason: format!("ptmx handle has wrong inode number: {}", stat.st_ino),
-            });
+            return Err(VerifyInodeError::Verification(format!(
+                "ptmx handle has wrong inode number: {}",
+                stat.st_ino
+            )));
         }
 
         // 3. Check it's a character device with correct major:minor
@@ -216,14 +199,12 @@ fn verify_ptmx_handle(ptmx: &OwnedFd) -> Result<()> {
         let dev_minor = minor(stat.st_rdev);
 
         if mode_type != SFlag::S_IFCHR || dev_major != PTMX_MAJOR || dev_minor != PTMX_MINOR {
-            return Err(TTYError::InvalidPty {
-                reason: format!(
-                    "ptmx handle is not a real char ptmx device: ftype {:#x} {}:{}",
-                    mode_type.bits(),
-                    dev_major,
-                    dev_minor
-                ),
-            });
+            return Err(VerifyInodeError::Verification(format!(
+                "ptmx handle is not a real char ptmx device: ftype {:#x} {}:{}",
+                mode_type.bits(),
+                dev_major,
+                dev_minor
+            )));
         }
 
         tracing::debug!(
@@ -232,6 +213,9 @@ fn verify_ptmx_handle(ptmx: &OwnedFd) -> Result<()> {
             "verified ptmx handle"
         );
         Ok(())
+    })
+    .map_err(|e| TTYError::InvalidPty {
+        reason: e.to_string(),
     })
 }
 
@@ -246,12 +230,10 @@ fn verify_pty_slave(slave: &OwnedFd) -> Result<()> {
     verify_inode(slave, |stat, fs_stat| {
         // 1. Check filesystem type is devpts
         if fs_stat.filesystem_type() != FsType(DEVPTS_SUPER_MAGIC) {
-            return Err(TTYError::InvalidPty {
-                reason: format!(
-                    "slave handle is not on a real devpts mount: super magic is {:#x}",
-                    fs_stat.filesystem_type().0
-                ),
-            });
+            return Err(VerifyInodeError::Verification(format!(
+                "slave handle is not on a real devpts mount: super magic is {:#x}",
+                fs_stat.filesystem_type().0
+            )));
         }
 
         // 2. Check it's a character device with PTY slave major number
@@ -259,13 +241,11 @@ fn verify_pty_slave(slave: &OwnedFd) -> Result<()> {
         let dev_major = major(stat.st_rdev);
 
         if mode_type != SFlag::S_IFCHR || dev_major != PTY_SLAVE_MAJOR {
-            return Err(TTYError::InvalidPty {
-                reason: format!(
-                    "slave handle is not a real PTY slave device: ftype {:#x} major {}",
-                    mode_type.bits(),
-                    dev_major
-                ),
-            });
+            return Err(VerifyInodeError::Verification(format!(
+                "slave handle is not a real PTY slave device: ftype {:#x} major {}",
+                mode_type.bits(),
+                dev_major
+            )));
         }
 
         tracing::debug!(
@@ -275,6 +255,9 @@ fn verify_pty_slave(slave: &OwnedFd) -> Result<()> {
             "verified PTY slave"
         );
         Ok(())
+    })
+    .map_err(|e| TTYError::InvalidPty {
+        reason: e.to_string(),
     })
 }
 
@@ -322,7 +305,7 @@ pub fn setup_console(syscall: &dyn Syscall, console_fd: RawFd, mount: bool) -> R
     }
 
     // Send PTY master to console socket
-    let pty_name: &[u8] = b"/dev/ptmx";
+    let pty_name: &[u8] = PTMX_PATH;
     let iov = [IoSlice::new(pty_name)];
     let fds = [master.as_raw_fd()];
     let cmsg = socket::ControlMessage::ScmRights(&fds);
