@@ -8,7 +8,7 @@ use nix::sys::signal;
 use nix::unistd::Pid;
 use oci_spec::runtime::{Hook, State as OciState};
 
-use crate::container::{Container, StateConversionError};
+use crate::container::{State, StateConversionError};
 use crate::utils;
 
 #[derive(Debug, thiserror::Error)]
@@ -35,16 +35,12 @@ type Result<T> = std::result::Result<T, HookError>;
 
 pub fn run_hooks(
     hooks: Option<&Vec<Hook>>,
-    container: Option<&Container>, // TODO: instead of passing the container, we should pass only the state.
+    state: Option<State>,
     // TODO: Remove the following parameters. To comply with the OCI State, hooks should only depend on structures defined in oci-spec-rs. Cleaning these up ensures proper functional isolation.
     cwd: Option<&Path>,
     pid: Option<Pid>,
 ) -> Result<()> {
-    // TODO: Avoid clone() by passing State by value to run_hooks instead of &Container.
-    let base_state = container
-        .ok_or(HookError::MissingContainerState)?
-        .state
-        .clone();
+    let base_state = state.ok_or(HookError::MissingContainerState)?;
 
     // High-level container runtimes use OCI state to pass the container state to the hooks.
     // So we need to convert the container state to OCI state.
@@ -173,6 +169,7 @@ mod test {
     use serial_test::serial;
 
     use super::*;
+    use crate::container::Container;
 
     fn is_command_in_path(program: &str) -> bool {
         if let Ok(path) = env::var("PATH") {
@@ -198,7 +195,8 @@ mod test {
     fn test_run_hook() -> Result<()> {
         {
             let default_container: Container = Default::default();
-            run_hooks(None, Some(&default_container), None, None).context("Failed simple test")?;
+            run_hooks(None, Some(default_container.state.clone()), None, None)
+                .context("Failed simple test")?;
         }
 
         {
@@ -207,8 +205,13 @@ mod test {
 
             let hook = HookBuilder::default().path("true").build()?;
             let hooks = Some(vec![hook]);
-            run_hooks(hooks.as_ref(), Some(&default_container), None, None)
-                .context("Failed true")?;
+            run_hooks(
+                hooks.as_ref(),
+                Some(default_container.state.clone()),
+                None,
+                None,
+            )
+            .context("Failed true")?;
         }
 
         {
@@ -228,8 +231,13 @@ mod test {
                 .env(vec![String::from("key=value")])
                 .build()?;
             let hooks = Some(vec![hook]);
-            run_hooks(hooks.as_ref(), Some(&default_container), None, None)
-                .context("Failed printenv test")?;
+            run_hooks(
+                hooks.as_ref(),
+                Some(default_container.state.clone()),
+                None,
+                None,
+            )
+            .context("Failed printenv test")?;
         }
 
         {
@@ -249,7 +257,7 @@ mod test {
             let hooks = Some(vec![hook]);
             run_hooks(
                 hooks.as_ref(),
-                Some(&default_container),
+                Some(default_container.state.clone()),
                 Some(tmp.path()),
                 None,
             )
@@ -271,7 +279,7 @@ mod test {
             let hooks = Some(vec![hook]);
             run_hooks(
                 hooks.as_ref(),
-                Some(&default_container),
+                Some(default_container.state.clone()),
                 None,
                 Some(expected_pid),
             )
@@ -298,7 +306,12 @@ mod test {
             .timeout(1)
             .build()?;
         let hooks = Some(vec![hook]);
-        match run_hooks(hooks.as_ref(), Some(&default_container), None, None) {
+        match run_hooks(
+            hooks.as_ref(),
+            Some(default_container.state.clone()),
+            None,
+            None,
+        ) {
             Ok(_) => {
                 bail!(
                     "The test expects the hook to error out with timeout. Should not execute cleanly"

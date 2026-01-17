@@ -108,11 +108,16 @@ pub fn container_init_process(
 
             // create_container hook needs to be called after the namespace setup, but
             // before pivot_root is called. This runs in the container namespaces.
-            hooks::run_hooks(hooks.create_container().as_ref(), ctx.container, None, None)
-                .map_err(|err| {
-                    tracing::error!(?err, "failed to run create container hooks");
-                    InitProcessError::Hooks(err)
-                })?;
+            hooks::run_hooks(
+                hooks.create_container().as_ref(),
+                ctx.container.map(|c| c.state.clone()),
+                None,
+                None,
+            )
+            .map_err(|err| {
+                tracing::error!(?err, "failed to run create container hooks");
+                InitProcessError::Hooks(err)
+            })?;
         }
 
         // Entering into the rootfs jail. If mount namespace is specified, then
@@ -425,16 +430,20 @@ pub fn container_init_process(
         err
     })?;
 
-    // create_container hook needs to be called after the namespace setup, but
+    // start_container hook needs to be called after the namespace setup, but
     // before pivot_root is called. This runs in the container namespaces.
     if matches!(args.container_type, ContainerType::InitContainer) {
         if let Some(hooks) = ctx.hooks {
-            hooks::run_hooks(hooks.start_container().as_ref(), ctx.container, None, None).map_err(
-                |err| {
-                    tracing::error!(?err, "failed to run start container hooks");
-                    err
-                },
-            )?;
+            hooks::run_hooks(
+                hooks.start_container().as_ref(),
+                ctx.container.map(|c| c.state.clone()),
+                None,
+                None,
+            )
+            .map_err(|err| {
+                tracing::error!(?err, "failed to run start container hooks");
+                err
+            })?;
         }
     }
 
