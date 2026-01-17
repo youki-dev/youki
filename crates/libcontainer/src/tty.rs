@@ -296,12 +296,7 @@ pub fn setup_console(syscall: &dyn Syscall, console_fd: RawFd, mount: bool) -> R
 
     // Mount PTY slave on /dev/console (only for init container)
     if mount {
-        if let Err(err) = mount_console(syscall, slave) {
-            tracing::warn!(
-                ?err,
-                "failed to mount /dev/console, CRIU checkpoint may not work"
-            );
-        }
+        mount_console(syscall, slave)?;
     }
 
     // Send PTY master to console socket
@@ -479,7 +474,7 @@ mod tests {
         dup2(old_stdout, StdIO::Stdout.into())?;
         dup2(old_stderr, StdIO::Stderr.into())?;
 
-        assert!(status.is_ok());
+        assert!(status.is_ok(), "setup_console failed: {:?}", status);
 
         Ok(())
     }
