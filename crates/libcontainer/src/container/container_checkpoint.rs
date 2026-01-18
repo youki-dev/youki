@@ -108,6 +108,14 @@ impl Container {
         // keep the FD open until CRIU uses it.
         let work_dir: File;
         if let Some(wp) = &opts.work_path {
+            // Create work directory if it doesn't exist.
+            // Like crun, allow EEXIST (directory may already exist).
+            if let Err(err) = create_dir(wp) {
+                if err.kind() != ErrorKind::AlreadyExists {
+                    tracing::error!(path = ?wp, ?err, "failed to create work directory");
+                    return Err(LibcontainerError::OtherIO(err));
+                }
+            }
             work_dir = File::open(wp).map_err(LibcontainerError::OtherIO)?;
             criu.set_work_dir_fd(work_dir.as_raw_fd());
         }
