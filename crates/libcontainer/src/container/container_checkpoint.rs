@@ -1,5 +1,5 @@
-use std::fs::{self, File};
-use std::io::Write;
+use std::fs::{File, create_dir, read_link};
+use std::io::{ErrorKind, Write};
 use std::os::unix::io::AsRawFd;
 
 use libcgroups::common::CgroupSetup::{Hybrid, Legacy};
@@ -25,11 +25,20 @@ impl Container {
         self.refresh_status()?;
 
         // can_pause() checks if the container is running. That also works for
-        // checkpoitning. is_running() would make more sense here, but let's
+        // checkpointing. is_running() would make more sense here, but let's
         // just reuse existing functions.
         if !self.can_pause() {
             tracing::error!(status = ?self.status(), id = ?self.id(), "cannot checkpoint container because it is not running");
             return Err(LibcontainerError::IncorrectStatus);
+        }
+
+        // Create checkpoint image directory if it doesn't exist.
+        // Like crun, allow EEXIST (directory may already exist).
+        if let Err(err) = create_dir(&opts.image_path) {
+            if err.kind() != ErrorKind::AlreadyExists {
+                tracing::error!(path = ?opts.image_path, ?err, "failed to create checkpoint directory");
+                return Err(LibcontainerError::OtherIO(err));
+            }
         }
 
         let mut criu = rust_criu::Criu::new().map_err(|e| {
@@ -89,17 +98,17 @@ impl Container {
             }
         }
 
-        let directory = std::fs::File::open(&opts.image_path).map_err(|err| {
-            tracing::error!(path = ?opts.image_path, ?err, "failed to open criu image directory");
+        let directory = File::open(&opts.image_path).map_err(|err| {
+            tracing::error!(path = ?opts.image_path, ?err, "failed to open checkpoint directory");
             LibcontainerError::OtherIO(err)
         })?;
         criu.set_images_dir_fd(directory.as_raw_fd());
 
         // It seems to be necessary to be defined outside of 'if' to
         // keep the FD open until CRIU uses it.
-        let work_dir: std::fs::File;
+        let work_dir: File;
         if let Some(wp) = &opts.work_path {
-            work_dir = std::fs::File::open(wp).map_err(LibcontainerError::OtherIO)?;
+            work_dir = File::open(wp).map_err(LibcontainerError::OtherIO)?;
             criu.set_work_dir_fd(work_dir.as_raw_fd());
         }
 
@@ -113,7 +122,7 @@ impl Container {
         // Remember original stdin, stdout, stderr for container restore.
         let mut descriptors = Vec::new();
         for n in 0..3 {
-            let link_path = match fs::read_link(format!("/proc/{pid}/fd/{n}")) {
+            let link_path = match read_link(format!("/proc/{pid}/fd/{n}")) {
                 // it should not have any non utf-8 or non os safe path,
                 // as we are reading from os , so ok to unwrap
                 Ok(lp) => lp.into_os_string().into_string().unwrap(),
