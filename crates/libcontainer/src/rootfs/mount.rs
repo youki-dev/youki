@@ -1541,6 +1541,8 @@ mod tests {
             flags,
             data: vec![],
             rec_attr: None,
+            apply_idmap: false,
+            apply_recursive_idmap: false,
         };
         mounter
             .mount_cgroup_v2(&spec_cgroup_mount, &mount_opts, &mount_option_config)

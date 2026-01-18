@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::network::cidr::CidrAddress;
+use oci_spec::runtime::LinuxIdMapping;
 
 /// Used as a wrapper for messages to be sent between child and parent processes
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -16,6 +17,8 @@ pub enum Message {
     SeccompNotifyDone,
     SetupNetworkDeviceReady,
     MoveNetworkDevice(HashMap<String, Vec<CidrAddress>>),
+    MountFdPlease(MountMsg),
+    MountFdReply,
     ExecFailed(String),
     OtherError(String),
     HookRequest,
@@ -35,8 +38,24 @@ impl fmt::Display for Message {
             Message::SeccompNotifyDone => write!(f, "SeccompNotifyDone"),
             Message::HookRequest => write!(f, "HookRequest"),
             Message::HookDone => write!(f, "HookDone"),
+            Message::MountFdPlease(_) => write!(f, "MountFdPlease"),
+            Message::MountFdReply => write!(f, "MountFdReply"),
             Message::ExecFailed(s) => write!(f, "ExecFailed({})", s),
             Message::OtherError(s) => write!(f, "OtherError({})", s),
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MountMsg {
+    pub source: String,
+    pub idmap: Option<MountIdMap>,
+    pub recursive: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MountIdMap {
+    pub uid_mappings: Vec<LinuxIdMapping>,
+    pub gid_mappings: Vec<LinuxIdMapping>,
+    pub recursive: bool,
 }

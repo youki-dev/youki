@@ -1,11 +1,11 @@
 use std::collections::HashMap;
-use std::os::unix::prelude::{AsRawFd, RawFd};
+use std::os::unix::prelude::{AsRawFd, OwnedFd, RawFd, FromRawFd};
 
 use nix::unistd::Pid;
 
 use crate::channel::{Receiver, Sender, channel};
 use crate::network::cidr::CidrAddress;
-use crate::process::message::Message;
+use crate::process::message::{Message, MountMsg};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ChannelError {
@@ -28,6 +28,8 @@ pub enum ChannelError {
     ExecError(String),
     #[error("intermediate process error {0}")]
     OtherError(String),
+    #[error("missing fd from mount request")]
+    MissingMountFds,
 }
 
 // Channel Design
@@ -63,6 +65,18 @@ impl MainSender {
     pub fn seccomp_notify_request(&mut self, fd: RawFd) -> Result<(), ChannelError> {
         self.sender
             .send_fds(Message::SeccompNotify, &[fd.as_raw_fd()])?;
+
+        Ok(())
+    }
+
+    pub fn request_mount_fd(&mut self, msg: MountMsg) -> Result<(), ChannelError> {
+        self.sender.send(Message::MountFdPlease(msg))?;
+
+        Ok(())
+    }
+
+    pub fn send_mount_fd_reply(&mut self, fd RawFd) -> Result<(), ChannelError> {
+        self.sender.send_fds(Message::MountFdReply, &[fd])?;
 
         Ok(())
     }
@@ -151,6 +165,27 @@ impl MainReceiver {
                 expected: Message::WriteMapping,
                 received: msg,
             }),
+        }
+    }
+
+    pub fn wait_for_mount_fd_request(&mut self) -> Result<MountMsg, ChannelError> {
+        let msg = self
+            .receiver.recv().
+            map_err(|err| ChannelError::ReceiveError {
+                msg: "waiting for mount fd request".to_string(),
+                source: err,
+            })?;
+
+        match msg {
+            Message::MountFdPlease(req) => Ok(req),
+            msg => Err(ChannelError::UnexpectedMessage {
+                expected: Message::MountFdPlease(MountMsg {
+                    source: String::new(),
+                    idmap: None,
+                    recursive: false,
+                }), 
+                received: msg,
+            })
         }
     }
 
@@ -340,6 +375,13 @@ impl InitSender {
 
         Ok(())
     }
+
+    pub fn send_mount_fd_reply(&mut self, fd: RawFd) -> Result<(), ChannelError> {
+        self.sender.send_fds(Message::MountFdReply, &[fd])?;
+
+        Ok(())
+    }
+
 }
 
 pub struct InitReceiver {
@@ -405,6 +447,30 @@ impl InitReceiver {
         self.receiver.close()?;
 
         Ok(())
+    }
+
+    pub fn wait_for_mount_fd_reply(&mut self) -> Result<OwnedFd, ChannelError> {
+        let (msg, fds) = self
+            .receiver
+            .recv_with_fds::<[RawFd; 1]>()
+            .map_err(|err| ChannelError::ReceiveError {
+                msg: "waiting for mount fd reply".to_string(),
+                source: err,
+            })?;
+
+        match msg {
+            Message::MountFdReply => {
+                let fd = match fds {
+                    Some([fd]) => fd,
+                    _ => return Err(ChannelError::MissingMountFds),
+                };
+                Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+            }
+            msg => Err(ChannelError::UnexpectedMessage {
+                expected: Message::MountFdReply,
+                received: msg,
+            }),
+        }
     }
 }
 
