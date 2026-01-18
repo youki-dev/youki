@@ -247,25 +247,25 @@ pub enum StateConversionError {
     InvalidStatus(ContainerStatus),
 }
 
-/// Convert internal State to OCI-compliant State (by value, no cloning).
+/// Convert internal State to OCI-compliant State (by reference, cloning necessary fields).
 ///
 /// Based on runc's implementation:
 /// https://github.com/opencontainers/runc/blob/v2.2.1/libcontainer/container_linux.go#L961
-impl TryFrom<State> for OciState {
+impl TryFrom<&State> for OciState {
     type Error = StateConversionError;
 
-    fn try_from(state: State) -> std::result::Result<Self, Self::Error> {
+    fn try_from(state: &State) -> std::result::Result<Self, Self::Error> {
         let status = OciContainerState::try_from(state.status)?;
 
         let mut builder = OciStateBuilder::default()
-            .version(state.oci_version)
-            .id(state.id)
+            .version(state.oci_version.clone())
+            .id(state.id.clone())
             .status(status)
-            .bundle(state.bundle);
+            .bundle(state.bundle.clone());
 
         // Preserve None vs empty map distinction per OCI spec
-        if let Some(annotations) = state.annotations {
-            builder = builder.annotations(annotations);
+        if let Some(annotations) = &state.annotations {
+            builder = builder.annotations(annotations.clone());
         }
         if let Some(pid) = state.pid {
             builder = builder.pid(pid);

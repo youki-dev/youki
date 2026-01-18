@@ -35,7 +35,7 @@ type Result<T> = std::result::Result<T, HookError>;
 
 pub fn run_hooks(
     hooks: Option<&Vec<Hook>>,
-    state: Option<State>,
+    state: Option<&State>,
     // TODO: Remove the following parameters. To comply with the OCI State, hooks should only depend on structures defined in oci-spec-rs. Cleaning these up ensures proper functional isolation.
     cwd: Option<&Path>,
     pid: Option<Pid>,
@@ -195,7 +195,7 @@ mod test {
     fn test_run_hook() -> Result<()> {
         {
             let default_container: Container = Default::default();
-            run_hooks(None, Some(default_container.state.clone()), None, None)
+            run_hooks(None, Some(&default_container.state), None, None)
                 .context("Failed simple test")?;
         }
 
@@ -205,13 +205,8 @@ mod test {
 
             let hook = HookBuilder::default().path("true").build()?;
             let hooks = Some(vec![hook]);
-            run_hooks(
-                hooks.as_ref(),
-                Some(default_container.state.clone()),
-                None,
-                None,
-            )
-            .context("Failed true")?;
+            run_hooks(hooks.as_ref(), Some(&default_container.state), None, None)
+                .context("Failed true")?;
         }
 
         {
@@ -231,13 +226,8 @@ mod test {
                 .env(vec![String::from("key=value")])
                 .build()?;
             let hooks = Some(vec![hook]);
-            run_hooks(
-                hooks.as_ref(),
-                Some(default_container.state.clone()),
-                None,
-                None,
-            )
-            .context("Failed printenv test")?;
+            run_hooks(hooks.as_ref(), Some(&default_container.state), None, None)
+                .context("Failed printenv test")?;
         }
 
         {
@@ -257,7 +247,7 @@ mod test {
             let hooks = Some(vec![hook]);
             run_hooks(
                 hooks.as_ref(),
-                Some(default_container.state.clone()),
+                Some(&default_container.state),
                 Some(tmp.path()),
                 None,
             )
@@ -279,7 +269,7 @@ mod test {
             let hooks = Some(vec![hook]);
             run_hooks(
                 hooks.as_ref(),
-                Some(default_container.state.clone()),
+                Some(&default_container.state),
                 None,
                 Some(expected_pid),
             )
@@ -306,12 +296,7 @@ mod test {
             .timeout(1)
             .build()?;
         let hooks = Some(vec![hook]);
-        match run_hooks(
-            hooks.as_ref(),
-            Some(default_container.state.clone()),
-            None,
-            None,
-        ) {
+        match run_hooks(hooks.as_ref(), Some(&default_container.state), None, None) {
             Ok(_) => {
                 bail!(
                     "The test expects the hook to error out with timeout. Should not execute cleanly"

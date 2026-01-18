@@ -158,7 +158,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
             if let Some(container_for_hooks) = &container_args.container {
                 hooks::run_hooks(
                     hooks.prestart().as_ref(),
-                    Some(container_for_hooks.state.clone()),
+                    Some(&container_for_hooks.state),
                     None,
                     Some(init_pid),
                 )
@@ -169,7 +169,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
 
                 hooks::run_hooks(
                     hooks.create_runtime().as_ref(),
-                    Some(container_for_hooks.state.clone()),
+                    Some(&container_for_hooks.state),
                     None,
                     Some(init_pid),
                 )

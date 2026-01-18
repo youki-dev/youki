@@ -110,7 +110,7 @@ pub fn container_init_process(
             // before pivot_root is called. This runs in the container namespaces.
             hooks::run_hooks(
                 hooks.create_container().as_ref(),
-                ctx.container.map(|c| c.state.clone()),
+                ctx.container.map(|c| &c.state),
                 None,
                 None,
             )
@@ -436,7 +436,7 @@ pub fn container_init_process(
         if let Some(hooks) = ctx.hooks {
             hooks::run_hooks(
                 hooks.start_container().as_ref(),
-                ctx.container.map(|c| c.state.clone()),
+                ctx.container.map(|c| &c.state),
                 None,
                 None,
             )

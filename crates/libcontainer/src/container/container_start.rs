@@ -56,7 +56,7 @@ impl Container {
         if let Some(hooks) = config.hooks.as_ref() {
             hooks::run_hooks(
                 hooks.poststart().as_ref(),
-                Some(self.state.clone()),
+                Some(&self.state),
                 Some(&self.root),
                 None,
             )
