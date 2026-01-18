@@ -166,6 +166,8 @@ const DEVPTS_SUPER_MAGIC: u64 = 0x1cd1;
 const DEVPTS_SUPER_MAGIC: i64 = 0x1cd1;
 /// Path to the PTY master device
 const PTMX_PATH: &[u8] = b"/dev/ptmx";
+/// Path to the console device
+const CONSOLE_PATH: &str = "/dev/console";
 
 /// Verify that the ptmx handle points to a real /dev/pts/ptmx device.
 ///
@@ -333,13 +335,11 @@ pub fn setup_console(syscall: &dyn Syscall, console_fd: RawFd, mount: bool) -> R
 fn mount_console(syscall: &dyn Syscall, slave: &OwnedFd) -> Result<()> {
     use std::fs::OpenOptions;
 
-    // After pivot_root, the target is /dev/console
-    let console_path = Path::new("/dev/console");
+    let console_path = Path::new(CONSOLE_PATH);
 
     tracing::debug!(
         slave_fd = slave.as_raw_fd(),
-        ?console_path,
-        "mounting PTY on /dev/console"
+        "mounting PTY on {CONSOLE_PATH}"
     );
 
     // Create /dev/console mount target.
@@ -353,7 +353,7 @@ fn mount_console(syscall: &dyn Syscall, slave: &OwnedFd) -> Result<()> {
         .mode(0o666)
         .open(console_path)
         .map_err(|err| {
-            tracing::error!(?err, ?console_path, "failed to create /dev/console");
+            tracing::error!(?err, "failed to create {CONSOLE_PATH}");
             TTYError::CreateDevConsole { source: err }
         })?;
 
@@ -363,16 +363,14 @@ fn mount_console(syscall: &dyn Syscall, slave: &OwnedFd) -> Result<()> {
         tracing::error!(
             ?err,
             slave_fd = slave.as_raw_fd(),
-            ?console_path,
-            "failed to bind mount pty on /dev/console"
+            "failed to bind mount pty on {CONSOLE_PATH}"
         );
         TTYError::MountConsole { source: err }
     })?;
 
     tracing::debug!(
         slave_fd = slave.as_raw_fd(),
-        ?console_path,
-        "mounted PTY on /dev/console"
+        "mounted PTY on {CONSOLE_PATH}"
     );
     Ok(())
 }
