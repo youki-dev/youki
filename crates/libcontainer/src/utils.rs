@@ -2,13 +2,15 @@
 
 use std::collections::HashMap;
 use std::fs::{self, DirBuilder, File};
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::linux::fs::MetadataExt;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use libc::IFNAMSIZ;
-use nix::sys::stat::Mode;
+use nix::sys::stat::{Mode, fstat};
+use nix::sys::statfs::{Statfs, fstatfs};
 use nix::unistd::{Uid, User};
 use oci_spec::runtime::{LinuxNamespaceType, Spec};
 
@@ -186,6 +188,37 @@ pub enum MkdirWithModeError {
     Io(#[from] std::io::Error),
     #[error("metadata doesn't match the expected attributes")]
     MetadataMismatch,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum VerifyInodeError {
+    #[error("stat operation failed")]
+    Stat(#[from] nix::Error),
+    #[error("{0}")]
+    Verification(String),
+}
+
+/// Verify file descriptor using stat and statfs, similar to runc's VerifyInode.
+///
+/// This is a helper function that gets stat/statfs for a file descriptor and
+/// calls the provided verification function with the results.
+///
+/// # Arguments
+/// * `fd` - The file descriptor to verify
+/// * `verify` - A closure that receives stat and statfs results and performs verification
+///
+/// # Returns
+/// Returns `Ok(())` if verification succeeds, or an error if stat/statfs fails
+/// or the verification function returns an error.
+///
+/// Ref: <https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/system/linux.go>
+pub fn verify_inode<F>(fd: &OwnedFd, verify: F) -> Result<(), VerifyInodeError>
+where
+    F: FnOnce(&libc::stat, &Statfs) -> Result<(), VerifyInodeError>,
+{
+    let stat = fstat(fd.as_raw_fd())?;
+    let fs_stat = fstatfs(fd)?;
+    verify(&stat, &fs_stat)
 }
 
 /// Creates the specified directory and all parent directories with the specified mode. Ensures

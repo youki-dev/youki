@@ -1700,8 +1700,8 @@
 - fix a memory subsystem by @utam0k in https://github.com/containers/youki/pull/36
 - Add comments to main.rs by @YJDoc2 in https://github.com/containers/youki/pull/38
 - Update Rust-Analyzer in Dockerfile by @nalpine in https://github.com/containers/youki/pull/40
-- get oci_spec in seperate crate by @ferrell-code in https://github.com/containers/youki/pull/42
-- extract the integration tests writen in the ci file as a script file. by @utam0k in https://github.com/containers/youki/pull/37
+- get oci_spec in separate crate by @ferrell-code in https://github.com/containers/youki/pull/42
+- extract the integration tests written in the ci file as a script file. by @utam0k in https://github.com/containers/youki/pull/37
 - revert asynchronous devices mounting. by @utam0k in https://github.com/containers/youki/pull/41
 - organize the logger. by @utam0k in https://github.com/containers/youki/pull/47
 - add default handling when there isn't cgroup path in config.json. by @utam0k in https://github.com/containers/youki/pull/45
@@ -1754,7 +1754,7 @@
 - improve build time in CI by @utam0k in https://github.com/containers/youki/pull/97
 - split the subcommands into their own files. by @utam0k in https://github.com/containers/youki/pull/110
 - Update README.md by @bkochendorfer in https://github.com/containers/youki/pull/112
-- Seperate adding tasks to cgroups and applying resource restrictions by @Furisto in https://github.com/containers/youki/pull/111
+- Separate adding tasks to cgroups and applying resource restrictions by @Furisto in https://github.com/containers/youki/pull/111
 - Require only requested cgroups to be present by @Furisto in https://github.com/containers/youki/pull/114
 - force delete container if it is running or created by @bobsongplus in https://github.com/containers/youki/pull/115
 - add comments in intergration_test.sh about test case that runc no paas by @bobsongplus in https://github.com/containers/youki/pull/116
