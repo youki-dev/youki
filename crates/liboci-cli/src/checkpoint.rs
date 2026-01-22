@@ -36,7 +36,7 @@ pub struct Checkpoint {
     /// TODO: Use lazy migration mechanism
     /// #[clap(long)]
     /// pub lazy_pages: bool,
-    /// TODO: Pass a file descriptor fd to criu
+    /// TODO: Pass a file descriptor fd to criu. Is u32 the right type?
     /// #[clap(long)]
     /// pub status_fd: Option<u32>,
     /// TODO: Start a page server at the given URL
