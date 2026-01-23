@@ -398,12 +398,7 @@ pub fn container_init_process(
     }
 
     // add HOME into envs if not exists
-    if !ctx.envs.contains_key("HOME") {
-        if let Some(dir_home) = utils::get_user_home(ctx.process.user().uid()) {
-            ctx.envs
-                .insert("HOME".to_owned(), dir_home.to_string_lossy().to_string());
-        }
-    }
+    set_home_env_if_not_exists(&mut ctx.envs, ctx.process.user().uid().into());
 
     args.executor.validate(ctx.spec)?;
     args.executor.setup_envs(ctx.envs)?;
@@ -1013,14 +1008,33 @@ fn verify_cwd() -> Result<()> {
     Ok(())
 }
 
+/// Set the HOME environment variable if it is not already set or is empty.
+fn set_home_env_if_not_exists(envs: &mut HashMap<String, String>, uid: Uid) {
+    if envs.get("HOME").is_none_or(|v| v.is_empty()) {
+        if let Some(dir_home) = utils::get_user_home(uid.into()) {
+            set_home_from_path(envs, &dir_home);
+        }
+    }
+}
+
+/// Set the HOME environment variable if dir_home string is valid UTF-8
+fn set_home_from_path(envs: &mut HashMap<String, String>, dir_home: &Path) {
+    if let Some(home_str) = dir_home.to_str() {
+        envs.insert("HOME".to_owned(), home_str.to_owned());
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
     use std::fs;
-    use std::path::Path;
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::{Path, PathBuf};
 
     use anyhow::Result;
     #[cfg(feature = "libseccomp")]
     use nix::unistd;
+    use nix::unistd::{Uid, User as NixUser};
     use oci_spec::runtime::{LinuxNamespaceBuilder, SpecBuilder, UserBuilder};
     #[cfg(feature = "libseccomp")]
     use serial_test::serial;
@@ -1328,5 +1342,102 @@ mod tests {
         };
         let set_io_prioritys = test_command.get_io_priority_args();
         assert_eq!(set_io_prioritys[0], want_io_priority);
+    }
+
+    #[test]
+    fn test_set_home_env_if_not_exists_already_exists() {
+        let mut envs = HashMap::new();
+        envs.insert("HOME".to_owned(), "/existing/home".to_owned());
+
+        set_home_env_if_not_exists(&mut envs, Uid::from_raw(0));
+        assert_eq!(envs.get("HOME"), Some(&"/existing/home".to_string()));
+    }
+
+    #[test]
+    fn test_set_home_env_if_not_exists_already_exists_non_root() {
+        let mut envs = HashMap::new();
+        envs.insert("HOME".to_owned(), "/existing/home".to_owned());
+
+        set_home_env_if_not_exists(&mut envs, Uid::current());
+        assert_eq!(envs.get("HOME"), Some(&"/existing/home".to_string()));
+    }
+
+    #[test]
+    fn test_set_home_env_if_not_exists_already_exists_but_empty_value() {
+        let mut envs = HashMap::new();
+        envs.insert("HOME".to_owned(), "".to_owned());
+
+        set_home_env_if_not_exists(&mut envs, Uid::from_raw(0));
+        assert_eq!(envs.get("HOME"), Some(&"/root".to_string()));
+    }
+
+    #[test]
+    fn test_set_home_env_if_not_exists_already_exists_but_empty_value_non_root() {
+        let mut envs = HashMap::new();
+        envs.insert("HOME".to_owned(), "".to_owned());
+
+        // Make TEST_NON_ROOT_UID configurable to run tests on GitHub Actions runners.
+        let test_uid = env::var("TEST_NON_ROOT_UID")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .map(Uid::from_raw)
+            .unwrap_or_else(Uid::current);
+        let expected = NixUser::from_uid(test_uid)
+            .ok()
+            .flatten()
+            .and_then(|user| user.dir.to_str().map(|s| s.to_owned()))
+            .unwrap_or_default();
+
+        set_home_env_if_not_exists(&mut envs, test_uid);
+        assert_eq!(envs.get("HOME"), Some(&expected));
+    }
+
+    #[test]
+    fn test_set_home_env_if_not_exists_not_set() {
+        let mut envs = HashMap::new();
+
+        set_home_env_if_not_exists(&mut envs, Uid::from_raw(0));
+        assert_eq!(envs.get("HOME"), Some(&"/root".to_string()));
+    }
+
+    #[test]
+    fn test_set_home_env_if_not_exists_not_set_non_root() {
+        let mut envs = HashMap::new();
+
+        // Make TEST_NON_ROOT_UID configurable to run tests on GitHub Actions runners.
+        let test_uid = env::var("TEST_NON_ROOT_UID")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .map(Uid::from_raw)
+            .unwrap_or_else(Uid::current);
+        let expected = NixUser::from_uid(test_uid)
+            .ok()
+            .flatten()
+            .and_then(|user| user.dir.to_str().map(|s| s.to_owned()))
+            .unwrap_or_default();
+
+        set_home_env_if_not_exists(&mut envs, test_uid);
+        assert_eq!(envs.get("HOME"), Some(&expected));
+    }
+
+    #[test]
+    fn test_set_home_from_path_valid_utf8() {
+        let mut envs = HashMap::new();
+        let valid_path = PathBuf::from("/home/user");
+
+        set_home_from_path(&mut envs, &valid_path);
+        assert_eq!(envs.get("HOME"), Some(&"/home/user".to_string()));
+    }
+
+    #[test]
+    fn test_set_home_from_path_invalid_utf8() {
+        let mut envs = HashMap::new();
+
+        let invalid_bytes = b"/home/user/\xFF\xFE";
+        let invalid_path = PathBuf::from(OsStr::from_bytes(invalid_bytes));
+        assert!(invalid_path.to_str().is_none());
+
+        set_home_from_path(&mut envs, &invalid_path);
+        assert_eq!(envs.get("HOME"), None);
     }
 }

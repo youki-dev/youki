@@ -51,12 +51,12 @@ regex = { version = "1.12.2", default-features = false, features = [
     "std",
     "unicode-perl",
 ] }
-thiserror = "2.0.17"
+thiserror = "2.0.18"
 tracing = { version = "0.1.44", features = ["attributes"] }
 safe-path = "0.1.0"
 nc = "0.9.7"
 netlink-packet-route = "0.26.0"
-netlink-sys = "0.8.5"
+netlink-sys = "0.8.8"
 netlink-packet-core = "0.8.1"
 pathrs = "0.2.2"
 
