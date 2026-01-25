@@ -7,7 +7,6 @@ use nix::unistd;
 use oci_spec::runtime;
 
 use super::channel;
-use crate::container::ContainerProcessState;
 use crate::seccomp;
 
 #[derive(Debug, thiserror::Error)]
@@ -26,7 +25,7 @@ type Result<T> = std::result::Result<T, SeccompListenerError>;
 
 pub fn sync_seccomp(
     seccomp: &runtime::LinuxSeccomp,
-    state: &ContainerProcessState,
+    state: &runtime::ContainerProcessState,
     init_sender: &mut channel::InitSender,
     main_receiver: &mut channel::MainReceiver,
 ) -> Result<()> {
@@ -115,7 +114,6 @@ mod tests {
     use serial_test::serial;
 
     use super::*;
-    use crate::container::ContainerProcessState;
     use crate::process::channel;
 
     #[test]
@@ -144,7 +142,24 @@ mod tests {
         let socket_path = tmp_dir.path().join("socket_file.sock");
         let socket_path_seccomp_th = socket_path.clone();
 
-        let state = ContainerProcessState::default();
+        let state = runtime::ContainerProcessStateBuilder::default()
+            .version("1.0.0".to_string())
+            .fds(vec!["seccompFd".to_string()])
+            .pid(1234)
+            .metadata("test".to_string())
+            .state(
+                runtime::StateBuilder::default()
+                    .version("1.0.0".to_string())
+                    .id("test-container".to_string())
+                    .status(runtime::ContainerState::Creating)
+                    .pid(1234)
+                    .bundle(std::path::PathBuf::from("/tmp/bundle"))
+                    .annotations(std::collections::HashMap::new())
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
         let want = serde_json::to_string(&state)?;
         let th = thread::spawn(move || {
             sync_seccomp(

@@ -210,7 +210,7 @@ impl Mount {
                     })?;
             }
             _ => {
-                if *mount.destination() == PathBuf::from("/dev") {
+                if mount.destination() == Path::new("/dev") {
                     mount_option_config.flags &= !MsFlags::MS_RDONLY;
                     self.mount_into_container(
                         mount,
@@ -658,21 +658,13 @@ impl Mount {
 
             // mount_setattr
             let attr_set_from_flags = self.mount_flag_to_attr(&mount_option_config.flags);
-            let mut mount_attr = mount_option_config
-                .rec_attr
-                .clone()
-                .unwrap_or(linux::MountAttr {
-                    attr_set: 0,
-                    attr_clr: 0,
-                    propagation: 0,
-                    userns_fd: 0,
-                });
+            let mut mount_attr = linux::MountAttr {
+                attr_set: 0,
+                attr_clr: 0,
+                propagation: 0,
+                userns_fd: 0,
+            };
             mount_attr.attr_set |= attr_set_from_flags;
-
-            let mut at_flags = linux::AT_EMPTY_PATH;
-            if recursive {
-                at_flags |= linux::AT_RECURSIVE;
-            }
 
             self.apply_atime_from_msflags(
                 &mut mount_attr,
@@ -683,10 +675,21 @@ impl Mount {
             self.syscall.mount_setattr(
                 mount_fd,
                 Path::new(""),
-                at_flags,
+                linux::AT_EMPTY_PATH,
                 &mount_attr,
                 mem::size_of::<linux::MountAttr>(),
             )?;
+
+            // rec_attr is applied recursively
+            if let Some(rec_attr) = &mount_option_config.rec_attr {
+                self.syscall.mount_setattr(
+                    mount_fd,
+                    Path::new(""),
+                    linux::AT_EMPTY_PATH | linux::AT_RECURSIVE,
+                    rec_attr,
+                    mem::size_of::<linux::MountAttr>(),
+                )?;
+            }
 
             // move_mount
             self.syscall.move_mount(
@@ -744,16 +747,12 @@ impl Mount {
 
                 // mount_setattr
                 let attr_set_from_flags = self.mount_flag_to_attr(&mount_option_config.flags);
-                let mut mount_attr =
-                    mount_option_config
-                        .rec_attr
-                        .clone()
-                        .unwrap_or(linux::MountAttr {
-                            attr_set: 0,
-                            attr_clr: 0,
-                            propagation: 0,
-                            userns_fd: 0,
-                        });
+                let mut mount_attr = linux::MountAttr {
+                    attr_set: 0,
+                    attr_clr: 0,
+                    propagation: 0,
+                    userns_fd: 0,
+                };
                 mount_attr.attr_set |= attr_set_from_flags;
 
                 self.apply_atime_from_msflags(
@@ -765,10 +764,21 @@ impl Mount {
                 self.syscall.mount_setattr(
                     mount_fd,
                     Path::new(""),
-                    linux::AT_EMPTY_PATH | linux::AT_RECURSIVE,
+                    linux::AT_EMPTY_PATH,
                     &mount_attr,
                     mem::size_of::<linux::MountAttr>(),
                 )?;
+
+                // rec_attr is applied recursively
+                if let Some(rec_attr) = &mount_option_config.rec_attr {
+                    self.syscall.mount_setattr(
+                        mount_fd,
+                        Path::new(""),
+                        linux::AT_EMPTY_PATH | linux::AT_RECURSIVE,
+                        rec_attr,
+                        mem::size_of::<linux::MountAttr>(),
+                    )?;
+                }
 
                 // move_mount
                 self.syscall.move_mount(

@@ -7,9 +7,9 @@ edition = "2024"
 oci-spec = { version = "0.8.4", features = ["runtime"] }
 nix = "0.29.0"
 anyhow = "1.0"
-libc = "0.2.178" # TODO (YJDoc2) upgrade to latest
+libc = "0.2.180" # TODO (YJDoc2) upgrade to latest
 nc = "0.9.7"
 tempfile = "3"
 netlink-packet-route = "0.26.0"
 netlink-packet-core = "0.8.1"
-netlink-sys = "0.8.5"
+netlink-sys = "0.8.8"

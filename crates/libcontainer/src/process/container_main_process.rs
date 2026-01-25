@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use nix::sys::wait::{WaitStatus, waitpid};
 use nix::unistd::Pid;
 use oci_spec::runtime::{Linux, LinuxNamespaceType};
+#[cfg(feature = "libseccomp")]
+use oci_spec::runtime::{SECCOMP_FD_NAME, VERSION as OCI_VERSION};
 
 use crate::hooks;
 use crate::network::network_device::dev_change_net_namespace;
@@ -42,6 +44,8 @@ pub enum ProcessError {
     SyscallOther(#[source] SyscallError),
     #[error("failed hooks {0}")]
     Hooks(#[from] crate::hooks::HookError),
+    #[error("failed to build OCI state: {0}")]
+    OciStateBuild(String),
 }
 
 type Result<T> = std::result::Result<T, ProcessError>;
@@ -183,19 +187,36 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
 
         #[cfg(feature = "libseccomp")]
         if let Some(seccomp) = linux.seccomp() {
-            let state = crate::container::ContainerProcessState {
-                oci_version: container_args.spec.version().to_string(),
-                // runc hardcode the `seccompFd` name for fds.
-                fds: vec![String::from("seccompFd")],
-                pid: init_pid.as_raw(),
-                metadata: seccomp.listener_metadata().to_owned().unwrap_or_default(),
-                state: container_args
-                    .container
-                    .as_ref()
-                    .ok_or(ProcessError::ContainerStateRequired)?
-                    .state
-                    .clone(),
+            let container = container_args
+                .container
+                .as_ref()
+                .ok_or(ProcessError::ContainerStateRequired)?;
+
+            // Determine OCI status based on container type (matching runc behavior)
+            let oci_status = match container_args.container_type {
+                ContainerType::InitContainer => oci_spec::runtime::ContainerState::Creating,
+                ContainerType::TenantContainer { .. } => oci_spec::runtime::ContainerState::Running,
             };
+
+            // Build OCI-compliant ContainerProcessState using builder pattern
+            let oci_state = oci_spec::runtime::StateBuilder::default()
+                .version(OCI_VERSION)
+                .id(container.state.id.clone())
+                .status(oci_status)
+                .pid(init_pid.as_raw())
+                .bundle(container.state.bundle.clone())
+                .annotations(container.state.annotations.clone().unwrap_or_default())
+                .build()
+                .map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
+
+            let state = oci_spec::runtime::ContainerProcessStateBuilder::default()
+                .version(OCI_VERSION)
+                .fds(vec![SECCOMP_FD_NAME.to_string()])
+                .pid(init_pid.as_raw())
+                .metadata(seccomp.listener_metadata().clone().unwrap_or_default())
+                .state(oci_state)
+                .build()
+                .map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
             crate::process::seccomp_listener::sync_seccomp(
                 seccomp,
                 &state,
