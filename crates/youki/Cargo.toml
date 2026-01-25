@@ -57,5 +57,5 @@ scopeguard = "1.2.0"
 
 [build-dependencies]
 anyhow = "1.0.100"
-vergen-gitcl = { version = "1.0.8", features = ["build", "rustc"] }
+vergen-gitcl = { version = "9.1.0", features = ["build", "rustc"] }
 pkg-config = "0.3.32"
