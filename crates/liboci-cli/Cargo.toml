@@ -10,9 +10,6 @@ authors = ["youki team"]
 edition = "2021"
 keywords = ["youki", "container", "oci"]
 
-[dependencies]
-parse_duration = "2.1.1"
-
 [dependencies.clap]
 version = "4.1.6"
 default-features = false
