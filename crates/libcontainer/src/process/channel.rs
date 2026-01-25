@@ -75,7 +75,7 @@ impl MainSender {
         Ok(())
     }
 
-    pub fn send_mount_fd_reply(&mut self, fd RawFd) -> Result<(), ChannelError> {
+    pub fn send_mount_fd_reply(&mut self, fd: RawFd) -> Result<(), ChannelError> {
         self.sender.send_fds(Message::MountFdReply, &[fd])?;
 
         Ok(())
