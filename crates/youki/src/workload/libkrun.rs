@@ -1,10 +1,10 @@
 use std::cell::OnceCell;
 use std::ffi::CString;
-use std::fs::File;
+use std::fs::Permissions;
 use std::io;
 use std::io::Write;
 use std::os::raw::c_char;
-use std::os::unix::io::{AsRawFd, FromRawFd};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -13,11 +13,14 @@ use libcontainer::oci_spec::runtime::{
     LinuxBuilder, LinuxDevice, LinuxDeviceBuilder, LinuxDeviceCgroup, LinuxDeviceCgroupBuilder,
     LinuxDeviceType, Spec,
 };
-use libcontainer::workload::{EMPTY, Executor, ExecutorError, ExecutorValidationError};
+use libcontainer::workload::{
+    ContainerExecutor, EMPTY, Executor, ExecutorError, ExecutorValidationError, HostExecutor,
+};
 use libloading::Library;
 use nix::errno::Errno;
-use nix::fcntl::{OFlag, open, openat};
-use nix::sys::stat::{Mode, major, minor, stat};
+use nix::sys::stat::{major, minor, stat};
+use pathrs::Root;
+use pathrs::flags::{OpenFlags, ResolverFlags};
 
 const EXECUTOR_NAME: &str = "libkrun";
 const KRUN_CONFIG_FILE: &str = ".krun_config.json";
@@ -158,12 +161,15 @@ pub fn get_executor() -> LibkrunExecutor {
     }
 }
 
-impl Executor for LibkrunExecutor {
-    fn pre_exec(&self, spec: Spec) -> Result<Spec, ExecutorError> {
+impl HostExecutor for LibkrunExecutor {
+    fn modify_spec(&self, spec: Spec) -> Result<Spec, ExecutorError> {
         if !can_handle(&spec) {
             return Err(ExecutorError::CantHandle(EXECUTOR_NAME));
         }
-        tracing::debug!("executing libkrun pre executor");
+        validate_kvm().map_err(|e| {
+            ExecutorError::Other(format!("validate kvm error in host executor: {e}"))
+        })?;
+        tracing::debug!("executing libkrun host executor");
 
         let spec = configure_spec_for_libkrun(spec)
             .map_err(|e| ExecutorError::Other(format!("configure_for_libkrun: {e}")))?;
@@ -173,12 +179,14 @@ impl Executor for LibkrunExecutor {
         self.set_ctx_id(ctx_id)?;
         Ok(spec)
     }
+}
 
+impl ContainerExecutor for LibkrunExecutor {
     fn exec(&self, spec: &Spec) -> Result<(), ExecutorError> {
         if !can_handle(spec) {
             return Err(ExecutorError::CantHandle(EXECUTOR_NAME));
         }
-        tracing::debug!("executing libkrun executor");
+        tracing::debug!("executing libkrun container executor");
 
         let process = spec.process().as_ref();
         let args = process.and_then(|p| p.args().as_ref()).unwrap_or(&EMPTY);
@@ -213,6 +221,8 @@ impl Executor for LibkrunExecutor {
     }
 }
 
+impl Executor for LibkrunExecutor {}
+
 pub fn can_handle(spec: &Spec) -> bool {
     if let Some(annotations) = spec.annotations()
         && let Some(handler) = annotations.get("run.oci.handler")
@@ -223,6 +233,16 @@ pub fn can_handle(spec: &Spec) -> bool {
     false
 }
 
+pub fn validate_kvm() -> Result<(), KrunError> {
+    match stat_dev_numbers("/dev/kvm") {
+        Ok((_major, _minor)) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(KrunError::Other("/dev/kvm unavailable".to_string()))
+        }
+        Err(e) => Err(KrunError::Other(format!("failed to read /dev/kvm: {e}"))),
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum KrunError {
     #[error("{0}")]
@@ -230,24 +250,28 @@ pub enum KrunError {
 }
 
 // Add /dev/kvm to `linux.devices` so libkrun can access KVM device.
-pub fn modify_spec_device(spec: &mut Spec) -> Result<(), KrunError> {
-    let mut linux = match spec.linux().clone() {
-        Some(l) => l,
-        None => LinuxBuilder::default()
-            .build()
-            .map_err(|e| KrunError::Other(format!("build default linux section: {e}")))?,
-    };
-
+pub fn add_dev_kvm_to_linux_devices(spec: &mut Spec) -> Result<(), KrunError> {
     let (kvm_major, kvm_minor) = match stat_dev_numbers("/dev/kvm") {
         Ok(v) => v,
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            spec.set_linux(Some(linux));
             return Ok(());
         }
         Err(e) => return Err(KrunError::Other(format!("stat `/dev/kvm`: {e}"))),
     };
 
-    let mut devices: Vec<LinuxDevice> = linux.devices().clone().unwrap_or_default();
+    if spec.linux().is_none() {
+        let linux = LinuxBuilder::default()
+            .build()
+            .map_err(|e| KrunError::Other(format!("build default linux section: {e}")))?;
+        spec.set_linux(Some(linux));
+    }
+
+    let linux = spec
+        .linux_mut()
+        .as_mut()
+        .ok_or_else(|| KrunError::Other("spec.linux is None after initialization".into()))?;
+
+    let devices = linux.devices_mut().get_or_insert_with(Vec::new);
 
     let exists = devices.iter().any(|d| d.path() == Path::new("/dev/kvm"));
     if !exists {
@@ -260,26 +284,23 @@ pub fn modify_spec_device(spec: &mut Spec) -> Result<(), KrunError> {
             0u32,
             0u32,
         )?);
-        linux.set_devices(Some(devices));
     }
-
-    spec.set_linux(Some(linux));
     Ok(())
 }
 
 // Add an allow rule for /dev/kvm to linux.resources.devices
 // if resources.devices is None or empty, it's effectively permissive, so skip.
-pub fn modify_spec_resource_device(spec: &mut Spec) -> Result<(), KrunError> {
-    let mut linux = match spec.linux() {
-        Some(l) => l.clone(),
+pub fn allow_kvm_in_linux_resources_devices(spec: &mut Spec) -> Result<(), KrunError> {
+    let linux = match spec.linux_mut() {
+        Some(l) => l,
         None => return Ok(()),
     };
-    let mut res = match linux.resources() {
-        Some(r) => r.clone(),
+    let res = match linux.resources_mut() {
+        Some(r) => r,
         None => return Ok(()),
     };
-    let mut device_cgroups: Vec<LinuxDeviceCgroup> = match res.devices() {
-        Some(v) if !v.is_empty() => v.clone(),
+    let device_cgroups = match res.devices_mut().as_mut() {
+        Some(v) if !v.is_empty() => v,
         _ => return Ok(()),
     };
 
@@ -296,9 +317,6 @@ pub fn modify_spec_resource_device(spec: &mut Spec) -> Result<(), KrunError> {
         true,
         "rwm",
     )?);
-    res.set_devices(Some(device_cgroups));
-    linux.set_resources(Some(res));
-    spec.set_linux(Some(linux));
 
     Ok(())
 }
@@ -315,28 +333,22 @@ fn stat_dev_numbers(path: &str) -> std::io::Result<(i64, i64)> {
 // must ensure the file is opened below the rootfs directory.
 // see: https://github.com/containers/crun/blob/92977c0fc843e4649fe4611a97ba12b06cb5073f/src/libcrun/handlers/krun.c#L514C1-L515C72
 pub fn write_krun_config(rootfs: &Path, json_spec: &str) -> Result<(), KrunError> {
-    let dirfd = open(
-        rootfs,
-        OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(|e| KrunError::Other(format!("open rootfs dir {} failed: {e}", rootfs.display())))?;
-    let dirfile = unsafe { File::from_raw_fd(dirfd) };
+    let mut root =
+        Root::open(rootfs).map_err(|e| KrunError::Other(format!("failed to open rootfs {e}")))?;
+    root.set_resolver_flags(ResolverFlags::NO_SYMLINKS);
+    let perm = Permissions::from_mode(0o444);
 
-    let oflags =
-        OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
-    let mode = Mode::S_IRUSR | Mode::S_IRGRP | Mode::S_IROTH; // 0444
+    let mut f = root
+        .create_file(
+            KRUN_CONFIG_FILE,
+            OpenFlags::O_WRONLY | OpenFlags::O_TRUNC | OpenFlags::O_CLOEXEC,
+            &perm,
+        )
+        .map_err(|e| KrunError::Other(format!("failed to create file: {e}")))?;
 
-    let fd = openat(Some(dirfile.as_raw_fd()), KRUN_CONFIG_FILE, oflags, mode).map_err(|e| {
-        KrunError::Other(format!(
-            "openat({}, {:?}) failed: {e}",
-            KRUN_CONFIG_FILE, oflags
-        ))
-    })?;
+    f.write_all(json_spec.as_bytes())
+        .map_err(|e| KrunError::Other(format!("failed to write : {e}")))?;
 
-    let mut out = unsafe { File::from_raw_fd(fd) };
-    out.write_all(json_spec.as_bytes())
-        .map_err(|e| KrunError::Other(format!("write {} failed: {e}", KRUN_CONFIG_FILE)))?;
     Ok(())
 }
 
@@ -348,10 +360,10 @@ pub fn configure_spec_for_libkrun(mut spec: Spec) -> Result<Spec, KrunError> {
         .map_err(|e| KrunError::Other(format!("missing root in spec: {e:?}")))?
         .path()
         .to_path_buf();
-    modify_spec_device(&mut spec)
-        .map_err(|e| KrunError::Other(format!("modify_spec_device: {e:?}")))?;
-    modify_spec_resource_device(&mut spec)
-        .map_err(|e| KrunError::Other(format!("modify_spec_resource_device: {e:?}")))?;
+    add_dev_kvm_to_linux_devices(&mut spec)
+        .map_err(|e| KrunError::Other(format!("add_dev_kvm_to_linux_devices: {e:?}")))?;
+    allow_kvm_in_linux_resources_devices(&mut spec)
+        .map_err(|e| KrunError::Other(format!("allow_kvm_in_linux_resources_devices: {e:?}")))?;
 
     let json_spec = serde_json::to_string_pretty(&spec)
         .map_err(|e| KrunError::Other(format!("failed to serialize spec to JSON: {}", e)))?;

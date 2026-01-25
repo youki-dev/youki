@@ -66,7 +66,7 @@ impl InitContainerBuilder {
     pub fn build(self) -> Result<Container, LibcontainerError> {
         let spec = self.load_spec()?;
 
-        let spec = self.base.executor.pre_exec(spec)?;
+        let spec = self.base.executor.modify_spec(spec)?;
 
         let container_dir = self.create_container_dir()?;
 
