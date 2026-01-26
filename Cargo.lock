@@ -5005,7 +5005,7 @@ dependencies = [
  "rustc_version 0.4.1",
  "rustversion",
  "time 0.3.45",
- "vergen-lib",
+ "vergen-lib 9.1.0",
 ]
 
 [[package]]
@@ -5019,7 +5019,18 @@ dependencies = [
  "rustversion",
  "time 0.3.45",
  "vergen",
- "vergen-lib",
+ "vergen-lib 0.1.6",
+]
+
+[[package]]
+name = "vergen-lib"
+version = "9.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b34a29ba7e9c59e62f229ae1932fb1b8fb8a6fdcc99215a641913f5f5a59a569"
+dependencies = [
+ "anyhow",
+ "derive_builder 0.20.2",
+ "rustversion",
 ]
 
 [[package]]
@@ -6616,9 +6627,11 @@ dependencies = [
  "clap_complete",
  "libcgroups",
  "libcontainer",
+ "libloading",
  "liboci-cli",
  "nix 0.29.0",
  "oci-spec",
+ "pathrs",
  "pentacle",
  "pkg-config",
  "procfs",
@@ -6627,6 +6640,7 @@ dependencies = [
  "serial_test",
  "tabwriter",
  "tempfile",
+ "thiserror 2.0.18",
  "tracing",
  "tracing-journald",
  "tracing-subscriber",
