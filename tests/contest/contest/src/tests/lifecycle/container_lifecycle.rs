@@ -1,3 +1,4 @@
+use std::path;
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -36,6 +37,14 @@ impl ContainerLifecycle {
 
     pub fn set_id(&mut self, id: &str) {
         self.container_id = id.to_string();
+    }
+
+    pub fn get_id(&self) -> &str {
+        &self.container_id
+    }
+
+    pub fn get_project_path(&self) -> &path::Path {
+        self.project_path.path()
     }
 
     pub fn create(&self) -> TestResult {

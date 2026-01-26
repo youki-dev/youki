@@ -10,6 +10,7 @@ pub mod hostname;
 pub mod intel_rdt;
 pub mod io_priority;
 pub mod kill;
+pub mod kill_no_effect;
 pub mod lifecycle;
 pub mod linux_masked_paths;
 pub mod linux_ns_itype;
