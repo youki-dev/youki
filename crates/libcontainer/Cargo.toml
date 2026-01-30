@@ -58,7 +58,7 @@ nc = "0.9.7"
 netlink-packet-route = "0.26.0"
 netlink-sys = "0.8.8"
 netlink-packet-core = "0.8.1"
-pathrs = "0.2.2"
+pathrs = "0.2.3"
 
 [dev-dependencies]
 oci-spec = { version = "~0.8.4", features = ["proptests", "runtime"] }
