@@ -2862,9 +2862,9 @@ dependencies = [
 
 [[package]]
 name = "pathrs"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7e1a93ab007fbfbd784b3015b60cae7fc564ed3dc44d3c9f9f4a5043040ad83"
+checksum = "e28a357ed3c82eb2589457e5c756717f544c6f4221ecf3e3d64c14400677c10f"
 dependencies = [
  "bitflags 2.10.0",
  "itertools 0.14.0",
