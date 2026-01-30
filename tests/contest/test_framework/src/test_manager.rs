@@ -61,25 +61,36 @@ impl TestManager {
     }
     /// Run all tests from all tests group
     pub fn run_all(&self) {
-        thread::scope(|s| {
-            let mut collector = Vec::with_capacity(self.test_groups.len());
-            for (name, tg) in &self.test_groups {
-                if !tg.parallel() {
-                    continue;
+        // Collect all parallel test groups
+        let parallel_groups: Vec<_> = self
+            .test_groups
+            .iter()
+            .filter(|(_, tg)| tg.parallel())
+            .collect();
+
+        let batch_size = num_cpus::get().max(1);
+
+        for batch in parallel_groups.chunks(batch_size) {
+            thread::scope(|s| {
+                let mut collector = Vec::with_capacity(batch.len());
+                for (name, tg) in batch {
+                    let r = s.spawn(move |_| tg.run_all());
+                    collector.push((name, r));
                 }
-                let r = s.spawn(move |_| tg.run_all());
-                collector.push((name, r));
-            }
-            for (name, handle) in collector {
-                self.print_test_result(name, &handle.join().unwrap());
-            }
-        })
-        .unwrap();
+
+                for (name, handle) in collector {
+                    let result = handle.join().unwrap();
+                    self.print_test_result(name, &result);
+                }
+            })
+            .unwrap();
+        }
+
         for (name, tg) in &self.test_groups {
             if tg.parallel() {
                 continue;
             }
-            self.print_test_result(name, &tg.run_all())
+            self.print_test_result(name, &tg.run_all());
         }
 
         for cleaner in &self.cleanup {
