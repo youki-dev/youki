@@ -161,6 +161,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                     Some(&container_for_hooks.state),
                     None,
                     Some(init_pid),
+                    None,
                 )
                 .map_err(|err| {
                     tracing::error!("failed to run prestart hooks: {}", err);
@@ -172,6 +173,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                     Some(&container_for_hooks.state),
                     None,
                     Some(init_pid),
+                    None,
                 )
                 .map_err(|err| {
                     tracing::error!("failed to run create runtime hooks: {}", err);

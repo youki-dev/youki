@@ -108,6 +108,7 @@ pub fn container_init_process(
                 ctx.container.map(|c| &c.state),
                 None,
                 None,
+                None,
             )
             .map_err(|err| {
                 tracing::error!(?err, "failed to run create container hooks");
@@ -445,6 +446,7 @@ pub fn container_init_process(
                 ctx.container.map(|c| &c.state),
                 None,
                 None,
+                Some(&ctx.envs),
             )
             .map_err(|err| {
                 tracing::error!(?err, "failed to run start container hooks");

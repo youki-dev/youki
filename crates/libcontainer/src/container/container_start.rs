@@ -59,6 +59,7 @@ impl Container {
                 Some(&self.state),
                 Some(&self.root),
                 None,
+                None,
             )
             .map_err(|err| {
                 tracing::error!("failed to run post start hooks: {}", err);
