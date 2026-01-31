@@ -1,5 +1,7 @@
 use libcontainer::oci_spec::runtime::Spec;
-use libcontainer::workload::{EMPTY, Executor, ExecutorError, ExecutorValidationError};
+use libcontainer::workload::{
+    ContainerExecutor, EMPTY, Executor, ExecutorError, ExecutorValidationError, HostExecutor,
+};
 use wasi_common::I32Exit;
 use wasi_common::sync::{WasiCtxBuilder, add_to_linker};
 use wasmtime::{Engine, Linker, Module, Store};
@@ -9,7 +11,7 @@ const EXECUTOR_NAME: &str = "wasmtime";
 #[derive(Clone)]
 pub struct WasmtimeExecutor {}
 
-impl Executor for WasmtimeExecutor {
+impl ContainerExecutor for WasmtimeExecutor {
     fn exec(&self, spec: &Spec) -> Result<(), ExecutorError> {
         if !can_handle(spec) {
             return Err(ExecutorError::CantHandle(EXECUTOR_NAME));
@@ -104,6 +106,9 @@ impl Executor for WasmtimeExecutor {
         Ok(())
     }
 }
+
+impl HostExecutor for WasmtimeExecutor {}
+impl Executor for WasmtimeExecutor {}
 
 pub fn get_executor() -> WasmtimeExecutor {
     WasmtimeExecutor {}
