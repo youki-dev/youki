@@ -147,6 +147,8 @@ pub fn validate_mounts_recursive(spec: &Spec) {
     if let Some(mounts) = spec.mounts() {
         for mount in mounts {
             if let Some(options) = mount.options() {
+                let subdir_path = mount.destination().join("mount_subdir");
+                let null_device_path = subdir_path.join("null");
                 for option in options {
                     match option.as_str() {
                         "rro" => {
@@ -222,40 +224,38 @@ pub fn validate_mounts_recursive(spec: &Spec) {
                             }
                         }
                         "rdiratime" => {
-                            let sub_dir = mount.destination().join("rdiratime_subdir");
                             let rest =
-                                utils::test_dir_update_access_time(sub_dir.to_str().unwrap());
+                                utils::test_dir_update_access_time(subdir_path.to_str().unwrap());
                             if let Err(e) = rest {
                                 eprintln!("error in testing rdiratime recursive mounting: {e}");
                             }
                         }
                         "rnodiratime" => {
-                            let sub_dir = mount.destination().join("rnodiratime_subdir");
-                            let rest =
-                                utils::test_dir_not_update_access_time(sub_dir.to_str().unwrap());
+                            let rest = utils::test_dir_not_update_access_time(
+                                subdir_path.to_str().unwrap(),
+                            );
                             if let Err(e) = rest {
                                 eprintln!("error in testing rnodiratime recursive mounting: {e}");
                             }
                         }
                         "rdev" => {
-                            let device_path = mount.destination().join("rdev_subdir/null");
-                            let rest = utils::test_device_access(device_path.to_str().unwrap());
+                            let rest =
+                                utils::test_device_access(null_device_path.to_str().unwrap());
                             if let Err(e) = rest {
                                 eprintln!("error in testing rdev recursive mounting: {e}");
                             }
                         }
                         "rnodev" => {
-                            let device_path = mount.destination().join("rnodev_subdir/null");
-                            let rest = utils::test_device_access(device_path.to_str().unwrap());
+                            let rest =
+                                utils::test_device_access(null_device_path.to_str().unwrap());
                             if rest.is_ok() {
-                                // because /rnodev/rnodev_subdir/null device not access,so rest is err
+                                // because /mnt/mount_subdir/null device not access,so rest is err
                                 eprintln!("error in testing rnodev recursive mounting");
                             }
                         }
                         "rrelatime" => {
-                            let sub_path = mount.destination().join("rrelatime_subdir");
                             if let Err(e) =
-                                utils::test_mount_releatime_option(sub_path.to_str().unwrap())
+                                utils::test_mount_releatime_option(subdir_path.to_str().unwrap())
                             {
                                 eprintln!(
                                     "path expected to be rrelatime, found not rrelatime, error: {e}"
@@ -263,9 +263,8 @@ pub fn validate_mounts_recursive(spec: &Spec) {
                             }
                         }
                         "rnorelatime" => {
-                            let sub_path = mount.destination().join("rnorelatime_subdir");
                             if let Err(e) =
-                                utils::test_mount_norelatime_option(sub_path.to_str().unwrap())
+                                utils::test_mount_norelatime_option(subdir_path.to_str().unwrap())
                             {
                                 eprintln!(
                                     "path expected to be rnorelatime, found not rnorelatime, error: {e}"
@@ -273,7 +272,6 @@ pub fn validate_mounts_recursive(spec: &Spec) {
                             }
                         }
                         "rnoatime" => {
-                            let subdir_path = mount.destination().join("rnoatime_subdir");
                             if let Err(e) =
                                 utils::test_mount_rnoatime_option(subdir_path.to_str().unwrap())
                             {
@@ -283,7 +281,6 @@ pub fn validate_mounts_recursive(spec: &Spec) {
                             }
                         }
                         "rstrictatime" => {
-                            let subdir_path = mount.destination().join("rstrictatime_subdir");
                             if let Err(e) =
                                 utils::test_mount_rstrictatime_option(subdir_path.to_str().unwrap())
                             {
@@ -293,7 +290,6 @@ pub fn validate_mounts_recursive(spec: &Spec) {
                             }
                         }
                         "rnosymfollow" => {
-                            let subdir_path = mount.destination().join("rnosymfollow_subdir");
                             if let Err(e) =
                                 utils::test_mount_rnosymfollow_option(subdir_path.to_str().unwrap())
                             {
@@ -303,7 +299,6 @@ pub fn validate_mounts_recursive(spec: &Spec) {
                             }
                         }
                         "rsymfollow" => {
-                            let subdir_path = mount.destination().join("rsymfollow_subdir");
                             if let Err(e) =
                                 utils::test_mount_rsymfollow_option(subdir_path.to_str().unwrap())
                             {
@@ -330,7 +325,7 @@ pub fn validate_mounts_recursive_rbind_ro() {
         return;
     }
 
-    let sub_path = Path::new("/mnt/rbind_ro_subdir").join("bar");
+    let sub_path = Path::new("/mnt/mount_subdir").join("bar");
     if let Err(e) = test_write_access(sub_path.to_str().unwrap()) {
         eprintln!(
             "subpath expected to be writable, found read-only: {} err: {}",
