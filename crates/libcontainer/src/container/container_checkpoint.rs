@@ -1,5 +1,6 @@
-use std::fs::{File, create_dir, read_link};
+use std::fs::{DirBuilder, File, read_link};
 use std::io::{ErrorKind, Write};
+use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::io::AsRawFd;
 
 use libcgroups::common::CgroupSetup::{Hybrid, Legacy};
@@ -32,9 +33,8 @@ impl Container {
             return Err(LibcontainerError::IncorrectStatus);
         }
 
-        // Create checkpoint image directory if it doesn't exist.
-        // Like crun, allow EEXIST (directory may already exist).
-        if let Err(err) = create_dir(&opts.image_path) {
+        // Create checkpoint image directory if it doesn't exist (mode 0o700 like crun).
+        if let Err(err) = DirBuilder::new().mode(0o700).create(&opts.image_path) {
             if err.kind() != ErrorKind::AlreadyExists {
                 tracing::error!(path = ?opts.image_path, ?err, "failed to create checkpoint directory");
                 return Err(LibcontainerError::OtherIO(err));
@@ -108,9 +108,8 @@ impl Container {
         // keep the FD open until CRIU uses it.
         let work_dir: File;
         if let Some(wp) = &opts.work_path {
-            // Create work directory if it doesn't exist.
-            // Like crun, allow EEXIST (directory may already exist).
-            if let Err(err) = create_dir(wp) {
+            // Create work directory if it doesn't exist (mode 0o700 like crun).
+            if let Err(err) = DirBuilder::new().mode(0o700).create(wp) {
                 if err.kind() != ErrorKind::AlreadyExists {
                     tracing::error!(path = ?wp, ?err, "failed to create work directory");
                     return Err(LibcontainerError::OtherIO(err));
