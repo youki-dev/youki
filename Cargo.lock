@@ -4478,6 +4478,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "crossbeam",
+ "num_cpus",
 ]
 
 [[package]]
