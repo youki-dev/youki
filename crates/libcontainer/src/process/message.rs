@@ -21,6 +21,7 @@ pub enum Message {
     MountFdReply,
     ExecFailed(String),
     OtherError(String),
+    MountFdError(String),
     HookRequest,
     HookDone,
 }
@@ -40,6 +41,7 @@ impl fmt::Display for Message {
             Message::HookDone => write!(f, "HookDone"),
             Message::MountFdPlease(_) => write!(f, "MountFdPlease"),
             Message::MountFdReply => write!(f, "MountFdReply"),
+            Message::MountFdError(err) => write!(f, "MountFdError({})", err),
             Message::ExecFailed(s) => write!(f, "ExecFailed({})", s),
             Message::OtherError(s) => write!(f, "OtherError({})", s),
         }

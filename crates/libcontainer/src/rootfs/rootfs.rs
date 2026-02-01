@@ -5,7 +5,7 @@ use nix::mount::MsFlags;
 use oci_spec::runtime::{Linux, Spec};
 
 use super::device::Device;
-use super::mount::{Mount, MountOptions};
+use super::mount::{Mount, MountChannels, MountOptions};
 use super::symlink::Symlink;
 use super::utils::default_devices;
 use super::{Result, RootfsError};
@@ -37,6 +37,7 @@ impl RootFS {
         spec: &Spec,
         rootfs: &Path,
         cgroup_ns: bool,
+        mut comm: Option<&mut MountChannels<'_>>,
     ) -> Result<()> {
         let mut flags = MsFlags::MS_REC;
         match linux.rootfs_propagation().as_deref() {
@@ -86,7 +87,7 @@ impl RootFS {
 
         if let Some(mounts) = spec.mounts() {
             for mount in mounts {
-                mounter.setup_mount(mount, &global_options)?;
+                mounter.setup_mount(mount, &global_options, comm.as_deref_mut())?;
             }
         }
         Ok(())
@@ -98,11 +99,12 @@ impl RootFS {
         rootfs: &Path,
         bind_devices: bool,
         cgroup_ns: bool,
+        comm: Option<&mut MountChannels<'_>>,
     ) -> Result<()> {
         tracing::debug!(?rootfs, "prepare rootfs");
         let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
 
-        self.mount_to_rootfs(linux, spec, rootfs, cgroup_ns)?;
+        self.mount_to_rootfs(linux, spec, rootfs, cgroup_ns, comm)?;
 
         let symlinker = Symlink::new();
         symlinker.setup_kcore_symlink(rootfs)?;

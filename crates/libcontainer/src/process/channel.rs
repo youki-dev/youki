@@ -30,6 +30,8 @@ pub enum ChannelError {
     OtherError(String),
     #[error("missing fd from mount request")]
     MissingMountFds,
+    #[error("mount request failed: {0}")]
+    MountFdError(String),
 }
 
 // Channel Design
@@ -187,6 +189,15 @@ impl MainReceiver {
                 received: msg,
             })
         }
+    }
+
+    pub fn recv_message_with_fds(&mut self) -> Result<(Message, Option<[RawFd; 1]>), ChannelError> {
+        self.receiver
+            .recv_with_fds::<[RawFd; 1]>()
+            .map_err(|err| ChannelError::ReceiveError {
+                msg: "waiting for message".to_string(),
+                source: err,
+            })
     }
 
     pub fn wait_for_seccomp_request(&mut self) -> Result<i32, ChannelError> {
@@ -379,6 +390,11 @@ impl InitSender {
     pub fn send_mount_fd_reply(&mut self, fd: RawFd) -> Result<(), ChannelError> {
         self.sender.send_fds(Message::MountFdReply, &[fd])?;
 
+        Ok(())
+    }
+
+    pub fn send_mount_fd_error(&mut self, err: String) -> Result<(), ChannelError> {
+        self.sender.send(Message::MountFdError(err))?;
         Ok(())
     }
 

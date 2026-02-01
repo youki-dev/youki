@@ -31,6 +31,8 @@ use crate::config::PersonalityDomain;
 // see https://man7.org/linux/man-pages/man2/mount_setattr.2.html.
 pub const AT_RECURSIVE: u32 = 0x00008000; // Change the mount properties of the entire mount tree.
 pub const AT_EMPTY_PATH: u32 = 0x00001000;
+pub const OPEN_TREE_CLONE: u32 = 0x01;
+pub const OPEN_TREE_CLOEXEC: u32 = 0x80000;
 #[allow(non_upper_case_globals)]
 pub const MOUNT_ATTR__ATIME: u64 = 0x00000070; // Setting on how atime should be updated.
 pub const MOUNT_ATTR_RDONLY: u64 = 0x00000001;
@@ -44,6 +46,7 @@ pub const MOUNT_ATTR_NODIRATIME: u64 = 0x00000080;
 pub const MOUNT_ATTR_NOSYMFOLLOW: u64 = 0x00200000;
 pub const MOVE_MOUNT_F_EMPTY_PATH: u32 = 0x00000004;
 pub const MOVE_MOUNT_T_EMPTY_PATH: u32 = 0x00000040;
+pub const MOUNT_ATTR_IDMAP: u64 = 0x00100000;
 
 // The type of fsconfig() call made.
 pub const FSCONFIG_SET_FLAG: u64 = 0;

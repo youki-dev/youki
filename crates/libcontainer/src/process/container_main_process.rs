@@ -1,12 +1,19 @@
+use std::mem;
 use std::collections::HashMap;
+use std::io::ErrorKind;
 use std::fs;
 use std::fs::File;
-use std::os::fd::AsRawFd;
+use std::sync::mpsc;
+use std::os::fd::{AsRawFd, OwnedFd, AsFd};
+use std::path::Path;
 use std::path::PathBuf;
+use crate::process::message::{Message, MountMsg};
+use nix::unistd::{ForkResult, Pid, fork, close, pipe, read as nix_read, write as nix_write};
 
 use nix::sys::wait::{WaitStatus, waitpid};
-use nix::unistd::Pid;
-use oci_spec::runtime::{Linux, LinuxNamespaceType};
+use nix::errno::Errno;
+use nix::sched::CloneFlags;
+use oci_spec::runtime::{Linux, LinuxIdMapping, LinuxNamespaceType};
 #[cfg(feature = "libseccomp")]
 use oci_spec::runtime::{SECCOMP_FD_NAME, VERSION as OCI_VERSION};
 
@@ -16,8 +23,10 @@ use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::fork::{self, CloneCb};
 use crate::process::intel_rdt::setup_intel_rdt;
 use crate::process::{channel, container_intermediate_process};
-use crate::syscall::SyscallError;
+use crate::syscall::syscall::SyscallType;
+use crate::syscall::{SyscallError, linux, Syscall};
 use crate::user_ns::UserNamespaceConfig;
+use crate::seccomp;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProcessError {
@@ -40,6 +49,8 @@ pub enum ProcessError {
     SeccompListener(#[from] crate::process::seccomp_listener::SeccompListenerError),
     #[error("failed setup network device")]
     Network(#[from] crate::network::NetworkError),
+    # [error("mount request failed: {0}")]
+    MountRequest(String),
     #[error("failed syscall")]
     SyscallOther(#[source] SyscallError),
     #[error("failed hooks {0}")]
@@ -59,6 +70,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     let (mut main_sender, mut main_receiver) = channel::main_channel()?;
     let mut inter_chan = channel::intermediate_channel()?;
     let mut init_chan = channel::init_channel()?;
+    let syscall = container_args.syscall.create_syscall();
 
     let cb: CloneCb = {
         Box::new(|| {
@@ -133,6 +145,9 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     // process.  The intermediate process should exit after this point.
     let init_pid = main_receiver.wait_for_intermediate_ready()?;
     let mut need_to_clean_up_intel_rdt_subdirectory = false;
+    let  mount_worker_tx = start_mount_worker(init_pid, container_args.syscall);
+    #[cfg(feature = "libseccomp")]
+    let mut seccomp_state: Option<(PathBuf, Vec<u8>)> = None;
 
     if let Some(linux) = container_args.spec.linux() {
         if let Some(intel_rdt) = linux.intel_rdt() {
@@ -187,42 +202,118 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
 
         #[cfg(feature = "libseccomp")]
         if let Some(seccomp) = linux.seccomp() {
-            let container = container_args
-                .container
-                .as_ref()
-                .ok_or(ProcessError::ContainerStateRequired)?;
+            if seccomp::is_notify(seccomp) {
+                let container = container_args
+                    .container
+                    .as_ref()
+                    .ok_or(ProcessError::ContainerStateRequired)?;
 
-            // Determine OCI status based on container type (matching runc behavior)
-            let oci_status = match container_args.container_type {
-                ContainerType::InitContainer => oci_spec::runtime::ContainerState::Creating,
-                ContainerType::TenantContainer { .. } => oci_spec::runtime::ContainerState::Running,
-            };
+                // Determine OCI status based on container type (matching runc behavior)
+                let oci_status = match container_args.container_type {
+                    ContainerType::InitContainer => oci_spec::runtime::ContainerState::Creating,
+                    ContainerType::TenantContainer { .. } => oci_spec::runtime::ContainerState::Running,
+                };
 
-            // Build OCI-compliant ContainerProcessState using builder pattern
-            let oci_state = oci_spec::runtime::StateBuilder::default()
-                .version(OCI_VERSION)
-                .id(container.state.id.clone())
-                .status(oci_status)
-                .pid(init_pid.as_raw())
-                .bundle(container.state.bundle.clone())
-                .annotations(container.state.annotations.clone().unwrap_or_default())
-                .build()
-                .map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
+                // Build OCI-compliant ContainerProcessState using builder pattern
+                let oci_state = oci_spec::runtime::StateBuilder::default()
+                    .version(OCI_VERSION)
+                    .id(container.state.id.clone())
+                    .status(oci_status)
+                    .pid(init_pid.as_raw())
+                    .bundle(container.state.bundle.clone())
+                    .annotations(container.state.annotations.clone().unwrap_or_default())
+                    .build()
+                    .map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
 
-            let state = oci_spec::runtime::ContainerProcessStateBuilder::default()
-                .version(OCI_VERSION)
-                .fds(vec![SECCOMP_FD_NAME.to_string()])
-                .pid(init_pid.as_raw())
-                .metadata(seccomp.listener_metadata().clone().unwrap_or_default())
-                .state(oci_state)
-                .build()
-                .map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
-            crate::process::seccomp_listener::sync_seccomp(
-                seccomp,
-                &state,
-                &mut init_sender,
-                &mut main_receiver,
-            )?;
+                let state = oci_spec::runtime::ContainerProcessStateBuilder::default()
+                    .version(OCI_VERSION)
+                    .fds(vec![SECCOMP_FD_NAME.to_string()])
+                    .pid(init_pid.as_raw())
+                    .metadata(seccomp.listener_metadata().clone().unwrap_or_default())
+                    .state(oci_state)
+                    .build()
+                    .map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
+            }
+        }
+    }
+
+    loop {
+        let (msg, fds) = main_receiver.recv_message_with_fds()?;
+        match msg {
+            Message::InitReady => break,
+            Message::MountFdPlease(req) => {
+                let (resp_tx, resp_rx) = mpsc::channel();
+                mount_worker_tx
+                    .send(MountWorkerRequest {
+                        msg: req,
+                        response: resp_tx
+                    })
+                    .map_err(|err| {
+                        ProcessError::MountRequest(format!(
+                            "failed to send mount request to worker: {err}"
+                        ))
+                    })?;
+                let response = resp_rx.recv().map_err(|err| {
+                    ProcessError::MountRequest(format!(
+                        "failed to receive mount response from worker: {err}"
+                    ))
+                })?;
+                match response {
+                    Ok(fd) => init_sender.send_mount_fd_reply(fd.as_raw_fd())?,
+                    Err(err) => {
+                        let _ = init_sender.send_mount_fd_error(err.clone());
+                        return Err(ProcessError::MountRequest(err));
+                    }
+                }
+            }
+            Message::SeccompNotify => {
+                #[cfg(feature = "libseccomp")]
+                {
+                    use crate::process::seccomp_listener;
+
+                    let seccomp_fd = match fds {
+                        Some([fd]) => fd,
+                        _ => {
+                            return Err(ProcessError::Channel(
+                                channel::ChannelError::MissingSeccompFds,
+                            ));
+                        }
+                    };
+                    let (listener_path, encoded_state) = seccomp_state.as_ref().ok_or(
+                        seccomp_listener::SeccompListenerError::MissingListenerPath,
+                    )?;
+                    seccomp_listener::sync_seccomp_send_msg(
+                        listener_path,
+                        encoded_state.as_slice(),
+                        seccomp_fd,
+                    )?;
+                    init_sender.seccomp_notify_done()?;
+                    drop(seccomp_fd);
+                }
+                #[cfg(not(feature = "libseccomp"))]
+                {
+                    return Err(ProcessError::Channel(
+                        channel::ChannelError::UnexpectedMessage {
+                            expected: Message::InitReady,
+                            received: Message::SeccompNotify
+                        },
+                    ))
+                }
+            }
+            Message::ExecFailed(err) => {
+                return Err(ProcessError::Channel(channel::ChannelError::ExecError(err)));
+            }
+            Message::OtherError(err) => {
+                return Err(ProcessError::Channel(channel::ChannelError::OtherError(err)));
+            }
+            msg => {
+                return Err(ProcessError::Channel(
+                    channel::ChannelError::UnexpectedMessage {
+                        expected: Message::InitReady,
+                        received: msg,
+                    }
+                ));
+            }
         }
     }
 
@@ -230,11 +321,6 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     // close the sender.
     init_sender.close().map_err(|err| {
         tracing::error!("failed to close unused init sender: {}", err);
-        err
-    })?;
-
-    main_receiver.wait_for_init_ready().map_err(|err| {
-        tracing::error!("failed to wait for init ready: {}", err);
         err
     })?;
 
@@ -279,6 +365,158 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     };
 
     Ok((init_pid, need_to_clean_up_intel_rdt_subdirectory))
+}
+
+fn create_userns_fd(uid_mappings: &[LinuxIdMapping], gid_mappings: &[LinuxIdMapping]) -> Result<OwnedFd> {
+    let (read_fd, write_fd) = pipe().map_err(|err| {
+        ProcessError::MountRequest(format!("failed to create userns pipe: {err}"))
+    })?;
+    match unsafe { fork() } {
+        Ok(ForkResult::Child) => {
+            drop(write_fd);
+            if let Err(err) = nix::sched::unshare(CloneFlags::CLONE_NEWUSER) {
+                tracing::error!(?err, "failed to unshare user namespace");
+                std::process::exit(1);
+            }
+
+            let mut buf = [0u8; 1];
+            let _ = nix_read(read_fd.as_raw_fd(), &mut buf);
+            std::process::exit(0);
+        }
+        Ok(ForkResult::Parent { child }) => {
+            drop(read_fd);
+            let result = (|| -> Result<OwnedFd> {
+                let setgroups_path = format!("/proc/{}/setgroups", child.as_raw());
+                if let Err(err) = std::fs::write(&setgroups_path, "deny") {
+                    if err.kind() != ErrorKind::NotFound {
+                        return Err(ProcessError::SetGroupsDeny(err));
+                    }
+                }
+
+                write_id_mapping_file(child, "uid_map", uid_mappings)?;
+                write_id_mapping_file(child, "gid_map", gid_mappings)?;
+
+                let userns_path = format!("/proc/{}/ns/user", child.as_raw());
+                let fd = File::open(&userns_path).map_err(|err| {
+                    ProcessError::MountRequest(format!("failed to open user namespace: {err}"))
+                })?;
+                Ok(fd.into())
+            })();
+            let _ = nix_write(write_fd, &[1]);
+            let _ = waitpid(child, None);
+            return result;
+        }
+        Err(err) => Err(ProcessError::MountRequest(format!(
+            "failed to fork userns helper: {err}"
+        ))),
+    } 
+}
+
+fn write_id_mapping_file(pid: Pid, file_name: &str, mappings: &[LinuxIdMapping]) -> Result<()> {
+    if mappings.is_empty() {
+        return Err(ProcessError::MountRequest(format!(
+            "{file_name} mappings are empty"
+        )));
+    }
+    let mut content = String::new();
+    for mapping in mappings {
+        content.push_str(&format!(
+            "{} {} {}\n",
+            mapping.container_id(),
+            mapping.host_id(),
+            mapping.size()
+        ));
+    }
+    let path = format!("/proc/{}/{}", pid.as_raw(), file_name);
+    std::fs::write(&path, content).map_err(|err| {
+        tracing::error!(?err, ?path, "failed to write id mapping");
+        ProcessError::MountRequest(format!("failed to write {file_name}: {err}" ))
+    })?;
+    Ok(())
+}
+
+fn mount_idmapped_fd(syscall: &dyn Syscall, req: &MountMsg) -> Result<OwnedFd> {
+    let idmap = req.idmap.as_ref().ok_or_else(|| {
+        ProcessError::MountRequest("idmapped mount request missing mappings".to_string())
+    })?;
+
+    let userns_fd = create_userns_fd(&idmap.uid_mappings, &idmap.gid_mappings)?;
+    let mut open_flags = linux::OPEN_TREE_CLONE | linux::OPEN_TREE_CLOEXEC;
+    if idmap.recursive {
+        open_flags |= linux::AT_RECURSIVE;
+    }
+    let mount_fd = Syscall::open_tree(syscall, libc::AT_FDCWD, Some(req.source.as_str()), open_flags).map_err(ProcessError::SyscallOther)?;
+    let mut setattr_flags = linux::AT_EMPTY_PATH;
+    if idmap.recursive {
+        setattr_flags |= linux::AT_RECURSIVE;
+    }
+    let mount_attr = linux::MountAttr {
+        attr_set: linux::MOUNT_ATTR_IDMAP,
+        attr_clr: 0,
+        propagation: 0,
+        userns_fd: userns_fd.as_raw_fd() as u64,
+    };
+    syscall.mount_setattr(
+        mount_fd.as_fd(),
+        Path::new(""),
+        setattr_flags,
+        &mount_attr,
+        mem::size_of::<linux::MountAttr>(),
+    )
+    .map_err(ProcessError::SyscallOther)?;
+    Ok(mount_fd)
+}
+
+fn idmapped_error_message(err: &ProcessError) -> String {
+    match err {
+        ProcessError::SyscallOther(SyscallError::Nix(Errno::ENOSYS)) => {
+            "idmapped mounts require open_tree/mount_setattr support (Linux 5.12+)".to_string()
+        }
+        _ => err.to_string(),
+    }
+}
+
+struct MountWorkerRequest {
+    msg: MountMsg,
+    response: mpsc::Sender<std::result::Result<OwnedFd, String>>,
+}
+
+fn start_mount_worker(init_pid: Pid, syscall_type: SyscallType) -> mpsc::Sender<MountWorkerRequest> {
+    let (tx, rx) = mpsc::channel::<MountWorkerRequest>();
+    std::thread::spawn(move || {
+        let syscall = syscall_type.create_syscall();
+        let mut mountns_error: Option<ProcessError> = None;
+        let mut mountns_ready = false;
+
+        for req in rx {
+            if !mountns_ready && mountns_error.is_none() {
+                let result = (|| -> Result<()> {
+                    let target_mnt = File::open(format!("/proc/{}/ns/mnt", init_pid.as_raw()))
+                        .map_err(|err| {
+                            ProcessError::MountRequest(format!(
+                                "failed to open init mount namespace: {err}"
+                            ))
+                        })?;
+                    syscall
+                        .set_ns(target_mnt.as_raw_fd(), CloneFlags::CLONE_NEWNS)
+                        .map_err(ProcessError::SyscallOther);
+                    Ok(())
+                })();
+                match result {
+                    Ok(()) => mountns_ready = true,
+                    Err(err) => mountns_error = Some(err),
+                }
+            }
+
+            let response = match &mountns_error {
+                Some(err) => Err(idmapped_error_message(err)),
+                None => mount_idmapped_fd(syscall.as_ref(), &req.msg)
+                    .map_err(|err| idmapped_error_message(&err)),
+            };
+            let _ = req.response.send(response);
+        }
+    });
+    tx
 }
 
 fn setup_mapping(config: &UserNamespaceConfig, pid: Pid) -> Result<()> {

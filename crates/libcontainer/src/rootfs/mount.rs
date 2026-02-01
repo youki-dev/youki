@@ -7,6 +7,8 @@ use std::time::Duration;
 #[cfg(feature = "v1")]
 use std::{borrow::Cow, collections::HashMap};
 use std::{fs, mem};
+use crate::process::channel;
+use crate::process::message::{MountIdMap, MountMsg};
 
 use libcgroups::common::CgroupSetup::{Hybrid, Legacy, Unified};
 #[cfg(feature = "v1")]
@@ -15,7 +17,7 @@ use nix::NixPath;
 use nix::errno::Errno;
 use nix::mount::MsFlags;
 use nix::sys::statfs::{PROC_SUPER_MAGIC, statfs};
-use oci_spec::runtime::{Mount as SpecMount, MountBuilder as SpecMountBuilder};
+use oci_spec::runtime::{Mount as SpecMount, MountBuilder as SpecMountBuilder, LinuxIdMapping};
 use pathrs::Root;
 use pathrs::flags::OpenFlags;
 use pathrs::procfs::{ProcfsBase, ProcfsHandle};
@@ -68,6 +70,11 @@ pub enum MountError {
 }
 
 type Result<T> = std::result::Result<T, MountError>;
+
+pub struct MountChannels<'a> {
+    pub main: &'a mut channel::MainSender,
+    pub init: &'a mut channel::InitReceiver,
+}
 
 pub trait MountInfoProvider {
     fn mountinfo(&self) -> Result<Vec<MountInfo>>;
@@ -133,7 +140,98 @@ impl Mount {
         self
     }
 
-    pub fn setup_mount(&self, mount: &SpecMount, options: &MountOptions) -> Result<()> {
+    fn mount_idmapped(
+        &self,
+        mount: &SpecMount,
+        rootfs: &Path,
+        mount_option_config: &MountOptionConfig,
+        uid_mappings: &[LinuxIdMapping],
+        gid_mappings: &[LinuxIdMapping],
+    ) -> Result<()> {
+        let dest_for_host = safe_path::scoped_join(rootfs, mount.destination()).map_err(|err| {
+            tracing::error!(
+                "failed to join rootfs {:?} with mount destination {:?}: {}",
+                rootfs,
+                mount.destination(),
+                err
+            );
+            MountError::Other(err.into())
+        })?;
+        let dest = Path::new(&dest_for_host);
+        let source = mount.source().as_ref().ok_or(MountError::NoSource)?;
+        let src = self.prepare_bind_source(source, dest)?;
+
+        let recursive = mount_option_config.apply_recursive_idmap
+            || mount_option_config.flags.contains(MsFlags::MS_REC);
+        let msg = MountMsg {
+            source: src.to_string_lossy().to_string(),
+            destination: dest.to_string_lossy().to_string(),
+            flags: mount_option_config.flags.bits() as u64,
+            cleared_flags: 0,
+            is_bind: true,
+            idmap: Some(MountIdMap {
+                uid_mappings: uid_mappings.to_vec(),
+                gid_mappings: gid_mappings.to_vec(),
+                recursive,
+            }),
+        };
+        comm.main.request_mount_fd(msg).map_err(|err| {
+            tracing::error!("failed to request mount fd: {}", err);
+            MountError::Other(err.into())
+        })?;
+        let mount_fd = comm.init.wait_for_mount_fd_reply().map_err(|err| {
+            tracing::error!("failed to receive mount fd: {}", err);
+            MountError::Other(err.into())
+        })?;
+
+        self.syscall
+            .move_mount(
+                mount_fd.as_raw_fd(),
+                Path::new(""),
+                libc::AT_FDCWD,
+                dest,
+                linux::MOVE_MOUNT_F_EMPTY_PATH,
+            )
+            .map_err(map_idmapped_syscall_error)?;
+
+        if mount_option_config.flags.intersects(
+            !(MsFlags::MS_REC
+                | MsFlags::MS_REMOUNT
+                | MsFlags::MS_BIND
+                | MsFlags::MS_PRIVATE
+                | MsFlags::MS_SHARED
+                | MsFlags::MS_SLAVE),
+        ) {
+            self.syscall
+                .mount(
+                    Some(dest),
+                    dest,
+                    None,
+                    mount_option_config.flags | MsFlags::MS_REMOUNT,
+                    None,
+                )
+                .map_err(|err| {
+                    tracing::error!("failed to remount {:?}: {}", dest, err);
+                    err
+                })?;
+        }
+
+        if let Some(mount_attr) = &mount_option_config.rec_attr {
+            let open_dir = Dir::open(dest, OFlag::O_DIRECTORY, Mode::empty())?;
+            let dir_fd_pathbuf = PathBuf::from(format!("/proc/self/fd/{}", open_dir.as_raw_fd()));
+            self.syscall.mount_setattr(
+                -1,
+                &dir_fd_pathbuf,
+                linux::AT_RECURSIVE,
+                mount_attr,
+                mem::size_of::<linux::MountAttr>(),
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn setup_mount(&self, mount: &SpecMount, options: &MountOptions, mut comm: Option<&mut MountChannels<'_>>) -> Result<()> {
         tracing::debug!("mounting {:?}", mount);
         let mut mount_option_config = parse_mount(mount)?;
 

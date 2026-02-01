@@ -51,7 +51,7 @@ pub fn sync_seccomp(
     Ok(())
 }
 
-fn sync_seccomp_send_msg(listener_path: &Path, msg: &[u8], fd: i32) -> Result<()> {
+pub(crate) fn sync_seccomp_send_msg(listener_path: &Path, msg: &[u8], fd: i32) -> Result<()> {
     // The seccomp listener has specific instructions on how to transmit the
     // information through seccomp listener.  Therefore, we have to use
     // libc/nix APIs instead of Rust std lib APIs to maintain flexibility.
