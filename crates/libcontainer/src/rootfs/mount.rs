@@ -1,6 +1,9 @@
+use nix::sys::stat::Mode;
+use nix::fcntl::OFlag;
+use nix::dir::Dir;
 use std::fs::{Permissions, canonicalize};
 use std::io::{BufRead, BufReader, ErrorKind};
-use std::os::fd::{AsFd, OwnedFd};
+use std::os::fd::{AsFd, OwnedFd, AsRawFd};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -9,6 +12,8 @@ use std::{borrow::Cow, collections::HashMap};
 use std::{fs, mem};
 use crate::process::channel;
 use crate::process::message::{MountIdMap, MountMsg};
+use std::fs::OpenOptions;
+use std::os::fd::{BorrowedFd};
 
 use libcgroups::common::CgroupSetup::{Hybrid, Legacy, Unified};
 #[cfg(feature = "v1")]
@@ -116,6 +121,32 @@ pub struct MountOptions<'a> {
     pub cgroup_ns: bool,
 }
 
+fn normalized_id_mappings(
+    mount: &SpecMount,
+) -> (Option<&[LinuxIdMapping]>, Option<&[LinuxIdMapping]>) {
+    let uid_mappings = mount
+        .uid_mappings()
+        .as_ref()
+        .filter(|mappings| !mappings.is_empty())
+        .map(|mappings| mappings.as_slice());
+    let gid_mappings = mount
+        .gid_mappings()
+        .as_ref()
+        .filter(|mappings| !mappings.is_empty())
+        .map(|mappings| mappings.as_slice());
+
+    (uid_mappings, gid_mappings)
+}
+
+fn map_idmapped_syscall_error(err: SyscallError) -> MountError {
+    match err {
+        SyscallError::Nix(Errno::ENOSYS) => MountError::Custom(
+            "idmapped mounts require open_tree/mount_setattr support (Linux 5.12+)".to_string(),
+        ),
+        _ => err.into(),
+    }
+}
+
 pub struct Mount {
     syscall: Box<dyn Syscall>,
     mountinfo_provider: Box<dyn MountInfoProvider>,
@@ -147,6 +178,7 @@ impl Mount {
         mount_option_config: &MountOptionConfig,
         uid_mappings: &[LinuxIdMapping],
         gid_mappings: &[LinuxIdMapping],
+        comm: &mut MountChannels<'_>,
     ) -> Result<()> {
         let dest_for_host = safe_path::scoped_join(rootfs, mount.destination()).map_err(|err| {
             tracing::error!(
@@ -165,15 +197,12 @@ impl Mount {
             || mount_option_config.flags.contains(MsFlags::MS_REC);
         let msg = MountMsg {
             source: src.to_string_lossy().to_string(),
-            destination: dest.to_string_lossy().to_string(),
-            flags: mount_option_config.flags.bits() as u64,
-            cleared_flags: 0,
-            is_bind: true,
             idmap: Some(MountIdMap {
                 uid_mappings: uid_mappings.to_vec(),
                 gid_mappings: gid_mappings.to_vec(),
                 recursive,
             }),
+            recursive,
         };
         comm.main.request_mount_fd(msg).map_err(|err| {
             tracing::error!("failed to request mount fd: {}", err);
@@ -183,13 +212,16 @@ impl Mount {
             tracing::error!("failed to receive mount fd: {}", err);
             MountError::Other(err.into())
         })?;
-
+        let dest_str = dest.to_str().ok_or_else(|| {
+            MountError::Custom("idmapped mount destination must be valid UTF-8".to_string())
+        })?;
+        let at_fdcwd = unsafe { BorrowedFd::borrow_raw(libc::AT_FDCWD) };
         self.syscall
             .move_mount(
-                mount_fd.as_raw_fd(),
-                Path::new(""),
-                libc::AT_FDCWD,
-                dest,
+                mount_fd.as_fd(),
+                None,
+                at_fdcwd,
+                Some(dest_str),
                 linux::MOVE_MOUNT_F_EMPTY_PATH,
             )
             .map_err(map_idmapped_syscall_error)?;
@@ -219,8 +251,9 @@ impl Mount {
         if let Some(mount_attr) = &mount_option_config.rec_attr {
             let open_dir = Dir::open(dest, OFlag::O_DIRECTORY, Mode::empty())?;
             let dir_fd_pathbuf = PathBuf::from(format!("/proc/self/fd/{}", open_dir.as_raw_fd()));
+            let at_fdcwd = unsafe { BorrowedFd::borrow_raw(libc::AT_FDCWD) };
             self.syscall.mount_setattr(
-                -1,
+                at_fdcwd,
                 &dir_fd_pathbuf,
                 linux::AT_RECURSIVE,
                 mount_attr,
@@ -248,7 +281,7 @@ impl Mount {
                             "libcontainer can't run in a Legacy or Hybrid cgroup setup without the v1 feature"
                         );
                         #[cfg(feature = "v1")]
-                        self.mount_cgroup_v1(mount, options).map_err(|err| {
+                        self.mount_cgroup_v1(mount, options, comm).map_err(|err| {
                             tracing::error!("failed to mount cgroup v1: {}", err);
                             err
                         })?
@@ -259,7 +292,7 @@ impl Mount {
                             "libcontainer can't run in a Unified cgroup setup without the v2 feature"
                         );
                         #[cfg(feature = "v2")]
-                        self.mount_cgroup_v2(mount, options, &mount_option_config)
+                        self.mount_cgroup_v2(mount, options, &mount_option_config, comm)
                             .map_err(|err| {
                                 tracing::error!("failed to mount cgroup v2: {}", err);
                                 err
@@ -339,7 +372,7 @@ impl Mount {
     }
 
     #[cfg(feature = "v1")]
-    fn mount_cgroup_v1(&self, cgroup_mount: &SpecMount, options: &MountOptions) -> Result<()> {
+    fn mount_cgroup_v1(&self, cgroup_mount: &SpecMount, options: &MountOptions, mut comm: Option<&mut MountChannels<'_>>) -> Result<()> {
         tracing::debug!("mounting cgroup v1 filesystem");
         // create tmpfs into which the cgroup subsystems will be mounted
         let tmpfs = SpecMountBuilder::default()
@@ -358,7 +391,7 @@ impl Mount {
                 err
             })?;
 
-        self.setup_mount(&tmpfs, options).map_err(|err| {
+        self.setup_mount(&tmpfs, options, comm.as_deref_mut()).map_err(|err| {
             tracing::error!("failed to mount tmpfs for cgroup: {}", err);
             err
         })?;
@@ -437,6 +470,7 @@ impl Mount {
                         subsystem_name == "systemd",
                         host_mount,
                         &process_cgroups,
+                        comm.as_deref_mut(),
                     )?;
                 }
 
@@ -514,6 +548,7 @@ impl Mount {
         named: bool,
         host_mount: &Path,
         process_cgroups: &HashMap<String, String>,
+        mut comm: Option<&mut MountChannels<'_>>,
     ) -> Result<()> {
         tracing::debug!("Mounting (emulated) {:?} cgroup subsystem", subsystem_name);
         let named_hierarchy: Cow<str> = if named {
@@ -557,7 +592,7 @@ impl Mount {
                 .build()?;
             tracing::debug!("Mounting emulated cgroup subsystem: {:?}", emulated);
 
-            self.setup_mount(&emulated, options).map_err(|err| {
+            self.setup_mount(&emulated, options, comm.as_deref_mut()).map_err(|err| {
                 tracing::error!("failed to mount {subsystem_name} cgroup hierarchy: {}", err);
                 err
             })?;
@@ -574,6 +609,7 @@ impl Mount {
         cgroup_mount: &SpecMount,
         options: &MountOptions,
         mount_option_config: &MountOptionConfig,
+        _comm: Option<&mut MountChannels<'_>>,
     ) -> Result<()> {
         tracing::debug!("Mounting cgroup v2 filesystem");
 
@@ -664,6 +700,37 @@ impl Mount {
         Ok(parent_mount)
     }
 
+    fn prepare_bind_source(&self, source: &Path, dest: &Path) -> Result<PathBuf> {
+        let src = canonicalize(source).map_err(|err| {
+            tracing::error!("failed to canonicalize {:?}: {}", source, err);
+            err
+        })?;
+        let dir = if src.is_file() {
+            dest.parent().unwrap()
+        } else {
+            dest
+        };
+
+        fs::create_dir_all(dir).map_err(|err| {
+            tracing::error!("failed to create dir for bind mount {:?}: {}", dir, err);
+            err
+        })?;
+
+        if src.is_file() && !dest.exists() {
+            OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(dest)
+                .map_err(|err| {
+                    tracing::error!("failed to create file for bind mount {:?}: {}", src, err);
+                    err
+                })?;
+        }
+
+        Ok(src)
+    }
+
     fn mount_into_container(
         &self,
         m: &SpecMount,
@@ -690,37 +757,7 @@ impl Mount {
         let source = m.source().as_ref().ok_or(MountError::NoSource)?;
         let dir_perm = Permissions::from_mode(0o755);
         let src = if typ == Some("bind") {
-            let src = canonicalize(source).map_err(|err| {
-                tracing::error!("failed to canonicalize {:?}: {}", source, err);
-                err
-            })?;
-
-            if src.is_file() {
-                let parent = container_dest
-                    .parent()
-                    .ok_or(MountError::Custom("destination has no parent".to_string()))?;
-                root.mkdir_all(parent, &dir_perm)?;
-
-                match root.create_file(
-                    container_dest,
-                    OpenFlags::O_EXCL
-                        | OpenFlags::O_CREAT
-                        | OpenFlags::O_NOFOLLOW
-                        | OpenFlags::O_CLOEXEC,
-                    &Permissions::from_mode(0o644),
-                ) {
-                    Ok(_) => Ok(()),
-                    // If we get here, the file is already present, so continue.
-                    Err(create_err) => root
-                        .resolve(container_dest)
-                        .map(|_| ())
-                        .map_err(|_| create_err),
-                }?;
-            } else {
-                root.mkdir_all(container_dest, &dir_perm)?;
-            };
-
-            src
+            self.prepare_bind_source(source, container_dest)?
         } else {
             root.mkdir_all(container_dest, &dir_perm)?;
             PathBuf::from(source)
@@ -1508,6 +1545,7 @@ mod tests {
                 false,
                 &host_cgroup_mount.join(subsystem_name),
                 &process_cgroups,
+                None,
             )
             .context("failed to setup emulated subsystem")?;
 
@@ -1561,7 +1599,7 @@ mod tests {
 
         // act
         mounter
-            .mount_cgroup_v1(&spec_cgroup_mount, &mount_opts)
+            .mount_cgroup_v1(&spec_cgroup_mount, &mount_opts, None)
             .context("failed to mount cgroup v1")?;
 
         // assert
@@ -1643,7 +1681,7 @@ mod tests {
             apply_recursive_idmap: false,
         };
         mounter
-            .mount_cgroup_v2(&spec_cgroup_mount, &mount_opts, &mount_option_config)
+            .mount_cgroup_v2(&spec_cgroup_mount, &mount_opts, &mount_option_config, None)
             .context("failed to mount cgroup v2")?;
 
         // assert
@@ -1784,7 +1822,7 @@ mod tests {
 
         let m = Mount::new();
 
-        let res = m.setup_mount(&mount, &options);
+        let res = m.setup_mount(&mount, &options, None);
 
         // proc destination symlink should be rejected
         assert!(res.is_err());
@@ -1819,7 +1857,7 @@ mod tests {
 
         let m = Mount::new();
 
-        let res = m.setup_mount(&mount, &options);
+        let res = m.setup_mount(&mount, &options, None);
 
         // sys destination symlink should be rejected
         assert!(res.is_err());
