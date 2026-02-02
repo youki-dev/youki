@@ -106,7 +106,6 @@ pub(crate) fn cgroup_test() -> TestResult {
         // TODO: Implement the test cases discussed in
         // https://github.com/youki-dev/youki/pull/3210#discussion_r2554961182.
         // This depends on changes introduced by PR https://github.com/youki-dev/youki/pull/3347.
-        // 
         // // an exec process can no longer join "/" after turning on a domain controller. Check that cgroup v2 fallback to init cgroup works
         // exec_container(
         //     id,
