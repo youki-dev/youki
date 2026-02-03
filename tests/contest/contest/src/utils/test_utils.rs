@@ -36,6 +36,15 @@ pub struct State {
     pub use_systemd: Option<bool>,
 }
 
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum LifecycleStatus {
+    Creating,
+    Created,
+    Running,
+    Stopped,
+}
+
 #[derive(Debug)]
 pub struct ContainerData {
     pub id: String,
@@ -125,6 +134,81 @@ pub fn get_state<P: AsRef<Path>>(id: &str, dir: P) -> Result<(String, String)> {
     let stderr = String::from_utf8(output.stderr).context("failed to parse std error stream")?;
     let stdout = String::from_utf8(output.stdout).context("failed to parse std output stream")?;
     Ok((stdout, stderr))
+}
+
+/// Get the container status as a LifecycleStatus
+pub fn get_container_status<P: AsRef<Path>>(id: &str, dir: P) -> Result<LifecycleStatus> {
+    match get_state(id, &dir) {
+        Ok((stdout, stderr)) => {
+            if stderr.contains("Error") || stderr.contains("error") {
+                bail!("Error :\nstdout : {}\nstderr : {}", stdout, stderr)
+            } else {
+                match serde_json::from_str::<serde_json::Value>(&stdout) {
+                    Ok(value) => {
+                        if let Some(status) = value.get("status") {
+                            return serde_json::from_value::<LifecycleStatus>(status.clone())
+                                .context("Failed to parse lifecycle status");
+                        }
+                        bail!("Failed to extract status from state output: {}", stdout)
+                    }
+                    Err(err) => bail!("Failed to parse state output as JSON: {} - {}", stdout, err),
+                }
+            }
+        }
+        Err(e) => Err(e.context("failed to get container state")),
+    }
+}
+
+/// Check if a container is in a specific state
+///
+/// Returns `true` if the container is in the expected state, `false` otherwise.
+/// If the container does not exist (e.g., after deletion), it is treated as `Stopped`.
+pub fn is_in_state<P: AsRef<Path>>(
+    id: &str,
+    dir: P,
+    expected_state: LifecycleStatus,
+) -> Result<bool> {
+    match get_container_status(id, &dir) {
+        Ok(status) => Ok(status == expected_state),
+        Err(e) => {
+            if e.to_string().contains("does not exist") {
+                // regard non-existent container as stopped (delete after stopping)
+                return Ok(expected_state == LifecycleStatus::Stopped);
+            }
+            Err(e.context(format!(
+                "failed to check if container is in {:?} state",
+                expected_state
+            )))
+        }
+    }
+}
+
+/// Wait for a container to reach a specific state with timeout
+pub fn wait_for_state<P: AsRef<Path>>(
+    id: &str,
+    dir: P,
+    expected_state: LifecycleStatus,
+    timeout: Duration,
+    poll_interval: Duration,
+) -> Result<()> {
+    let start = std::time::Instant::now();
+
+    while start.elapsed() < timeout {
+        match is_in_state(id, &dir, expected_state) {
+            Ok(true) => return Ok(()),
+            Ok(false) => std::thread::sleep(poll_interval),
+            Err(_) => {
+                // Ignore transient errors during state transitions and continue polling until timeout
+                std::thread::sleep(poll_interval)
+            }
+        }
+    }
+
+    Err(anyhow!(
+        "Timed out waiting for container {} to reach {:?} state",
+        id,
+        expected_state
+    ))
 }
 
 pub fn start_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
