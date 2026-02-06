@@ -4,6 +4,7 @@ use clap::Parser;
 
 /// Checkpoint a running container
 /// Reference: https://github.com/opencontainers/runc/blob/main/man/runc-checkpoint.8.md
+/// Unimplemented options vs runc: https://github.com/youki-dev/youki/issues/3394
 #[derive(Parser, Debug)]
 pub struct Checkpoint {
     /// Path for saving criu image files
