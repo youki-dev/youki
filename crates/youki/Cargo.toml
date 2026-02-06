@@ -28,7 +28,7 @@ default-features = false
 features = ["std", "suggestions", "derive", "cargo", "help", "usage", "error-context"]
 
 [dependencies]
-anyhow = "1.0.100"
+anyhow = "1.0.101"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 libcgroups = { path = "../libcgroups", default-features = false, version = "0.5.7" } # MARK: Version
 libcontainer = { path = "../libcontainer", default-features = false, version = "0.5.7" } # MARK: Version
@@ -56,6 +56,6 @@ tempfile = "3"
 scopeguard = "1.2.0"
 
 [build-dependencies]
-anyhow = "1.0.100"
+anyhow = "1.0.101"
 vergen-gitcl = { version = "9.1.0", features = ["build", "rustc"] }
 pkg-config = "0.3.32"
