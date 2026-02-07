@@ -27,10 +27,12 @@ pub(crate) fn ignore_paused_test() -> TestResult {
 
         let id2 = id.clone();
         let dir2 = dir.to_path_buf();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            let _ = resume_container(&id2, &dir2).unwrap().wait();
-        });
+
+        {
+            scopeguard::defer!(
+                let _ = resume_container(&id2, &dir2).unwrap().wait();
+            );
+        }
 
         let (stdout, _) = exec_container(
             id,

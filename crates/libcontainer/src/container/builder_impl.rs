@@ -106,7 +106,7 @@ impl ContainerBuilderImpl {
                         sub_cgroup_path
                     )));
                 }
-                final_cgroups_path = potential_path;
+                final_cgroups_path = normalized;
             }
         }
 

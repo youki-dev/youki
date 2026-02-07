@@ -623,7 +623,7 @@ impl TenantContainerBuilder {
     fn get_no_new_privileges(&self, spec: &Spec) -> Option<bool> {
         self.no_new_privs
             .filter(|&is_set| is_set)
-            .or_else(|| spec.process().clone().and_then(|p| p.no_new_privileges()))
+            .or_else(|| spec.process().as_ref().and_then(|p| p.no_new_privileges()))
     }
 
     fn get_namespaces(

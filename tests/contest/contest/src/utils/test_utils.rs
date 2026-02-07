@@ -150,7 +150,7 @@ pub fn resume_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
         .arg("resume")
         .arg(id)
         .spawn()
-        .context("could not pause container")?;
+        .context("could not resume container")?;
     Ok(res)
 }
 
