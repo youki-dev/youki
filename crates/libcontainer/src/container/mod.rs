@@ -22,4 +22,4 @@ pub use container::{CheckpointOptions, Container};
 pub use container_checkpoint::CheckpointError;
 #[allow(deprecated)]
 pub use state::ContainerProcessState;
-pub use state::{ContainerStatus, State};
+pub use state::{ContainerStatus, State, StateConversionError};

@@ -26,7 +26,7 @@ chrono = { version = "0.4", default-features = false, features = [
     "serde",
 ] }
 fastrand = "^2.3.0"
-libc = "0.2.178"
+libc = "0.2.180"
 nix = { version = "0.29.0", features = [
     "socket",
     "sched",
@@ -47,23 +47,23 @@ libseccomp = { version = "0.4.0", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 rust-criu = "0.4.0"
-regex = { version = "1.12.2", default-features = false, features = [
+regex = { version = "1.12.3", default-features = false, features = [
     "std",
     "unicode-perl",
 ] }
-thiserror = "2.0.17"
+thiserror = "2.0.18"
 tracing = { version = "0.1.44", features = ["attributes"] }
 safe-path = "0.1.0"
 nc = "0.9.7"
 netlink-packet-route = "0.26.0"
-netlink-sys = "0.8.5"
+netlink-sys = "0.8.8"
 netlink-packet-core = "0.8.1"
-pathrs = "0.2.2"
+pathrs = "0.2.3"
 
 [dev-dependencies]
 oci-spec = { version = "~0.8.4", features = ["proptests", "runtime"] }
 quickcheck = "1"
-serial_test = "3.1.1"
+serial_test = "3.3.1"
 tempfile = "3"
 anyhow = "1.0"
 rand = "0.9.2"

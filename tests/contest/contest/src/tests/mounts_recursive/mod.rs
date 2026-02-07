@@ -1,24 +1,26 @@
 use std::collections::hash_set::HashSet;
 use std::fs;
-use std::fs::File;
+use std::fs::{File, copy, create_dir, write};
 use std::os::unix::fs::symlink;
 use std::os::unix::prelude::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use anyhow::Context;
-use nix::libc;
+use anyhow::anyhow;
 use nix::mount::{MsFlags, mount, umount};
-use nix::sys::stat::Mode;
+use nix::sys::stat::{Mode, SFlag, makedev, mknod};
 use nix::unistd::{Uid, chown};
 use oci_spec::runtime::{
     Capability, LinuxBuilder, LinuxCapabilitiesBuilder, Mount, ProcessBuilder, Spec, SpecBuilder,
     get_default_mounts,
 };
+use tempfile::TempDir;
 use test_framework::{Test, TestGroup, TestResult};
 
 use crate::utils::test_inside_container;
 use crate::utils::test_utils::CreateOptions;
+
+const MOUNT_DEST: &str = "/mnt";
 
 fn get_spec(added_mounts: Vec<Mount>, process_args: Vec<String>) -> Spec {
     let mut mounts = get_default_mounts();
@@ -81,533 +83,492 @@ fn get_spec(added_mounts: Vec<Mount>, process_args: Vec<String>) -> Spec {
         .unwrap()
 }
 
-fn setup_mount(mount_dir: &Path, sub_mount_dir: &Path) {
-    fs::create_dir(mount_dir).unwrap();
-    mount::<Path, Path, str, str>(None, mount_dir, Some("tmpfs"), MsFlags::empty(), None).unwrap();
-    fs::create_dir(sub_mount_dir).unwrap();
-    mount::<Path, Path, str, str>(None, sub_mount_dir, Some("tmpfs"), MsFlags::empty(), None)
-        .unwrap();
+fn setup_mount(mount_dir: &Path, sub_mount_dir: &Path) -> anyhow::Result<()> {
+    create_dir(mount_dir)?;
+    mount::<Path, Path, str, str>(None, mount_dir, Some("tmpfs"), MsFlags::empty(), None)?;
+    create_dir(sub_mount_dir)?;
+    mount::<Path, Path, str, str>(None, sub_mount_dir, Some("tmpfs"), MsFlags::empty(), None)?;
+    Ok(())
 }
 
-fn clean_mount(mount_dir: &Path, sub_mount_dir: &Path) {
-    umount(sub_mount_dir).unwrap();
-    umount(mount_dir).unwrap();
-    fs::remove_dir_all(mount_dir).unwrap();
+fn setup_remount(mount_dir: &Path, sub_mount_dir: &Path, flag: MsFlags) -> anyhow::Result<()> {
+    mount::<Path, Path, str, str>(None, mount_dir, None, MsFlags::MS_REMOUNT | flag, None)?;
+    mount::<Path, Path, str, str>(None, sub_mount_dir, None, MsFlags::MS_REMOUNT | flag, None)?;
+    Ok(())
 }
 
-fn check_recursive_readonly() -> TestResult {
-    let rro_test_base_dir = PathBuf::from_str("/tmp").unwrap();
-    let rro_dir_path = rro_test_base_dir.join("rro_dir");
-    let rro_subdir_path = rro_dir_path.join("rro_subdir");
-    let mount_dest_path = PathBuf::from_str("/mnt").unwrap();
+fn clean_mount(mount_dir: &Path, sub_mount_dir: &Path) -> anyhow::Result<()> {
+    umount(sub_mount_dir)?;
+    umount(mount_dir)?;
+    fs::remove_dir_all(mount_dir)?;
+    Ok(())
+}
 
-    let mount_options = vec!["rbind".to_string(), "rro".to_string()];
+// Helper for mounts_recursive tests.
+// - `mount_options`: OCI mount options (e.g. ["rbind", "rro"]).
+// - `process_args`: If `None`, uses the default ["runtimetest", "mounts_recursive"].
+// - `setup_extra`: Hook to perform additional host-side setup before starting the container.
+//   It takes three parameters:
+//   - `bundle_path`: Bundle root (e.g. used to copy files from bundle/bin).
+//   - `dir_path`: Host directory that will be mounted at /mnt.
+//   - `subdir_path`: Host subdirectory that will be mounted at /mnt/mount_subdir.
+fn check_recursive<F>(
+    mount_options: Vec<String>,
+    process_args: Option<Vec<String>>,
+    setup_extra: F,
+) -> TestResult
+where
+    F: Fn(&Path, &Path, &Path) -> anyhow::Result<()>,
+{
+    let test_base_dir = TempDir::new().unwrap();
+    let dir_path = test_base_dir.path().join("mount_dir");
+    let subdir_path = dir_path.join("mount_subdir");
+    let mount_dest_path = PathBuf::from_str(MOUNT_DEST).unwrap();
+
     let mut mount_spec = Mount::default();
     mount_spec
         .set_destination(mount_dest_path)
         .set_typ(None)
-        .set_source(Some(rro_dir_path.clone()))
+        .set_source(Some(dir_path.clone()))
         .set_options(Some(mount_options));
-    let spec = get_spec(
-        vec![mount_spec],
-        vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
-    );
 
-    let result = test_inside_container(&spec, &CreateOptions::default(), &|_| {
-        setup_mount(&rro_dir_path, &rro_subdir_path);
+    let process_args = process_args
+        .unwrap_or_else(|| vec!["runtimetest".to_string(), "mounts_recursive".to_string()]);
+
+    let spec = get_spec(vec![mount_spec], process_args);
+
+    let result = test_inside_container(&spec, &CreateOptions::default(), &|bundle_path| {
+        setup_mount(&dir_path, &subdir_path).map_err(|e| anyhow!("setup_mount failed: {e:?}"))?;
+        setup_extra(bundle_path, &dir_path, &subdir_path)
+            .map_err(|e| anyhow!("setup_extra failed: {e:?}"))?;
         Ok(())
     });
 
-    clean_mount(&rro_dir_path, &rro_subdir_path);
+    // Even if clean_mount fails, we do not treat the test as failed.
+    if let Err(e) = clean_mount(&dir_path, &subdir_path) {
+        eprintln!(
+            "clean_mount failed (mount_dir={}, sub_mount_dir={}): {e:?}",
+            dir_path.display(),
+            subdir_path.display(),
+        );
+    };
 
     result
 }
 
-fn check_recursive_nosuid() -> TestResult {
-    let rnosuid_test_base_dir = PathBuf::from_str("/tmp").unwrap();
-    let rnosuid_dir_path = rnosuid_test_base_dir.join("rnosuid_dir");
-    let rnosuid_subdir_path = rnosuid_dir_path.join("rnosuid_subdir");
-    let mount_dest_path = PathBuf::from_str("/mnt").unwrap();
-    let executable_file_name = "whoami";
+// Mount Recursive test
+// Host:
+//   - <tmp>/mount_dir is a mount point (tmpfs)
+//   - <tmp>/mount_dir/mount_subdir is a submount (tmpfs)
+//
+// rbind:
+//   - Bind-mount <tmp>/mount_dir into the container at /mnt (rbind)
+//
+// In the container, we should observe:
+//   - mount at /mnt
+//   - submount at /mnt/mount_subdir
+//
+// Key check: the mount options/attributes must be applied to SUBMOUNTS.
 
+// rro_test
+// rro makes both /mnt and /mnt/mount_subdir read-only (including submounts).
+fn check_recursive_readonly() -> TestResult {
+    let mount_options = vec!["rbind".to_string(), "rro".to_string()];
+    check_recursive(
+        mount_options,
+        None,
+        |_bundle_path: &Path, _dir_path: &Path, subdir: &Path| {
+            write(subdir.join("bar"), b"bar\n").map_err(|e| anyhow!("write bar failed: {e:?}"))?;
+            Ok(())
+        },
+    )
+}
+
+// rnosuid_test
+fn check_recursive_nosuid() -> TestResult {
     let mount_options = vec!["rbind".to_string(), "rnosuid".to_string()];
-    let mut mount_spec = Mount::default();
-    mount_spec
-        .set_destination(mount_dest_path.clone())
-        .set_typ(None)
-        .set_source(Some(rnosuid_dir_path.clone()))
-        .set_options(Some(mount_options));
-    let spec = get_spec(
-        vec![mount_spec],
-        vec![
+    let mount_dest_path = PathBuf::from_str(MOUNT_DEST).unwrap();
+    let executable_file_name = "whoami";
+    check_recursive(
+        mount_options,
+        Some(vec![
             "sh".to_string(),
             "-c".to_string(),
             format!(
                 "{}; {}",
                 mount_dest_path.join(executable_file_name).to_str().unwrap(),
                 mount_dest_path
-                    .join("rnosuid_subdir/whoami")
+                    .join("mount_subdir/whoami")
                     .to_str()
                     .unwrap()
             ),
-        ],
-    );
+        ]),
+        |bundle_path: &Path, dir_path: &Path, subdir_path: &Path| {
+            let executable_file_path = bundle_path.join("bin").join(executable_file_name);
+            let in_container_executable_file_path = dir_path.join(executable_file_name);
+            let in_container_executable_subdir_file_path = subdir_path.join(executable_file_name);
 
-    let result = test_inside_container(&spec, &CreateOptions::default(), &|bundle_path| {
-        setup_mount(&rnosuid_dir_path, &rnosuid_subdir_path);
+            copy(&executable_file_path, &in_container_executable_file_path)?;
+            copy(
+                &executable_file_path,
+                &in_container_executable_subdir_file_path,
+            )?;
 
-        let executable_file_path = bundle_path.join("bin").join(executable_file_name);
-        let in_container_executable_file_path = rnosuid_dir_path.join(executable_file_name);
-        let in_container_executable_subdir_file_path =
-            rnosuid_subdir_path.join(executable_file_name);
+            let in_container_executable_file = File::open(&in_container_executable_file_path)?;
+            let in_container_executable_subdir_file =
+                File::open(&in_container_executable_subdir_file_path)?;
 
-        fs::copy(&executable_file_path, &in_container_executable_file_path)?;
-        fs::copy(
-            &executable_file_path,
-            &in_container_executable_subdir_file_path,
-        )?;
+            let mut in_container_executable_file_perm =
+                in_container_executable_file.metadata()?.permissions();
+            let mut in_container_executable_subdir_file_perm = in_container_executable_subdir_file
+                .metadata()?
+                .permissions();
 
-        let in_container_executable_file = fs::File::open(&in_container_executable_file_path)?;
-        let in_container_executable_subdir_file =
-            fs::File::open(&in_container_executable_subdir_file_path)?;
+            // Change file user to nonexistent uid and set suid.
+            // if rnosuid is applied, whoami command is executed as root.
+            // but if not adapted, whoami command is executed as uid 1200 and make an error.
+            chown(
+                &in_container_executable_file_path,
+                Some(Uid::from_raw(1200)),
+                None,
+            )
+            .unwrap();
+            chown(
+                &in_container_executable_subdir_file_path,
+                Some(Uid::from_raw(1200)),
+                None,
+            )
+            .unwrap();
+            in_container_executable_file_perm
+                .set_mode(in_container_executable_file_perm.mode() | Mode::S_ISUID.bits());
+            in_container_executable_subdir_file_perm
+                .set_mode(in_container_executable_subdir_file_perm.mode() | Mode::S_ISUID.bits());
 
-        let mut in_container_executable_file_perm =
-            in_container_executable_file.metadata()?.permissions();
-        let mut in_container_executable_subdir_file_perm = in_container_executable_subdir_file
-            .metadata()?
-            .permissions();
-
-        // Change file user to nonexistent uid and set suid.
-        // if rnosuid is applied, whoami command is executed as root.
-        // but if not adapted, whoami command is executed as uid 1200 and make an error.
-        chown(
-            &in_container_executable_file_path,
-            Some(Uid::from_raw(1200)),
-            None,
-        )
-        .unwrap();
-        chown(
-            &in_container_executable_subdir_file_path,
-            Some(Uid::from_raw(1200)),
-            None,
-        )
-        .unwrap();
-        in_container_executable_file_perm
-            .set_mode(in_container_executable_file_perm.mode() | Mode::S_ISUID.bits());
-        in_container_executable_subdir_file_perm
-            .set_mode(in_container_executable_subdir_file_perm.mode() | Mode::S_ISUID.bits());
-
-        in_container_executable_file.set_permissions(in_container_executable_file_perm.clone())?;
-        in_container_executable_subdir_file
-            .set_permissions(in_container_executable_subdir_file_perm.clone())?;
-
-        Ok(())
-    });
-
-    clean_mount(&rnosuid_dir_path, &rnosuid_subdir_path);
-
-    result
+            in_container_executable_file
+                .set_permissions(in_container_executable_file_perm.clone())?;
+            in_container_executable_subdir_file
+                .set_permissions(in_container_executable_subdir_file_perm.clone())?;
+            Ok(())
+        },
+    )
 }
 
+// rsuid_test
+// Mounting with 'rsuid' honors SUID bits on this mount (i.e., SUID can take effect).
+// Note: The bits remain set in the inode (e.g., ls -l still shows 's').
 fn check_recursive_rsuid() -> TestResult {
-    let rsuid_dir_path = PathBuf::from_str("/tmp/rsuid_dir").unwrap();
-    let mount_dest_path = PathBuf::from_str("/mnt/rsuid_dir").unwrap();
-    fs::create_dir_all(rsuid_dir_path.clone()).unwrap();
-    scopeguard::defer!(fs::remove_dir_all(rsuid_dir_path.clone()).unwrap());
-
     let mount_options = vec!["rbind".to_string(), "rsuid".to_string()];
-    let mut mount_spec = Mount::default();
-    mount_spec
-        .set_destination(mount_dest_path)
-        .set_typ(None)
-        .set_source(Some(rsuid_dir_path.clone()))
-        .set_options(Some(mount_options));
-    let spec = get_spec(
-        vec![mount_spec],
-        vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
-    );
-    test_inside_container(&spec, &CreateOptions::default(), &|_| {
-        let original_file_path = rsuid_dir_path.join("file");
-        let file = File::create(original_file_path)?;
-        let mut permission = file.metadata()?.permissions();
-        // chmod +s /tmp/rsuid_dir/file && chmod +g /tmp/rsuid_dir/file
-        permission.set_mode(permission.mode() | libc::S_ISUID | libc::S_ISGID);
-        file.set_permissions(permission)
-            .with_context(|| "failed to set permission")?;
+    let mount_dest_path = PathBuf::from_str(MOUNT_DEST).unwrap();
+    let executable_file_name = "whoami";
+    let result = check_recursive(
+        mount_options,
+        Some(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            format!(
+                "{}; {}",
+                mount_dest_path.join(executable_file_name).to_str().unwrap(),
+                mount_dest_path
+                    .join("mount_subdir/whoami")
+                    .to_str()
+                    .unwrap()
+            ),
+        ]),
+        |bundle_path: &Path, dir_path: &Path, subdir_path: &Path| {
+            let executable_file_path = bundle_path.join("bin").join(executable_file_name);
+            let in_container_executable_file_path = dir_path.join(executable_file_name);
+            let in_container_executable_subdir_file_path = subdir_path.join(executable_file_name);
+            copy(&executable_file_path, &in_container_executable_file_path)?;
+            copy(
+                &executable_file_path,
+                &in_container_executable_subdir_file_path,
+            )?;
 
-        Ok(())
-    })
+            let in_container_executable_file = File::open(&in_container_executable_file_path)?;
+            let in_container_executable_subdir_file =
+                File::open(&in_container_executable_subdir_file_path)?;
+            let mut in_container_executable_file_perm =
+                in_container_executable_file.metadata()?.permissions();
+            let mut in_container_executable_subdir_file_perm = in_container_executable_subdir_file
+                .metadata()?
+                .permissions();
+
+            // Change file user to nonexistent uid and set suid.
+            // if rsuid is applied, whoami command is executed as 1200 and make an error.
+            chown(
+                &in_container_executable_file_path,
+                Some(Uid::from_raw(1200)),
+                None,
+            )
+            .unwrap();
+            chown(
+                &in_container_executable_subdir_file_path,
+                Some(Uid::from_raw(1200)),
+                None,
+            )
+            .unwrap();
+            in_container_executable_file_perm
+                .set_mode(in_container_executable_file_perm.mode() | Mode::S_ISUID.bits());
+            in_container_executable_subdir_file_perm
+                .set_mode(in_container_executable_subdir_file_perm.mode() | Mode::S_ISUID.bits());
+
+            in_container_executable_file
+                .set_permissions(in_container_executable_file_perm.clone())?;
+            in_container_executable_subdir_file
+                .set_permissions(in_container_executable_subdir_file_perm.clone())?;
+            Ok(())
+        },
+    );
+
+    match result {
+        TestResult::Failed(e) => {
+            let msg = e.to_string();
+            // This error message may vary depending on the environment.
+            if msg.contains("whoami: unknown uid 1200") {
+                TestResult::Passed
+            } else {
+                TestResult::Failed(anyhow!(
+                    "whoami failed, but not with expected message. error: {}",
+                    msg
+                ))
+            }
+        }
+        // TestResult::Passed,
+        TestResult::Passed => TestResult::Failed(anyhow!(
+            "Expected execute a non-existent user to fail, but it succeeded"
+        )),
+        _ => TestResult::Failed(anyhow!("Unexpected test result")),
+    }
 }
 
+// rnoexec_test
 fn check_recursive_noexec() -> TestResult {
-    let rnoexec_test_base_dir = PathBuf::from_str("/tmp").unwrap();
-    let rnoexec_dir_path = rnoexec_test_base_dir.join("rnoexec_dir");
-    let rnoexec_subdir_path = rnoexec_dir_path.join("rnoexec_subdir");
-    let mount_dest_path = PathBuf::from_str("/mnt").unwrap();
-
     let mount_options = vec!["rbind".to_string(), "rnoexec".to_string()];
-    let mut mount_spec = Mount::default();
-    mount_spec
-        .set_destination(mount_dest_path)
-        .set_typ(None)
-        .set_source(Some(rnoexec_dir_path.clone()))
-        .set_options(Some(mount_options));
-    let spec = get_spec(
-        vec![mount_spec],
-        vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
-    );
+    check_recursive(
+        mount_options,
+        None,
+        |bundle_path: &Path, dir_path: &Path, subdir_path: &Path| {
+            let executable_file_name = "echo";
+            let executable_file_path = bundle_path.join("bin").join(executable_file_name);
+            let in_container_executable_file_path = dir_path.join(executable_file_name);
+            let in_container_executable_subdir_file_path = subdir_path.join(executable_file_name);
 
-    let result = test_inside_container(&spec, &CreateOptions::default(), &|bundle_path| {
-        setup_mount(&rnoexec_dir_path, &rnoexec_subdir_path);
+            copy(&executable_file_path, in_container_executable_file_path)?;
+            copy(
+                &executable_file_path,
+                in_container_executable_subdir_file_path,
+            )?;
 
-        let executable_file_name = "echo";
-        let executable_file_path = bundle_path.join("bin").join(executable_file_name);
-        let in_container_executable_file_path = rnoexec_dir_path.join(executable_file_name);
-        let in_container_executable_subdir_file_path =
-            rnoexec_subdir_path.join(executable_file_name);
-
-        fs::copy(&executable_file_path, in_container_executable_file_path)?;
-        fs::copy(
-            &executable_file_path,
-            in_container_executable_subdir_file_path,
-        )?;
-
-        Ok(())
-    });
-
-    clean_mount(&rnoexec_dir_path, &rnoexec_subdir_path);
-
-    result
+            Ok(())
+        },
+    )
 }
 
+// rexec_test
 fn check_recursive_rexec() -> TestResult {
-    let rnoexec_test_base_dir = PathBuf::from_str("/tmp").unwrap();
-    let rnoexec_dir_path = rnoexec_test_base_dir.join("rexec_dir");
-    let rnoexec_subdir_path = rnoexec_dir_path.join("rexec_subdir");
-    let mount_dest_path = PathBuf::from_str("/mnt").unwrap();
-
     let mount_options = vec!["rbind".to_string(), "rexec".to_string()];
-    let mut mount_spec = Mount::default();
-    mount_spec
-        .set_destination(mount_dest_path)
-        .set_typ(None)
-        .set_source(Some(rnoexec_dir_path.clone()))
-        .set_options(Some(mount_options));
-    let spec = get_spec(
-        vec![mount_spec],
-        vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
-    );
+    check_recursive(
+        mount_options,
+        None,
+        |bundle_path: &Path, dir_path: &Path, subdir_path: &Path| {
+            let executable_file_name = "echo";
+            let executable_file_path = bundle_path.join("bin").join(executable_file_name);
+            let in_container_executable_file_path = dir_path.join(executable_file_name);
+            let in_container_executable_subdir_file_path = subdir_path.join(executable_file_name);
 
-    let result = test_inside_container(&spec, &CreateOptions::default(), &|bundle_path| {
-        setup_mount(&rnoexec_dir_path, &rnoexec_subdir_path);
+            copy(&executable_file_path, in_container_executable_file_path)?;
+            copy(
+                &executable_file_path,
+                in_container_executable_subdir_file_path,
+            )?;
 
-        let executable_file_name = "echo";
-        let executable_file_path = bundle_path.join("bin").join(executable_file_name);
-        let in_container_executable_file_path = rnoexec_dir_path.join(executable_file_name);
-        let in_container_executable_subdir_file_path =
-            rnoexec_subdir_path.join(executable_file_name);
-
-        fs::copy(&executable_file_path, in_container_executable_file_path)?;
-        fs::copy(
-            &executable_file_path,
-            in_container_executable_subdir_file_path,
-        )?;
-
-        Ok(())
-    });
-
-    clean_mount(&rnoexec_dir_path, &rnoexec_subdir_path);
-
-    result
+            Ok(())
+        },
+    )
 }
 
-/// rdiratime If set in attr_clr, removes the restriction that prevented updating access time for directories.
+// rdiratime_test
+// rdiratime If set in attr_clr, removes the restriction that prevented updating access time for directories.
 fn check_recursive_rdiratime() -> TestResult {
-    let rdiratime_base_dir = PathBuf::from_str("/tmp/rdiratime").unwrap();
-    let mount_dest_path = PathBuf::from_str("/rdiratime").unwrap();
-    fs::create_dir(rdiratime_base_dir.clone()).unwrap();
-
     let mount_options = vec!["rbind".to_string(), "rdiratime".to_string()];
-    let mut mount_spec = Mount::default();
-    mount_spec
-        .set_destination(mount_dest_path)
-        .set_typ(None)
-        .set_source(Some(rdiratime_base_dir.clone()))
-        .set_options(Some(mount_options));
-    let spec = get_spec(
-        vec![mount_spec],
-        vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
-    );
-
-    let result = test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()));
-
-    fs::remove_dir(rdiratime_base_dir).unwrap();
-    result
+    check_recursive(
+        mount_options,
+        None,
+        |_bundle_path: &Path, _dir_path: &Path, _subdir_path: &Path| Ok(()),
+    )
 }
 
-/// If set in attr_set, prevents updating access time for directories on this mount
+// rnodiratime_test
+// If set in attr_set, prevents updating access time for directories on this mount
 fn check_recursive_rnodiratime() -> TestResult {
-    let rnodiratime_base_dir = PathBuf::from_str("/tmp/rnodiratime").unwrap();
-    let mount_dest_path = PathBuf::from_str("/rnodiratime").unwrap();
-    fs::create_dir(rnodiratime_base_dir.clone()).unwrap();
-
     let mount_options = vec!["rbind".to_string(), "rnodiratime".to_string()];
-    let mut mount_spec = Mount::default();
-    mount_spec
-        .set_destination(mount_dest_path)
-        .set_typ(None)
-        .set_source(Some(rnodiratime_base_dir.clone()))
-        .set_options(Some(mount_options));
-    let spec = get_spec(
-        vec![mount_spec],
-        vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
-    );
-
-    let result = test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()));
-    fs::remove_dir(rnodiratime_base_dir).unwrap();
-    result
+    check_recursive(
+        mount_options,
+        None,
+        |_bundle_path: &Path, _dir_path: &Path, _subdir_path: &Path| Ok(()),
+    )
 }
 
+// rdev_test
 fn check_recursive_rdev() -> TestResult {
-    let rdev_base_dir = PathBuf::from_str("/dev").unwrap();
-    let mount_dest_path = PathBuf::from_str("/rdev").unwrap();
-
     let mount_options = vec!["rbind".to_string(), "rdev".to_string()];
-    let mut mount_spec = Mount::default();
-    mount_spec
-        .set_destination(mount_dest_path)
-        .set_typ(None)
-        .set_source(Some(rdev_base_dir))
-        .set_options(Some(mount_options));
-    let spec = get_spec(
-        vec![mount_spec],
-        vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
-    );
-
-    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
+    check_recursive(
+        mount_options,
+        None,
+        |_bundle_path: &Path, _dir_path: &Path, subdir_path: &Path| {
+            let dev = makedev(1, 3);
+            mknod(
+                &subdir_path.join("null"),
+                SFlag::S_IFCHR,
+                Mode::from_bits_truncate(0o666),
+                dev,
+            )
+            .expect("create null device");
+            Ok(())
+        },
+    )
 }
 
+// rnodev_test
 fn check_recursive_rnodev() -> TestResult {
-    let rnodev_base_dir = PathBuf::from_str("/dev").unwrap();
-    let mount_dest_path = PathBuf::from_str("/rnodev").unwrap();
-
     let mount_options = vec!["rbind".to_string(), "rnodev".to_string()];
-    let mut mount_spec = Mount::default();
-    mount_spec
-        .set_destination(mount_dest_path)
-        .set_typ(None)
-        .set_source(Some(rnodev_base_dir))
-        .set_options(Some(mount_options));
-    let spec = get_spec(
-        vec![mount_spec],
-        vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
-    );
-
-    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
+    check_recursive(
+        mount_options,
+        None,
+        |_bundle_path: &Path, _dir_path: &Path, subdir_path: &Path| {
+            let dev = makedev(1, 3);
+            mknod(
+                &subdir_path.join("null"),
+                SFlag::S_IFCHR,
+                Mode::from_bits_truncate(0o666),
+                dev,
+            )
+            .expect("create null device");
+            Ok(())
+        },
+    )
 }
 
+// rrw_test
 fn check_recursive_readwrite() -> TestResult {
-    let rrw_test_base_dir = PathBuf::from_str("/tmp").unwrap();
-    let rrw_dir_path = rrw_test_base_dir.join("rrw_dir");
-    let rrw_subdir_path = rrw_dir_path.join("rrw_subdir");
-    let mount_dest_path = PathBuf::from_str("/rrw").unwrap();
-
     let mount_options = vec!["rbind".to_string(), "rrw".to_string()];
-    let mut mount_spec = Mount::default();
-    mount_spec
-        .set_destination(mount_dest_path)
-        .set_typ(None)
-        .set_source(Some(rrw_dir_path.clone()))
-        .set_options(Some(mount_options));
-    let spec = get_spec(
-        vec![mount_spec],
-        vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
-    );
-
-    let result = test_inside_container(&spec, &CreateOptions::default(), &|_| {
-        setup_mount(&rrw_dir_path, &rrw_subdir_path);
-        Ok(())
-    });
-
-    clean_mount(&rrw_dir_path, &rrw_subdir_path);
-
-    result
+    check_recursive(
+        mount_options,
+        None,
+        |_bundle_path: &Path, _dir_path: &Path, subdir_path: &Path| {
+            write(subdir_path.join("bar"), b"bar\n").unwrap();
+            Ok(())
+        },
+    )
 }
 
+// rrelatime_test
 fn check_recursive_rrelatime() -> TestResult {
-    let rrelatime_base_dir = PathBuf::from_str("/tmp").unwrap();
-    let rrelatime_dir_path = rrelatime_base_dir.join("rrelatime_dir");
-    let rrelatime_suddir_path = rrelatime_dir_path.join("rrelatime_subdir");
-    let mount_dest_path = PathBuf::from_str("/rrelatime").unwrap();
-    fs::create_dir_all(rrelatime_suddir_path).unwrap();
-
     let mount_options = vec!["rbind".to_string(), "rrelatime".to_string()];
-    let mut mount_spec = Mount::default();
-    mount_spec
-        .set_destination(mount_dest_path)
-        .set_typ(None)
-        .set_source(Some(rrelatime_dir_path.clone()))
-        .set_options(Some(mount_options));
-    let spec = get_spec(
-        vec![mount_spec],
-        vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
-    );
-    let result = test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()));
-
-    fs::remove_dir_all(rrelatime_dir_path).unwrap();
-    result
+    check_recursive(
+        mount_options,
+        None,
+        |_bundle_path: &Path, dir_path: &Path, subdir_path: &Path| {
+            setup_remount(dir_path, subdir_path, MsFlags::MS_STRICTATIME)
+                .map_err(|e| anyhow!("setup_remount failed: {e:?}"))?;
+            Ok(())
+        },
+    )
 }
 
+// rnorelatime_test
 fn check_recursive_rnorelatime() -> TestResult {
-    let rnorelatime_base_dir = PathBuf::from_str("/tmp").unwrap();
-    let rnorelatime_dir_path = rnorelatime_base_dir.join("rnorelatime_dir");
-    let mount_dest_path = PathBuf::from_str("/rnorelatime").unwrap();
-    fs::create_dir(rnorelatime_dir_path.clone()).unwrap();
-
     let mount_options = vec!["rbind".to_string(), "rnorelatime".to_string()];
-    let mut mount_spec = Mount::default();
-    mount_spec
-        .set_destination(mount_dest_path)
-        .set_typ(None)
-        .set_source(Some(rnorelatime_dir_path.clone()))
-        .set_options(Some(mount_options));
-    let spec = get_spec(
-        vec![mount_spec],
-        vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
-    );
-
-    let result = test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()));
-
-    fs::remove_dir_all(rnorelatime_dir_path).unwrap();
-    result
+    check_recursive(
+        mount_options,
+        None,
+        |_bundle_path: &Path, dir_path: &Path, subdir_path: &Path| {
+            // The container implementation treats `norelatime` as clearing the `relatime` flag.
+            // In this test, the mount is configured with `strictatime`, so once `relatime` is cleared, the mount ends up using `strictatime`.
+            setup_remount(dir_path, subdir_path, MsFlags::MS_STRICTATIME)
+                .map_err(|e| anyhow!("setup_remount failed: {e:?}"))?;
+            Ok(())
+        },
+    )
 }
 
+// rnoatime_test
 fn check_recursive_rnoatime() -> TestResult {
-    let rnoatime_base_dir = PathBuf::from_str("/tmp").unwrap();
-    let rnoatime_dir_path = rnoatime_base_dir.join("rnoatime_dir");
-    let mount_dest_path = PathBuf::from_str("/rnoatime").unwrap();
-    fs::create_dir(rnoatime_dir_path.clone()).unwrap();
-
     let mount_options = vec!["rbind".to_string(), "rnoatime".to_string()];
-    let mut mount_spec = Mount::default();
-    mount_spec
-        .set_destination(mount_dest_path)
-        .set_typ(None)
-        .set_source(Some(rnoatime_dir_path.clone()))
-        .set_options(Some(mount_options));
-    let spec = get_spec(
-        vec![mount_spec],
-        vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
-    );
-
-    let result = test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()));
-
-    fs::remove_dir_all(rnoatime_dir_path).unwrap();
-    result
+    check_recursive(
+        mount_options,
+        None,
+        |_bundle_path: &Path, _dir_path: &Path, _subdir_path: &Path| Ok(()),
+    )
 }
 
+// rstrictatime_test
 fn check_recursive_rstrictatime() -> TestResult {
-    let rstrictatime_base_dir = PathBuf::from_str("/tmp").unwrap();
-    let rstrictatime_dir_path = rstrictatime_base_dir.join("rstrictatime_dir");
-    let mount_dest_path = PathBuf::from_str("/rstrictatime").unwrap();
-    fs::create_dir(rstrictatime_dir_path.clone()).unwrap();
-
     let mount_options = vec!["rbind".to_string(), "rstrictatime".to_string()];
-    let mut mount_spec = Mount::default();
-    mount_spec
-        .set_destination(mount_dest_path)
-        .set_typ(None)
-        .set_source(Some(rstrictatime_dir_path.clone()))
-        .set_options(Some(mount_options));
-    let spec = get_spec(
-        vec![mount_spec],
-        vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
-    );
-    let result = test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()));
-
-    fs::remove_dir_all(rstrictatime_dir_path).unwrap();
-    result
+    check_recursive(
+        mount_options,
+        None,
+        |_bundle_path: &Path, _dir_path: &Path, _subdir_path: &Path| Ok(()),
+    )
 }
 
+// rnosymfollow_test
 fn check_recursive_rnosymfollow() -> TestResult {
-    let rnosymfollow_dir_path = PathBuf::from_str("/tmp/rnosymfollow").unwrap();
-    let mount_dest_path = PathBuf::from_str("/mnt/rnosymfollow").unwrap();
-    fs::create_dir_all(rnosymfollow_dir_path.clone()).unwrap();
+    let mount_options = vec!["rbind".to_string(), "rnosymfollow".to_string()];
+    check_recursive(
+        mount_options,
+        None,
+        |_bundle_path: &Path, _dir_path: &Path, subdir_path: &Path| {
+            let original_file_path = format!("{}/{}", subdir_path.to_str().unwrap(), "file");
+            let _ = File::create(&original_file_path)?;
+            let link_file_path = format!("{}/{}", subdir_path.to_str().unwrap(), "link");
 
-    let mount_options = vec![
-        "rbind".to_string(),
-        "rnosymfollow".to_string(),
-        "rsuid".to_string(),
-    ];
-    let mut mount_spec = Mount::default();
-    mount_spec
-        .set_destination(mount_dest_path)
-        .set_typ(None)
-        .set_source(Some(rnosymfollow_dir_path.clone()))
-        .set_options(Some(mount_options));
-    let spec = get_spec(
-        vec![mount_spec],
-        vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
-    );
-    let result = test_inside_container(&spec, &CreateOptions::default(), &|_| {
-        let original_file_path = format!("{}/{}", rnosymfollow_dir_path.to_str().unwrap(), "file");
-        let file = File::create(&original_file_path)?;
-        let link_file_path = format!("{}/{}", rnosymfollow_dir_path.to_str().unwrap(), "link");
-        let mut permission = file.metadata()?.permissions();
-        permission.set_mode(permission.mode() | libc::S_ISUID | libc::S_ISGID);
-        file.set_permissions(permission)
-            .with_context(|| "failed to set permission")?;
-
-        symlink(original_file_path, link_file_path)?;
-        Ok(())
-    });
-
-    fs::remove_dir_all(rnosymfollow_dir_path).unwrap();
-    result
+            symlink(original_file_path, link_file_path)?;
+            Ok(())
+        },
+    )
 }
 
+// rsymfollow_test
 fn check_recursive_rsymfollow() -> TestResult {
-    let rsymfollow_dir_path = PathBuf::from_str("/tmp/rsymfollow").unwrap();
-    let mount_dest_path = PathBuf::from_str("/mnt/rsymfollow").unwrap();
-    fs::create_dir_all(rsymfollow_dir_path.clone()).unwrap();
-
-    let mount_options = vec![
-        "rbind".to_string(),
-        "rsymfollow".to_string(),
-        "rsuid".to_string(),
-    ];
-    let mut mount_spec = Mount::default();
-    mount_spec
-        .set_destination(mount_dest_path)
-        .set_typ(None)
-        .set_source(Some(rsymfollow_dir_path.clone()))
-        .set_options(Some(mount_options));
-    let spec = get_spec(
-        vec![mount_spec],
-        vec!["runtimetest".to_string(), "mounts_recursive".to_string()],
-    );
-    let result = test_inside_container(&spec, &CreateOptions::default(), &|_| {
-        let original_file_path = format!("{}/{}", rsymfollow_dir_path.to_str().unwrap(), "file");
-        let file = File::create(&original_file_path)?;
-        let link_file_path = format!("{}/{}", rsymfollow_dir_path.to_str().unwrap(), "link");
-        let mut permission = file.metadata()?.permissions();
-        permission.set_mode(permission.mode() | libc::S_ISUID | libc::S_ISGID);
-        file.set_permissions(permission)
-            .with_context(|| "failed to set permission")?;
-
-        symlink(original_file_path, link_file_path)?;
-        Ok(())
-    });
-
-    fs::remove_dir_all(rsymfollow_dir_path).unwrap();
-    result
+    let mount_options = vec!["rbind".to_string(), "rsymfollow".to_string()];
+    check_recursive(
+        mount_options,
+        None,
+        |_bundle_path: &Path, _dir_path: &Path, subdir_path: &Path| {
+            let original_file_path = format!("{}/{}", subdir_path.to_str().unwrap(), "file");
+            let _ = File::create(&original_file_path)?;
+            let link_file_path = format!("{}/{}", subdir_path.to_str().unwrap(), "link");
+            symlink(original_file_path, link_file_path)?;
+            Ok(())
+        },
+    )
 }
 
-/// this mount test how to work?
-/// 1. Create mount_options based on the mount properties of the test
-/// 2. Create OCI.Spec content, container one process is runtimetest,(runtimetest is cargo model, file path `tests/runtimetest/`)
-/// 3. inside container to check if the actual mount matches the spec, (spec https://man7.org/linux/man-pages/man2/mount_setattr.2.html),
-///    eg. tests/runtimetest/src/tests.rs
+// rbind_ro_test
+// If we specify `rbind` and `ro`, the top-level mount becomes read-only, but the setting is not applied recursively to submounts.
+// ref: https://github.com/opencontainers/runc/blob/main/tests/integration/mounts_recursive.bats#L34
+fn check_rbind_ro_is_readonly_but_not_recursively() -> TestResult {
+    let mount_options = vec!["rbind".to_string(), "ro".to_string()];
+    check_recursive(
+        mount_options,
+        Some(vec![
+            "runtimetest".to_string(),
+            "mounts_recursive_rbind_ro".to_string(),
+        ]),
+        |_bundle_path: &Path, dir_path: &Path, subdir_path: &Path| {
+            write(dir_path.join("bar"), b"bar\n").unwrap();
+            write(subdir_path.join("bar"), b"bar\n").unwrap();
+            Ok(())
+        },
+    )
+}
+
+// this mount test how to work?
+// 1. Create mount_options based on the mount properties of the test
+// 2. Create OCI Spec content, container one process is runtimetest,(runtimetest is cargo model, file path `tests/runtimetest/`)
+// 3. inside container to check if the actual mount matches the spec, (spec https://man7.org/linux/man-pages/man2/mount_setattr.2.html),
+//    eg. tests/runtimetest/src/tests.rs
 pub fn get_mounts_recursive_test() -> TestGroup {
     let rro_test = Test::new("rro_test", Box::new(check_recursive_readonly));
     let rnosuid_test = Test::new("rnosuid_test", Box::new(check_recursive_nosuid));
@@ -625,6 +586,10 @@ pub fn get_mounts_recursive_test() -> TestGroup {
     let rstrictatime_test = Test::new("rstrictatime_test", Box::new(check_recursive_rstrictatime));
     let rnosymfollow_test = Test::new("rnosymfollow_test", Box::new(check_recursive_rnosymfollow));
     let rsymfollow_test = Test::new("rsymfollow_test", Box::new(check_recursive_rsymfollow));
+    let rbind_ro_test = Test::new(
+        "rbind_ro_test",
+        Box::new(check_rbind_ro_is_readonly_but_not_recursively),
+    );
 
     let mut tg = TestGroup::new("mounts_recursive");
     tg.add(vec![
@@ -644,6 +609,7 @@ pub fn get_mounts_recursive_test() -> TestGroup {
         Box::new(rstrictatime_test),
         Box::new(rnosymfollow_test),
         Box::new(rsymfollow_test),
+        Box::new(rbind_ro_test),
     ]);
 
     tg

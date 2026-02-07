@@ -21,6 +21,7 @@ use crate::tests::hostname::get_hostname_test;
 use crate::tests::intel_rdt::get_intel_rdt_test;
 use crate::tests::io_priority::get_io_priority_test;
 use crate::tests::kill::get_kill_test;
+use crate::tests::kill_no_effect::get_kill_no_effect_test;
 use crate::tests::lifecycle::{ContainerCreate, ContainerLifecycle};
 use crate::tests::linux_masked_paths::get_linux_masked_paths_tests;
 use crate::tests::linux_ns_itype::get_ns_itype_tests;
@@ -32,6 +33,7 @@ use crate::tests::no_pivot::get_no_pivot_test;
 use crate::tests::personality::get_personality_test;
 use crate::tests::pidfile::get_pidfile_test;
 use crate::tests::poststart::get_poststart_tests;
+use crate::tests::poststart_fail::get_poststart_fail_tests;
 use crate::tests::process::get_process_test;
 use crate::tests::process_capabilities_fail::get_process_capabilities_fail_test;
 use crate::tests::process_oom_score_adj::get_process_oom_score_adj_test;
@@ -119,6 +121,7 @@ fn main() -> Result<()> {
     let ns_itype = get_ns_itype_tests();
     let hooks = get_hooks_tests();
     let poststart = get_poststart_tests();
+    let poststart_fail = get_poststart_fail_tests();
     let cgroup_v1_pids = cgroups::pids::get_test_group();
     let cgroup_v1_cpu = cgroups::cpu::v1::get_test_group();
     let cgroup_v2_cpu = cgroups::cpu::v2::get_test_group();
@@ -149,6 +152,7 @@ fn main() -> Result<()> {
     let process_oom_score_adj = get_process_oom_score_adj_test();
     let fd_control = get_fd_control_test();
     let kill = get_kill_test();
+    let kill_no_effect = get_kill_no_effect_test();
     let masked_paths = get_linux_masked_paths_tests();
     let rootfs_propagation = get_rootfs_propagation_test();
     let process_capabilities_fail = get_process_capabilities_fail_test();
@@ -166,6 +170,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(ns_itype));
     tm.add_test_group(Box::new(hooks));
     tm.add_test_group(Box::new(poststart));
+    tm.add_test_group(Box::new(poststart_fail));
     tm.add_test_group(Box::new(cgroup_v1_pids));
     tm.add_test_group(Box::new(cgroup_v1_cpu));
     tm.add_test_group(Box::new(cgroup_v2_cpu));
@@ -196,6 +201,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(process_oom_score_adj));
     tm.add_test_group(Box::new(fd_control));
     tm.add_test_group(Box::new(kill));
+    tm.add_test_group(Box::new(kill_no_effect));
     tm.add_test_group(Box::new(rootfs_propagation));
     tm.add_test_group(Box::new(net_devices));
     tm.add_test_group(Box::new(process_capabilities_fail));

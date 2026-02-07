@@ -22,15 +22,15 @@ cgroupsv2_devices = ["rbpf", "libbpf-sys", "errno", "libc", "nix/dir"]
 [dependencies]
 nix = { version = "0.29.0", features = ["signal", "user", "fs"] }
 procfs = "0.17.0"
-pathrs = "0.2.2"
+pathrs = "0.2.3"
 oci-spec = { version = "~0.8.4", features = ["runtime"] }
 fixedbitset = "0.5.7"
 serde = { version = "1.0", features = ["derive"] }
 rbpf = { version = "0.3.0", optional = true }
-libbpf-sys = { version = "1.6.2", optional = true }
+libbpf-sys = { version = "1.6.3", optional = true }
 errno = { version = "0.3.14", optional = true }
-libc = { version = "0.2.178", optional = true }
-thiserror = "2.0.17"
+libc = { version = "0.2.180", optional = true }
+thiserror = "2.0.18"
 tracing = { version = "0.1.44", features = ["attributes"] }
 
 [dev-dependencies]
@@ -42,5 +42,5 @@ clap = "4.5.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 env_logger = "0.11"
-serial_test = "3.1.1"
+serial_test = "3.3.1"
 tempfile = "3"

@@ -56,13 +56,8 @@ pub fn container_init_process(
 
     memory_policy::setup_memory_policy(ctx.linux.memory_policy(), ctx.syscall.as_ref())?;
 
-    // set up tty if specified
-    if let Some(csocketfd) = args.console_socket {
-        tty::setup_console(csocketfd).map_err(|err| {
-            tracing::error!(?err, "failed to set up tty");
-            InitProcessError::Tty(err)
-        })?;
-    } else {
+    // If no console socket, set up stdio now
+    if args.console_socket.is_none() {
         if let Some(stdin) = args.stdin {
             dup2(stdin, 0).map_err(InitProcessError::NixOther)?;
             close(stdin).map_err(InitProcessError::NixOther)?;
@@ -108,11 +103,16 @@ pub fn container_init_process(
 
             // create_container hook needs to be called after the namespace setup, but
             // before pivot_root is called. This runs in the container namespaces.
-            hooks::run_hooks(hooks.create_container().as_ref(), ctx.container, None, None)
-                .map_err(|err| {
-                    tracing::error!(?err, "failed to run create container hooks");
-                    InitProcessError::Hooks(err)
-                })?;
+            hooks::run_hooks(
+                hooks.create_container().as_ref(),
+                ctx.container.map(|c| &c.state),
+                None,
+                None,
+            )
+            .map_err(|err| {
+                tracing::error!(?err, "failed to run create container hooks");
+                InitProcessError::Hooks(err)
+            })?;
         }
 
         // Entering into the rootfs jail. If mount namespace is specified, then
@@ -140,6 +140,22 @@ pub fn container_init_process(
         if let Some(kernel_params) = ctx.linux.sysctl() {
             sysctl(kernel_params)?;
         }
+    }
+
+    // Setup console AFTER reopen_dev_null (for init) or at start (for exec).
+    // This follows runc's order:
+    //   - standard_init_linux.go: setupConsole() is called after prepareRootfs()
+    //     (which includes pivotRoot and reOpenDevNull)
+    //   - setns_init_linux.go: setupConsole() is called early
+    // mount=true for init (mount /dev/console), false for exec (already mounted)
+    // See: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/standard_init_linux.go
+    // See: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/setns_init_linux.go
+    if let Some(csocketfd) = args.console_socket {
+        let mount_console = matches!(args.container_type, ContainerType::InitContainer);
+        tty::setup_console(ctx.syscall.as_ref(), csocketfd, mount_console).map_err(|err| {
+            tracing::error!(?err, "failed to set up tty");
+            InitProcessError::Tty(err)
+        })?;
     }
 
     if let Some(personality) = ctx.linux.personality() {
@@ -387,12 +403,7 @@ pub fn container_init_process(
     }
 
     // add HOME into envs if not exists
-    if !ctx.envs.contains_key("HOME") {
-        if let Some(dir_home) = utils::get_user_home(ctx.process.user().uid()) {
-            ctx.envs
-                .insert("HOME".to_owned(), dir_home.to_string_lossy().to_string());
-        }
-    }
+    set_home_env_if_not_exists(&mut ctx.envs, ctx.process.user().uid().into());
 
     args.executor.validate(ctx.spec)?;
     args.executor.setup_envs(ctx.envs)?;
@@ -425,16 +436,20 @@ pub fn container_init_process(
         err
     })?;
 
-    // create_container hook needs to be called after the namespace setup, but
+    // start_container hook needs to be called after the namespace setup, but
     // before pivot_root is called. This runs in the container namespaces.
     if matches!(args.container_type, ContainerType::InitContainer) {
         if let Some(hooks) = ctx.hooks {
-            hooks::run_hooks(hooks.start_container().as_ref(), ctx.container, None, None).map_err(
-                |err| {
-                    tracing::error!(?err, "failed to run start container hooks");
-                    err
-                },
-            )?;
+            hooks::run_hooks(
+                hooks.start_container().as_ref(),
+                ctx.container.map(|c| &c.state),
+                None,
+                None,
+            )
+            .map_err(|err| {
+                tracing::error!(?err, "failed to run start container hooks");
+                err
+            })?;
         }
     }
 
@@ -1002,14 +1017,33 @@ fn verify_cwd() -> Result<()> {
     Ok(())
 }
 
+/// Set the HOME environment variable if it is not already set or is empty.
+fn set_home_env_if_not_exists(envs: &mut HashMap<String, String>, uid: Uid) {
+    if envs.get("HOME").is_none_or(|v| v.is_empty()) {
+        if let Some(dir_home) = utils::get_user_home(uid.into()) {
+            set_home_from_path(envs, &dir_home);
+        }
+    }
+}
+
+/// Set the HOME environment variable if dir_home string is valid UTF-8
+fn set_home_from_path(envs: &mut HashMap<String, String>, dir_home: &Path) {
+    if let Some(home_str) = dir_home.to_str() {
+        envs.insert("HOME".to_owned(), home_str.to_owned());
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
     use std::fs;
-    use std::path::Path;
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::{Path, PathBuf};
 
     use anyhow::Result;
     #[cfg(feature = "libseccomp")]
     use nix::unistd;
+    use nix::unistd::{Uid, User as NixUser};
     use oci_spec::runtime::{LinuxNamespaceBuilder, SpecBuilder, UserBuilder};
     #[cfg(feature = "libseccomp")]
     use serial_test::serial;
@@ -1317,5 +1351,102 @@ mod tests {
         };
         let set_io_prioritys = test_command.get_io_priority_args();
         assert_eq!(set_io_prioritys[0], want_io_priority);
+    }
+
+    #[test]
+    fn test_set_home_env_if_not_exists_already_exists() {
+        let mut envs = HashMap::new();
+        envs.insert("HOME".to_owned(), "/existing/home".to_owned());
+
+        set_home_env_if_not_exists(&mut envs, Uid::from_raw(0));
+        assert_eq!(envs.get("HOME"), Some(&"/existing/home".to_string()));
+    }
+
+    #[test]
+    fn test_set_home_env_if_not_exists_already_exists_non_root() {
+        let mut envs = HashMap::new();
+        envs.insert("HOME".to_owned(), "/existing/home".to_owned());
+
+        set_home_env_if_not_exists(&mut envs, Uid::current());
+        assert_eq!(envs.get("HOME"), Some(&"/existing/home".to_string()));
+    }
+
+    #[test]
+    fn test_set_home_env_if_not_exists_already_exists_but_empty_value() {
+        let mut envs = HashMap::new();
+        envs.insert("HOME".to_owned(), "".to_owned());
+
+        set_home_env_if_not_exists(&mut envs, Uid::from_raw(0));
+        assert_eq!(envs.get("HOME"), Some(&"/root".to_string()));
+    }
+
+    #[test]
+    fn test_set_home_env_if_not_exists_already_exists_but_empty_value_non_root() {
+        let mut envs = HashMap::new();
+        envs.insert("HOME".to_owned(), "".to_owned());
+
+        // Make TEST_NON_ROOT_UID configurable to run tests on GitHub Actions runners.
+        let test_uid = env::var("TEST_NON_ROOT_UID")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .map(Uid::from_raw)
+            .unwrap_or_else(Uid::current);
+        let expected = NixUser::from_uid(test_uid)
+            .ok()
+            .flatten()
+            .and_then(|user| user.dir.to_str().map(|s| s.to_owned()))
+            .unwrap_or_default();
+
+        set_home_env_if_not_exists(&mut envs, test_uid);
+        assert_eq!(envs.get("HOME"), Some(&expected));
+    }
+
+    #[test]
+    fn test_set_home_env_if_not_exists_not_set() {
+        let mut envs = HashMap::new();
+
+        set_home_env_if_not_exists(&mut envs, Uid::from_raw(0));
+        assert_eq!(envs.get("HOME"), Some(&"/root".to_string()));
+    }
+
+    #[test]
+    fn test_set_home_env_if_not_exists_not_set_non_root() {
+        let mut envs = HashMap::new();
+
+        // Make TEST_NON_ROOT_UID configurable to run tests on GitHub Actions runners.
+        let test_uid = env::var("TEST_NON_ROOT_UID")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .map(Uid::from_raw)
+            .unwrap_or_else(Uid::current);
+        let expected = NixUser::from_uid(test_uid)
+            .ok()
+            .flatten()
+            .and_then(|user| user.dir.to_str().map(|s| s.to_owned()))
+            .unwrap_or_default();
+
+        set_home_env_if_not_exists(&mut envs, test_uid);
+        assert_eq!(envs.get("HOME"), Some(&expected));
+    }
+
+    #[test]
+    fn test_set_home_from_path_valid_utf8() {
+        let mut envs = HashMap::new();
+        let valid_path = PathBuf::from("/home/user");
+
+        set_home_from_path(&mut envs, &valid_path);
+        assert_eq!(envs.get("HOME"), Some(&"/home/user".to_string()));
+    }
+
+    #[test]
+    fn test_set_home_from_path_invalid_utf8() {
+        let mut envs = HashMap::new();
+
+        let invalid_bytes = b"/home/user/\xFF\xFE";
+        let invalid_path = PathBuf::from(OsStr::from_bytes(invalid_bytes));
+        assert!(invalid_path.to_str().is_none());
+
+        set_home_from_path(&mut envs, &invalid_path);
+        assert_eq!(envs.get("HOME"), None);
     }
 }
