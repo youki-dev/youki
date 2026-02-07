@@ -25,26 +25,39 @@ pub(crate) fn ignore_paused_test() -> TestResult {
             return TestResult::Failed(anyhow!("container pause failed"));
         }
 
-        let id2 = id.clone();
-        let dir2 = dir.to_path_buf();
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
 
-        {
-            scopeguard::defer!(
-                let _ = resume_container(&id2, &dir2).unwrap().wait();
-            );
-        }
+        std::thread::spawn({
+            let id = id.clone();
+            let dir = dir.to_path_buf();
 
-        let (stdout, _) = exec_container(
-            id,
-            dir,
-            &[
-                "--ignore-paused",
-                "echo",
-                "ya I can be executed in a pause state without error!",
-            ],
-            None,
-        )
-        .expect("exec failed");
+            move || {
+                rx.recv().ok();
+                let _ = resume_container(&id, &dir).unwrap().wait();
+            }
+        });
+
+        let exec_thread = std::thread::spawn({
+            let id = id.clone();
+            let dir = dir.clone();
+
+            move || {
+                exec_container(
+                    &id,
+                    &dir,
+                    &[
+                        "--ignore-paused",
+                        "echo",
+                        "ya I can be executed in a pause state without error!",
+                    ],
+                    None,
+                )
+            }
+        });
+
+        tx.send(()).unwrap();
+
+        let (stdout, _) = exec_thread.join().unwrap().expect("exec failed");
         if !stdout.contains("ya I can be executed in a pause state without error!") {
             return TestResult::Failed(anyhow!("unexpected output: {}", stdout));
         }
