@@ -1,9 +1,9 @@
-use std::env;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::{env, fs};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use flate2::read::GzDecoder;
 use oci_spec::runtime::{Process, Spec};
 use rand::Rng;
@@ -98,4 +98,31 @@ pub fn is_runtime_runc() -> bool {
         Err(_) => false,
         Ok(s) => s == "runc",
     }
+}
+
+pub fn wait_for_file_content(
+    file_path: &PathBuf,
+    expected_content: &str,
+    timeout: std::time::Duration,
+    poll_interval: std::time::Duration,
+) -> anyhow::Result<()> {
+    let start = std::time::Instant::now();
+
+    while start.elapsed() < timeout {
+        if file_path.exists()
+            && let Ok(contents) = fs::read_to_string(file_path)
+            && contents.contains(expected_content)
+        {
+            return Ok(());
+        }
+        std::thread::sleep(poll_interval);
+    }
+
+    let actual_content = fs::read_to_string(file_path)
+        .unwrap_or_else(|_| "(file does not exist or cannot be read)".to_string());
+
+    Err(anyhow!(
+        "Timed out waiting for file {} to contain '{expected_content}', but got: '{actual_content}'",
+        file_path.display(),
+    ))
 }
