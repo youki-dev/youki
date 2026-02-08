@@ -43,7 +43,13 @@ pub enum ChannelError {
 
 pub fn main_channel() -> Result<(MainSender, MainReceiver), ChannelError> {
     let (sender, receiver) = channel::<Message>()?;
-    Ok((MainSender { sender }, MainReceiver { receiver }))
+    Ok((
+        MainSender { sender },
+        MainReceiver {
+            receiver,
+            init_ready_received: false,
+        },
+    ))
 }
 
 pub struct MainSender {
@@ -112,28 +118,37 @@ impl MainSender {
 
 pub struct MainReceiver {
     receiver: Receiver<Message>,
+    init_ready_received: bool,
 }
 
 impl MainReceiver {
     /// Waits for associated intermediate process to send ready message
     /// and return the pid of init process which is forked by intermediate process
     pub fn wait_for_intermediate_ready(&mut self) -> Result<Pid, ChannelError> {
-        let msg = self
-            .receiver
-            .recv()
-            .map_err(|err| ChannelError::ReceiveError {
-                msg: "waiting for intermediate process".to_string(),
-                source: err,
-            })?;
+        loop {
+            let msg = self
+                .receiver
+                .recv()
+                .map_err(|err| ChannelError::ReceiveError {
+                    msg: "waiting for intermediate process".to_string(),
+                    source: err,
+                })?;
 
-        match msg {
-            Message::IntermediateReady(pid) => Ok(Pid::from_raw(pid)),
-            Message::ExecFailed(err) => Err(ChannelError::ExecError(err)),
-            Message::OtherError(err) => Err(ChannelError::OtherError(err)),
-            msg => Err(ChannelError::UnexpectedMessage {
-                expected: Message::IntermediateReady(0),
-                received: msg,
-            }),
+            match msg {
+                Message::IntermediateReady(pid) => return Ok(Pid::from_raw(pid)),
+                Message::InitReady => {
+                    self.init_ready_received = true;
+                    continue;
+                }
+                Message::ExecFailed(err) => return Err(ChannelError::ExecError(err)),
+                Message::OtherError(err) => return Err(ChannelError::OtherError(err)),
+                msg => {
+                    return Err(ChannelError::UnexpectedMessage {
+                        expected: Message::IntermediateReady(0),
+                        received: msg,
+                    });
+                }
+            }
         }
     }
 
@@ -203,6 +218,11 @@ impl MainReceiver {
     /// Waits for associated init process to send ready message
     /// and return the pid of init process which is forked by init process
     pub fn wait_for_init_ready(&mut self) -> Result<(), ChannelError> {
+        if self.init_ready_received {
+            self.init_ready_received = false;
+            return Ok(());
+        }
+
         let msg = self
             .receiver
             .recv()
@@ -620,6 +640,40 @@ mod tests {
                 sender
                     .network_setup_ready()
                     .with_context(|| "Failed to send network setup ready")?;
+                sender.close()?;
+                std::process::exit(0);
+            }
+        };
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_channel_race_condition() -> Result<()> {
+        let (sender, receiver) = &mut main_channel()?;
+        match unsafe { unistd::fork()? } {
+            unistd::ForkResult::Parent { child } => {
+                wait::waitpid(child, None)?;
+                // The child sends InitReady first, then IntermediateReady.
+                // wait_for_intermediate_ready should handle this gracefully.
+                let pid = receiver
+                    .wait_for_intermediate_ready()
+                    .with_context(|| "Failed to wait for intermediate ready")?;
+                assert_eq!(pid, child);
+
+                // Now wait_for_init_ready should return immediately because it was already received.
+                receiver
+                    .wait_for_init_ready()
+                    .with_context(|| "Failed to wait for init ready")?;
+
+                receiver.close()?;
+            }
+            unistd::ForkResult::Child => {
+                let pid = unistd::getpid();
+                // Simulating the race condition: InitReady arrives before IntermediateReady
+                sender.init_ready()?;
+                sender.intermediate_ready(pid)?;
                 sender.close()?;
                 std::process::exit(0);
             }
