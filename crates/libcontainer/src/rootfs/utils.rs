@@ -508,6 +508,22 @@ mod tests {
             mount_option_config
         );
 
+        let mount_option_config = parse_mount(
+            &MountBuilder::default()
+                .options(vec!["idmap".to_string()])
+                .build()?,
+        )?;
+        assert!(mount_option_config.apply_idmap);
+        assert!(!mount_option_config.apply_recursive_idmap);
+
+        let mount_option_config = parse_mount(
+            &MountBuilder::default()
+                .options(vec!["ridmap".to_string()])
+                .build()?,
+        )?;
+        assert!(mount_option_config.apply_idmap);
+        assert!(mount_option_config.apply_recursive_idmap);
+
         Ok(())
     }
 }
