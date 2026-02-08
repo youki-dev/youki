@@ -15,6 +15,7 @@ mod container_kill;
 mod container_pause;
 mod container_resume;
 mod container_start;
+mod mount_validation;
 pub mod init_builder;
 pub mod state;
 pub mod tenant_builder;
