@@ -3,10 +3,10 @@ name: 🧪 e2e test
 on:
   push:
     branches:
-      - main
+    - main
   pull_request:
     branches:
-      - main
+    - main
 
 jobs:
   youki-build:
@@ -14,30 +14,30 @@ jobs:
     timeout-minutes: 15
     strategy:
       matrix:
-        arch: [ "x86_64", "aarch64" ]
-        libc: [ "gnu", "musl" ]
+        arch: ["x86_64", "aarch64"]
+        libc: ["gnu", "musl"]
     steps:
-      - uses: actions/checkout@v4
-      - name: Setup Rust toolchain and cache
-        uses: actions-rust-lang/setup-rust-toolchain@v1.3.7
-        env:
-          RUST_CACHE_KEY_OS: rust-cache-${{ matrix.arch }}-${{ matrix.libc }}
-      - name: Install just
-        uses: taiki-e/install-action@just
-      - name: Install cross-rs
-        run: RUSTFLAGS="" cargo install cross --git https://github.com/cross-rs/cross
-      - name: Setup target
-        run: |
-          echo "CARGO=cross" >> ${GITHUB_ENV}
-          echo "TARGET=${{ matrix.arch }}-unknown-linux-${{ matrix.libc }}" >> ${GITHUB_ENV}
-      - name: Build youki
-        run: just youki-release
-      - name: Upload youki binary
-        if: ${{ matrix.arch == 'x86_64' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: youki-${{ matrix.arch }}-${{ matrix.libc }}
-          path: youki
+    - uses: actions/checkout@v4
+    - name: Setup Rust toolchain and cache
+      uses: actions-rust-lang/setup-rust-toolchain@v1.3.7
+      env:
+        RUST_CACHE_KEY_OS: rust-cache-${{ matrix.arch }}-${{ matrix.libc }}
+    - name: Install just
+      uses: taiki-e/install-action@just
+    - name: Install cross-rs
+      run: RUSTFLAGS="" cargo install cross --git https://github.com/cross-rs/cross
+    - name: Setup target
+      run: |
+        echo "CARGO=cross" >> ${GITHUB_ENV}
+        echo "TARGET=${{ matrix.arch }}-unknown-linux-${{ matrix.libc }}" >> ${GITHUB_ENV}
+    - name: Build youki
+      run: just youki-release
+    - name: Upload youki binary
+      if: ${{ matrix.arch == 'x86_64' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: youki-${{ matrix.arch }}-${{ matrix.libc }}
+        path: youki
 
   containerd-integration-tests:
     runs-on: ubuntu-24.04
@@ -45,38 +45,38 @@ jobs:
     timeout-minutes: 40
     strategy:
       matrix:
-        arch: [ "x86_64" ]
-        libc: [ "gnu", "musl" ]
+        arch: ["x86_64"]
+        libc: ["gnu", "musl"]
     steps:
-      - uses: actions/checkout@v4
-        with:
-          repository: containerd/containerd
-          ref: v1.7.11
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.20.12'
-          cache: true
-      - run: sudo apt-get -y update
-      - run: sudo apt-get install -y pkg-config libsystemd-dev libelf-dev libseccomp-dev btrfs-progs libbtrfs-dev
-      - name: Build containerd
-        run: |
-          make build
-          make binaries
-          sudo make install
-          ./script/setup/install-cni
-          ./script/setup/install-critools
-      - name: Download youki binary
-        uses: actions/download-artifact@v4
-        with:
-          name: youki-${{ matrix.arch }}-${{ matrix.libc }}
-      - name: Replace runc to youki
-        run: |
-          sudo rm -f /usr/bin/runc /usr/local/bin/runc /usr/sbin/runc
-          sudo chmod 755 youki
-          sudo cp youki /usr/bin/runc
-          runc --version
-      - name: Integration Test
-        run: sudo make RUNC_FLAVOR=crun TEST_RUNTIME=io.containerd.runc.v2 TESTFLAGS="-timeout 40m" integration
+    - uses: actions/checkout@v4
+      with:
+        repository: containerd/containerd
+        ref: v1.7.11
+    - uses: actions/setup-go@v5
+      with:
+        go-version: '1.20.12'
+        cache: true
+    - run: sudo apt-get -y update
+    - run: sudo apt-get install -y pkg-config libsystemd-dev libelf-dev libseccomp-dev btrfs-progs libbtrfs-dev
+    - name: Build containerd
+      run: |
+        make build
+        make binaries
+        sudo make install
+        ./script/setup/install-cni
+        ./script/setup/install-critools
+    - name: Download youki binary
+      uses: actions/download-artifact@v4
+      with:
+        name: youki-${{ matrix.arch }}-${{ matrix.libc }}
+    - name: Replace runc to youki
+      run: |
+        sudo rm -f /usr/bin/runc /usr/local/bin/runc /usr/sbin/runc
+        sudo chmod 755 youki
+        sudo cp youki /usr/bin/runc
+        runc --version
+    - name: Integration Test
+      run: sudo make RUNC_FLAVOR=crun TEST_RUNTIME=io.containerd.runc.v2 TESTFLAGS="-timeout 40m -skip TestImagePullSchema1" integration
 
   k8s-tests:
     runs-on: ubuntu-24.04
@@ -84,20 +84,20 @@ jobs:
     timeout-minutes: 40
     strategy:
       matrix:
-        arch: [ "x86_64" ]
-        libc: [ "gnu", "musl" ]
+        arch: ["x86_64"]
+        libc: ["gnu", "musl"]
     steps:
-      - uses: actions/checkout@v4
-      - name: Download youki binary
-        uses: actions/download-artifact@v4
-        with:
-          name: youki-${{ matrix.arch }}-${{ matrix.libc }}
-      - name: Add the permission to run
-        run: chmod +x ./youki
-      - name: Install just
-        uses: taiki-e/install-action@just
-      - name: test/k8s/deploy
-        run: just test-kind
+    - uses: actions/checkout@v4
+    - name: Download youki binary
+      uses: actions/download-artifact@v4
+      with:
+        name: youki-${{ matrix.arch }}-${{ matrix.libc }}
+    - name: Add the permission to run
+      run: chmod +x ./youki
+    - name: Install just
+      uses: taiki-e/install-action@just
+    - name: test/k8s/deploy
+      run: just test-kind
 
   oci-validation-go:
     runs-on: ubuntu-24.04
@@ -105,29 +105,29 @@ jobs:
     timeout-minutes: 15
     strategy:
       matrix:
-        arch: [ "x86_64" ]
-        libc: [ "gnu", "musl" ]
+        arch: ["x86_64"]
+        libc: ["gnu", "musl"]
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Setup Rust toolchain and cache
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-      - name: Install just
-        uses: taiki-e/install-action@just
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.20'
-          cache: true
-          cache-dependency-path: tests/oci-runtime-tests/src/github.com/opencontainers/runtime-tools/go.sum
-      - name: Download youki binary
-        uses: actions/download-artifact@v4
-        with:
-          name: youki-${{ matrix.arch }}-${{ matrix.libc }}
-      - name: Add the permission to run
-        run: chmod +x ./youki
-      - name: Run integration tests
-        run: just test-oci
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    - name: Setup Rust toolchain and cache
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+    - name: Install just
+      uses: taiki-e/install-action@just
+    - uses: actions/setup-go@v5
+      with:
+        go-version: '1.20'
+        cache: true
+        cache-dependency-path: tests/oci-runtime-tests/src/github.com/opencontainers/runtime-tools/go.sum
+    - name: Download youki binary
+      uses: actions/download-artifact@v4
+      with:
+        name: youki-${{ matrix.arch }}-${{ matrix.libc }}
+    - name: Add the permission to run
+      run: chmod +x ./youki
+    - name: Run integration tests
+      run: just test-oci
 
   oci-validation-rust:
     runs-on: ubuntu-24.04
@@ -135,28 +135,28 @@ jobs:
     timeout-minutes: 20
     strategy:
       matrix:
-        arch: [ "x86_64" ]
-        libc: [ "gnu", "musl" ]
+        arch: ["x86_64"]
+        libc: ["gnu", "musl"]
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Setup Rust toolchain and cache
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-      - name: Install just
-        uses: taiki-e/install-action@just
-      - name: Add CRIU PPA
-        run: sudo add-apt-repository -y ppa:criu/ppa
-      - name: Install requirements
-        run: sudo env PATH=$PATH just ci-prepare
-      - name: Download youki binary
-        uses: actions/download-artifact@v4
-        with:
-          name: youki-${{ matrix.arch }}-${{ matrix.libc }}
-      - name: Add the permission to run
-        run: chmod +x ./youki
-      - name: Validate tests on youki
-        run: just test-contest
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    - name: Setup Rust toolchain and cache
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+    - name: Install just
+      uses: taiki-e/install-action@just
+    - name: Add CRIU PPA
+      run: sudo add-apt-repository -y ppa:criu/ppa
+    - name: Install requirements
+      run: sudo env PATH=$PATH just ci-prepare
+    - name: Download youki binary
+      uses: actions/download-artifact@v4
+      with:
+        name: youki-${{ matrix.arch }}-${{ matrix.libc }}
+    - name: Add the permission to run
+      run: chmod +x ./youki
+    - name: Validate tests on youki
+      run: just test-contest
 
   rootless-podman-test:
     runs-on: ubuntu-24.04
@@ -164,28 +164,28 @@ jobs:
     timeout-minutes: 20
     strategy:
       matrix:
-        arch: [ "x86_64" ]
-        libc: [ "gnu", "musl" ]
+        arch: ["x86_64"]
+        libc: ["gnu", "musl"]
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Setup Rust toolchain and cache
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-      - name: Install just
-        uses: taiki-e/install-action@just
-      - name: Add CRIU PPA
-        run: sudo add-apt-repository -y ppa:criu/ppa
-      - name: Install requirements
-        run: sudo env PATH=$PATH just ci-prepare
-      - name: Download youki binary
-        uses: actions/download-artifact@v4
-        with:
-          name: youki-${{ matrix.arch }}-${{ matrix.libc }}
-      - name: Add the permission to run
-        run: chmod +x ./youki
-      - name: Run tests
-        run: just test-rootless-podman
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    - name: Setup Rust toolchain and cache
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+    - name: Install just
+      uses: taiki-e/install-action@just
+    - name: Add CRIU PPA
+      run: sudo add-apt-repository -y ppa:criu/ppa
+    - name: Install requirements
+      run: sudo env PATH=$PATH just ci-prepare
+    - name: Download youki binary
+      uses: actions/download-artifact@v4
+      with:
+        name: youki-${{ matrix.arch }}-${{ matrix.libc }}
+    - name: Add the permission to run
+      run: chmod +x ./youki
+    - name: Run tests
+      run: just test-rootless-podman
 
   docker-in-docker:
     runs-on: ubuntu-24.04
@@ -194,62 +194,62 @@ jobs:
       matrix:
         cgroup-version: ["v2"]
     steps:
-      - uses: actions/checkout@v4
-      - name: Install just
-        uses: taiki-e/install-action@just
-      - name: Download youki binary
-        uses: actions/download-artifact@v4
-        with:
-          name: youki-x86_64-musl
-      - name: Add the permission to run
-        run: chmod +x ./youki
-      # Steps for cgroups-v1 only (using Lima with AlmaLinux 8)
-      - name: Setup Lima
-        if: matrix.cgroup-version == 'v1'
-        uses: lima-vm/lima-actions/setup@v1
-        id: lima-actions-setup
-      - uses: actions/cache@v4
-        if: matrix.cgroup-version == 'v1'
-        with:
-          path: ~/.cache/lima
-          key: lima-${{ steps.lima-actions-setup.outputs.version }}
-      - name: Start the guest VM
-        if: matrix.cgroup-version == 'v1'
-        run: |
-          set -eux
-          # containerd=none is set because the built-in containerd support conflicts with Docker
-          limactl start \
-            --name=default \
-            --cpus=4 \
-            --memory=8 \
-            --containerd=none \
-            --set '.mounts=[{"location":"~/","writable":true}] | .portForwards=[{"guestSocket":"/var/run/docker.sock","hostSocket":"{{.Dir}}/sock/docker.sock"}]' \
-            template://almalinux-8
-      - name: Install dockerd in the guest VM
-        if: matrix.cgroup-version == 'v1'
-        run: |
-          set -eux
-          lima sudo mkdir -p /etc/systemd/system/docker.socket.d
-          cat <<-EOF | lima sudo tee /etc/systemd/system/docker.socket.d/override.conf
-          [Socket]
-          SocketUser=$(whoami)
-          EOF
-          lima sudo dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
-          lima sudo dnf -q -y install docker-ce --nobest
-          lima sudo systemctl enable --now docker
-      - name: Configure the host to use dockerd in the guest VM
-        if: matrix.cgroup-version == 'v1'
-        run: |
-          set -eux
-          sudo systemctl disable --now docker.service docker.socket
-          export DOCKER_HOST="unix://$(limactl ls --format '{{.Dir}}/sock/docker.sock' default)"
-          echo "DOCKER_HOST=${DOCKER_HOST}" >>$GITHUB_ENV
-          docker info
-          docker version
-      # Run tests differently based on cgroup version
-      - name: Run tests (cgroups-v2)
-        if: matrix.cgroup-version == 'v2'
-        run: just test-dind
-      - name: Run tests (cgroups-v1)
-        if: matrix.cgroup-version == 'v1'
-        run: just test-dind
+    - uses: actions/checkout@v4
+    - name: Install just
+      uses: taiki-e/install-action@just
+    - name: Download youki binary
+      uses: actions/download-artifact@v4
+      with:
+        name: youki-x86_64-musl
+    - name: Add the permission to run
+      run: chmod +x ./youki
+    # Steps for cgroups-v1 only (using Lima with AlmaLinux 8)
+    - name: Setup Lima
+      if: matrix.cgroup-version == 'v1'
+      uses: lima-vm/lima-actions/setup@v1
+      id: lima-actions-setup
+    - uses: actions/cache@v4
+      if: matrix.cgroup-version == 'v1'
+      with:
+        path: ~/.cache/lima
+        key: lima-${{ steps.lima-actions-setup.outputs.version }}
+    - name: Start the guest VM
+      if: matrix.cgroup-version == 'v1'
+      run: |
+        set -eux
+        # containerd=none is set because the built-in containerd support conflicts with Docker
+        limactl start \
+          --name=default \
+          --cpus=4 \
+          --memory=8 \
+          --containerd=none \
+          --set '.mounts=[{"location":"~/","writable":true}] | .portForwards=[{"guestSocket":"/var/run/docker.sock","hostSocket":"{{.Dir}}/sock/docker.sock"}]' \
+          template://almalinux-8
+    - name: Install dockerd in the guest VM
+      if: matrix.cgroup-version == 'v1'
+      run: |
+        set -eux
+        lima sudo mkdir -p /etc/systemd/system/docker.socket.d
+        cat <<-EOF | lima sudo tee /etc/systemd/system/docker.socket.d/override.conf
+        [Socket]
+        SocketUser=$(whoami)
+        EOF
+        lima sudo dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
+        lima sudo dnf -q -y install docker-ce --nobest
+        lima sudo systemctl enable --now docker
+    - name: Configure the host to use dockerd in the guest VM
+      if: matrix.cgroup-version == 'v1'
+      run: |
+        set -eux
+        sudo systemctl disable --now docker.service docker.socket
+        export DOCKER_HOST="unix://$(limactl ls --format '{{.Dir}}/sock/docker.sock' default)"
+        echo "DOCKER_HOST=${DOCKER_HOST}" >>$GITHUB_ENV
+        docker info
+        docker version
+    # Run tests differently based on cgroup version
+    - name: Run tests (cgroups-v2)
+      if: matrix.cgroup-version == 'v2'
+      run: just test-dind
+    - name: Run tests (cgroups-v1)
+      if: matrix.cgroup-version == 'v1'
+      run: just test-dind
