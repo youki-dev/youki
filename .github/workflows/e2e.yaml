@@ -1,3 +1,5 @@
+- name: 🧪 e2e test
+-
 on:
   push:
     branches:
@@ -187,6 +189,8 @@ jobs:
 
   docker-in-docker:
     runs-on: ubuntu-24.04
+    needs: [youki-build]
+    strategy:
       matrix:
         cgroup-version: ["v2"]
     steps:
