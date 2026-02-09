@@ -12,11 +12,22 @@ use nix::mount::{MntFlags, umount2};
 use oci_spec::runtime::{LinuxNamespaceType, Spec};
 use serde::{Deserialize, Serialize};
 use test_framework::{TestResult, test_result};
+use thiserror::Error;
 
 use super::{generate_uuid, get_runtime_path, get_runtimetest_path, prepare_bundle, set_config};
 
 const SLEEP_TIME: Duration = Duration::from_millis(150);
 pub const CGROUP_ROOT: &str = "/sys/fs/cgroup";
+
+#[derive(Error, Debug)]
+pub enum ContainerStateError {
+    #[error("Failed to parse lifecycle status")]
+    ParseLifecycleStatus(#[source] serde_json::Error),
+    #[error("Container does not exist")]
+    ContainerNotFound,
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -137,26 +148,47 @@ pub fn get_state<P: AsRef<Path>>(id: &str, dir: P) -> Result<(String, String)> {
 }
 
 /// Get the container status as a LifecycleStatus
-pub fn get_container_status<P: AsRef<Path>>(id: &str, dir: P) -> Result<LifecycleStatus> {
-    match get_state(id, &dir) {
-        Ok((stdout, stderr)) => {
-            if stderr.contains("Error") || stderr.contains("error") {
-                bail!("Error :\nstdout : {}\nstderr : {}", stdout, stderr)
-            } else {
-                match serde_json::from_str::<serde_json::Value>(&stdout) {
-                    Ok(value) => {
-                        if let Some(status) = value.get("status") {
-                            return serde_json::from_value::<LifecycleStatus>(status.clone())
-                                .context("Failed to parse lifecycle status");
-                        }
-                        bail!("Failed to extract status from state output: {}", stdout)
-                    }
-                    Err(err) => bail!("Failed to parse state output as JSON: {} - {}", stdout, err),
-                }
-            }
+pub fn get_container_status<P: AsRef<Path>>(
+    id: &str,
+    dir: P,
+) -> Result<LifecycleStatus, ContainerStateError> {
+    let (stdout, stderr) = get_state(id, &dir).map_err(|e| {
+        if e.to_string().contains("does not exist") {
+            ContainerStateError::ContainerNotFound
+        } else {
+            ContainerStateError::Other(e.context("failed to get container state"))
         }
-        Err(e) => Err(e.context("failed to get container state")),
+    })?;
+
+    if stderr.contains("does not exist") {
+        return Err(ContainerStateError::ContainerNotFound);
     }
+
+    if stderr.contains("Error") || stderr.contains("error") {
+        return Err(ContainerStateError::Other(anyhow!(
+            "Error :\nstdout : {}\nstderr : {}",
+            stdout,
+            stderr
+        )));
+    }
+
+    let value = serde_json::from_str::<serde_json::Value>(&stdout).map_err(|err| {
+        ContainerStateError::Other(anyhow!(
+            "Failed to parse state output as JSON: {} - {}",
+            stdout,
+            err
+        ))
+    })?;
+
+    let status = value.get("status").ok_or_else(|| {
+        ContainerStateError::Other(anyhow!(
+            "Failed to extract status from state output: {}",
+            stdout
+        ))
+    })?;
+
+    serde_json::from_value::<LifecycleStatus>(status.clone())
+        .map_err(ContainerStateError::ParseLifecycleStatus)
 }
 
 /// Check if a container is in a specific state
@@ -167,19 +199,13 @@ pub fn is_in_state<P: AsRef<Path>>(
     id: &str,
     dir: P,
     expected_state: LifecycleStatus,
-) -> Result<bool> {
+) -> Result<bool, ContainerStateError> {
     match get_container_status(id, &dir) {
         Ok(status) => Ok(status == expected_state),
-        Err(e) => {
-            if e.to_string().contains("does not exist") {
-                // regard non-existent container as stopped (delete after stopping)
-                return Ok(expected_state == LifecycleStatus::Stopped);
-            }
-            Err(e.context(format!(
-                "failed to check if container is in {:?} state",
-                expected_state
-            )))
+        Err(ContainerStateError::ContainerNotFound) => {
+            Ok(expected_state == LifecycleStatus::Stopped)
         }
+        Err(e) => Err(e),
     }
 }
 
@@ -196,19 +222,23 @@ pub fn wait_for_state<P: AsRef<Path>>(
     while start.elapsed() < timeout {
         match is_in_state(id, &dir, expected_state) {
             Ok(true) => return Ok(()),
-            Ok(false) => std::thread::sleep(poll_interval),
-            Err(_) => {
-                // Ignore transient errors during state transitions and continue polling until timeout
+            Ok(false) | Err(ContainerStateError::ParseLifecycleStatus(_)) => {
                 std::thread::sleep(poll_interval)
+            }
+            Err(e) => {
+                return Err(anyhow::Error::from(e).context(format!(
+                    "Failed to wait for container {} to reach {:?} state",
+                    id, expected_state
+                )));
             }
         }
     }
 
-    Err(anyhow!(
+    bail!(
         "Timed out waiting for container {} to reach {:?} state",
         id,
         expected_state
-    ))
+    )
 }
 
 pub fn start_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
