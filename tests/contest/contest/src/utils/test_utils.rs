@@ -156,7 +156,7 @@ pub fn get_container_status<P: AsRef<Path>>(
         if e.to_string().contains("does not exist") {
             ContainerStateError::ContainerNotFound
         } else {
-            ContainerStateError::Other(e.context("failed to get container state"))
+            ContainerStateError::Other(e)
         }
     })?;
 
