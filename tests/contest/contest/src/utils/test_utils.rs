@@ -56,6 +56,14 @@ pub enum LifecycleStatus {
     Stopped,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum WaitTarget {
+    Status(LifecycleStatus),
+    // the state after the container is deleted
+    // this state isn't in the runtime spec, but is useful for tests that wait for deletion
+    Deleted,
+}
+
 #[derive(Debug)]
 pub struct ContainerData {
     pub id: String,
@@ -191,53 +199,54 @@ pub fn get_container_status<P: AsRef<Path>>(
         .map_err(ContainerStateError::ParseLifecycleStatus)
 }
 
-/// Check if a container is in a specific state
+/// Check if a container matches the expected wait target
 ///
-/// Returns `true` if the container is in the expected state, `false` otherwise.
-/// If the container does not exist (e.g., after deletion), it is treated as `Stopped`.
+/// Returns `true` if the container state matches the expected target, `false` otherwise.
+/// When `WaitTarget::Deleted` is specified, returns `true` if the container does not exist.
 pub fn is_in_state<P: AsRef<Path>>(
     id: &str,
     dir: P,
-    expected_state: LifecycleStatus,
+    expected_target: WaitTarget,
 ) -> Result<bool, ContainerStateError> {
-    match get_container_status(id, &dir) {
-        Ok(status) => Ok(status == expected_state),
-        Err(ContainerStateError::ContainerNotFound) => {
-            Ok(expected_state == LifecycleStatus::Stopped)
-        }
-        Err(e) => Err(e),
+    match (get_container_status(id, &dir), expected_target) {
+        (Ok(status), WaitTarget::Status(expected_status)) => Ok(status == expected_status),
+        (Ok(_), WaitTarget::Deleted) => Ok(false),
+        (Err(ContainerStateError::ContainerNotFound), WaitTarget::Deleted) => Ok(true),
+        (Err(ContainerStateError::ContainerNotFound), WaitTarget::Status(_)) => Ok(false),
+        (Err(e), _) => Err(e),
     }
 }
 
-/// Wait for a container to reach a specific state with timeout
+/// Wait for a container to reach a specific wait target with timeout
 pub fn wait_for_state<P: AsRef<Path>>(
     id: &str,
     dir: P,
-    expected_state: LifecycleStatus,
+    expected_target: WaitTarget,
     timeout: Duration,
     poll_interval: Duration,
 ) -> Result<()> {
     let start = std::time::Instant::now();
+    let deadline = start + timeout;
 
-    while start.elapsed() < timeout {
-        match is_in_state(id, &dir, expected_state) {
+    while std::time::Instant::now() < deadline {
+        match is_in_state(id, &dir, expected_target) {
             Ok(true) => return Ok(()),
             Ok(false) | Err(ContainerStateError::ParseLifecycleStatus(_)) => {
                 std::thread::sleep(poll_interval)
             }
             Err(e) => {
                 return Err(anyhow::Error::from(e).context(format!(
-                    "Failed to wait for container {} to reach {:?} state",
-                    id, expected_state
+                    "Failed to wait for container {} to reach {:?} target",
+                    id, expected_target
                 )));
             }
         }
     }
 
     bail!(
-        "Timed out waiting for container {} to reach {:?} state",
+        "Timed out waiting for container {} to reach {:?} target",
         id,
-        expected_state
+        expected_target
     )
 }
 

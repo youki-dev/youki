@@ -1,13 +1,14 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{anyhow, bail};
 use oci_spec::runtime::{Hook, HookBuilder, HooksBuilder, ProcessBuilder, Spec, SpecBuilder};
 use test_framework::{Test, TestGroup, TestResult};
 
-use crate::utils::test_utils::{CreateOptions, LifecycleStatus, start_container};
 use crate::utils::{
-    create_container, delete_container, generate_uuid, prepare_bundle, set_config, wait_for_state,
+    CreateOptions, LifecycleStatus, WaitTarget, create_container, delete_container, generate_uuid,
+    prepare_bundle, set_config, start_container, wait_for_state,
 };
 
 const STATE_WAIT_TIMEOUT_SECS: u64 = 5;
@@ -17,7 +18,7 @@ fn get_hook_output_path(bundle: &tempfile::TempDir) -> PathBuf {
     bundle.as_ref().join("bundle").join("rootfs").join("output")
 }
 
-fn delete_hook_output_file(path: &PathBuf) -> anyhow::Result<()> {
+fn delete_hook_output_file(path: &Path) -> anyhow::Result<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -80,6 +81,17 @@ fn get_spec(host_output_file: &str) -> Spec {
         .unwrap()
 }
 
+fn wait_for_target(id: &str, bundle_path: &Path, target: WaitTarget) {
+    wait_for_state(
+        id,
+        bundle_path,
+        target,
+        Duration::from_secs(STATE_WAIT_TIMEOUT_SECS),
+        Duration::from_millis(STATE_POLL_INTERVAL_MILLIS),
+    )
+    .unwrap();
+}
+
 fn get_test(test_name: &'static str) -> Test {
     Test::new(
         test_name,
@@ -97,24 +109,14 @@ fn get_test(test_name: &'static str) -> Test {
                 .unwrap()
                 .wait()
                 .unwrap();
-            wait_for_state(
+            wait_for_target(
                 &id_str,
                 bundle.path(),
-                LifecycleStatus::Created,
-                std::time::Duration::from_secs(STATE_WAIT_TIMEOUT_SECS),
-                std::time::Duration::from_millis(STATE_POLL_INTERVAL_MILLIS),
-            )
-            .unwrap();
+                WaitTarget::Status(LifecycleStatus::Created),
+            );
             start_container(&id_str, &bundle).unwrap().wait().unwrap();
             delete_container(&id_str, &bundle).unwrap().wait().unwrap();
-            wait_for_state(
-                &id_str,
-                bundle.path(),
-                LifecycleStatus::Stopped,
-                std::time::Duration::from_secs(STATE_WAIT_TIMEOUT_SECS),
-                std::time::Duration::from_millis(STATE_POLL_INTERVAL_MILLIS),
-            )
-            .unwrap();
+            wait_for_target(&id_str, bundle.path(), WaitTarget::Deleted);
             let log = fs::read_to_string(&host_output_file).expect("cannot read output file");
             delete_hook_output_file(&host_output_file).unwrap();
             let expected = "pre-start1 called\n\
