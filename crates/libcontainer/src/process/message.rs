@@ -1,10 +1,10 @@
 use core::fmt;
 use std::collections::HashMap;
 
+use oci_spec::runtime::LinuxIdMapping;
 use serde::{Deserialize, Serialize};
 
 use crate::network::cidr::CidrAddress;
-use oci_spec::runtime::LinuxIdMapping;
 
 /// Used as a wrapper for messages to be sent between child and parent processes
 #[derive(Debug, Serialize, Deserialize, Clone)]
