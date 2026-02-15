@@ -26,6 +26,7 @@ use crate::process::{channel, container_intermediate_process};
 use crate::syscall::syscall::SyscallType;
 use crate::syscall::{SyscallError, linux, Syscall};
 use crate::user_ns::UserNamespaceConfig;
+#[cfg(feature = "libseccomp")]
 use crate::seccomp;
 
 #[derive(Debug, thiserror::Error)]
@@ -451,7 +452,7 @@ fn mount_idmapped_fd(syscall: &dyn Syscall, req: &MountMsg) -> Result<OwnedFd> {
     })?;
 
     let userns_fd = create_userns_fd(&idmap.uid_mappings, &idmap.gid_mappings)?;
-    let mut open_flags = linux::OPEN_TREE_CLONE | linux::OPEN_TREE_CLOEXEC;
+    let mut open_flags = linux::OPEN_TREE_CLONE | linux::OPEN_TREE_CLOEXEC | linux::AT_EMPTY_PATH;
     if idmap.recursive {
         open_flags |= linux::AT_RECURSIVE;
     }
@@ -508,8 +509,18 @@ fn start_mount_worker(init_pid: Pid, syscall_type: SyscallType) -> mpsc::Sender<
                             ))
                         })?;
                     syscall
-                        .set_ns(target_mnt.as_raw_fd(), CloneFlags::CLONE_NEWNS)
-                        .map_err(ProcessError::SyscallOther)?;
+                        .unshare(CloneFlags::CLONE_FS)
+                        .map_err(|e| ProcessError::MountRequest(format!("unshare(CLONE_FS) failed: {e}")))?;
+                    let target_fd = target_mnt.as_raw_fd();
+                    if let Err(err) = syscall.set_ns(target_fd, CloneFlags::CLONE_NEWNS) {
+                        if matches!(err, SyscallError::Nix(Errno::EINVAL)) {
+                            syscall
+                                .set_ns(target_fd, CloneFlags::empty())
+                                .map_err(|e| ProcessError::MountRequest(format!("setns failed: {e}")))?;
+                        } else {
+                            return Err(ProcessError::MountRequest(format!("setns failed: {err}")));
+                        }
+                    }
                     Ok(())
                 })();
                 match result {
