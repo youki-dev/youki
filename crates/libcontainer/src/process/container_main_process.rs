@@ -8,7 +8,7 @@ use std::os::fd::{AsRawFd, OwnedFd, AsFd};
 use std::path::Path;
 use std::path::PathBuf;
 use crate::process::message::{Message, MountMsg};
-use nix::unistd::{ForkResult, Pid, fork, close, pipe, read as nix_read, write as nix_write};
+use nix::unistd::{ForkResult, Pid, fork, pipe, read as nix_read, write as nix_write};
 
 use nix::sys::wait::{WaitStatus, waitpid};
 use nix::errno::Errno;
@@ -49,7 +49,7 @@ pub enum ProcessError {
     SeccompListener(#[from] crate::process::seccomp_listener::SeccompListenerError),
     #[error("failed setup network device")]
     Network(#[from] crate::network::NetworkError),
-    # [error("mount request failed: {0}")]
+    #[error("mount request failed: {0}")]
     MountRequest(String),
     #[error("failed syscall")]
     SyscallOther(#[source] SyscallError),
@@ -70,7 +70,6 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     let (mut main_sender, mut main_receiver) = channel::main_channel()?;
     let mut inter_chan = channel::intermediate_channel()?;
     let mut init_chan = channel::init_channel()?;
-    let syscall = container_args.syscall.create_syscall();
 
     let cb: CloneCb = {
         Box::new(|| {
@@ -233,6 +232,13 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                     .state(oci_state)
                     .build()
                     .map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
+
+                let listener_path = seccomp.listener_path().ok_or(
+                    crate::process::seccomp_listener::SeccompListenerError::MissingListenerPath,
+                )?;
+                let encoded_state =
+                    serde_json::to_vec(&state).map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
+                seccomp_state = Some((listener_path, encoded_state));
             }
         }
     }
@@ -499,7 +505,7 @@ fn start_mount_worker(init_pid: Pid, syscall_type: SyscallType) -> mpsc::Sender<
                         })?;
                     syscall
                         .set_ns(target_mnt.as_raw_fd(), CloneFlags::CLONE_NEWNS)
-                        .map_err(ProcessError::SyscallOther);
+                        .map_err(ProcessError::SyscallOther)?;
                     Ok(())
                 })();
                 match result {
@@ -608,8 +614,11 @@ fn move_network_devices_to_container(
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::os::fd::BorrowedFd;
+    use std::path::Path;
 
     use anyhow::Result;
+    use nix::mount::{mount, MsFlags};
     use nix::sched::{CloneFlags, unshare};
     use nix::unistd::{self, getgid, getuid};
     use oci_spec::runtime::LinuxIdMappingBuilder;
@@ -618,6 +627,8 @@ mod tests {
     use super::*;
     use crate::process::channel::{intermediate_channel, main_channel};
     use crate::user_ns::UserNamespaceIDMapper;
+    use crate::syscall::syscall::SyscallType;
+    use crate::syscall::linux;
 
     #[test]
     #[serial]
@@ -729,6 +740,78 @@ mod tests {
                 std::process::exit(0);
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_idmapped_mount_smoke() -> Result<()> {
+        if !cfg!(target_os = "linux") {
+            return Ok(());
+        }
+        if !unistd::geteuid().is_root() {
+            return Ok(());
+        }
+
+        unshare(CloneFlags::CLONE_NEWNS)?;
+        mount::<Path, Path, str, str>(
+            None,
+            Path::new("/"),
+            None,
+            MsFlags::MS_REC | MsFlags::MS_PRIVATE,
+            None,
+        )?;
+
+        let tmp = tempfile::tempdir()?;
+        let src = tmp.path().join("src");
+        let dest = tmp.path().join("dest");
+        std::fs::create_dir_all(&src)?;
+        std::fs::create_dir_all(&dest)?;
+
+        let uid_mapping = LinuxIdMappingBuilder::default()
+            .host_id(0u32)
+            .container_id(0u32)
+            .size(1u32)
+            .build()?;
+        let gid_mapping = LinuxIdMappingBuilder::default()
+            .host_id(0u32)
+            .container_id(0u32)
+            .size(1u32)
+            .build()?;
+
+        let msg = MountMsg {
+            source: src.to_string_lossy().to_string(),
+            idmap: Some(crate::process::message::MountIdMap {
+                uid_mappings: vec![uid_mapping],
+                gid_mappings: vec![gid_mapping],
+                recursive: false,
+            }),
+            recursive: false,
+        };
+
+        let syscall = SyscallType::Linux.create_syscall();
+        let mount_fd = match mount_idmapped_fd(syscall.as_ref(), &msg) {
+            Ok(fd) => fd,
+            Err(ProcessError::SyscallOther(SyscallError::Nix(Errno::ENOSYS))) => return Ok(()),
+            Err(err) => return Err(err.into()),
+        };
+
+        let dest_str = dest.to_str().unwrap();
+        let at_fdcwd = unsafe { BorrowedFd::borrow_raw(libc::AT_FDCWD) };
+        syscall.move_mount(
+            mount_fd.as_fd(),
+            None,
+            at_fdcwd,
+            Some(dest_str),
+            linux::MOVE_MOUNT_F_EMPTY_PATH,
+        )?;
+
+        let mountinfo = std::fs::read_to_string("/proc/self/mountinfo")?;
+        let found = mountinfo
+            .lines()
+            .any(|line| line.split_whitespace().nth(4) == Some(dest_str));
+        assert!(found);
+
         Ok(())
     }
 }

@@ -482,6 +482,7 @@ impl InitReceiver {
                 };
                 Ok(unsafe { OwnedFd::from_raw_fd(fd) })
             }
+            Message::MountFdError(err) => Err(ChannelError::MountFdError(err)),
             msg => Err(ChannelError::UnexpectedMessage {
                 expected: Message::MountFdReply,
                 received: msg,
@@ -492,6 +493,9 @@ impl InitReceiver {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    use std::os::fd::AsRawFd;
+
     use anyhow::{Context, Result};
     use nix::sys::wait;
     use nix::unistd;
@@ -569,6 +573,53 @@ mod tests {
             }
         };
 
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_channel_mount_fd_error() -> Result<()> {
+        let (sender, receiver) = &mut init_channel()?;
+        sender.send_mount_fd_error("boom".to_string())?;
+        let err = receiver.wait_for_mount_fd_reply().unwrap_err();
+        assert!(matches!(err, ChannelError::MountFdError(msg) if msg == "boom"));
+        sender.close()?;
+        receiver.close()?;
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_channel_mount_fd_reply_success() -> Result<()> {
+        let (sender, receiver) = &mut init_channel()?;
+        let mut file = tempfile::tempfile()?;
+        file.write_all(b"ok")?;
+
+        sender.send_mount_fd_reply(file.as_raw_fd())?;
+        let fd = receiver.wait_for_mount_fd_reply()?;
+        let mut received = std::fs::File::from(fd);
+        received.seek(SeekFrom::Start(0))?;
+        let mut buf = String::new();
+        received.read_to_string(&mut buf)?;
+        assert_eq!(buf, "ok");
+
+        sender.close()?;
+        receiver.close()?;
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_channel_mount_fd_reply_missing_fds() -> Result<()> {
+        let (mut sender, receiver) = channel::<Message>()?;
+        let mut receiver = InitReceiver { receiver };
+
+        sender.send(Message::MountFdReply)?;
+        let err = receiver.wait_for_mount_fd_reply().unwrap_err();
+        assert!(matches!(err, ChannelError::MissingMountFds));
+
+        sender.close()?;
+        receiver.close()?;
         Ok(())
     }
 

@@ -12,7 +12,6 @@ use std::{borrow::Cow, collections::HashMap};
 use std::{fs, mem};
 use crate::process::channel;
 use crate::process::message::{MountIdMap, MountMsg};
-use std::fs::OpenOptions;
 use std::os::fd::{BorrowedFd};
 
 use libcgroups::common::CgroupSetup::{Hybrid, Legacy, Unified};
@@ -24,6 +23,7 @@ use nix::mount::MsFlags;
 use nix::sys::statfs::{PROC_SUPER_MAGIC, statfs};
 use oci_spec::runtime::{Mount as SpecMount, MountBuilder as SpecMountBuilder, LinuxIdMapping};
 use pathrs::Root;
+use pathrs::error::ErrorKind as PathrsErrorKind;
 use pathrs::flags::OpenFlags;
 use pathrs::procfs::{ProcfsBase, ProcfsHandle};
 #[cfg(feature = "v1")]
@@ -121,7 +121,7 @@ pub struct MountOptions<'a> {
     pub cgroup_ns: bool,
 }
 
-fn normalized_id_mappings(
+fn extract_id_mappings(
     mount: &SpecMount,
 ) -> (Option<&[LinuxIdMapping]>, Option<&[LinuxIdMapping]>) {
     let uid_mappings = mount
@@ -180,21 +180,22 @@ impl Mount {
         gid_mappings: &[LinuxIdMapping],
         comm: &mut MountChannels<'_>,
     ) -> Result<()> {
-        let dest_for_host = safe_path::scoped_join(rootfs, mount.destination()).map_err(|err| {
+        let root = Root::open(rootfs)?;
+        let container_dest = mount.destination();
+        let dest_for_host = safe_path::scoped_join(rootfs, container_dest).map_err(|err| {
             tracing::error!(
                 "failed to join rootfs {:?} with mount destination {:?}: {}",
                 rootfs,
-                mount.destination(),
+                container_dest,
                 err
             );
             MountError::Other(err.into())
         })?;
         let dest = Path::new(&dest_for_host);
         let source = mount.source().as_ref().ok_or(MountError::NoSource)?;
-        let src = self.prepare_bind_source(source, dest)?;
+        let src = self.prepare_bind_source(source, &root, container_dest)?;
 
-        let recursive = mount_option_config.apply_recursive_idmap
-            || mount_option_config.flags.contains(MsFlags::MS_REC);
+        let recursive = mount_option_config.apply_recursive_idmap;
         let msg = MountMsg {
             source: src.to_string_lossy().to_string(),
             idmap: Some(MountIdMap {
@@ -208,10 +209,16 @@ impl Mount {
             tracing::error!("failed to request mount fd: {}", err);
             MountError::Other(err.into())
         })?;
-        let mount_fd = comm.init.wait_for_mount_fd_reply().map_err(|err| {
-            tracing::error!("failed to receive mount fd: {}", err);
-            MountError::Other(err.into())
-        })?;
+        let mount_fd = match comm.init.wait_for_mount_fd_reply() {
+            Ok(fd) => fd,
+            Err(channel::ChannelError::MountFdError(err)) => {
+                return Err(MountError::Custom(err));
+            }
+            Err(err) => {
+                tracing::error!("failed to receive mount fd: {}", err);
+                return Err(MountError::Other(err.into()));
+            }
+        };
         let dest_str = dest.to_str().ok_or_else(|| {
             MountError::Custom("idmapped mount destination must be valid UTF-8".to_string())
         })?;
@@ -267,6 +274,43 @@ impl Mount {
     pub fn setup_mount(&self, mount: &SpecMount, options: &MountOptions, mut comm: Option<&mut MountChannels<'_>>) -> Result<()> {
         tracing::debug!("mounting {:?}", mount);
         let mut mount_option_config = parse_mount(mount)?;
+        let (uid_mappings, gid_mappings) = extract_id_mappings(mount);
+        let is_bind = mount.typ().as_deref() == Some("bind")
+            || mount
+                .options()
+                .as_deref()
+                .is_some_and(|ops| ops.iter().any(|o| o == "bind" || o == "rbind"));
+        if mount_option_config.apply_idmap {
+            if !is_bind {
+                return Err(MountError::Custom(
+                    "idmapped mount requires bind mount".to_string(),
+                ));
+            }
+            let comm = comm.take().ok_or_else(|| {
+                MountError::Custom(
+                    "idmapped mount requires mount fd channel".to_string(),
+                )
+            })?;
+            let uid_mappings = uid_mappings.ok_or_else(|| {
+                MountError::Custom(
+                    "idmapped mount requires uid/gid mappings".to_string(),
+                )
+            })?;
+            let gid_mappings = gid_mappings.ok_or_else(|| {
+                MountError::Custom(
+                    "idmapped mount requires uid/gid mappings".to_string(),
+                )
+            })?;
+            self.mount_idmapped(
+                mount,
+                options.root,
+                &mount_option_config,
+                uid_mappings,
+                gid_mappings,
+                comm,
+            )?;
+            return Ok(());
+        }
 
         match mount.typ().as_deref() {
             Some("cgroup") => {
@@ -700,32 +744,38 @@ impl Mount {
         Ok(parent_mount)
     }
 
-    fn prepare_bind_source(&self, source: &Path, dest: &Path) -> Result<PathBuf> {
+    fn prepare_bind_source(&self, source: &Path, root: &Root, dest: &Path) -> Result<PathBuf> {
         let src = canonicalize(source).map_err(|err| {
             tracing::error!("failed to canonicalize {:?}: {}", source, err);
             err
         })?;
         let dir = if src.is_file() {
-            dest.parent().unwrap()
+            dest.parent().unwrap_or(Path::new("/"))
         } else {
             dest
         };
+        let dir_perm = Permissions::from_mode(0o755);
+        root.mkdir_all(dir, &dir_perm)?;
 
-        fs::create_dir_all(dir).map_err(|err| {
-            tracing::error!("failed to create dir for bind mount {:?}: {}", dir, err);
-            err
-        })?;
-
-        if src.is_file() && !dest.exists() {
-            OpenOptions::new()
-                .create(true)
-                .truncate(true)
-                .write(true)
-                .open(dest)
-                .map_err(|err| {
-                    tracing::error!("failed to create file for bind mount {:?}: {}", src, err);
-                    err
-                })?;
+        if src.is_file() {
+            let file_perm = Permissions::from_mode(0o644);
+            match root.resolve(dest) {
+                Ok(_) => {}
+                Err(err) => {
+                    if matches!(
+                        err.kind(),
+                        PathrsErrorKind::OsError(Some(code)) if code == libc::ENOENT
+                    ) {
+                        root.create_file(
+                            dest,
+                            OpenFlags::O_WRONLY | OpenFlags::O_TRUNC,
+                            &file_perm,
+                        )?;
+                    } else {
+                        return Err(MountError::Pathrs(err));
+                    }
+                }
+            }
         }
 
         Ok(src)
@@ -757,7 +807,7 @@ impl Mount {
         let source = m.source().as_ref().ok_or(MountError::NoSource)?;
         let dir_perm = Permissions::from_mode(0o755);
         let src = if typ == Some("bind") {
-            self.prepare_bind_source(source, container_dest)?
+            self.prepare_bind_source(source, &root, container_dest)?
         } else {
             root.mkdir_all(container_dest, &dir_perm)?;
             PathBuf::from(source)
@@ -1162,11 +1212,14 @@ mod tests {
     use std::fs::OpenOptions;
     use std::os::unix::fs::symlink;
     use std::str::FromStr;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use anyhow::{Context, Ok, Result};
 
     use super::*;
+    use crate::process::channel;
     use crate::syscall::test::{ArgName, MountArgs, TestHelperSyscall};
+    use oci_spec::runtime::LinuxIdMappingBuilder;
 
     #[test]
     #[ignore] // TODO: fix fd-based test
@@ -1863,6 +1916,242 @@ mod tests {
         assert!(res.is_err());
         let err = format!("{:?}", res.err().unwrap());
         assert!(err.contains("must be mounted on ordinary directory"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn setup_mount_idmapped_requires_bind() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let rootfs = tmp.path().join("rootfs");
+        std::fs::create_dir_all(&rootfs)?;
+
+        let mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/mnt"))
+            .typ("tmpfs")
+            .source("tmpfs")
+            .options(vec!["idmap".to_string()])
+            .build()?;
+
+        let options = MountOptions {
+            root: &rootfs,
+            label: None,
+            cgroup_ns: true,
+        };
+
+        let m = Mount::new();
+        let res = m.setup_mount(&mount, &options, None);
+        assert!(matches!(
+            res,
+            Err(MountError::Custom(msg)) if msg == "idmapped mount requires bind mount"
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn setup_mount_idmapped_requires_channel() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let rootfs = tmp.path().join("rootfs");
+        let source_dir = tmp.path().join("source");
+        std::fs::create_dir_all(&rootfs)?;
+        std::fs::create_dir_all(&source_dir)?;
+
+        let mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/mnt"))
+            .typ("bind")
+            .source(&source_dir)
+            .options(vec!["idmap".to_string()])
+            .build()?;
+
+        let options = MountOptions {
+            root: &rootfs,
+            label: None,
+            cgroup_ns: true,
+        };
+
+        let m = Mount::new();
+        let res = m.setup_mount(&mount, &options, None);
+        assert!(matches!(
+            res,
+            Err(MountError::Custom(msg)) if msg == "idmapped mount requires mount fd channel"
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn setup_mount_idmapped_requires_mappings() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let rootfs = tmp.path().join("rootfs");
+        let source_dir = tmp.path().join("source");
+        std::fs::create_dir_all(&rootfs)?;
+        std::fs::create_dir_all(&source_dir)?;
+
+        let mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/mnt"))
+            .typ("bind")
+            .source(&source_dir)
+            .options(vec!["idmap".to_string()])
+            .build()?;
+
+        let options = MountOptions {
+            root: &rootfs,
+            label: None,
+            cgroup_ns: true,
+        };
+
+        let m = Mount::new();
+        let (mut main_sender, mut _main_receiver) = channel::main_channel()?;
+        let (mut init_sender, mut init_receiver) = channel::init_channel()?;
+        let mut comm = MountChannels {
+            main: &mut main_sender,
+            init: &mut init_receiver,
+        };
+
+        let res = m.setup_mount(&mount, &options, Some(&mut comm));
+        assert!(matches!(
+            res,
+            Err(MountError::Custom(msg)) if msg == "idmapped mount requires uid/gid mappings"
+        ));
+
+        main_sender.close()?;
+        init_sender.close()?;
+        init_receiver.close()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn setup_mount_idmapped_rejects_empty_mappings() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let rootfs = tmp.path().join("rootfs");
+        let source_dir = tmp.path().join("source");
+        std::fs::create_dir_all(&rootfs)?;
+        std::fs::create_dir_all(&source_dir)?;
+
+        let mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/mnt"))
+            .typ("bind")
+            .source(&source_dir)
+            .options(vec!["idmap".to_string()])
+            .uid_mappings(Vec::new())
+            .gid_mappings(Vec::new())
+            .build()?;
+
+        let options = MountOptions {
+            root: &rootfs,
+            label: None,
+            cgroup_ns: true,
+        };
+
+        let m = Mount::new();
+        let (mut main_sender, mut _main_receiver) = channel::main_channel()?;
+        let (mut init_sender, mut init_receiver) = channel::init_channel()?;
+        let mut comm = MountChannels {
+            main: &mut main_sender,
+            init: &mut init_receiver,
+        };
+
+        let res = m.setup_mount(&mount, &options, Some(&mut comm));
+        assert!(matches!(
+            res,
+            Err(MountError::Custom(msg)) if msg == "idmapped mount requires uid/gid mappings"
+        ));
+
+        main_sender.close()?;
+        init_sender.close()?;
+        init_receiver.close()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn setup_mount_idmapped_propagates_mount_fd_error() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let rootfs = tmp.path().join("rootfs");
+        let source_dir = tmp.path().join("source");
+        std::fs::create_dir_all(&rootfs)?;
+        std::fs::create_dir_all(&source_dir)?;
+
+        let uid_mapping = LinuxIdMappingBuilder::default()
+            .container_id(0)
+            .host_id(0)
+            .size(1)
+            .build()?;
+        let gid_mapping = LinuxIdMappingBuilder::default()
+            .container_id(0)
+            .host_id(0)
+            .size(1)
+            .build()?;
+
+        let mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/mnt"))
+            .typ("bind")
+            .source(&source_dir)
+            .options(vec!["idmap".to_string()])
+            .uid_mappings(vec![uid_mapping])
+            .gid_mappings(vec![gid_mapping])
+            .build()?;
+
+        let options = MountOptions {
+            root: &rootfs,
+            label: None,
+            cgroup_ns: true,
+        };
+
+        let m = Mount::new();
+        let (mut main_sender, mut _main_receiver) = channel::main_channel()?;
+        let (mut init_sender, mut init_receiver) = channel::init_channel()?;
+        init_sender.send_mount_fd_error("boom".to_string())?;
+        let mut comm = MountChannels {
+            main: &mut main_sender,
+            init: &mut init_receiver,
+        };
+
+        let res = m.setup_mount(&mount, &options, Some(&mut comm));
+        assert!(matches!(
+            res,
+            Err(MountError::Custom(msg)) if msg == "boom"
+        ));
+
+        main_sender.close()?;
+        init_sender.close()?;
+        init_receiver.close()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_bind_source_creates_inside_rootfs() -> Result<()> {
+        let tmp_dir = tempfile::tempdir()?;
+        let rootfs = tmp_dir.path().join("rootfs");
+        let source_dir = tmp_dir.path().join("source");
+        std::fs::create_dir_all(&rootfs)?;
+        std::fs::create_dir_all(&source_dir)?;
+
+        let source_file = source_dir.join("file");
+        OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&source_file)?;
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let container_dest = PathBuf::from(format!("/youki-bind-test-{unique}/file"));
+        let host_dest = &container_dest;
+        assert!(!host_dest.exists());
+
+        let root = Root::open(&rootfs)?;
+        let m = Mount::new();
+        m.prepare_bind_source(&source_file, &root, &container_dest)?;
+
+        let rel_dest = container_dest.strip_prefix("/").unwrap();
+        assert!(rootfs.join(rel_dest).exists());
+        assert!(!host_dest.exists());
 
         Ok(())
     }
