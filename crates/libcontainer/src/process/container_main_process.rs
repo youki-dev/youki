@@ -8,7 +8,7 @@ use std::os::fd::{AsRawFd, OwnedFd, AsFd};
 use std::path::Path;
 use std::path::PathBuf;
 use crate::process::message::{Message, MountMsg};
-use nix::unistd::{ForkResult, Pid, fork, pipe, read as nix_read, write as nix_write};
+use nix::unistd::{ForkResult, Pid, fork, pipe, close, read as nix_read, write as nix_write};
 
 use nix::sys::wait::{WaitStatus, waitpid};
 use nix::errno::Errno;
@@ -233,9 +233,13 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                     .build()
                     .map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
 
-                let listener_path = seccomp.listener_path().ok_or(
+                let listener_path = seccomp
+                    .listener_path()
+                    .as_ref()
+                    .ok_or(
                     crate::process::seccomp_listener::SeccompListenerError::MissingListenerPath,
-                )?;
+                )?
+                .clone();
                 let encoded_state =
                     serde_json::to_vec(&state).map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
                 seccomp_state = Some((listener_path, encoded_state));
@@ -294,7 +298,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                         seccomp_fd,
                     )?;
                     init_sender.seccomp_notify_done()?;
-                    drop(seccomp_fd);
+                    let _ = close(seccomp_fd);
                 }
                 #[cfg(not(feature = "libseccomp"))]
                 {
