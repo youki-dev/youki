@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::os::unix::prelude::{AsRawFd, OwnedFd, RawFd, FromRawFd};
+use std::os::unix::prelude::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
 use nix::unistd::Pid;
 
@@ -166,8 +166,9 @@ impl MainReceiver {
 
     pub fn wait_for_mount_fd_request(&mut self) -> Result<MountMsg, ChannelError> {
         let msg = self
-            .receiver.recv().
-            map_err(|err| ChannelError::ReceiveError {
+            .receiver
+            .recv()
+            .map_err(|err| ChannelError::ReceiveError {
                 msg: "waiting for mount fd request".to_string(),
                 source: err,
             })?;
@@ -179,9 +180,9 @@ impl MainReceiver {
                     source: String::new(),
                     idmap: None,
                     recursive: false,
-                }), 
+                }),
                 received: msg,
-            })
+            }),
         }
     }
 
@@ -391,7 +392,6 @@ impl InitSender {
         self.sender.send(Message::MountFdError(err))?;
         Ok(())
     }
-
 }
 
 pub struct InitReceiver {
@@ -460,13 +460,12 @@ impl InitReceiver {
     }
 
     pub fn wait_for_mount_fd_reply(&mut self) -> Result<OwnedFd, ChannelError> {
-        let (msg, fds) = self
-            .receiver
-            .recv_with_fds::<[RawFd; 1]>()
-            .map_err(|err| ChannelError::ReceiveError {
+        let (msg, fds) = self.receiver.recv_with_fds::<[RawFd; 1]>().map_err(|err| {
+            ChannelError::ReceiveError {
                 msg: "waiting for mount fd reply".to_string(),
                 source: err,
-            })?;
+            }
+        })?;
 
         match msg {
             Message::MountFdReply => {
