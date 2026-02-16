@@ -6,7 +6,7 @@ use std::{env, fs};
 use anyhow::{Context, Result, anyhow};
 use flate2::read::GzDecoder;
 use oci_spec::runtime::{Process, Spec};
-use rand::Rng;
+use rand::RngExt;
 use tar::Archive;
 use tempfile::TempDir;
 use uuid::Uuid;
