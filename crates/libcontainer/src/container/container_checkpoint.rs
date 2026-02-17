@@ -30,7 +30,7 @@ impl Container {
         // just reuse existing functions.
         if !self.can_pause() {
             tracing::error!(status = ?self.status(), id = ?self.id(), "cannot checkpoint container because it is not running");
-            return Err(LibcontainerError::IncorrectStatus);
+            return Err(LibcontainerError::IncorrectStatus(self.status()));
         }
 
         // Create checkpoint image directory if it doesn't exist (mode 0o700 like crun).

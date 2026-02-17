@@ -31,7 +31,7 @@ impl Container {
         self.refresh_status()?;
         if !self.state.status.eq(&ContainerStatus::Running) {
             tracing::error!(id = ?self.id(), status = ?self.state.status, "container is not running");
-            return Err(LibcontainerError::IncorrectStatus);
+            return Err(LibcontainerError::IncorrectStatus(self.status()));
         }
 
         let cgroup_manager =
