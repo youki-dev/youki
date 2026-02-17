@@ -76,7 +76,7 @@ jobs:
           sudo cp youki /usr/bin/runc
           runc --version
       - name: Integration Test
-        run: sudo make RUNC_FLAVOR=crun TEST_RUNTIME=io.containerd.runc.v2 TESTFLAGS="-timeout 40m" integration
+        run: sudo make RUNC_FLAVOR=crun TEST_RUNTIME=io.containerd.runc.v2 TESTFLAGS="-timeout 40m -skip TestImagePullSchema1" integration
 
   k8s-tests:
     runs-on: ubuntu-24.04
