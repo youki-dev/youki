@@ -600,6 +600,7 @@ dependencies = [
  "tar",
  "tempfile",
  "test_framework",
+ "thiserror 2.0.18",
  "tracing",
  "tracing-subscriber",
  "uuid",
