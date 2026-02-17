@@ -1,6 +1,6 @@
 use anyhow::{Context, Ok, Result};
 use oci_spec::runtime::{ProcessBuilder, Spec, SpecBuilder};
-use rand::Rng;
+use rand::RngExt;
 use test_framework::{Test, TestGroup, TestResult, test_result};
 
 use crate::utils::test_inside_container;

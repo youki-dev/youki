@@ -456,7 +456,7 @@ mod tests {
     use oci_spec::runtime::{
         LinuxBuilder, LinuxIdMappingBuilder, LinuxNamespaceBuilder, SpecBuilder,
     };
-    use rand::Rng;
+    use rand::RngExt;
     use serial_test::serial;
 
     use super::*;

@@ -4,7 +4,7 @@ use oci_spec::runtime::{
     LinuxBuilder, LinuxIdMapping, LinuxIdMappingBuilder, LinuxNamespace, LinuxNamespaceBuilder,
     LinuxNamespaceType, ProcessBuilder, Spec, SpecBuilder,
 };
-use rand::Rng;
+use rand::RngExt;
 use test_framework::{Test, TestGroup, TestResult};
 
 use crate::utils::test_inside_container;
