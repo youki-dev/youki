@@ -119,6 +119,8 @@ pub struct State {
     pub creator: Option<u32>,
     // Specifies if systemd should be used to manage cgroups
     pub use_systemd: bool,
+    // Specifies if the container is rootless.
+    pub is_rootless: bool,
     // Specifies if the Intel RDT subdirectory needs be cleaned up.
     pub clean_up_intel_rdt_subdirectory: Option<bool>,
 }
@@ -142,6 +144,7 @@ impl State {
             created: None,
             creator: None,
             use_systemd: false,
+            is_rootless: false,
             clean_up_intel_rdt_subdirectory: None,
         }
     }

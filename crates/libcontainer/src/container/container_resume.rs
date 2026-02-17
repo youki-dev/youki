@@ -37,10 +37,13 @@ impl Container {
             libcgroups::common::create_cgroup_manager(libcgroups::common::CgroupConfig {
                 cgroup_path: self.spec()?.cgroup_path,
                 systemd_cgroup: self.systemd(),
+                rootless_container: self.rootless(),
                 container_name: self.id().to_string(),
             })?;
         // resume the frozen container
-        cmanager.freeze(FreezerState::Thawed)?;
+        if let Some(cmanager) = cmanager {
+            cmanager.freeze(FreezerState::Thawed)?;
+        }
 
         tracing::debug!("saving running status");
         self.set_status(ContainerStatus::Running).save()?;

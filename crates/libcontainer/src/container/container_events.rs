@@ -38,26 +38,29 @@ impl Container {
             libcgroups::common::create_cgroup_manager(libcgroups::common::CgroupConfig {
                 cgroup_path: self.spec()?.cgroup_path,
                 systemd_cgroup: self.systemd(),
+                rootless_container: self.rootless(),
                 container_name: self.id().to_string(),
             })?;
-        match stats {
-            true => {
-                let stats = cgroup_manager.stats()?;
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&stats)
-                        .map_err(LibcontainerError::OtherSerialization)?
-                );
+        if let Some(cgroup_manager) = cgroup_manager {
+            match stats {
+                true => {
+                    let stats = cgroup_manager.stats()?;
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&stats)
+                            .map_err(LibcontainerError::OtherSerialization)?
+                    );
+                }
+                false => loop {
+                    let stats = cgroup_manager.stats()?;
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&stats)
+                            .map_err(LibcontainerError::OtherSerialization)?
+                    );
+                    thread::sleep(Duration::from_secs(interval as u64));
+                },
             }
-            false => loop {
-                let stats = cgroup_manager.stats()?;
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&stats)
-                        .map_err(LibcontainerError::OtherSerialization)?
-                );
-                thread::sleep(Duration::from_secs(interval as u64));
-            },
         }
 
         Ok(())
