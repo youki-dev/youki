@@ -35,6 +35,7 @@ use crate::tests::pidfile::get_pidfile_test;
 use crate::tests::poststart::get_poststart_tests;
 use crate::tests::poststart_fail::get_poststart_fail_tests;
 use crate::tests::poststop::get_poststop_tests;
+use crate::tests::poststop_fail::get_poststop_fail_tests;
 use crate::tests::prestart::get_prestart_tests;
 use crate::tests::process::get_process_test;
 use crate::tests::process_capabilities_fail::get_process_capabilities_fail_test;
@@ -125,6 +126,7 @@ fn main() -> Result<()> {
     let poststart = get_poststart_tests();
     let poststop = get_poststop_tests();
     let poststart_fail = get_poststart_fail_tests();
+    let poststop_fail = get_poststop_fail_tests();
     let prestart = get_prestart_tests();
     let create_runtime = get_create_runtime_tests();
     let cgroup_v1_pids = cgroups::pids::get_test_group();
@@ -176,6 +178,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(poststart));
     tm.add_test_group(Box::new(poststart_fail));
     tm.add_test_group(Box::new(poststop));
+    tm.add_test_group(Box::new(poststop_fail));
     tm.add_test_group(Box::new(prestart));
     tm.add_test_group(Box::new(create_runtime));
     tm.add_test_group(Box::new(cgroup_v1_pids));
