@@ -10,14 +10,14 @@ use test_framework::{Test, TestGroup, TestResult};
 use crate::utils::test_utils::CreateOptions;
 use crate::utils::{create_container, delete_container, generate_uuid, prepare_bundle, set_config};
 
-const HOOK_OUTPUT_FILE: &str = "output";
+const OUTPUT_FILE: &str = "output";
 
 fn get_output_file_path(bundle: &tempfile::TempDir) -> PathBuf {
     bundle
         .as_ref()
         .join("bundle")
         .join("rootfs")
-        .join(HOOK_OUTPUT_FILE)
+        .join(OUTPUT_FILE)
 }
 
 fn delete_output_file(path: &PathBuf) {
@@ -40,8 +40,9 @@ fn get_spec(host_output_file: &str) -> Spec {
                 .args(vec![
                     "/bin/sh".to_string(),
                     "-c".to_string(),
-                    "true".to_string(),
+                    format!("echo 'process called' >> {OUTPUT_FILE}"),
                 ])
+                .cwd("/")
                 .build()
                 .unwrap(),
         )
@@ -83,13 +84,13 @@ fn get_spec(host_output_file: &str) -> Spec {
         .unwrap()
 }
 
-/// Tests that when a createRuntime hook fails, the runtime generates an error,
-/// stops the container, and subsequent hooks are not executed.
+/// Tests that when a createRuntime hook fails, the runtime generates an error, stops the container,
+/// and subsequent hooks are not executed.
 ///
-/// According to the OCI spec: "If any createRuntime hook fails, the runtime MUST
-/// generate an error, stop the container, and continue the lifecycle at step 12."
-/// This test creates 3 hooks where hook_2 fails, then verifies that hook_1 and
-/// hook_2 ran but hook_3 did not.
+/// According to the OCI spec: "If any createRuntime hook fails, the runtime MUST generate an error,
+/// stop the container, and continue the lifecycle at step 12." This test creates 3 hooks where
+/// hook_2 fails, then verifies that hook_1 and hook_2 ran in order, hook_3 did not run, and the
+/// container process was never started.
 fn get_test(test_name: &'static str) -> Test {
     Test::new(
         test_name,
@@ -126,21 +127,23 @@ fn get_test(test_name: &'static str) -> Test {
             } else {
                 let content =
                     fs::read_to_string(&host_output_file).expect("failed to read output file");
+                let lines: Vec<&str> = content.lines().collect();
 
-                if !content.contains("hook_1 called") {
+                if lines.contains(&"process called") {
                     TestResult::Failed(anyhow!(
-                        "first createRuntime hook should run before the failing hook"
-                    ))
-                } else if !content.contains("hook_2 called") {
-                    TestResult::Failed(anyhow!(
-                        "the failing createRuntime hook should have attempted to run"
-                    ))
-                } else if content.contains("hook_3 called") {
-                    TestResult::Failed(anyhow!(
-                        "hook after the failed hook was executed, but it shouldn't have"
+                        "container process must not run when a createRuntime hook fails"
                     ))
                 } else {
-                    TestResult::Passed
+                    let expected = vec!["hook_1 called", "hook_2 called"];
+                    if lines != expected {
+                        TestResult::Failed(anyhow!(
+                            "expected hooks to run in order {:?}, but got {:?}",
+                            expected,
+                            lines
+                        ))
+                    } else {
+                        TestResult::Passed
+                    }
                 }
             };
 
