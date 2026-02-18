@@ -1,32 +1,16 @@
 use std::fs;
-use std::path::PathBuf;
 
 use anyhow::anyhow;
-use oci_spec::runtime::{
-    Hook, HookBuilder, HooksBuilder, ProcessBuilder, RootBuilder, Spec, SpecBuilder,
-};
+use oci_spec::runtime::{HooksBuilder, ProcessBuilder, RootBuilder, Spec, SpecBuilder};
 use test_framework::{Test, TestGroup, TestResult};
 
 use crate::utils::{
-    CreateOptions, create_container, delete_container, generate_uuid, prepare_bundle, set_config,
-    start_container, wait_for_file_content,
+    CreateOptions, build_hook, create_container, delete_container, delete_hook_output_file,
+    generate_uuid, get_hook_output_file_path, prepare_bundle, set_config, start_container,
+    wait_for_file_content,
 };
 
 const POSTSTOP_OUTPUT_FILE: &str = "output";
-
-fn get_output_file_path(bundle: &tempfile::TempDir) -> PathBuf {
-    bundle
-        .as_ref()
-        .join("bundle")
-        .join("rootfs")
-        .join(POSTSTOP_OUTPUT_FILE)
-}
-
-fn delete_output_file(path: &PathBuf) {
-    if path.exists() {
-        fs::remove_file(path).expect("failed to remove output file");
-    }
-}
 
 fn write_process_command() -> Vec<String> {
     vec![
@@ -34,18 +18,6 @@ fn write_process_command() -> Vec<String> {
         "-c".to_string(),
         format!("echo 'process called' >> {POSTSTOP_OUTPUT_FILE}"),
     ]
-}
-
-fn write_poststop_hook(host_output_file: &str) -> Hook {
-    HookBuilder::default()
-        .path("/bin/sh")
-        .args(vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            format!("echo 'post-stop called' >> {host_output_file}"),
-        ])
-        .build()
-        .expect("could not build hook")
 }
 
 fn get_spec(host_output_file: &str) -> Spec {
@@ -65,7 +37,7 @@ fn get_spec(host_output_file: &str) -> Spec {
         )
         .hooks(
             HooksBuilder::default()
-                .poststop(vec![write_poststop_hook(host_output_file)])
+                .poststop(vec![build_hook("post-stop called", host_output_file)])
                 .build()
                 .expect("could not build hooks"),
         )
@@ -83,7 +55,7 @@ fn get_test(test_name: &'static str) -> Test {
             let id_str = id.to_string();
             let bundle = prepare_bundle().unwrap();
 
-            let host_output_file = get_output_file_path(&bundle);
+            let host_output_file = get_hook_output_file_path(&bundle);
             let host_output_file_str = host_output_file.to_str().unwrap();
 
             let spec = get_spec(host_output_file_str);
@@ -122,7 +94,7 @@ fn get_test(test_name: &'static str) -> Test {
             delete_container(&id_str, &bundle).unwrap().wait().unwrap();
 
             if let TestResult::Failed(_) = result {
-                delete_output_file(&host_output_file);
+                delete_hook_output_file(&host_output_file);
                 return result;
             }
 
@@ -152,7 +124,7 @@ fn get_test(test_name: &'static str) -> Test {
                 }
             };
 
-            delete_output_file(&host_output_file);
+            delete_hook_output_file(&host_output_file);
             result
         }),
     )

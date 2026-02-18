@@ -1,42 +1,14 @@
 use std::fs;
-use std::path::PathBuf;
 
 use anyhow::anyhow;
-use oci_spec::runtime::{
-    HookBuilder, HooksBuilder, ProcessBuilder, RootBuilder, Spec, SpecBuilder,
-};
+use oci_spec::runtime::{HooksBuilder, ProcessBuilder, RootBuilder, Spec, SpecBuilder};
 use test_framework::{Test, TestGroup, TestResult};
 
 use crate::utils::test_utils::CreateOptions;
-use crate::utils::{create_container, delete_container, generate_uuid, prepare_bundle, set_config};
-
-const HOOK_OUTPUT_FILE: &str = "output";
-
-fn get_output_file_path(bundle: &tempfile::TempDir) -> PathBuf {
-    bundle
-        .as_ref()
-        .join("bundle")
-        .join("rootfs")
-        .join(HOOK_OUTPUT_FILE)
-}
-
-fn delete_output_file(path: &PathBuf) {
-    if path.exists() {
-        fs::remove_file(path).expect("failed to remove output file");
-    }
-}
-
-fn write_prestart_hook(host_output_file: &str) -> oci_spec::runtime::Hook {
-    HookBuilder::default()
-        .path("/bin/sh")
-        .args(vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            format!("echo 'pre-start called' >> {host_output_file}"),
-        ])
-        .build()
-        .expect("could not build hook")
-}
+use crate::utils::{
+    build_hook, create_container, delete_container, delete_hook_output_file, generate_uuid,
+    get_hook_output_file_path, prepare_bundle, set_config,
+};
 
 fn get_spec(host_output_file: &str) -> Spec {
     SpecBuilder::default()
@@ -59,7 +31,7 @@ fn get_spec(host_output_file: &str) -> Spec {
         )
         .hooks(
             HooksBuilder::default()
-                .prestart(vec![write_prestart_hook(host_output_file)])
+                .prestart(vec![build_hook("pre-start called", host_output_file)])
                 .build()
                 .expect("could not build hooks"),
         )
@@ -78,7 +50,7 @@ fn get_test(test_name: &'static str) -> Test {
             let id = generate_uuid().to_string();
             let bundle = prepare_bundle().unwrap();
 
-            let host_output_file = get_output_file_path(&bundle);
+            let host_output_file = get_hook_output_file_path(&bundle);
 
             let spec = get_spec(host_output_file.to_str().unwrap());
             set_config(&bundle, &spec).unwrap();
@@ -106,7 +78,7 @@ fn get_test(test_name: &'static str) -> Test {
             };
 
             let _ = delete_container(&id, &bundle);
-            delete_output_file(&host_output_file);
+            delete_hook_output_file(&host_output_file);
             result
         }),
     )

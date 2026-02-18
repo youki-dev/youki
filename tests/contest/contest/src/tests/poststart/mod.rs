@@ -1,28 +1,17 @@
 use std::fs;
-use std::path::PathBuf;
 
 use anyhow::anyhow;
-use oci_spec::runtime::{
-    HookBuilder, HooksBuilder, ProcessBuilder, RootBuilder, Spec, SpecBuilder,
-};
+use oci_spec::runtime::{HooksBuilder, ProcessBuilder, RootBuilder, Spec, SpecBuilder};
 use test_framework::{Test, TestGroup, TestResult};
 
 use crate::utils::test_utils::CreateOptions;
 use crate::utils::{
-    create_container, delete_container, generate_uuid, is_runtime_runc, prepare_bundle, set_config,
+    build_hook, create_container, delete_container, delete_hook_output_file, generate_uuid,
+    get_hook_output_file_path, is_runtime_runc, prepare_bundle, set_config, start_container,
+    wait_for_file_content,
 };
 
 const CONTAINER_OUTPUT_FILE: &str = "output";
-
-fn get_output_file_path(bundle: &tempfile::TempDir) -> PathBuf {
-    bundle.as_ref().join("bundle").join("rootfs").join("output")
-}
-
-fn delete_output_file(path: &PathBuf) {
-    if path.exists() {
-        fs::remove_file(path).expect("failed to remove output file");
-    }
-}
 
 fn write_process_command() -> Vec<String> {
     vec![
@@ -30,44 +19,6 @@ fn write_process_command() -> Vec<String> {
         "-c".to_string(),
         format!("echo 'process called' >> {}", CONTAINER_OUTPUT_FILE),
     ]
-}
-
-fn write_poststart_hook(host_output_file: &str) -> oci_spec::runtime::Hook {
-    HookBuilder::default()
-        .path("/bin/sh")
-        .args(vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            format!("echo 'post-start called' >> {host_output_file}"),
-        ])
-        .build()
-        .expect("could not build hook")
-}
-
-fn wait_for_file_content(
-    file_path: &PathBuf,
-    expected_content: &str,
-    timeout: std::time::Duration,
-    poll_interval: std::time::Duration,
-) -> anyhow::Result<()> {
-    let start = std::time::Instant::now();
-
-    while start.elapsed() < timeout {
-        if file_path.exists()
-            && let Ok(contents) = fs::read_to_string(file_path)
-            && contents.contains(expected_content)
-        {
-            return Ok(());
-        }
-        std::thread::sleep(poll_interval);
-    }
-
-    let actual_content = fs::read_to_string(file_path).expect("failed to read output file");
-
-    Err(anyhow!(
-        "Timed out waiting for file {} to contain '{expected_content}', but got: '{actual_content}'",
-        file_path.display(),
-    ))
 }
 
 fn get_spec(host_output_file: &str) -> Spec {
@@ -87,7 +38,7 @@ fn get_spec(host_output_file: &str) -> Spec {
         )
         .hooks(
             HooksBuilder::default()
-                .poststart(vec![write_poststart_hook(host_output_file)])
+                .poststart(vec![build_hook("post-start called", host_output_file)])
                 .build()
                 .expect("could not build hooks"),
         )
@@ -106,7 +57,7 @@ fn get_test(test_name: &'static str) -> Test {
             let id_str = id.to_string();
             let bundle = prepare_bundle().unwrap();
 
-            let host_output_file = get_output_file_path(&bundle);
+            let host_output_file = get_hook_output_file_path(&bundle);
             let host_output_file_str = host_output_file.to_str().unwrap();
 
             let spec = get_spec(host_output_file_str);
@@ -124,7 +75,7 @@ fn get_test(test_name: &'static str) -> Test {
                     .expect("failed to read output file after create");
                 if !content.is_empty() {
                     let _ = delete_container(&id_str, &bundle);
-                    delete_output_file(&host_output_file);
+                    delete_hook_output_file(&host_output_file);
                     let has_poststart = content.contains("post-start called");
                     let has_process = content.contains("process called");
                     return match (has_poststart, has_process) {
@@ -142,10 +93,7 @@ fn get_test(test_name: &'static str) -> Test {
                 }
             }
 
-            crate::utils::start_container(&id_str, &bundle)
-                .unwrap()
-                .wait()
-                .unwrap();
+            start_container(&id_str, &bundle).unwrap().wait().unwrap();
 
             let wait_result = wait_for_file_content(
                 &host_output_file,
@@ -180,7 +128,7 @@ fn get_test(test_name: &'static str) -> Test {
             };
 
             let _ = delete_container(&id_str, &bundle);
-            delete_output_file(&host_output_file);
+            delete_hook_output_file(&host_output_file);
             result
         }),
     )
