@@ -14,7 +14,7 @@ pub enum MissingSpecError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum LibcontainerError {
-    #[error("failed to perform operation due to the container's status: `{0}`")]
+    #[error("failed operation due to incompatible container status: `{0}`")]
     IncorrectStatus(ContainerStatus),
     #[error("container already exists")]
     Exist,
@@ -161,23 +161,23 @@ mod tests {
         use crate::error::LibcontainerError::IncorrectStatus;
 
         assert_eq!(
-            "failed to perform operation due to the container's status: `Creating`",
+            "failed operation due to incompatible container status: `Creating`",
             format!("{}", IncorrectStatus(Creating))
         );
         assert_eq!(
-            "failed to perform operation due to the container's status: `Created`",
+            "failed operation due to incompatible container status: `Created`",
             format!("{}", IncorrectStatus(Created))
         );
         assert_eq!(
-            "failed to perform operation due to the container's status: `Stopped`",
+            "failed operation due to incompatible container status: `Stopped`",
             format!("{}", IncorrectStatus(Stopped))
         );
         assert_eq!(
-            "failed to perform operation due to the container's status: `Running`",
+            "failed operation due to incompatible container status: `Running`",
             format!("{}", IncorrectStatus(Running))
         );
         assert_eq!(
-            "failed to perform operation due to the container's status: `Paused`",
+            "failed operation due to incompatible container status: `Paused`",
             format!("{}", IncorrectStatus(Paused))
         );
     }
