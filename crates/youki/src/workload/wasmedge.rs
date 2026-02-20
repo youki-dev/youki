@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use libcontainer::oci_spec::runtime::Spec;
-use libcontainer::workload::{Executor, ExecutorError, ExecutorValidationError};
+use libcontainer::workload::{
+    ContainerExecutor, Executor, ExecutorError, ExecutorValidationError, HostExecutor,
+};
 use wasmedge_sdk::error::{CoreError, CoreExecutionError, WasmEdgeError};
 use wasmedge_sdk::wasi::WasiModule;
 use wasmedge_sdk::{Module, Store, Vm, params};
@@ -11,7 +13,7 @@ const EXECUTOR_NAME: &str = "wasmedge";
 #[derive(Clone)]
 pub struct WasmedgeExecutor {}
 
-impl Executor for WasmedgeExecutor {
+impl ContainerExecutor for WasmedgeExecutor {
     fn exec(&self, spec: &Spec) -> Result<(), ExecutorError> {
         if !can_handle(spec) {
             return Err(ExecutorError::CantHandle(EXECUTOR_NAME));
@@ -67,6 +69,9 @@ impl Executor for WasmedgeExecutor {
         Ok(())
     }
 }
+
+impl HostExecutor for WasmedgeExecutor {}
+impl Executor for WasmedgeExecutor {}
 
 pub fn get_executor() -> WasmedgeExecutor {
     WasmedgeExecutor {}
