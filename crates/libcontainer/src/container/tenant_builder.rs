@@ -441,7 +441,7 @@ impl TenantContainerBuilder {
         let container = Container::load(container_dir)?;
         if !container.can_exec() {
             tracing::error!(status = ?container.status(), "cannot exec as container");
-            return Err(LibcontainerError::IncorrectStatus);
+            return Err(LibcontainerError::IncorrectStatus(container.status()));
         }
 
         Ok(container)

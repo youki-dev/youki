@@ -61,7 +61,7 @@ impl Container {
                         status = ?self.status(),
                         "delete requires the container state to be stopped or created",
                     );
-                    return Err(LibcontainerError::IncorrectStatus);
+                    return Err(LibcontainerError::IncorrectStatus(self.status()));
                 }
             }
         }
