@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use procfs::process::Process;
 pub mod blkio;
 pub mod cpu;
+pub mod devices;
 pub mod memory;
 pub mod network;
 pub mod pids;
