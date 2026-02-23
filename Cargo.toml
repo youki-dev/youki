@@ -6,5 +6,3 @@ exclude = ["experiment/seccomp", "experiment/selinux"]
 [profile.release]
 lto = true
 
-[patch.crates-io]
-oci-spec = { git = "https://github.com/viboognesh/oci-spec-rs.git" }
