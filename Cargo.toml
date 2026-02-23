@@ -5,4 +5,3 @@ exclude = ["experiment/seccomp", "experiment/selinux"]
 
 [profile.release]
 lto = true
-
