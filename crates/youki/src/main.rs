@@ -149,7 +149,6 @@ fn main() -> Result<()> {
 
     if let Err(ref e) = cmd_result {
         tracing::error!("error in executing command: {:?}", e);
-        std::process::exit(1);
     }
     cmd_result
 }
