@@ -25,6 +25,7 @@ pub mod pidfile;
 pub mod poststart;
 pub mod poststart_fail;
 pub mod poststop;
+pub mod poststop_fail;
 pub mod prestart;
 pub mod prestart_fail;
 pub mod process;
