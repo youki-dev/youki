@@ -51,7 +51,7 @@ tracing-journald = "0.3.2"
 oci-spec = { version = "0.8.4", features = ["runtime"] }
 
 [dev-dependencies]
-serial_test = "3.3.1"
+serial_test = "3.4.0"
 tempfile = "3"
 scopeguard = "1.2.0"
 
