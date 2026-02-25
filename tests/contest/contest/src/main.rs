@@ -36,6 +36,7 @@ use crate::tests::poststart::get_poststart_tests;
 use crate::tests::poststart_fail::get_poststart_fail_tests;
 use crate::tests::poststop::get_poststop_tests;
 use crate::tests::prestart::get_prestart_tests;
+use crate::tests::prestart_fail::get_prestart_fail_tests;
 use crate::tests::process::get_process_test;
 use crate::tests::process_capabilities_fail::get_process_capabilities_fail_test;
 use crate::tests::process_oom_score_adj::get_process_oom_score_adj_test;
@@ -127,6 +128,7 @@ fn main() -> Result<()> {
     let poststart_fail = get_poststart_fail_tests();
     let prestart = get_prestart_tests();
     let create_runtime = get_create_runtime_tests();
+    let prestart_fail = get_prestart_fail_tests();
     let cgroup_v1_pids = cgroups::pids::get_test_group();
     let cgroup_v1_cpu = cgroups::cpu::v1::get_test_group();
     let cgroup_v2_cpu = cgroups::cpu::v2::get_test_group();
@@ -178,6 +180,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(poststop));
     tm.add_test_group(Box::new(prestart));
     tm.add_test_group(Box::new(create_runtime));
+    tm.add_test_group(Box::new(prestart_fail));
     tm.add_test_group(Box::new(cgroup_v1_pids));
     tm.add_test_group(Box::new(cgroup_v1_cpu));
     tm.add_test_group(Box::new(cgroup_v2_cpu));
