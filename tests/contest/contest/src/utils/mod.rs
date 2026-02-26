@@ -2,8 +2,9 @@ pub mod support;
 pub mod test_utils;
 
 pub use support::{
-    generate_uuid, get_runtime_path, get_runtimetest_path, is_runtime_runc, prepare_bundle,
-    set_config, wait_for_file_content,
+    build_hook, delete_hook_output_file, generate_uuid, get_hook_output_file_path,
+    get_runtime_path, get_runtimetest_path, is_runtime_runc, prepare_bundle, set_config,
+    wait_for_file_content,
 };
 pub use test_utils::{
     CreateOptions, LifecycleStatus, State, WaitTarget, create_container, delete_container,

@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::PathBuf;
 
 use anyhow::anyhow;
 use oci_spec::runtime::{
@@ -9,25 +8,9 @@ use test_framework::{ConditionalTest, TestGroup, TestResult};
 
 use crate::utils::test_utils::CreateOptions;
 use crate::utils::{
-    create_container, delete_container, generate_uuid, is_runtime_runc, prepare_bundle, set_config,
-    start_container,
+    build_hook, create_container, delete_container, delete_hook_output_file, generate_uuid,
+    get_hook_output_file_path, is_runtime_runc, prepare_bundle, set_config, start_container,
 };
-
-const HOOK_OUTPUT_FILE: &str = "output";
-
-fn get_output_file_path(bundle: &tempfile::TempDir) -> PathBuf {
-    bundle
-        .as_ref()
-        .join("bundle")
-        .join("rootfs")
-        .join(HOOK_OUTPUT_FILE)
-}
-
-fn delete_output_file(path: &PathBuf) {
-    if path.exists() {
-        fs::remove_file(path).expect("failed to remove output file");
-    }
-}
 
 fn get_spec(host_output_file: &str) -> Spec {
     SpecBuilder::default()
@@ -52,15 +35,7 @@ fn get_spec(host_output_file: &str) -> Spec {
         .hooks(
             HooksBuilder::default()
                 .poststart(vec![
-                    HookBuilder::default()
-                        .path("/bin/sh")
-                        .args(vec![
-                            "sh".to_string(),
-                            "-c".to_string(),
-                            format!("echo 'hook_1 called' >> {host_output_file}"),
-                        ])
-                        .build()
-                        .expect("could not build hook"),
+                    build_hook("hook_1 called", host_output_file),
                     HookBuilder::default()
                         .path("/bin/sh")
                         .args(vec![
@@ -70,15 +45,7 @@ fn get_spec(host_output_file: &str) -> Spec {
                         ])
                         .build()
                         .expect("could not build hook"),
-                    HookBuilder::default()
-                        .path("/bin/sh")
-                        .args(vec![
-                            "sh".to_string(),
-                            "-c".to_string(),
-                            format!("echo 'hook_3 called' >> {host_output_file}"),
-                        ])
-                        .build()
-                        .expect("could not build hook"),
+                    build_hook("hook_3 called", host_output_file),
                 ])
                 .build()
                 .expect("could not build hooks"),
@@ -104,7 +71,7 @@ fn get_test(test_name: &'static str) -> ConditionalTest {
             let id = generate_uuid().to_string();
             let bundle = prepare_bundle().unwrap();
 
-            let host_output_file = get_output_file_path(&bundle);
+            let host_output_file = get_hook_output_file_path(&bundle);
 
             let spec = get_spec(host_output_file.to_str().unwrap());
             set_config(&bundle, &spec).unwrap();
@@ -120,7 +87,7 @@ fn get_test(test_name: &'static str) -> ConditionalTest {
 
             if create_failed {
                 let _ = delete_container(&id, &bundle);
-                delete_output_file(&host_output_file);
+                delete_hook_output_file(&host_output_file);
                 return TestResult::Failed(anyhow!("runtime failed at create"));
             }
 
@@ -128,7 +95,7 @@ fn get_test(test_name: &'static str) -> ConditionalTest {
                 let code = cmd.wait().unwrap().code().unwrap();
                 if code != 1 {
                     let _ = delete_container(&id, &bundle);
-                    delete_output_file(&host_output_file);
+                    delete_hook_output_file(&host_output_file);
                     return TestResult::Failed(anyhow!(
                         "start should exit with code 1, got {code}"
                     ));
@@ -157,7 +124,7 @@ fn get_test(test_name: &'static str) -> ConditionalTest {
             };
 
             let _ = delete_container(&id, &bundle);
-            delete_output_file(&host_output_file);
+            delete_hook_output_file(&host_output_file);
             result
         }),
     )

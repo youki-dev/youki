@@ -5,7 +5,7 @@ use std::{env, fs};
 
 use anyhow::{Context, Result, anyhow};
 use flate2::read::GzDecoder;
-use oci_spec::runtime::{Process, Spec};
+use oci_spec::runtime::{Hook, HookBuilder, Process, Spec};
 use rand::RngExt;
 use tar::Archive;
 use tempfile::TempDir;
@@ -125,4 +125,32 @@ pub fn wait_for_file_content(
         "Timed out waiting for file {} to contain '{expected_content}', but got: '{actual_content}'",
         file_path.display(),
     ))
+}
+
+const HOOK_OUTPUT_FILE: &str = "output";
+
+pub fn get_hook_output_file_path(bundle: &TempDir) -> PathBuf {
+    bundle
+        .as_ref()
+        .join("bundle")
+        .join("rootfs")
+        .join(HOOK_OUTPUT_FILE)
+}
+
+pub fn delete_hook_output_file(path: &PathBuf) {
+    if path.exists() {
+        fs::remove_file(path).expect("failed to remove output file");
+    }
+}
+
+pub fn build_hook(message: &str, host_output_file: &str) -> Hook {
+    HookBuilder::default()
+        .path("/bin/sh")
+        .args(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            format!("echo '{message}' >> {host_output_file}"),
+        ])
+        .build()
+        .expect("could not build hook")
 }
