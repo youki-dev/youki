@@ -25,6 +25,7 @@ mod features;
 mod list;
 mod pause;
 mod ps;
+mod restore;
 mod resume;
 mod run;
 mod spec;
@@ -37,6 +38,7 @@ pub use features::Features;
 pub use list::List;
 pub use pause::Pause;
 pub use ps::Ps;
+pub use restore::Restore;
 pub use resume::Resume;
 pub use run::Run;
 pub use spec::Spec;
@@ -61,7 +63,7 @@ pub enum StandardCmd {
 // and other runtimes.
 #[derive(Parser, Debug)]
 pub enum CommonCmd {
-    Checkpointt(Checkpoint),
+    Checkpoint(Checkpoint),
     Events(Events),
     Exec(Exec),
     Features(Features),
@@ -69,6 +71,7 @@ pub enum CommonCmd {
     Pause(Pause),
     #[clap(allow_hyphen_values = true)]
     Ps(Ps),
+    Restore(Restore),
     Resume(Resume),
     Run(Run),
     Update(Update),
