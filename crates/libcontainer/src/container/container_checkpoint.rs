@@ -23,6 +23,47 @@ pub enum CheckpointError {
 }
 
 impl Container {
+    /// Checkpoint a running container using CRIU.
+    ///
+    /// # Implemented
+    ///
+    /// - Image directory creation with mode 0o700
+    /// - Container running state check
+    /// - CRIU version check (minimum 3.0.0)
+    /// - Bind mounts registered as CRIU external mounts
+    /// - Cgroup v1 subsystem mounts registered as CRIU external mounts
+    /// - Work directory creation and setup
+    /// - Saving stdin/stdout/stderr paths to `descriptors.json` for restore
+    /// - Basic CRIU options: `leave_running`, `ext_unix_sk`, `shell_job`,
+    ///   `tcp_established`, `file_locks`, `orphan_pts_master`, `manage_cgroups`
+    /// - External namespace handling for network and PID namespaces
+    /// - Container status update to `Stopped` after checkpoint (unless `leave_running`)
+    ///
+    /// # TODO
+    ///
+    /// - **Root user check**: require root before checkpointing
+    ///   (`crun: if (geteuid()) return error`)
+    /// - **CRIU config file**: load `/etc/criu/crun.conf` (fallback: `/etc/criu/runc.conf`)
+    ///   (`crun: handle_criu_config_file() → criu_set_config_file(path)`)
+    /// - **work_path fallback**: use `image_path` as `work_path` when not specified
+    ///   (`crun: if (work_path == NULL) work_path = image_path`)
+    /// - **`criu_set_root` path**: use `bundle/rootfs` instead of `bundle` alone
+    ///   (`crun: append_paths(bundle, rootfs) → criu_set_root(path)`)
+    /// - **Bind mount destination resolution**: resolve destination relative to rootfs
+    ///   (`crun: chroot_realpath(rootfs, dest) → criu_add_ext_mount(dest_in_root, dest_in_root)`)
+    /// - **Bind mount nofollow check**: reject bind mounts with `src-nofollow` option
+    ///   (`crun: if (nofollow) return error("CRIU does not support src-nofollow")`)
+    /// - **Masked paths**: register masked paths as CRIU external mounts
+    ///   (`crun: register_masked_paths_mounts(def, container, wrapper, false)`)
+    /// - **Cgroup freezer**: set freeze cgroup path via `criu_set_freeze_cgroup`
+    ///   (`crun: append_paths(CGROUP_ROOT[/freezer], cgroup_path) → criu_set_freeze_cgroup`)
+    /// - **`manage_cgroups_mode`**: set mode (default: SOFT) instead of only `manage_cgroups(true)`
+    ///   (`crun: criu_set_manage_cgroups_mode(CRIU_CG_MODE_SOFT)`)
+    /// - **Network lock method**: set CRIU network lock method (iptables/nftables/skip)
+    ///   (`crun: criu_set_network_lock(network_lock_method)`)
+    /// - **Pre-dump / Iterative migration**: incremental checkpoint support
+    ///   (`crun: --parent-path, --pre-dump, criu_set_track_mem(true), criu_pre_dump(),
+    ///   criu_feature_check() to verify memory tracking support`)
     pub fn checkpoint(&mut self, opts: &CheckpointOptions) -> Result<(), LibcontainerError> {
         self.refresh_status()?;
 
@@ -174,40 +215,6 @@ impl Container {
         // This follows runc's handleCheckpointingExternalNamespaces
         handle_checkpointing_external_namespaces(&mut criu, &spec, LinuxNamespaceType::Network)?;
         handle_checkpointing_external_namespaces(&mut criu, &spec, LinuxNamespaceType::Pid)?;
-
-        // TODO: The following features from runc are not yet implemented:
-        //
-        // 1. ManageCgroupsMode - Set cgroups mode from opts (IGNORE, CG_NONE, PROPS, SOFT, FULL, STRICT, DEFAULT)
-        //    runc: cgMode, err := criuCgMode(criuOpts.ManageCgroupsMode)
-        //
-        // 2. CRIU Configuration File - Handle criu configuration file (criu 3.11+)
-        //    runc: c.handleCriuConfigurationFile(&rpcOpts)
-        //
-        // 3. Cgroup Freezer - Use cgroup freezer instead of ptrace (criu 3.14+ for v2)
-        //    runc: rpcOpts.FreezeCgroup = proto.String(fcg)
-        //
-        // 5. Page Server - Support for remote page server
-        //    runc: rpcOpts.Ps = &criurpc.CriuPageServerInfo{Address, Port}
-        //
-        // 6. Pre-dump / Iterative Migration - Support for incremental checkpoints
-        //    runc: CriuReqType_PRE_DUMP, ParentImg, TrackMem
-        //
-        // 7. Lazy Pages - Support for lazy migration
-        //    runc: rpcOpts.LazyPages, checkCriuFeatures
-        //
-        // 8. Additional Options - TcpSkipInFlight, LinkRemap, EmptyNs, AutoDedup
-        //
-        // 9. Mask Paths - Add masked paths to CRIU dump
-        //    runc: c.addMaskPaths(req)
-        //
-        // 10. Device Mounts - Add device mounts to CRIU dump
-        //     runc: c.addCriuDumpMount(req, m) for devices
-        //
-        // 11. CRIU Feature Check - Check if CRIU supports required features
-        //     runc: c.checkCriuFeatures(criuOpts, &feat)
-        //
-        // 12. Error Logging - Log CRIU errors on failure
-        //     runc: logCriuErrors(logDir, logFile)
 
         criu.dump().map_err(|err| {
             tracing::error!(?err, id = ?self.id(), logfile = ?opts.image_path.join(CRIU_CHECKPOINT_LOG_FILE), "checkpointing container failed");
