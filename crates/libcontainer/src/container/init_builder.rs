@@ -126,6 +126,52 @@ impl InitContainerBuilder {
         Ok(container)
     }
 
+    /// Creates a container for restore without starting the init process.
+    /// This follows the runc pattern where createContainer only sets up the
+    /// container configuration, and the actual process is restored by CRIU.
+    pub fn build_for_restore(self) -> Result<Container, LibcontainerError> {
+        // For restore, we load the spec without canonicalizing rootfs
+        // because the rootfs may not be mounted yet (podman unmounts it after checkpoint)
+        let spec = self.load_spec_for_restore()?;
+        let container_dir = self.create_container_dir()?;
+
+        let mut container = self.create_container_state(&container_dir)?;
+        container
+            .set_systemd(self.use_systemd)
+            .set_annotations(spec.annotations().clone());
+
+        // Save the YoukiConfig for later use
+        let config = YoukiConfig::from_spec(&spec, container.id())?;
+        config.save(&container_dir).map_err(|err| {
+            tracing::error!(?container_dir, "failed to save config: {}", err);
+            err
+        })?;
+
+        // Save the container state
+        container.save()?;
+
+        Ok(container)
+    }
+
+    /// Load spec for restore without canonicalizing rootfs.
+    /// This is needed because the rootfs may not be mounted yet when restoring.
+    fn load_spec_for_restore(&self) -> Result<Spec, LibcontainerError> {
+        let source_spec_path = self.bundle.join("config.json");
+        let spec = Spec::load(source_spec_path)?;
+
+        // Only validate basic spec properties, skip rootfs-dependent validations
+        let version = spec.version();
+        if !version.starts_with("1.") {
+            tracing::error!(
+                "runtime spec has incompatible version '{}'. Only 1.X.Y is supported",
+                spec.version()
+            );
+            Err(ErrInvalidSpec::UnsupportedVersion)?;
+        }
+
+        Ok(spec)
+    }
+
     fn create_container_dir(&self) -> Result<PathBuf, LibcontainerError> {
         let container_dir = self.base.root_path.join(&self.base.container_id);
         tracing::debug!("container directory will be {:?}", container_dir);
