@@ -6,8 +6,9 @@ use std::os::unix::io::AsRawFd;
 use libcgroups::common::CgroupSetup::{Hybrid, Legacy};
 #[cfg(feature = "v1")]
 use libcgroups::common::DEFAULT_CGROUP_ROOT;
-use oci_spec::runtime::Spec;
+use oci_spec::runtime::{LinuxNamespaceType, Spec};
 
+use super::container_criu::{CRIU_VERSION_MINIMUM, handle_checkpointing_external_namespaces};
 use super::{Container, ContainerStatus};
 use crate::container::container::CheckpointOptions;
 use crate::error::LibcontainerError;
@@ -22,6 +23,47 @@ pub enum CheckpointError {
 }
 
 impl Container {
+    /// Checkpoint a running container using CRIU.
+    ///
+    /// # Implemented
+    ///
+    /// - Image directory creation with mode 0o700
+    /// - Container running state check
+    /// - CRIU version check (minimum 3.0.0)
+    /// - Bind mounts registered as CRIU external mounts
+    /// - Cgroup v1 subsystem mounts registered as CRIU external mounts
+    /// - Work directory creation and setup
+    /// - Saving stdin/stdout/stderr paths to `descriptors.json` for restore
+    /// - Basic CRIU options: `leave_running`, `ext_unix_sk`, `shell_job`,
+    ///   `tcp_established`, `file_locks`, `orphan_pts_master`, `manage_cgroups`
+    /// - External namespace handling for network and PID namespaces
+    /// - Container status update to `Stopped` after checkpoint (unless `leave_running`)
+    ///
+    /// # TODO
+    ///
+    /// - **Root user check**: require root before checkpointing
+    ///   (`crun: if (geteuid()) return error`)
+    /// - **CRIU config file**: load `/etc/criu/crun.conf` (fallback: `/etc/criu/runc.conf`)
+    ///   (`crun: handle_criu_config_file() → criu_set_config_file(path)`)
+    /// - **work_path fallback**: use `image_path` as `work_path` when not specified
+    ///   (`crun: if (work_path == NULL) work_path = image_path`)
+    /// - **`criu_set_root` path**: use `bundle/rootfs` instead of `bundle` alone
+    ///   (`crun: append_paths(bundle, rootfs) → criu_set_root(path)`)
+    /// - **Bind mount destination resolution**: resolve destination relative to rootfs
+    ///   (`crun: chroot_realpath(rootfs, dest) → criu_add_ext_mount(dest_in_root, dest_in_root)`)
+    /// - **Bind mount nofollow check**: reject bind mounts with `src-nofollow` option
+    ///   (`crun: if (nofollow) return error("CRIU does not support src-nofollow")`)
+    /// - **Masked paths**: register masked paths as CRIU external mounts
+    ///   (`crun: register_masked_paths_mounts(def, container, wrapper, false)`)
+    /// - **Cgroup freezer**: set freeze cgroup path via `criu_set_freeze_cgroup`
+    ///   (`crun: append_paths(CGROUP_ROOT[/freezer], cgroup_path) → criu_set_freeze_cgroup`)
+    /// - **`manage_cgroups_mode`**: set mode (default: SOFT) instead of only `manage_cgroups(true)`
+    ///   (`crun: criu_set_manage_cgroups_mode(CRIU_CG_MODE_SOFT)`)
+    /// - **Network lock method**: set CRIU network lock method (iptables/nftables/skip)
+    ///   (`crun: criu_set_network_lock(network_lock_method)`)
+    /// - **Pre-dump / Iterative migration**: incremental checkpoint support
+    ///   (`crun: --parent-path, --pre-dump, criu_set_track_mem(true), criu_pre_dump(),
+    ///   criu_feature_check() to verify memory tracking support`)
     pub fn checkpoint(&mut self, opts: &CheckpointOptions) -> Result<(), LibcontainerError> {
         self.refresh_status()?;
 
@@ -41,12 +83,16 @@ impl Container {
             }
         }
 
+        // We are relying on the CRIU version RPC which was introduced with CRIU 3.0.0
+        self.check_criu_version(CRIU_VERSION_MINIMUM)?;
+
         let mut criu = rust_criu::Criu::new().map_err(|e| {
             LibcontainerError::Checkpoint(CheckpointError::CriuError(format!(
                 "error in creating criu struct: {}",
                 e
             )))
         })?;
+
         // We need to tell CRIU that all bind mounts are external. CRIU will fail checkpointing
         // if it does not know that these bind mounts are coming from the outside of the container.
         // This information is needed during restore again. The external location of the bind
@@ -164,6 +210,11 @@ impl Container {
                 .into_string()
                 .unwrap(),
         );
+
+        // Handle external namespaces (network and PID)
+        // This follows runc's handleCheckpointingExternalNamespaces
+        handle_checkpointing_external_namespaces(&mut criu, &spec, LinuxNamespaceType::Network)?;
+        handle_checkpointing_external_namespaces(&mut criu, &spec, LinuxNamespaceType::Pid)?;
 
         criu.dump().map_err(|err| {
             tracing::error!(?err, id = ?self.id(), logfile = ?opts.image_path.join(CRIU_CHECKPOINT_LOG_FILE), "checkpointing container failed");
