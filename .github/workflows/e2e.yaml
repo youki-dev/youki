@@ -1,5 +1,3 @@
-name: 🧪 e2e test
-
 on:
   push:
     branches:
@@ -76,7 +74,7 @@ jobs:
           sudo cp youki /usr/bin/runc
           runc --version
       - name: Integration Test
-        run: sudo make RUNC_FLAVOR=crun TEST_RUNTIME=io.containerd.runc.v2 TESTFLAGS="-timeout 40m -skip TestImagePullSchema1" integration
+        run: sudo make RUNC_FLAVOR=crun TEST_RUNTIME=io.containerd.runc.v2 TESTFLAGS="-timeout 40m" integration
 
   k8s-tests:
     runs-on: ubuntu-24.04
@@ -189,8 +187,7 @@ jobs:
 
   docker-in-docker:
     runs-on: ubuntu-24.04
-    needs: [youki-build]
-    strategy:
+@@ -194,62 +194,62 @@ jobs:
       matrix:
         cgroup-version: ["v2"]
     steps:

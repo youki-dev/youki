@@ -32,6 +32,7 @@ pub fn exec(args: Exec, root_path: PathBuf) -> Result<i32> {
         .with_capabilities(args.cap)
         .with_ignore_paused(args.ignore_paused)
         .with_sub_cgroup(args.cgroup)
+        .with_apparmor(args.process_label)
         .build()?;
 
     // See https://github.com/youki-dev/youki/pull/1252 for a detailed explanation
