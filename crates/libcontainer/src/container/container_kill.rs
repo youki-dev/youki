@@ -38,7 +38,7 @@ impl Container {
             }
             false => {
                 tracing::error!(id = ?self.id(), status = ?self.status(), "cannot kill container due to incorrect state");
-                return Err(LibcontainerError::IncorrectStatus);
+                return Err(LibcontainerError::IncorrectStatus(self.status()));
             }
         }
         self.set_status(ContainerStatus::Stopped).save()?;

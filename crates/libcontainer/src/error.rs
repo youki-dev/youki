@@ -1,3 +1,5 @@
+use crate::container::ContainerStatus;
+
 #[derive(Debug, thiserror::Error)]
 pub enum MissingSpecError {
     #[error("missing process in spec")]
@@ -12,8 +14,8 @@ pub enum MissingSpecError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum LibcontainerError {
-    #[error("failed to perform operation due to incorrect container status")]
-    IncorrectStatus,
+    #[error("failed operation due to incompatible container status: `{0}`")]
+    IncorrectStatus(ContainerStatus),
     #[error("container already exists")]
     Exist,
     #[error("container state directory does not exist")]
@@ -151,6 +153,32 @@ mod tests {
             "failed to create container: non default cgroup root not supported. \
          error during cleanup: container id can't be empty",
             msg
+        );
+    }
+    #[test]
+    fn test_libcontainer_error_msg() {
+        use crate::container::ContainerStatus::*;
+        use crate::error::LibcontainerError::IncorrectStatus;
+
+        assert_eq!(
+            "failed operation due to incompatible container status: `Creating`",
+            format!("{}", IncorrectStatus(Creating))
+        );
+        assert_eq!(
+            "failed operation due to incompatible container status: `Created`",
+            format!("{}", IncorrectStatus(Created))
+        );
+        assert_eq!(
+            "failed operation due to incompatible container status: `Stopped`",
+            format!("{}", IncorrectStatus(Stopped))
+        );
+        assert_eq!(
+            "failed operation due to incompatible container status: `Running`",
+            format!("{}", IncorrectStatus(Running))
+        );
+        assert_eq!(
+            "failed operation due to incompatible container status: `Paused`",
+            format!("{}", IncorrectStatus(Paused))
         );
     }
 }

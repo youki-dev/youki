@@ -85,7 +85,7 @@ impl Executor for WasmerExecutor {
             }
         })?;
 
-        wasi_env.cleanup(&mut store, None);
+        wasi_env.on_exit(&mut store, None);
 
         std::process::exit(0)
     }

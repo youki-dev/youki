@@ -480,7 +480,13 @@ impl TenantContainerBuilder {
     }
 
     fn load_container_state(&self, container_dir: PathBuf) -> Result<Container, LibcontainerError> {
-        Container::load(container_dir)
+        let container = Container::load(container_dir)?;
+        if !container.can_exec() {
+            tracing::error!(status = ?container.status(), "cannot exec as container");
+            return Err(LibcontainerError::IncorrectStatus(container.status()));
+        }
+
+        Ok(container)
     }
 
     fn adapt_spec_for_tenant(

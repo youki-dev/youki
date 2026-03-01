@@ -1,4 +1,5 @@
 pub mod cgroups;
+pub mod create_runtime;
 pub mod delete;
 pub mod devices;
 pub mod domainname;
@@ -24,6 +25,9 @@ pub mod personality;
 pub mod pidfile;
 pub mod poststart;
 pub mod poststart_fail;
+pub mod poststop;
+pub mod prestart;
+pub mod prestart_fail;
 pub mod process;
 pub mod process_capabilities_fail;
 pub mod process_oom_score_adj;

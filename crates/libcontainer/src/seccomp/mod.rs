@@ -157,6 +157,9 @@ pub fn initialize_seccomp(seccomp: &LinuxSeccomp) -> Result<Option<io::RawFd>> {
                 LinuxSeccompFilterFlag::SeccompFilterFlagLog => ctx.set_ctl_log(true),
                 LinuxSeccompFilterFlag::SeccompFilterFlagTsync => ctx.set_ctl_tsync(true),
                 LinuxSeccompFilterFlag::SeccompFilterFlagSpecAllow => ctx.set_ctl_ssb(true),
+                LinuxSeccompFilterFlag::SeccompFilterFlagWaitKillableRecv => {
+                    ctx.set_ctl_waitkill(true)
+                }
             }
             .map_err(|err| SeccompError::SetFilterFlag {
                 source: err,
