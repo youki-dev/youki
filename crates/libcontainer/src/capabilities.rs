@@ -135,24 +135,28 @@ pub fn drop_privileges<S: Syscall + ?Sized>(
     cs: &LinuxCapabilities,
     syscall: &S,
 ) -> Result<(), SyscallError> {
-    tracing::debug!("dropping bounding capabilities to {:?}", cs.bounding());
     if let Some(bounding) = cs.bounding() {
+        tracing::debug!("dropping bounding capabilities to {:?}", bounding);
         syscall.set_capability(CapSet::Bounding, &to_set(bounding))?;
     }
 
     if let Some(effective) = cs.effective() {
+        tracing::debug!("dropping effective capabilities to {:?}", effective);
         syscall.set_capability(CapSet::Effective, &to_set(effective))?;
     }
 
     if let Some(permitted) = cs.permitted() {
+        tracing::debug!("dropping permitted capabilities to {:?}", permitted);
         syscall.set_capability(CapSet::Permitted, &to_set(permitted))?;
     }
 
     if let Some(inheritable) = cs.inheritable() {
+        tracing::debug!("dropping inheritable capabilities to {:?}", inheritable);
         syscall.set_capability(CapSet::Inheritable, &to_set(inheritable))?;
     }
 
     if let Some(ambient) = cs.ambient() {
+        tracing::debug!("dropping ambient capabilities to {:?}", ambient);
         syscall.set_capability(CapSet::Ambient, &to_set(ambient))?;
     }
 
