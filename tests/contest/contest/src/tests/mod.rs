@@ -4,6 +4,7 @@ pub mod delete;
 pub mod devices;
 pub mod domainname;
 pub mod example;
+pub mod exec;
 pub mod exec_cpu_affinity;
 pub mod fd_control;
 pub mod hooks;
