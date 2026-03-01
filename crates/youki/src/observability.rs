@@ -108,6 +108,7 @@ where
             subscriber
                 .with(
                     tracing_subscriber::fmt::layer()
+                        .with_ansi(false)
                         .without_time()
                         .with_writer(std::io::stderr),
                 )
