@@ -109,7 +109,7 @@ fn main() -> Result<()> {
             StandardCmd::State(state) => commands::state::state(state, root_path),
         },
         Some(SubCommand::Common(cmd)) => match *cmd {
-            CommonCmd::Checkpointt(checkpoint) => {
+            CommonCmd::Checkpoint(checkpoint) => {
                 commands::checkpoint::checkpoint(checkpoint, root_path)
             }
             CommonCmd::Events(events) => commands::events::events(events, root_path),
@@ -125,6 +125,16 @@ fn main() -> Result<()> {
             CommonCmd::List(list) => commands::list::list(list, root_path),
             CommonCmd::Pause(pause) => commands::pause::pause(pause, root_path),
             CommonCmd::Ps(ps) => commands::ps::ps(ps, root_path),
+            CommonCmd::Restore(restore) => {
+                match commands::restore::restore(restore, root_path, systemd_cgroup) {
+                    Ok(exit_code) => std::process::exit(exit_code),
+                    Err(e) => {
+                        tracing::error!("error in executing command: {:?}", e);
+                        eprintln!("restore failed : {e}");
+                        std::process::exit(-1);
+                    }
+                }
+            }
             CommonCmd::Resume(resume) => commands::resume::resume(resume, root_path),
             CommonCmd::Run(run) => match commands::run::run(run, root_path, systemd_cgroup) {
                 Ok(exit_code) => std::process::exit(exit_code),
