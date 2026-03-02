@@ -108,6 +108,9 @@ where
             subscriber
                 .with(
                     tracing_subscriber::fmt::layer()
+                        // TODO: consider making colors configurable
+                        // https://github.com/youki-dev/youki/issues/3435
+                        .with_ansi(false)
                         .without_time()
                         .with_writer(std::io::stderr),
                 )
