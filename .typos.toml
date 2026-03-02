@@ -13,6 +13,10 @@ extend-exclude = [
 # instance than write a regex.
 569d5ce3afe1074769f67 = "569d5ce3afe1074769f67"
 
+[default.extend-words]
+# This is the capabilities used in the exec integration test
+Inh = "Inh"
+
 [type.rust.extend-words]
 ser = "ser"
 flate = "flate"

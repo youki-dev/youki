@@ -21,6 +21,7 @@ use procfs::process::Namespace;
 use super::Container;
 use super::builder::ContainerBuilder;
 use crate::capabilities::CapabilityExt;
+use crate::container::ContainerStatus;
 use crate::container::builder_impl::ContainerBuilderImpl;
 use crate::error::{ErrInvalidSpec, LibcontainerError, MissingSpecError};
 use crate::notify_socket::NotifySocket;
@@ -68,6 +69,10 @@ pub struct TenantContainerBuilder {
     additional_gids: Vec<u32>,
     user: Option<u32>,
     group: Option<u32>,
+    ignore_paused: bool,
+    sub_cgroup: Option<String>,
+    process_label: Option<String>,
+    apparmor: Option<String>,
 }
 
 /// This is a helper function to get capabilities for tenant container, based on
@@ -163,6 +168,10 @@ impl TenantContainerBuilder {
             additional_gids: vec![],
             user: None,
             group: None,
+            ignore_paused: false,
+            sub_cgroup: None,
+            process_label: None,
+            apparmor: None,
         }
     }
 
@@ -226,6 +235,26 @@ impl TenantContainerBuilder {
         self
     }
 
+    pub fn with_ignore_paused(mut self, ignore_paused: bool) -> Self {
+        self.ignore_paused = ignore_paused;
+        self
+    }
+
+    pub fn with_sub_cgroup(mut self, sub_cgroup: Option<String>) -> Self {
+        self.sub_cgroup = sub_cgroup;
+        self
+    }
+
+    pub fn with_process_label(mut self, process_label: Option<String>) -> Self {
+        self.process_label = process_label;
+        self
+    }
+
+    pub fn with_apparmor(mut self, apparmor: Option<String>) -> Self {
+        self.apparmor = apparmor;
+        self
+    }
+
     /// Joins an existing container
     pub fn build(self) -> Result<Pid, LibcontainerError> {
         let container_dir = self.lookup_container_dir()?;
@@ -272,6 +301,8 @@ impl TenantContainerBuilder {
             stdout: self.base.stdout,
             stderr: self.base.stderr,
             as_sibling: self.as_sibling,
+            sub_cgroup_path: self.sub_cgroup,
+            process_label: self.process_label,
         };
 
         let pid = builder_impl.create()?;
@@ -439,7 +470,9 @@ impl TenantContainerBuilder {
 
     fn load_container_state(&self, container_dir: PathBuf) -> Result<Container, LibcontainerError> {
         let container = Container::load(container_dir)?;
-        if !container.can_exec() {
+        if !container.can_exec()
+            && (container.status() == ContainerStatus::Paused && !self.ignore_paused)
+        {
             tracing::error!(status = ?container.status(), "cannot exec as container");
             return Err(LibcontainerError::IncorrectStatus(container.status()));
         }
@@ -469,8 +502,12 @@ impl TenantContainerBuilder {
                 }
             }
 
-            if let Some(no_new_priv) = self.get_no_new_privileges() {
+            if let Some(no_new_priv) = self.get_no_new_privileges(spec) {
                 process_builder = process_builder.no_new_privileges(no_new_priv);
+            }
+
+            if let Some(ref apparmor) = self.apparmor {
+                process_builder = process_builder.apparmor_profile(apparmor)
             }
 
             let capabilities = get_capabilities(&self.capabilities, spec)?;
@@ -580,8 +617,10 @@ impl TenantContainerBuilder {
         env
     }
 
-    fn get_no_new_privileges(&self) -> Option<bool> {
+    fn get_no_new_privileges(&self, spec: &Spec) -> Option<bool> {
         self.no_new_privs
+            .filter(|&is_set| is_set)
+            .or_else(|| spec.process().as_ref().and_then(|p| p.no_new_privileges()))
     }
 
     fn get_namespaces(

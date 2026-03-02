@@ -9,8 +9,6 @@ use nix::sys::wait::{WaitStatus, waitpid};
 use crate::workload::executor::default_executor;
 
 pub fn exec(args: Exec, root_path: PathBuf) -> Result<i32> {
-    // TODO: not all values from exec are used here. We need to support
-    // the remaining ones.
     let user = args.user.map(|(u, _)| u);
     let group = args.user.and_then(|(_, g)| g);
 
@@ -19,6 +17,7 @@ pub fn exec(args: Exec, root_path: PathBuf) -> Result<i32> {
         .with_root_path(root_path)?
         .with_console_socket(args.console_socket.as_ref())
         .with_pid_file(args.pid_file.as_ref())?
+        .with_preserved_fds(args.preserve_fds)
         .validate_id()?
         .as_tenant()
         .with_detach(args.detach)
@@ -30,6 +29,10 @@ pub fn exec(args: Exec, root_path: PathBuf) -> Result<i32> {
         .with_additional_gids(args.additional_gids)
         .with_user(user)
         .with_group(group)
+        .with_capabilities(args.cap)
+        .with_ignore_paused(args.ignore_paused)
+        .with_sub_cgroup(args.cgroup)
+        .with_apparmor(args.apparmor)
         .build()?;
 
     // See https://github.com/youki-dev/youki/pull/1252 for a detailed explanation
