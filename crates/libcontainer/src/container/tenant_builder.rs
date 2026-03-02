@@ -9,6 +9,7 @@ use std::rc::Rc;
 use std::str::FromStr;
 
 use caps::Capability;
+use indexmap::IndexMap;
 use nix::fcntl::OFlag;
 use nix::unistd::{Pid, pipe2, read};
 use oci_spec::runtime::{
@@ -57,7 +58,7 @@ fn get_path_from_spec(spec: &Spec) -> Option<String> {
 /// that will join an existing container sandbox
 pub struct TenantContainerBuilder {
     base: ContainerBuilder,
-    env: HashMap<String, String>,
+    env: IndexMap<String, String>,
     cwd: Option<PathBuf>,
     args: Vec<String>,
     no_new_privs: Option<bool>,
@@ -152,7 +153,7 @@ impl TenantContainerBuilder {
     pub(super) fn new(builder: ContainerBuilder) -> Self {
         Self {
             base: builder,
-            env: HashMap::new(),
+            env: IndexMap::new(),
             cwd: None,
             args: Vec::new(),
             no_new_privs: None,
@@ -167,7 +168,7 @@ impl TenantContainerBuilder {
     }
 
     /// Sets environment variables for the container
-    pub fn with_env(mut self, env: HashMap<String, String>) -> Self {
+    pub fn with_env(mut self, env: IndexMap<String, String>) -> Self {
         self.env = env;
         self
     }
