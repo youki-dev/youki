@@ -9,6 +9,7 @@ use std::rc::Rc;
 use std::str::FromStr;
 
 use caps::Capability;
+use indexmap::IndexMap;
 use nix::fcntl::OFlag;
 use nix::unistd::{Pid, pipe2, read};
 use oci_spec::runtime::{
@@ -32,26 +33,6 @@ use crate::{tty, utils};
 const NAMESPACE_TYPES: &[&str] = &["ipc", "uts", "net", "pid", "mnt", "cgroup"];
 const TENANT_NOTIFY: &str = "tenant-notify-";
 const TENANT_TTY: &str = "tenant-tty-";
-
-fn get_path_from_spec(spec: &Spec) -> Option<String> {
-    let process = match spec.process() {
-        Some(p) => p,
-        None => return None,
-    };
-    let env = match process.env() {
-        Some(e) => e,
-        None => return None,
-    };
-    // as per runtime spec, env vars should follow https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap08.html#tag_08_01
-    // and that specifies having multiple env with same name is undefined behaviour
-    // so we take the last occurrence of PATH as that is somewhat intuitional of last
-    // specified value overriding
-    env.iter()
-        .find(|e| e.starts_with("PATH"))
-        .iter()
-        .next_back()
-        .map(|s| s.to_string())
-}
 
 /// Builder that can be used to configure the properties of a process
 /// that will join an existing container sandbox
@@ -455,10 +436,15 @@ impl TenantContainerBuilder {
         let process = if let Some(process) = &self.process {
             self.get_process(process)?
         } else {
-            let original_path_env = get_path_from_spec(spec);
+            let spec_env = spec
+                .process()
+                .as_ref()
+                .and_then(|p| p.env().as_ref())
+                .map(|v| v.as_slice())
+                .unwrap_or_default();
             let mut process_builder = ProcessBuilder::default()
                 .args(self.get_args()?)
-                .env(self.get_environment(original_path_env));
+                .env(self.get_environment(spec_env));
             if let Some(cwd) = self.get_working_dir()? {
                 process_builder = process_builder.cwd(cwd);
             }
@@ -556,28 +542,26 @@ impl TenantContainerBuilder {
         Ok(self.args.clone())
     }
 
-    fn get_environment(&self, path: Option<String>) -> Vec<String> {
-        let mut env_exists = false;
-        let mut env: Vec<String> = self
-            .env
-            .iter()
-            .map(|(k, v)| {
-                if k == "PATH" {
-                    env_exists = true;
-                }
-                format!("{k}={v}")
-            })
-            .collect();
-        // It is not possible in normal flow that path is None. The original container
-        // creation would have failed if path was absent. However we use Option
-        // just as a caution, and if neither exec cmd not original spec has PATH,
-        // the container creation will fail later which is ok
-        if let Some(p) = path {
-            if !env_exists {
-                env.push(p);
+    fn get_environment(&self, spec_env: &[String]) -> Vec<String> {
+        // Parse spec_env into IndexMap (preserves insertion order, last value wins)
+        let mut env_map: IndexMap<&str, &str> =
+            IndexMap::with_capacity(spec_env.len() + self.env.len());
+        for var in spec_env {
+            if let Some((key, value)) = var.split_once('=') {
+                env_map.insert(key, value);
             }
         }
-        env
+
+        // Exec env vars override spec env vars
+        for (key, value) in &self.env {
+            env_map.insert(key.as_str(), value.as_str());
+        }
+
+        // Convert back to Vec<String>
+        env_map
+            .into_iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect()
     }
 
     fn get_no_new_privileges(&self) -> Option<bool> {
@@ -793,5 +777,153 @@ mod test {
         assert_eq!(caps, expected_caps);
 
         Ok(())
+    }
+
+    mod get_environment_tests {
+        use std::collections::HashMap;
+
+        use super::super::TenantContainerBuilder;
+        use crate::container::builder::ContainerBuilder;
+        use crate::syscall::syscall::SyscallType;
+
+        fn create_tenant_builder_with_env(env: HashMap<String, String>) -> TenantContainerBuilder {
+            let base = ContainerBuilder::new("test_container".to_string(), SyscallType::default());
+            TenantContainerBuilder::new(base).with_env(env)
+        }
+
+        #[test]
+        fn test_get_environment_inherits_spec_env() {
+            // No exec env vars, so result should be spec env vars in original order
+            let exec_env = HashMap::new();
+            let builder = create_tenant_builder_with_env(exec_env);
+
+            let spec_env = vec![
+                "PATH=/usr/bin".to_string(),
+                "HOME=/root".to_string(),
+                "CUSTOM_VAR=value".to_string(),
+            ];
+
+            let result = builder.get_environment(&spec_env);
+
+            // With no exec env, spec vars should be preserved in original order
+            assert_eq!(result, spec_env);
+        }
+
+        #[test]
+        fn test_get_environment_exec_overrides_spec() {
+            let mut exec_env = HashMap::new();
+            exec_env.insert("PATH".to_string(), "/custom/path".to_string());
+            exec_env.insert("NEW_VAR".to_string(), "new_value".to_string());
+            let builder = create_tenant_builder_with_env(exec_env);
+
+            let spec_env = vec!["PATH=/usr/bin".to_string(), "HOME=/root".to_string()];
+
+            let mut result = builder.get_environment(&spec_env);
+            result.sort();
+
+            // Exec vars override spec vars, PATH from exec overrides PATH from spec
+            let mut expected = vec![
+                "HOME=/root".to_string(),
+                "NEW_VAR=new_value".to_string(),
+                "PATH=/custom/path".to_string(),
+            ];
+            expected.sort();
+
+            assert_eq!(result, expected);
+        }
+
+        #[test]
+        fn test_get_environment_no_spec_env() {
+            let mut exec_env = HashMap::new();
+            exec_env.insert("PATH".to_string(), "/custom/path".to_string());
+            let builder = create_tenant_builder_with_env(exec_env);
+
+            let result = builder.get_environment(&[]);
+
+            assert_eq!(result, vec!["PATH=/custom/path".to_string()]);
+        }
+
+        #[test]
+        fn test_get_environment_empty_both() {
+            let exec_env = HashMap::new();
+            let builder = create_tenant_builder_with_env(exec_env);
+
+            let result = builder.get_environment(&[]);
+
+            assert_eq!(result, Vec::<String>::new());
+        }
+
+        #[test]
+        fn test_get_environment_preserves_all_spec_vars() {
+            // No exec env vars, so result should be spec env vars in original order
+            let exec_env = HashMap::new();
+            let builder = create_tenant_builder_with_env(exec_env);
+
+            let spec_env = vec![
+                "PATH=/usr/bin:/bin".to_string(),
+                "HOME=/home/user".to_string(),
+                "TERM=xterm".to_string(),
+                "LANG=en_US.UTF-8".to_string(),
+                "MY_APP_CONFIG=/etc/app.conf".to_string(),
+            ];
+
+            let result = builder.get_environment(&spec_env);
+
+            // With no exec env, spec vars should be preserved in original order
+            assert_eq!(result, spec_env);
+        }
+
+        #[test]
+        fn test_get_environment_is_deterministic() {
+            // Test that multiple calls produce the same result (deterministic)
+            let mut exec_env = HashMap::new();
+            exec_env.insert("ZEBRA".to_string(), "z".to_string());
+            exec_env.insert("APPLE".to_string(), "a".to_string());
+            exec_env.insert("MANGO".to_string(), "m".to_string());
+            let builder = create_tenant_builder_with_env(exec_env);
+
+            let spec_env = vec!["BANANA=b".to_string(), "CHERRY=c".to_string()];
+
+            // Call multiple times and verify same result each time
+            let result1 = builder.get_environment(&spec_env);
+            let result2 = builder.get_environment(&spec_env);
+            let result3 = builder.get_environment(&spec_env);
+
+            // All calls should produce the same result
+            assert_eq!(result1, result2);
+            assert_eq!(result2, result3);
+
+            // Verify all expected vars are present
+            assert_eq!(result1.len(), 5);
+            assert!(result1.contains(&"APPLE=a".to_string()));
+            assert!(result1.contains(&"MANGO=m".to_string()));
+            assert!(result1.contains(&"ZEBRA=z".to_string()));
+            assert!(result1.contains(&"BANANA=b".to_string()));
+            assert!(result1.contains(&"CHERRY=c".to_string()));
+        }
+
+        #[test]
+        fn test_get_environment_spec_duplicates_last_wins() {
+            // If spec_env has duplicate keys, the last occurrence's value should win
+            // Order is preserved by first insertion position
+            let exec_env = HashMap::new();
+            let builder = create_tenant_builder_with_env(exec_env);
+
+            let spec_env = vec![
+                "FOO=first".to_string(),
+                "BAR=bar_value".to_string(),
+                "FOO=second".to_string(),
+                "FOO=third".to_string(),
+            ];
+
+            let result = builder.get_environment(&spec_env);
+
+            // Should have 2 vars: FOO (last value) and BAR
+            // Order: FOO first inserted at index 0, BAR at index 1
+            assert_eq!(
+                result,
+                vec!["FOO=third".to_string(), "BAR=bar_value".to_string()]
+            );
+        }
     }
 }

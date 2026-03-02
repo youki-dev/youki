@@ -465,11 +465,25 @@ pub fn exec_container<P: AsRef<Path>>(
     args: &[impl AsRef<OsStr>],
     process_path: Option<&Path>,
 ) -> Result<(String, String)> {
+    exec_container_with_env(id, dir, args, process_path, &[])
+}
+
+pub fn exec_container_with_env<P: AsRef<Path>>(
+    id: &str,
+    dir: P,
+    args: &[impl AsRef<OsStr>],
+    process_path: Option<&Path>,
+    env_vars: &[(&str, &str)],
+) -> Result<(String, String)> {
     let mut command = runtime_command(&dir);
     command.arg("--debug").arg("exec");
 
     if let Some(path) = process_path {
         command.arg("--process").arg(path);
+    }
+
+    for (key, value) in env_vars {
+        command.arg("--env").arg(format!("{}={}", key, value));
     }
 
     command.arg(id);

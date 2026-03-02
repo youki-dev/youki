@@ -2661,6 +2661,7 @@ dependencies = [
  "caps",
  "chrono",
  "fastrand",
+ "indexmap 2.13.0",
  "libc",
  "libcgroups",
  "libseccomp",
