@@ -14,6 +14,7 @@ use crate::tests::delete::get_delete_test;
 use crate::tests::devices::get_devices_test;
 use crate::tests::domainname::get_domainname_tests;
 use crate::tests::example::get_example_test;
+use crate::tests::exec::get_exec_test;
 use crate::tests::exec_cpu_affinity::get_exec_cpu_affinity_test;
 use crate::tests::fd_control::get_fd_control_test;
 use crate::tests::hooks::get_hooks_tests;
@@ -165,6 +166,7 @@ fn main() -> Result<()> {
     let process_capabilities_fail = get_process_capabilities_fail_test();
     let uid_mappings = get_uid_mappings_test();
     let exec_cpu_affinity = get_exec_cpu_affinity_test();
+    let exec = get_exec_test();
     let personality = get_personality_test();
     let prohibit_symlink = get_prohibit_symlink_test();
     let net_devices = get_net_devices_test();
@@ -217,6 +219,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(process_capabilities_fail));
     tm.add_test_group(Box::new(uid_mappings));
     tm.add_test_group(Box::new(exec_cpu_affinity));
+    tm.add_test_group(Box::new(exec));
     tm.add_test_group(Box::new(personality));
     tm.add_test_group(Box::new(prohibit_symlink));
     tm.add_test_group(Box::new(io_priority_test));

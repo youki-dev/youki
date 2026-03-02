@@ -185,21 +185,6 @@ pub fn container_init_process(
         })?;
     }
 
-    if ctx.rootfs_ro {
-        ctx.syscall
-            .mount(
-                None,
-                Path::new("/"),
-                None,
-                MsFlags::MS_RDONLY | MsFlags::MS_REMOUNT | MsFlags::MS_BIND,
-                None,
-            )
-            .map_err(|err| {
-                tracing::error!(?err, "failed to remount root `/` as readonly");
-                InitProcessError::SyscallOther(err)
-            })?;
-    }
-
     if let Some(umask) = ctx.process.user().umask() {
         match Mode::from_bits(umask) {
             Some(mode) => {
@@ -211,22 +196,39 @@ pub fn container_init_process(
         }
     }
 
-    if let Some(paths) = ctx.linux.readonly_paths() {
-        // mount readonly path
-        for path in paths {
-            readonly_path(Path::new(path), ctx.syscall.as_ref()).map_err(|err| {
-                tracing::error!(?err, ?path, "failed to set readonly path");
+    if matches!(args.container_type, ContainerType::InitContainer) {
+        if ctx.rootfs_ro {
+            ctx.syscall
+                .mount(
+                    None,
+                    Path::new("/"),
+                    None,
+                    MsFlags::MS_RDONLY | MsFlags::MS_REMOUNT | MsFlags::MS_BIND,
+                    None,
+                )
+                .map_err(|err| {
+                    tracing::error!(?err, "failed to remount root `/` as readonly");
+                    InitProcessError::SyscallOther(err)
+                })?;
+        }
+
+        if let Some(paths) = ctx.linux.readonly_paths() {
+            // mount readonly path
+            for path in paths {
+                readonly_path(Path::new(path), ctx.syscall.as_ref()).map_err(|err| {
+                    tracing::error!(?err, ?path, "failed to set readonly path");
+                    err
+                })?;
+            }
+        }
+
+        if let Some(paths) = ctx.linux.masked_paths() {
+            // mount masked paths
+            masked_paths(paths, ctx.linux.mount_label(), ctx.syscall.as_ref()).map_err(|err| {
+                tracing::error!(?err, "failed to set masked paths");
                 err
             })?;
         }
-    }
-
-    if let Some(paths) = ctx.linux.masked_paths() {
-        // mount masked paths
-        masked_paths(paths, ctx.linux.mount_label(), ctx.syscall.as_ref()).map_err(|err| {
-            tracing::error!(?err, "failed to set masked paths");
-            err
-        })?;
     }
 
     let cwd = format!("{}", ctx.process.cwd().display());
