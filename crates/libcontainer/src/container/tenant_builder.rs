@@ -437,7 +437,9 @@ impl TenantContainerBuilder {
         } else {
             // Inherit spec env vars for exec processes (matches runc/crun/runsc).
             // See https://github.com/youki-dev/youki/issues/3428
-            let spec_env = spec.process().as_ref()
+            let spec_env = spec
+                .process()
+                .as_ref()
                 .and_then(|p| p.env().as_ref().cloned())
                 .unwrap_or_default();
             let mut process_builder = ProcessBuilder::default()
@@ -625,15 +627,13 @@ impl TenantContainerBuilder {
 }
 
 #[cfg(test)]
-mod test {
-
+mod tests {
     use caps::Capability as Cap;
-    use oci_spec::runtime::{
-        Capabilities, Capability as SpecCap, LinuxCapabilities, ProcessBuilder, Spec, SpecBuilder,
-    };
+    use oci_spec::runtime::{Capabilities, Capability as SpecCap, SpecBuilder};
 
-    use super::{LibcontainerError, get_capabilities};
+    use super::*;
     use crate::capabilities::CapabilityExt;
+    use crate::syscall::syscall::SyscallType;
 
     fn get_spec(caps: LinuxCapabilities) -> Spec {
         SpecBuilder::default()
@@ -664,6 +664,19 @@ mod test {
             .set_ambient(None);
         t
     }
+
+    /// Helper to build a minimal TenantContainerBuilder with the given CLI env.
+    fn builder_with_env(env: &[(&str, &str)]) -> TenantContainerBuilder {
+        let base = ContainerBuilder::new("test".to_string(), SyscallType::default());
+        let env_map: HashMap<String, String> = env
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+
+        TenantContainerBuilder::new(base).with_env(env_map)
+    }
+
+    // --- capabilities tests ---
 
     // if there are no existing capabilities, then tenant can only
     // set effective, bounding and permitted caps ; not inheritable or ambient
@@ -776,24 +789,8 @@ mod test {
 
         Ok(())
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::syscall::syscall::SyscallType;
-
-    /// Helper to build a minimal TenantContainerBuilder with the given CLI env.
-    fn builder_with_env(env: &[(&str, &str)]) -> TenantContainerBuilder {
-        let base = ContainerBuilder::new("test".to_string(), SyscallType::default());
-    let env_map: HashMap<String, String> = env
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
-
-    TenantContainerBuilder::new(base)
-        .with_env(env_map)
-    }
+    // --- environment tests ---
 
     #[test]
     fn env_inherits_spec_vars() {

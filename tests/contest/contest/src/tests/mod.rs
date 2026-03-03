@@ -5,6 +5,7 @@ pub mod devices;
 pub mod domainname;
 pub mod example;
 pub mod exec_cpu_affinity;
+pub mod exec_env;
 pub mod fd_control;
 pub mod hooks;
 pub mod hostname;
