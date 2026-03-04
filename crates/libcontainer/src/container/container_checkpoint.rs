@@ -8,6 +8,7 @@ use libcgroups::common::CgroupSetup::{Hybrid, Legacy};
 use libcgroups::common::DEFAULT_CGROUP_ROOT;
 use oci_spec::runtime::Spec;
 
+use super::container_criu::{CRIU_VERSION_MINIMUM, check_criu_version};
 use super::{Container, ContainerStatus};
 use crate::container::container::CheckpointOptions;
 use crate::error::LibcontainerError;
@@ -32,6 +33,9 @@ impl Container {
             tracing::error!(status = ?self.status(), id = ?self.id(), "cannot checkpoint container because it is not running");
             return Err(LibcontainerError::IncorrectStatus(self.status()));
         }
+
+        // Require CRIU >= 3.15.0, matching crun's LIBCRIU_MIN_VERSION requirement.
+        check_criu_version(CRIU_VERSION_MINIMUM)?;
 
         // Create checkpoint image directory if it doesn't exist (mode 0o700 like crun).
         if let Err(err) = DirBuilder::new().mode(0o700).create(&opts.image_path) {
