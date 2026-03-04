@@ -12,24 +12,38 @@ use nix::unistd::Pid;
 use crate::workload::executor::default_executor;
 
 pub fn run(args: Run, root_path: PathBuf, systemd_cgroup: bool) -> Result<i32> {
-    let mut container = ContainerBuilder::new(args.container_id.clone(), SyscallType::default())
+    let Run {
+        bundle,
+        console_socket,
+        pid_file,
+        no_pivot,
+        preserve_fds,
+        container_id,
+        detach,
+        // TODO: not all values from run are used here. We need to support
+        //   the remaining ones.
+        no_subreaper: _,
+        no_new_keyring: _,
+        keep: _,
+    } = args;
+    let mut container = ContainerBuilder::new(container_id.clone(), SyscallType::default())
         .with_executor(default_executor())
-        .with_pid_file(args.pid_file.as_ref())?
-        .with_console_socket(args.console_socket.as_ref())
+        .with_pid_file(pid_file.as_ref())?
+        .with_console_socket(console_socket.as_ref())
         .with_root_path(root_path)?
-        .with_preserved_fds(args.preserve_fds)
+        .with_preserved_fds(preserve_fds)
         .validate_id()?
-        .as_init(&args.bundle)
+        .as_init(&bundle)
         .with_systemd(systemd_cgroup)
-        .with_detach(args.detach)
-        .with_no_pivot(args.no_pivot)
+        .with_detach(detach)
+        .with_no_pivot(no_pivot)
         .build()?;
 
     container
         .start()
-        .with_context(|| format!("failed to start container {}", args.container_id))?;
+        .with_context(|| format!("failed to start container {}", container_id))?;
 
-    if args.detach {
+    if detach {
         return Ok(0);
     }
 
