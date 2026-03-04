@@ -1,5 +1,17 @@
 # Changelog
 
+## [v0.6.1](https://github.com/youki-dev/youki/compare/v0.6.0...v0.6.1) - 2026-03-04
+### 💪 Improvements
+- feat(checkpoint): add CRIU version validation as prerequisite for checkpoint/restore by @nayuta723 in https://github.com/youki-dev/youki/pull/3438
+### 🐛 Bug Fixes
+- fix duplicate mount entries on exec by @saku3 in https://github.com/youki-dev/youki/pull/3432
+### 🧪 Test improvements and Misc Fixes
+- Disable colors in logs by @stepancheg in https://github.com/youki-dev/youki/pull/3433
+### Other Changes
+- (auto merged) chore(deps): bump the patch group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3425
+- chore(deps): bump uuid from 1.16.0 to 1.21.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3427
+- chore(deps): bump tempfile from 3.24.0 to 3.25.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3426
+
 ## [v0.6.0](https://github.com/youki-dev/youki/compare/v0.5.7...v0.6.0) - 2026-02-25
 ### 💪 Improvements
 - Add net device feature by @nayuta723 in https://github.com/youki-dev/youki/pull/3163
