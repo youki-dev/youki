@@ -8,7 +8,7 @@ use oci_spec::runtime::{
 };
 use test_framework::{Test, TestGroup, TestResult};
 
-use crate::utils::{get_runtime_path, test_outside_container};
+use crate::utils::test_outside_container;
 
 mod seccomp_agent;
 
@@ -109,17 +109,9 @@ fn test_seccomp_notify() -> Result<()> {
 pub fn get_seccomp_notify_test() -> TestGroup {
     let seccomp_notify_test = Test::new(
         "seccomp_notify",
-        Box::new(|| {
-            let runtime = get_runtime_path();
-            // runc doesn't support seccomp notify yet
-            if runtime.ends_with("runc") {
-                return TestResult::Skipped;
-            }
-
-            match test_seccomp_notify() {
-                Ok(_) => TestResult::Passed,
-                Err(err) => TestResult::Failed(err),
-            }
+        Box::new(|| match test_seccomp_notify() {
+            Ok(_) => TestResult::Passed,
+            Err(err) => TestResult::Failed(err),
         }),
     );
     let mut tg = TestGroup::new("seccomp_notify");
