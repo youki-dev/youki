@@ -8,6 +8,7 @@ use oci_spec::runtime::{ProcessBuilder, Spec, SpecBuilder};
 use serde_json::json;
 use test_framework::{Test, TestGroup, TestResult, test_result};
 
+use crate::utils::test_utils::check_container_created;
 use crate::utils::{exec_container, get_runtime_path, start_container, test_outside_container};
 
 fn create_spec_with_env(env: Vec<String>) -> anyhow::Result<Spec> {
@@ -67,6 +68,8 @@ fn test_exec_inherits_spec_env() -> TestResult {
     ]));
 
     test_outside_container(&spec, &|data| {
+        test_result!(check_container_created(&data));
+
         let id = &data.id;
         let dir = &data.bundle;
 
@@ -99,6 +102,8 @@ fn test_cli_env_overrides_spec() -> TestResult {
     ]));
 
     test_outside_container(&spec, &|data| {
+        test_result!(check_container_created(&data));
+
         let id = &data.id;
         let dir = &data.bundle;
 
@@ -136,6 +141,8 @@ fn test_cli_env_adds_new_var() -> TestResult {
     ]));
 
     test_outside_container(&spec, &|data| {
+        test_result!(check_container_created(&data));
+
         let id = &data.id;
         let dir = &data.bundle;
 
@@ -172,6 +179,8 @@ fn test_env_from_process_json() -> TestResult {
     let spec = test_result!(create_spec_with_env(vec!["PATH=/usr/bin".to_string(),]));
 
     test_outside_container(&spec, &|data| {
+        test_result!(check_container_created(&data));
+
         let id = &data.id;
         let dir = &data.bundle;
 
