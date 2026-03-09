@@ -117,7 +117,6 @@ fn main() -> Result<()> {
                 Ok(exit_code) => std::process::exit(exit_code),
                 Err(e) => {
                     tracing::error!("error in executing command: {:?}", e);
-                    eprintln!("exec failed : {e}");
                     std::process::exit(-1);
                 }
             },
@@ -130,7 +129,6 @@ fn main() -> Result<()> {
                 Ok(exit_code) => std::process::exit(exit_code),
                 Err(e) => {
                     tracing::error!("error in executing command: {:?}", e);
-                    eprintln!("run failed : {e}");
                     std::process::exit(-1);
                 }
             },
@@ -149,7 +147,6 @@ fn main() -> Result<()> {
 
     if let Err(ref e) = cmd_result {
         tracing::error!("error in executing command: {:?}", e);
-        eprintln!("error in executing command: {:?}", e);
     }
     cmd_result
 }
