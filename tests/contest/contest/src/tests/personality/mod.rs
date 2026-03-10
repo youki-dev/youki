@@ -51,7 +51,7 @@ fn personality_for_linux(domain: LinuxPersonalityDomain, expect: &str) -> TestRe
             return TestResult::Failed(anyhow!("container start failed"));
         }
 
-        let (stdout, _) = exec_container(id, dir, &["uname", "-m"], None).expect("exec failed");
+        let (stdout, _) = exec_container(id, dir, &["uname", "-m"], None, &[]).expect("exec failed");
 
         if !stdout.contains(expect) {
             return TestResult::Failed(anyhow!("unexpected personality: {}", stdout));

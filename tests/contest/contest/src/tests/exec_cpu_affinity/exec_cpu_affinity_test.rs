@@ -52,7 +52,7 @@ fn test_cpu_affinity_only_initial_set_from_process_json() -> TestResult {
             return TestResult::Failed(anyhow!("failed to write process.json: {}", e));
         }
 
-        let (_stdout, stderr) = match exec_container(id, dir, &["/bin/true"], Some(&process_path)) {
+        let (_stdout, stderr) = match exec_container(id, dir, &["/bin/true"], Some(&process_path), &[]) {
             Ok(output) => output,
             Err(e) => return TestResult::Failed(e),
         };
@@ -100,6 +100,7 @@ fn test_cpu_affinity_initial_and_final_set_from_process_json() -> TestResult {
             dir,
             &["grep", "Cpus_allowed_list", "/proc/self/status"],
             Some(&process_path),
+            &[],
         ) {
             Ok(output) => output,
             Err(e) => return TestResult::Failed(e),
@@ -142,6 +143,7 @@ fn test_cpu_affinity_from_config_json() -> TestResult {
             dir,
             &["grep", "Cpus_allowed_list", "/proc/self/status"],
             None,
+            &[],
         )
         .expect("exec failed");
 

@@ -435,8 +435,7 @@ impl TenantContainerBuilder {
         let process = if let Some(process) = &self.process {
             self.get_process(process)?
         } else {
-            // Inherit spec env vars for exec processes (matches runc/crun/runsc).
-            // See https://github.com/youki-dev/youki/issues/3428
+            // Use the spec's process env as the baseline for exec.
             let spec_env = spec
                 .process()
                 .as_ref()
@@ -542,10 +541,11 @@ impl TenantContainerBuilder {
         Ok(self.args.clone())
     }
 
-    /// Builds the environment for an exec process. The spec's env vars are
-    /// inherited as a baseline, then any vars passed via `--env` on the CLI
-    /// override them by name. This matches the behavior of runc, crun, and
-    /// runsc. See <https://github.com/youki-dev/youki/issues/3428>.
+    /// Builds the environment for an exec process.
+    /// The spec's env vars are used as the baseline, and env vars provided to the
+    /// builder, such as those from the CLI, override entries with the same key.
+    /// This follows runc's behavior.
+    /// See <https://github.com/youki-dev/youki/issues/3428>.
     fn get_environment(&self, spec_env: Vec<String>) -> Vec<String> {
         // Start with spec env, skipping any vars that the CLI overrides.
         let mut env: Vec<String> = spec_env
@@ -802,7 +802,7 @@ mod tests {
     }
 
     #[test]
-    fn cli_env_overrides_spec() {
+    fn builder_env_overrides_spec() {
         let b = builder_with_env(&[("AAA", "override")]);
         let spec_env = vec!["PATH=/usr/bin".to_string(), "AAA=bbb".to_string()];
         let result = b.get_environment(spec_env);
@@ -812,7 +812,7 @@ mod tests {
     }
 
     #[test]
-    fn cli_env_adds_new_vars() {
+    fn builder_env_adds_new_vars() {
         let b = builder_with_env(&[("NEW_VAR", "hello")]);
         let spec_env = vec!["PATH=/usr/bin".to_string()];
         let result = b.get_environment(spec_env);
@@ -821,7 +821,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_spec_env_uses_cli_only() {
+    fn empty_spec_env_uses_builder_env_only() {
         let b = builder_with_env(&[("FOO", "bar")]);
         let result = b.get_environment(Vec::new());
         assert_eq!(result, vec!["FOO=bar".to_string()]);

@@ -24,7 +24,7 @@ pub(crate) fn get_mount_test() -> TestResult {
         }
 
         let (stdout, _) =
-            exec_container(id, dir, &["cat", "/proc/self/mountinfo"], None).expect("exec failed");
+            exec_container(id, dir, &["cat", "/proc/self/mountinfo"], None, &[]).expect("exec failed");
 
         let rootfs_lines: Vec<&str> = stdout
             .lines()
