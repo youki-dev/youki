@@ -1,12 +1,9 @@
 use crate::instruction::*;
 use crate::instruction::{Arch, Instruction, SECCOMP_IOC_MAGIC};
-use anyhow::anyhow;
 use anyhow::Result;
 use core::fmt;
 use derive_builder::Builder;
-use nix::libc::{
-    SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_SPEC_ALLOW, SECCOMP_FILTER_FLAG_TSYNC,
-};
+use nix::libc::{SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_SPEC_ALLOW, SECCOMP_FILTER_FLAG_TSYNC, SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV};
 use nix::{
     errno::Errno,
     ioctl_readwrite, ioctl_write_ptr, libc,
@@ -380,11 +377,13 @@ impl TryFrom<LinuxSeccomp> for SeccompProgramPlan {
         let mut data: SeccompProgramPlan = Default::default();
 
         check_seccomp(&seccomp)?;
-        data.def_action = u32::from(seccomp.default_action());
-        if let Some(ret) = seccomp.default_errno_ret() {
-            data.def_errno_ret = ret
+
+        if seccomp.default_action() == LinuxSeccompAction::ScmpActErrno {
+            if let Some(ret) = seccomp.default_errno_ret() {
+                data.def_action = seccomp.default_action().as_u32(Option::from(ret));
+            }
         } else {
-            data.def_errno_ret = libc::EPERM as u32
+            data.def_action = u32::from(seccomp.default_action());
         }
 
         if let Some(flags) = seccomp.flags() {
@@ -398,6 +397,9 @@ impl TryFrom<LinuxSeccomp> for SeccompProgramPlan {
                     }
                     LinuxSeccompFilterFlag::SeccompFilterFlagSpecAllow => {
                         data.flags.push(SECCOMP_FILTER_FLAG_SPEC_ALLOW)
+                    },
+                    LinuxSeccompFilterFlag::SeccompFilterFlagWaitKillableRecv => {
+                        data.flags.push(SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV)
                     }
                 }
             }
@@ -421,10 +423,14 @@ impl TryFrom<LinuxSeccomp> for SeccompProgramPlan {
          */
         if let Some(syscalls) = seccomp.syscalls() {
             for syscall in syscalls {
-                if data.rule.action == 0 {
+                data.rule.is_notify = data.rule.action == SECCOMP_RET_USER_NOTIF;
+                if syscall.action().eq(&LinuxSeccompAction::ScmpActErrno) {
+                    if let Some(errno_ret) = syscall.errno_ret() {
+                        data.rule.action = syscall.action().as_u32(Option::from(errno_ret));
+                    }
+                } else {
                     data.rule.action = u32::from(syscall.action());
                 }
-                data.rule.is_notify = data.rule.action == SECCOMP_RET_USER_NOTIF;
 
                 for name in syscall.names() {
                     data.rule.syscall.append(&mut vec![name.to_string()]);
@@ -463,6 +469,8 @@ pub struct Rule {
     pub syscall: Vec<String>,
     pub action: u32,
     #[builder(default)]
+    pub errno_ret: u32,
+    #[builder(default)]
     pub check_arg_syscall: Vec<String>,
     #[builder(default)]
     pub arg_cnt: Option<u8>,
@@ -474,10 +482,12 @@ pub struct Rule {
     pub is_notify: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 impl Rule {
     pub fn new(
         syscall: Vec<String>,
         action: u32,
+        errno_ret: u32,
         check_arg_syscall: Vec<String>,
         arg_cnt: Option<u8>,
         args: Option<SyscallArgs>,
@@ -487,6 +497,7 @@ impl Rule {
         Self {
             syscall,
             action,
+            errno_ret,
             check_arg_syscall,
             arg_cnt,
             args,
