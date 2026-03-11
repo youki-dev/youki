@@ -114,10 +114,11 @@ fn test_cli_env_adds_new_var() -> TestResult {
         }
 
         // Exec with a new env var, print all env
-        let (stdout, _) = match exec_container(id, dir, &["/bin/env"], None, &[("NEW_VAR", "hello")]) {
-            Ok(output) => output,
-            Err(e) => return TestResult::Failed(e),
-        };
+        let (stdout, _) =
+            match exec_container(id, dir, &["/bin/env"], None, &[("NEW_VAR", "hello")]) {
+                Ok(output) => output,
+                Err(e) => return TestResult::Failed(e),
+            };
 
         if !stdout.contains("NEW_VAR=hello") {
             return TestResult::Failed(anyhow!(
@@ -175,7 +176,8 @@ fn test_env_from_process_json() -> TestResult {
             return TestResult::Failed(anyhow!("failed to write process.json: {}", e));
         }
 
-        let (stdout, _) = match exec_container(id, dir, &[OsStr::new("")], Some(&process_path), &[]) {
+        let (stdout, _) = match exec_container(id, dir, &[OsStr::new("")], Some(&process_path), &[])
+        {
             Ok(output) => output,
             Err(e) => return TestResult::Failed(e),
         };
