@@ -527,245 +527,245 @@ impl Rule {
         match rule.op.as_ref().unwrap() {
             SeccompCompareOp::NotEqual => {
                 // if system call number is not match, skip args check jf 4 to default action
-                bpf_prog.append(&mut vec![Instruction::jump(
+                bpf_prog.push(Instruction::jump(
                     BPF_JEQ | BPF_K,
                     0,
                     4,
                     get_syscall_number(arch, syscall).unwrap() as c_uint,
-                )]);
+                ));
                 // uppper 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(
+                bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     (offset + 4).into(),
-                )]);
-                bpf_prog.append(&mut vec![Instruction::jump(
+                ));
+                bpf_prog.push(Instruction::jump(
                     BPF_JEQ | BPF_K,
                     0,
                     3,
                     (rule.args.unwrap().arg0 >> 32) as c_uint,
-                )]);
+                ));
                 // lower 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(
+                bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     offset.into(),
-                )]);
-                bpf_prog.append(&mut vec![Instruction::jump(
+                ));
+                bpf_prog.push(Instruction::jump(
                     BPF_JEQ | BPF_K,
                     0,
                     1,
                     rule.args.unwrap().arg0 as c_uint,
-                )]);
+                ));
             }
             SeccompCompareOp::LessThan => {
                 // if system call number is not match, skip args check jf 4 to default action
-                bpf_prog.append(&mut vec![Instruction::jump(
+                bpf_prog.push(Instruction::jump(
                     BPF_JEQ | BPF_K,
                     0,
                     5,
                     get_syscall_number(arch, syscall).unwrap() as c_uint,
-                )]);
+                ));
                 // uppper 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(
+                bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     (offset + 4).into(),
-                )]);
-                bpf_prog.append(&mut vec![Instruction::jump(
+                ));
+                bpf_prog.push(Instruction::jump(
                     BPF_JGE | BPF_K,
                     0,
                     4,
                     (rule.args.unwrap().arg0 >> 32) as c_uint,
-                )]);
-                bpf_prog.append(&mut vec![Instruction::jump(
+                ));
+                bpf_prog.push(Instruction::jump(
                     BPF_JEQ | BPF_K,
                     0,
                     2,
                     (rule.args.unwrap().arg0 >> 32) as c_uint,
-                )]);
+                ));
                 // lower 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(
+                bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     offset.into(),
-                )]);
-                bpf_prog.append(&mut vec![Instruction::jump(
+                ));
+                bpf_prog.push(Instruction::jump(
                     BPF_JGE | BPF_K,
                     0,
                     1,
                     rule.args.unwrap().arg0 as c_uint,
-                )]);
+                ));
             }
             SeccompCompareOp::LessOrEqual => {
-                bpf_prog.append(&mut vec![Instruction::jump(
+                bpf_prog.push(Instruction::jump(
                     BPF_JEQ | BPF_K,
                     0,
                     5,
                     get_syscall_number(arch, syscall).unwrap() as c_uint,
-                )]);
+                ));
                 // uppper 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(
+                bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     (offset + 4).into(),
-                )]);
-                bpf_prog.append(&mut vec![Instruction::jump(
+                ));
+                bpf_prog.push(Instruction::jump(
                     BPF_JGE | BPF_K,
                     0,
                     4,
                     (rule.args.unwrap().arg0 >> 32) as c_uint,
-                )]);
-                bpf_prog.append(&mut vec![Instruction::jump(
+                ));
+                bpf_prog.push(Instruction::jump(
                     BPF_JEQ | BPF_K,
                     0,
                     2,
                     (rule.args.unwrap().arg0 >> 32) as c_uint,
-                )]);
+                ));
                 // lower 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(
+                bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     offset.into(),
-                )]);
-                bpf_prog.append(&mut vec![Instruction::jump(
+                ));
+                bpf_prog.push(Instruction::jump(
                     BPF_JGT | BPF_K,
                     0,
                     1,
                     rule.args.unwrap().arg0 as c_uint,
-                )]);
+                ));
             }
             SeccompCompareOp::Equal => {
                 // if system call number is not match, skip args check jf 4 to default action
-                bpf_prog.append(&mut vec![Instruction::jump(
+                bpf_prog.push(Instruction::jump(
                     BPF_JEQ | BPF_K,
                     0,
                     4,
                     get_syscall_number(arch, syscall).unwrap() as c_uint,
-                )]);
+                ));
                 // uppper 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(
+                bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     (offset + 4).into(),
-                )]);
-                bpf_prog.append(&mut vec![Instruction::jump(
+                ));
+                bpf_prog.push(Instruction::jump(
                     BPF_JEQ | BPF_K,
                     0,
                     2,
                     (rule.args.unwrap().arg0 >> 32) as c_uint,
-                )]);
+                ));
                 // lower 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(
+                bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     offset.into(),
-                )]);
-                bpf_prog.append(&mut vec![Instruction::jump(
+                ));
+                bpf_prog.push(Instruction::jump(
                     BPF_JEQ | BPF_K,
                     1,
                     0,
                     rule.args.unwrap().arg0 as c_uint,
-                )]);
+                ));
             }
             SeccompCompareOp::GreaterOrEqual => {
                 // if system call number is not match, skip args check jf 4 to default action
-                bpf_prog.append(&mut vec![Instruction::jump(
+                bpf_prog.push(Instruction::jump(
                     BPF_JEQ | BPF_K,
                     0,
                     5,
                     get_syscall_number(arch, syscall).unwrap() as c_uint,
-                )]);
+                ));
                 // uppper 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(
+                bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     (offset + 4).into(),
-                )]);
-                bpf_prog.append(&mut vec![Instruction::jump(
+                ));
+                bpf_prog.push(Instruction::jump(
                     BPF_JGT | BPF_K,
                     4,
                     0,
                     (rule.args.unwrap().arg0 >> 32) as c_uint,
-                )]);
-                bpf_prog.append(&mut vec![Instruction::jump(
+                ));
+                bpf_prog.push(Instruction::jump(
                     BPF_JEQ | BPF_K,
                     0,
                     2,
                     (rule.args.unwrap().arg0 >> 32) as c_uint,
-                )]);
+                ));
                 // lower 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(
+                bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     offset.into(),
-                )]);
-                bpf_prog.append(&mut vec![Instruction::jump(
+                ));
+                bpf_prog.push(Instruction::jump(
                     BPF_JGE | BPF_K,
                     1,
                     0,
                     rule.args.unwrap().arg0 as c_uint,
-                )]);
+                ));
             }
             SeccompCompareOp::GreaterThan => {
                 // if system call number is not match, skip args check jf 4 to default action
-                bpf_prog.append(&mut vec![Instruction::jump(
+                bpf_prog.push(Instruction::jump(
                     BPF_JEQ | BPF_K,
                     0,
                     5,
                     get_syscall_number(arch, syscall).unwrap() as c_uint,
-                )]);
+                ));
                 // uppper 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(
+                bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     (offset + 4).into(),
-                )]);
-                bpf_prog.append(&mut vec![Instruction::jump(
+                ));
+                bpf_prog.push(Instruction::jump(
                     BPF_JGT | BPF_K,
                     4,
                     0,
                     (rule.args.unwrap().arg0 >> 32) as c_uint,
-                )]);
-                bpf_prog.append(&mut vec![Instruction::jump(
+                ));
+                bpf_prog.push(Instruction::jump(
                     BPF_JEQ | BPF_K,
                     0,
                     2,
                     (rule.args.unwrap().arg0 >> 32) as c_uint,
-                )]);
+                ));
                 // lower 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(
+                bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     offset.into(),
-                )]);
-                bpf_prog.append(&mut vec![Instruction::jump(
+                ));
+                bpf_prog.push(Instruction::jump(
                     BPF_JGE | BPF_K,
                     1,
                     0,
                     rule.args.unwrap().arg0 as c_uint,
-                )]);
+                ));
             }
             SeccompCompareOp::MaskedEqual => {
                 // if system call number is not match, skip args check jf 4 to default action
-                bpf_prog.append(&mut vec![Instruction::jump(
+                bpf_prog.push(Instruction::jump(
                     BPF_JEQ | BPF_K,
                     0,
                     4,
                     get_syscall_number(arch, syscall).unwrap() as c_uint,
-                )]);
+                ));
 
                 // uppper 32bit check of args
-                bpf_prog.append(&mut vec![Instruction::stmt(
+                bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     (offset + 4).into(),
-                )]);
-                bpf_prog.append(&mut vec![Instruction::jump(
+                ));
+                bpf_prog.push(Instruction::jump(
                     BPF_JSET | BPF_K,
                     3,
                     0,
                     (rule.args.unwrap().arg0 >> 32) as c_uint,
-                )]);
+                ));
 
                 // lower 32bit check of
-                bpf_prog.append(&mut vec![Instruction::stmt(
+                bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     offset.into(),
-                )]);
-                bpf_prog.append(&mut vec![Instruction::jump(
+                ));
+                bpf_prog.push(Instruction::jump(
                     BPF_JSET | BPF_K,
                     1,
                     0,
                     rule.args.unwrap().arg0 as c_uint,
-                )]);
+                ));
             }
         }
         Ok(bpf_prog)
@@ -792,6 +792,7 @@ impl Rule {
         Ok(bpf_prog)
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -821,8 +822,8 @@ mod tests {
             inst[0],
             Instruction::jump(
                 BPF_JEQ | BPF_K,
-                0,
                 1,
+                0,
                 get_syscall_number(&Arch::X86, "getcwd").unwrap() as c_uint
             )
         );
@@ -841,8 +842,8 @@ mod tests {
             inst[0],
             Instruction::jump(
                 BPF_JEQ | BPF_K,
-                0,
                 1,
+                0,
                 get_syscall_number(&Arch::AArch64, "getcwd").unwrap() as c_uint
             )
         );
