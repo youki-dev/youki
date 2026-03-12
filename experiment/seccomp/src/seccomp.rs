@@ -3,7 +3,10 @@ use crate::instruction::{Arch, Instruction, SECCOMP_IOC_MAGIC};
 use anyhow::Result;
 use core::fmt;
 use derive_builder::Builder;
-use nix::libc::{SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_SPEC_ALLOW, SECCOMP_FILTER_FLAG_TSYNC, SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV};
+use nix::libc::{
+    SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_SPEC_ALLOW, SECCOMP_FILTER_FLAG_TSYNC,
+    SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV,
+};
 use nix::{
     errno::Errno,
     ioctl_readwrite, ioctl_write_ptr, libc,
@@ -283,7 +286,7 @@ fn check_seccomp(seccomp: &LinuxSeccomp) -> Result<(), SeccompError> {
     // expected.
     if seccomp.default_action() == LinuxSeccompAction::ScmpActNotify {
         // Todo: consider need to porting SeccompError
-        return Err(SeccompError::InvalidDefaultAction)
+        return Err(SeccompError::InvalidDefaultAction);
     }
 
     if let Some(syscalls) = seccomp.syscalls() {
@@ -301,6 +304,44 @@ fn check_seccomp(seccomp: &LinuxSeccomp) -> Result<(), SeccompError> {
     Ok(())
 }
 
+/// Converts one chunk (up to 254) of syscalls into a sequence of BPF instructions.
+/// The jump offset is complete within this chunk, and it is assumed that the matching instruction (an intermediate BPF_RET or a final BPF_RET)
+/// comes immediately after the chunk.
+fn syscall_to_bpf_chunk(
+    arc: &Arch,
+    rule: &Rule,
+    chunk: &[String],
+) -> Result<Vec<Instruction>, SeccompError> {
+    let mut bpf = vec![];
+    let n = chunk.len();
+    for (i, syscall) in chunk.iter().enumerate() {
+        let remain = n - i;
+        bpf.extend(Rule::build_instruction(arc, rule, remain, syscall)?);
+    }
+    Ok(bpf)
+}
+
+/// Divide the entire rule.syscall into chunks of 254,
+/// Construct the BPF instruction sequence so that jt/jf does not exceed 255.
+/// Insert BPF_JA + intermediate BPF_RET at the end of non-final chunks.
+fn build_syscall_section(
+    arc: &Arch,
+    rule: &Rule,
+    action: u32,
+) -> Result<Vec<Instruction>, SeccompError> {
+    let mut bpf = vec![];
+    let chunks: Vec<&[String]> = rule.syscall.chunks(254).collect();
+    let last_idx = chunks.len().saturating_sub(1);
+    for (i, chunk) in chunks.iter().enumerate() {
+        bpf.extend(syscall_to_bpf_chunk(arc, rule, chunk)?);
+        if i != last_idx {
+            bpf.push(Instruction::stmt(BPF_JMP | BPF_JA, 1));
+            bpf.push(Instruction::stmt(BPF_RET | BPF_K, action));
+        }
+    }
+    Ok(bpf)
+}
+
 #[derive(Debug, Default)]
 pub struct SeccompProgramPlan {
     pub arc: Arch,
@@ -313,59 +354,13 @@ pub struct SeccompProgramPlan {
 impl TryFrom<SeccompProgramPlan> for Vec<Instruction> {
     type Error = SeccompError;
     fn try_from(inst_data: SeccompProgramPlan) -> Result<Self, SeccompError> {
-        let mut bpf_prog = vec![];
-        let mut jump_num = inst_data.rule.syscall.len();
-        if jump_num <= 255 {
-            for syscall in &inst_data.rule.syscall {
-                bpf_prog.append(&mut Rule::build_instruction(
-                    &inst_data.arc,
-                    &inst_data.rule,
-                    jump_num,
-                    false,
-                    syscall,
-                )?);
-                jump_num -= 1;
-            }
-        } else {
-            let mut cnt_ff = 254;
-            for syscall in &inst_data.rule.syscall {
-                if cnt_ff == 0 {
-                    bpf_prog.append(&mut Rule::build_instruction(
-                        &inst_data.arc,
-                        &inst_data.rule,
-                        1,
-                        true,
-                        syscall,
-                    )?);
-                    bpf_prog.append(&mut vec![Instruction::stmt(
-                        BPF_RET | BPF_K,
-                        inst_data.rule.action,
-                    )]);
-                    cnt_ff = jump_num;
-                } else {
-                    bpf_prog.append(&mut Rule::build_instruction(
-                        &inst_data.arc,
-                        &inst_data.rule,
-                        cnt_ff,
-                        false,
-                        syscall,
-                    )?);
-                    jump_num -= 1;
-                }
-                cnt_ff -= 1;
-            }
-        }
+        let bpf_prog =
+            build_syscall_section(&inst_data.arc, &inst_data.rule, inst_data.rule.action)?;
 
         let mut all_bpf_prog = gen_validate(&inst_data.arc, inst_data.def_action, bpf_prog.len());
-        all_bpf_prog.append(&mut bpf_prog);
-        all_bpf_prog.append(&mut vec![Instruction::stmt(
-            BPF_RET | BPF_K,
-            inst_data.def_action,
-        )]);
-        all_bpf_prog.append(&mut vec![Instruction::stmt(
-            BPF_RET | BPF_K,
-            inst_data.rule.action,
-        )]);
+        all_bpf_prog.extend(bpf_prog);
+        all_bpf_prog.push(Instruction::stmt(BPF_RET | BPF_K, inst_data.def_action));
+        all_bpf_prog.push(Instruction::stmt(BPF_RET | BPF_K, inst_data.rule.action));
         Ok(all_bpf_prog)
     }
 }
@@ -373,7 +368,7 @@ impl TryFrom<SeccompProgramPlan> for Vec<Instruction> {
 impl TryFrom<LinuxSeccomp> for SeccompProgramPlan {
     type Error = SeccompError;
 
-    fn try_from(seccomp: LinuxSeccomp) -> Result<Self, SeccompError>{
+    fn try_from(seccomp: LinuxSeccomp) -> Result<Self, SeccompError> {
         let mut data: SeccompProgramPlan = Default::default();
 
         check_seccomp(&seccomp)?;
@@ -397,7 +392,7 @@ impl TryFrom<LinuxSeccomp> for SeccompProgramPlan {
                     }
                     LinuxSeccompFilterFlag::SeccompFilterFlagSpecAllow => {
                         data.flags.push(SECCOMP_FILTER_FLAG_SPEC_ALLOW)
-                    },
+                    }
                     LinuxSeccompFilterFlag::SeccompFilterFlagWaitKillableRecv => {
                         data.flags.push(SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV)
                     }
@@ -780,27 +775,20 @@ impl Rule {
         arch: &Arch,
         rule: &Rule,
         jump_num: usize,
-        zero_jump: bool,
         syscall: &String,
     ) -> Result<Vec<Instruction>, SeccompError> {
         let mut bpf_prog = vec![];
         if rule.arg_cnt.is_some() && rule.check_arg_syscall.contains(syscall) {
-            bpf_prog.append(&mut Rule::build_instruction_with_args(arch, rule, syscall)?);
-        } else if zero_jump {
-            bpf_prog.append(&mut vec![Instruction::jump(
-                BPF_JEQ | BPF_K,
-                0,
-                1,
-                get_syscall_number(arch, syscall).unwrap() as c_uint,
-            )]);
+            bpf_prog.extend(Rule::build_instruction_with_args(arch, rule, syscall)?);
         } else {
-            bpf_prog.append(&mut vec![Instruction::jump(
+            bpf_prog.push(Instruction::jump(
                 BPF_JEQ | BPF_K,
                 Self::jump_cnt(rule, jump_num),
                 0,
                 get_syscall_number(arch, syscall).unwrap() as c_uint,
-            )]);
+            ));
         }
+
         Ok(bpf_prog)
     }
 }
@@ -828,8 +816,7 @@ mod tests {
             .syscall(vec!["getcwd".to_string()])
             .build()
             .expect("failed to build rule");
-        let inst =
-            Rule::build_instruction(&Arch::X86, &rule, 1, true, &"getcwd".to_string()).unwrap();
+        let inst = Rule::build_instruction(&Arch::X86, &rule, 1, &"getcwd".to_string()).unwrap();
         assert_eq!(
             inst[0],
             Instruction::jump(
@@ -849,7 +836,7 @@ mod tests {
             .build()
             .expect("failed to build rule");
         let inst =
-            Rule::build_instruction(&Arch::AArch64, &rule, 1, true, &"getcwd".to_string()).unwrap();
+            Rule::build_instruction(&Arch::AArch64, &rule, 1, &"getcwd".to_string()).unwrap();
         assert_eq!(
             inst[0],
             Instruction::jump(
