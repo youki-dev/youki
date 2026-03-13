@@ -106,6 +106,30 @@ impl ContainerLifecycle {
         )
     }
 
+    // ignore and soft are used as representative cases, as checkpoint behavior
+    // primarily differs between ignore and other modes.
+    pub fn checkpoint_manage_cgroups_mode_ignore(&self) -> TestResult {
+        if !criu_installed() {
+            return TestResult::Skipped;
+        }
+
+        checkpoint::checkpoint_manage_cgroups_mode_ignore(
+            self.project_path.path(),
+            &self.container_id,
+        )
+    }
+
+    pub fn checkpoint_manage_cgroups_mode_soft(&self) -> TestResult {
+        if !criu_installed() {
+            return TestResult::Skipped;
+        }
+
+        checkpoint::checkpoint_manage_cgroups_mode_soft(
+            self.project_path.path(),
+            &self.container_id,
+        )
+    }
+
     /// Wait for the container to reach a specific state
     pub fn wait_for_state(&self, expected_state: &str, timeout: Duration) -> TestResult {
         use crate::tests::lifecycle::state;
@@ -149,6 +173,14 @@ impl TestableGroup for ContainerLifecycle {
                 "checkpoint and leave running",
                 self.checkpoint_leave_running(),
             ),
+            (
+                "checkpoint with cgroups-mode ignore",
+                self.checkpoint_manage_cgroups_mode_ignore(),
+            ),
+            (
+                "checkpoint with cgroups-mode soft",
+                self.checkpoint_manage_cgroups_mode_soft(),
+            ),
             ("kill", self.kill()),
             ("state", self.state()),
             ("delete", self.delete()),
@@ -168,6 +200,14 @@ impl TestableGroup for ContainerLifecycle {
                 "checkpoint_leave_running" => ret.push((
                     "checkpoint and leave running",
                     self.checkpoint_leave_running(),
+                )),
+                "checkpoint_manage_cgroups_mode_ignore" => ret.push((
+                    "checkpoint with cgroups-mode ignore",
+                    self.checkpoint_manage_cgroups_mode_ignore(),
+                )),
+                "checkpoint_manage_cgroups_mode_soft" => ret.push((
+                    "checkpoint with cgroups-mode soft",
+                    self.checkpoint_manage_cgroups_mode_soft(),
                 )),
                 "kill" => ret.push(("kill", self.kill())),
                 "state" => ret.push(("state", self.state())),

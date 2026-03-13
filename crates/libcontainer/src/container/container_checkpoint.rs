@@ -168,6 +168,7 @@ impl Container {
                 .into_string()
                 .unwrap(),
         );
+        criu.cgroups_mode(opts.manage_cgroups_mode.clone());
 
         criu.dump().map_err(|err| {
             tracing::error!(?err, id = ?self.id(), logfile = ?opts.image_path.join(CRIU_CHECKPOINT_LOG_FILE), "checkpointing container failed");
