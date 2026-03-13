@@ -27,6 +27,7 @@ pub(crate) fn cgroup_test() -> TestResult {
             dir,
             &["--cgroup", "..", "cat", "/proc/self/cgroup"],
             None,
+            &[],
         )
         .expect_err("exec success");
 
@@ -36,6 +37,7 @@ pub(crate) fn cgroup_test() -> TestResult {
             dir,
             &["--cgroup", "notexistspath", "cat", "/proc/self/cgroup"],
             None,
+            &[],
         )
         .expect_err("exec success");
 
@@ -45,21 +47,28 @@ pub(crate) fn cgroup_test() -> TestResult {
             dir,
             &["--cgroup", "cpu:notexistspath", "cat", "/proc/self/cgroup"],
             None,
+            &[],
         )
         .expect_err("exec success");
 
         // check we can't specify non-existent controller
-        exec_container(id, dir, &["--cgroup", "waaaaat:/", "true"], None)
+        exec_container(id, dir, &["--cgroup", "waaaaat:/", "true"], None, &[])
             .expect_err("exec success");
 
         // check we can join top-level cgroup (implicit)
-        exec_container(id, dir, &["cat", "/proc/self/cgroup"], None).expect("exec failed");
-        exec_container(id, dir, &["grep", "^0::/$", "/proc/self/cgroup"], None)
+        exec_container(id, dir, &["cat", "/proc/self/cgroup"], None, &[]).expect("exec failed");
+        exec_container(id, dir, &["grep", "^0::/$", "/proc/self/cgroup"], None, &[])
             .expect("exec failed");
 
         // check we can join top-level cgroup (explicit)
-        exec_container(id, dir, &["--cgroup=/", "cat", "/proc/self/cgroup"], None)
-            .expect("exec failed");
+        exec_container(
+            id,
+            dir,
+            &["--cgroup=/", "cat", "/proc/self/cgroup"],
+            None,
+            &[],
+        )
+        .expect("exec failed");
 
         TestResult::Passed
     });
@@ -91,17 +100,23 @@ pub(crate) fn cgroup_test() -> TestResult {
             dir,
             &["sh", "-euc", "mkdir /sys/fs/cgroup/foobar && echo 1 > /sys/fs/cgroup/foobar/cgroup.procs && grep -w foobar /proc/1/cgroup"],
             None,
+            &[],
         )
         .expect("exec failed");
 
         // the init process is now in "/foo", but an exec process can still join "/" because we haven't enabled any domain controller yet
-        exec_container(id, dir, &["grep", "^0::/$", "/proc/self/cgroup"], None)
+        exec_container(id, dir, &["grep", "^0::/$", "/proc/self/cgroup"], None, &[])
             .expect("exec failed");
 
         // turn on a domain controller (memory)
-        exec_container(id, dir,
-            &["sh", "-euc", "echo $$ > /sys/fs/cgroup/foobar/cgroup.procs; echo +memory > /sys/fs/cgroup/cgroup.subtree_control"], None)
-            .expect("exec failed");
+        exec_container(
+            id,
+            dir,
+            &["sh", "-euc", "echo $$ > /sys/fs/cgroup/foobar/cgroup.procs; echo +memory > /sys/fs/cgroup/cgroup.subtree_control"],
+            None,
+            &[],
+        )
+        .expect("exec failed");
 
         // TODO: Implement the test cases discussed in
         // https://github.com/youki-dev/youki/pull/3210#discussion_r2554961182.

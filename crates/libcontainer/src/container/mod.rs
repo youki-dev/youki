@@ -9,6 +9,7 @@ mod builder_impl;
 #[allow(clippy::module_inception)]
 mod container;
 mod container_checkpoint;
+mod container_criu;
 mod container_delete;
 mod container_events;
 mod container_kill;

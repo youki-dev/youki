@@ -6,10 +6,10 @@ use oci_spec::runtime::{
     ProcessBuilder, Spec, SpecBuilder,
 };
 use serde_json::json;
-use test_framework::{ConditionalTest, TestGroup, TestResult};
+use test_framework::{Test, TestGroup, TestResult};
 
+use crate::utils::test_inside_container;
 use crate::utils::test_utils::CreateOptions;
-use crate::utils::{is_runtime_runc, test_inside_container};
 
 fn spec_with_runtimetest(
     args_token: &str,
@@ -229,52 +229,29 @@ fn bind_way_too_large_node_number() -> TestResult {
 pub fn get_linux_memory_policy_tests() -> TestGroup {
     let mut tg = TestGroup::new("memory_policy");
 
-    // TODO: Revert from ConditionalTest to normal Test once the stable version of runc with memory policy implementation is released
-
-    let test_interleave_without_flags = ConditionalTest::new(
+    let test_interleave_without_flags = Test::new(
         "interleave_without_flags",
-        Box::new(|| !is_runtime_runc()),
         Box::new(interleave_without_flags),
     );
-    let test_bind_static = ConditionalTest::new(
-        "bind_static",
-        Box::new(|| !is_runtime_runc()),
-        Box::new(bind_static),
-    );
-    let test_preferred_relative = ConditionalTest::new(
-        "preferred_relative",
-        Box::new(|| !is_runtime_runc()),
-        Box::new(preferred_relative),
-    );
+    let test_bind_static = Test::new("bind_static", Box::new(bind_static));
+    let test_preferred_relative = Test::new("preferred_relative", Box::new(preferred_relative));
 
-    let test_default_with_missing_nodes_ok = ConditionalTest::new(
+    let test_default_with_missing_nodes_ok = Test::new(
         "default_with_missing_nodes_ok",
-        Box::new(|| !is_runtime_runc()),
         Box::new(default_with_missing_nodes_ok),
     );
-    let test_invalid_mode_string = ConditionalTest::new(
-        "invalid_mode_string",
-        Box::new(|| !is_runtime_runc()),
-        Box::new(invalid_mode_string),
-    );
-    let test_invalid_flag_string = ConditionalTest::new(
-        "invalid_flag_string",
-        Box::new(|| !is_runtime_runc()),
-        Box::new(invalid_flag_string),
-    );
-    let test_missing_mode_but_nodes_present = ConditionalTest::new(
+    let test_invalid_mode_string = Test::new("invalid_mode_string", Box::new(invalid_mode_string));
+    let test_invalid_flag_string = Test::new("invalid_flag_string", Box::new(invalid_flag_string));
+    let test_missing_mode_but_nodes_present = Test::new(
         "missing_mode_but_nodes_present",
-        Box::new(|| !is_runtime_runc()),
         Box::new(missing_mode_but_nodes_present),
     );
-    let test_syscall_invalid_arguments = ConditionalTest::new(
+    let test_syscall_invalid_arguments = Test::new(
         "syscall_invalid_arguments",
-        Box::new(|| !is_runtime_runc()),
         Box::new(syscall_invalid_arguments),
     );
-    let test_bind_way_too_large_node_number = ConditionalTest::new(
+    let test_bind_way_too_large_node_number = Test::new(
         "bind_way_too_large_node_number",
-        Box::new(|| !is_runtime_runc()),
         Box::new(bind_way_too_large_node_number),
     );
 

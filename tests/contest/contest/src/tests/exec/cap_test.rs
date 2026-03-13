@@ -36,7 +36,7 @@ pub(crate) fn get_test_no_capabilities() -> TestResult {
         }
 
         let (stdout, _) =
-            exec_container(id, dir, &["cat", "/proc/self/status"], None).expect("exec failed");
+            exec_container(id, dir, &["cat", "/proc/self/status"], None, &[]).expect("exec failed");
 
         // The capability sets in the spec were all empty. Thus, the resulting
         // capability sets for the process are all 0.
@@ -82,7 +82,7 @@ pub(crate) fn get_test_new_privileges() -> TestResult {
         }
 
         let (stdout, _) =
-            exec_container(id, dir, &["cat", "/proc/self/status"], None).expect("exec failed");
+            exec_container(id, dir, &["cat", "/proc/self/status"], None, &[]).expect("exec failed");
 
         // The capability sets are empty, similar to the no_capabilities test.
         if !stdout.contains("CapInh:\t0000000000000000") {
@@ -134,7 +134,7 @@ pub(crate) fn get_test_some_capabilities() -> TestResult {
         }
 
         let (stdout, _) =
-            exec_container(id, dir, &["cat", "/proc/self/status"], None).expect("exec failed");
+            exec_container(id, dir, &["cat", "/proc/self/status"], None, &[]).expect("exec failed");
 
         // The inheritable set was empty in the spec, so the CapInh (inheritable capabilities)
         // bitmask for the process is all zeros.
@@ -200,6 +200,7 @@ pub(crate) fn get_test_capabilities_by_flag_case1() -> TestResult {
                 "/proc/self/status",
             ],
             None,
+            &[],
         )
         .expect("exec failed");
 
@@ -268,7 +269,7 @@ pub(crate) fn get_test_capabilities_by_flag_case2() -> TestResult {
         }
 
         let (stdout, _) =
-            exec_container(id, dir, &["cat", "/proc/self/status"], None).expect("exec failed");
+            exec_container(id, dir, &["cat", "/proc/self/status"], None, &[]).expect("exec failed");
 
         // The inheritable set in the spec contained CAP_CHOWN (bit 0).
         // The bitmask is 1 << 0 = 0x1.
@@ -300,6 +301,7 @@ pub(crate) fn get_test_capabilities_by_flag_case2() -> TestResult {
             dir,
             &["--cap=CAP_SYSLOG", "cat", "/proc/self/status"],
             None,
+            &[],
         )
         .expect("exec failed");
 

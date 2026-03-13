@@ -41,6 +41,7 @@ pub(crate) fn ignore_paused_test() -> TestResult {
                 "ya I can be executed in a pause state without error!",
             ],
             None,
+            &[],
         )
         .expect("exec failed");
         if !stdout.contains("ya I can be executed in a pause state without error!") {

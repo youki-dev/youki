@@ -40,6 +40,7 @@ pub(crate) fn preserve_fds_test() -> TestResult {
             dir,
             &["--preserve-fds=1", "cat", "/proc/self/fd/3"],
             None,
+            &[],
         )
         .expect("exec failed");
 

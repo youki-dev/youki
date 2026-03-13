@@ -1,6 +1,7 @@
 mod cap_test;
 mod cgroup_test;
 mod ignore_paused_test;
+mod mount_test;
 mod preserve_fds_test;
 
 use anyhow::{Context, Result};
@@ -51,6 +52,7 @@ pub fn get_exec_test() -> TestGroup {
         "capabilities_by_flag_test_case2",
         Box::new(cap_test::get_test_capabilities_by_flag_case2),
     );
+    let mount_test = Test::new("mount_test", Box::new(mount_test::get_mount_test));
 
     test_group.add(vec![
         Box::new(preserve_fds_test),
@@ -61,6 +63,7 @@ pub fn get_exec_test() -> TestGroup {
         Box::new(some_capabilities_test),
         Box::new(capabilities_by_flag_test_case1),
         Box::new(capabilities_by_flag_test_case2),
+        Box::new(mount_test),
     ]);
 
     test_group

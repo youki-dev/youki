@@ -456,7 +456,7 @@ fn check_address() -> TestResult {
             return TestResult::Failed(anyhow!("container start failed"));
         }
 
-        let (stdout, _) = exec_container(id, dir, &["ip", "addr"], None).expect("exec failed");
+        let (stdout, _) = exec_container(id, dir, &["ip", "addr"], None, &[]).expect("exec failed");
 
         if !stdout.contains(&device_name) || !stdout.contains(DUMMY_ADDRESS) {
             return TestResult::Failed(anyhow!("unexpected : {}", stdout));
