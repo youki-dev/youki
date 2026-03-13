@@ -477,13 +477,13 @@ pub fn check_container_created(data: &ContainerData) -> Result<()> {
     }
 }
 
-pub fn exec_container<P: AsRef<Path>>(
+pub fn build_exec_command<P: AsRef<Path>>(
     id: &str,
     dir: P,
     args: &[impl AsRef<OsStr>],
     process_path: Option<&Path>,
     env: &[(&str, &str)],
-) -> Result<(String, String)> {
+) -> Command {
     let mut command = runtime_command(&dir);
     command.arg("--debug").arg("exec");
 
@@ -518,6 +518,18 @@ pub fn exec_container<P: AsRef<Path>>(
     } else {
         command.arg(id);
     }
+
+    command
+}
+
+pub fn exec_container<P: AsRef<Path>>(
+    id: &str,
+    dir: P,
+    args: &[impl AsRef<OsStr>],
+    process_path: Option<&Path>,
+    env: &[(&str, &str)],
+) -> Result<(String, String)> {
+    let mut command = build_exec_command(id, dir, args, process_path, env);
 
     let output = command.output().context("failed to run exec")?;
 

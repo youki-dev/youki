@@ -1,5 +1,6 @@
 use std::fs;
 use std::os::fd::AsRawFd;
+use std::os::unix::process::CommandExt;
 
 use anyhow::anyhow;
 use nix::fcntl::{FcntlArg, FdFlag, fcntl};
@@ -7,7 +8,7 @@ use nix::unistd::dup2;
 use test_framework::{TestResult, test_result};
 
 use crate::utils::test_utils::{
-    check_container_created, exec_container, start_container, test_outside_container,
+    build_exec_command, check_container_created, start_container, test_outside_container,
 };
 
 pub(crate) fn preserve_fds_test() -> TestResult {
@@ -31,18 +32,35 @@ pub(crate) fn preserve_fds_test() -> TestResult {
             fs::File::open(dir.join("preserve-fds.test")).expect("open preserve-fds.test failed");
         let fd = file.as_raw_fd();
 
-        let flags = FdFlag::from_bits_truncate(fcntl(fd, FcntlArg::F_GETFD).expect(""));
-        fcntl(fd, FcntlArg::F_SETFD(flags & !FdFlag::FD_CLOEXEC)).expect("");
-        dup2(fd, 3).expect("dup2 failed");
-
-        let (stdout, _) = exec_container(
+        let mut command = build_exec_command(
             id,
             dir,
             &["--preserve-fds=1", "cat", "/proc/self/fd/3"],
             None,
             &[],
-        )
-        .expect("exec failed");
+        );
+
+        unsafe {
+            command.pre_exec(move || {
+                let flags = FdFlag::from_bits_truncate(fcntl(fd, FcntlArg::F_GETFD).expect(""));
+                fcntl(fd, FcntlArg::F_SETFD(flags & !FdFlag::FD_CLOEXEC)).expect("");
+                dup2(fd, 3).expect("dup2 failed");
+                Ok(())
+            });
+        }
+
+        let output = command.output().expect("exec failed");
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        if !output.status.success() {
+            return TestResult::Failed(anyhow!(
+                "exec failed with status: {:?}, stderr: {}",
+                output.status,
+                stderr
+            ));
+        }
 
         if !stdout.contains("hello world") {
             return TestResult::Failed(anyhow!("unexpected output: {}", stdout));
