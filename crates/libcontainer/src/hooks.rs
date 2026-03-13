@@ -39,6 +39,7 @@ pub fn run_hooks(
     // TODO: Remove the following parameters. To comply with the OCI State, hooks should only depend on structures defined in oci-spec-rs. Cleaning these up ensures proper functional isolation.
     cwd: Option<&Path>,
     pid: Option<Pid>,
+    default_env: Option<&HashMap<String, String>>,
 ) -> Result<()> {
     let base_state = state.ok_or(HookError::MissingContainerState)?;
 
@@ -77,6 +78,8 @@ pub fn run_hooks(
 
             let envs: HashMap<String, String> = if let Some(env) = hook.env() {
                 utils::parse_env(env)
+            } else if let Some(default) = default_env {
+                default.clone()
             } else {
                 HashMap::new()
             };
@@ -195,7 +198,7 @@ mod test {
     fn test_run_hook() -> Result<()> {
         {
             let default_container: Container = Default::default();
-            run_hooks(None, Some(&default_container.state), None, None)
+            run_hooks(None, Some(&default_container.state), None, None, None)
                 .context("Failed simple test")?;
         }
 
@@ -205,8 +208,14 @@ mod test {
 
             let hook = HookBuilder::default().path("true").build()?;
             let hooks = Some(vec![hook]);
-            run_hooks(hooks.as_ref(), Some(&default_container.state), None, None)
-                .context("Failed true")?;
+            run_hooks(
+                hooks.as_ref(),
+                Some(&default_container.state),
+                None,
+                None,
+                None,
+            )
+            .context("Failed true")?;
         }
 
         {
@@ -226,8 +235,14 @@ mod test {
                 .env(vec![String::from("key=value")])
                 .build()?;
             let hooks = Some(vec![hook]);
-            run_hooks(hooks.as_ref(), Some(&default_container.state), None, None)
-                .context("Failed printenv test")?;
+            run_hooks(
+                hooks.as_ref(),
+                Some(&default_container.state),
+                None,
+                None,
+                None,
+            )
+            .context("Failed printenv test")?;
         }
 
         {
@@ -249,6 +264,7 @@ mod test {
                 hooks.as_ref(),
                 Some(&default_container.state),
                 Some(tmp.path()),
+                None,
                 None,
             )
             .context("Failed pwd test")?;
@@ -272,6 +288,7 @@ mod test {
                 Some(&default_container.state),
                 None,
                 Some(expected_pid),
+                None,
             )
             .context("Failed pid test")?;
         }
@@ -296,7 +313,13 @@ mod test {
             .timeout(1)
             .build()?;
         let hooks = Some(vec![hook]);
-        match run_hooks(hooks.as_ref(), Some(&default_container.state), None, None) {
+        match run_hooks(
+            hooks.as_ref(),
+            Some(&default_container.state),
+            None,
+            None,
+            None,
+        ) {
             Ok(_) => {
                 bail!(
                     "The test expects the hook to error out with timeout. Should not execute cleanly"
@@ -310,6 +333,84 @@ mod test {
                 );
             }
         };
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_run_hook_default_env() -> Result<()> {
+        // Test: hook without explicit env uses default_env
+        {
+            let default_container: Container = Default::default();
+            let hook = HookBuilder::default()
+                .path("bash")
+                .args(vec![
+                    String::from("bash"),
+                    String::from("-c"),
+                    String::from("printenv TEST_ENV > /dev/null"),
+                ])
+                .build()?;
+            let hooks = Some(vec![hook]);
+            let mut default_env = HashMap::new();
+            default_env.insert("TEST_ENV".to_string(), "default_value".to_string());
+            run_hooks(
+                hooks.as_ref(),
+                Some(&default_container.state),
+                None,
+                None,
+                Some(&default_env),
+            )
+            .context("Failed: hook without explicit env should use default_env")?;
+        }
+
+        // Test: hook with explicit env takes priority over default_env
+        {
+            let default_container: Container = Default::default();
+            let hook = HookBuilder::default()
+                .path("bash")
+                .args(vec![
+                    String::from("bash"),
+                    String::from("-c"),
+                    String::from("test \"$TEST_ENV\" = 'explicit_value'"),
+                ])
+                .env(vec![String::from("TEST_ENV=explicit_value")])
+                .build()?;
+            let hooks = Some(vec![hook]);
+            let mut default_env = HashMap::new();
+            default_env.insert("TEST_ENV".to_string(), "default_value".to_string());
+            run_hooks(
+                hooks.as_ref(),
+                Some(&default_container.state),
+                None,
+                None,
+                Some(&default_env),
+            )
+            .context("Failed: hook with explicit env should ignore default_env")?;
+        }
+
+        // Test: hook without explicit env and no default_env gets empty environment
+        {
+            let default_container: Container = Default::default();
+            let hook = HookBuilder::default()
+                .path("bash")
+                .args(vec![
+                    String::from("bash"),
+                    String::from("-c"),
+                    // Verify that the environment is empty (no TEST_ENV, etc.)
+                    String::from("test -z \"$TEST_ENV\""),
+                ])
+                .build()?;
+            let hooks = Some(vec![hook]);
+            run_hooks(
+                hooks.as_ref(),
+                Some(&default_container.state),
+                None,
+                None,
+                None,
+            )
+            .context("Failed: hook without env and without default_env should have empty env")?;
+        }
 
         Ok(())
     }
