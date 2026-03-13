@@ -491,13 +491,9 @@ pub fn exec_container<P: AsRef<Path>>(
         command.arg("--process").arg(path);
     }
 
-    command.arg(id);
-
     for (k, v) in env {
         command.arg("--env").arg(format!("{k}={v}"));
     }
-
-    command.arg(id);
 
     if process_path.is_none() {
         let mut opts = vec![];
