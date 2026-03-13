@@ -731,3 +731,8 @@ impl Display for MustBePowerOfTwo {
         f.write_str("page size must be in the format of 2^(integer)")
     }
 }
+
+/// Returns true if cgroupsv2_devices feature is enabled.
+pub fn is_cgroupsv2_devices_available() -> bool {
+    cfg!(feature = "cgroupsv2_devices")
+}
