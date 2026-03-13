@@ -17,6 +17,7 @@ use crate::process::{self};
 use crate::syscall::syscall::SyscallType;
 use crate::user_ns::UserNamespaceConfig;
 use crate::utils;
+use crate::utils::PathBufExt;
 use crate::workload::Executor;
 
 pub(super) struct ContainerBuilderImpl {
@@ -59,6 +60,12 @@ pub(super) struct ContainerBuilderImpl {
     pub stderr: Option<OwnedFd>,
     // Indicate if the init process should be a sibling of the main process.
     pub as_sibling: bool,
+    // Run the process in an (existing) sub-cgroup(s)
+    pub sub_cgroup_path: Option<String>,
+    // Asm process label for the process commonly used with selinux.
+    // TODO: youki does not support selinux yet
+    #[allow(dead_code)]
+    pub process_label: Option<String>,
 }
 
 impl ContainerBuilderImpl {
@@ -85,9 +92,26 @@ impl ContainerBuilderImpl {
 
     fn run_container(&mut self) -> Result<Pid, LibcontainerError> {
         let linux = self.spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
-        let cgroups_path = utils::get_cgroup_path(linux.cgroups_path(), &self.container_id);
+        let base_cgroups_path = utils::get_cgroup_path(linux.cgroups_path(), &self.container_id);
+        let mut final_cgroups_path = base_cgroups_path;
+
+        if let Some(sub_cgroup_path) = &self.sub_cgroup_path {
+            if sub_cgroup_path != "/" {
+                let potential_path = final_cgroups_path.join(sub_cgroup_path);
+                let normalized = potential_path.normalize();
+
+                if !normalized.starts_with(&final_cgroups_path) {
+                    return Err(LibcontainerError::OtherCgroup(format!(
+                        "{} is not a sub cgroup path",
+                        sub_cgroup_path
+                    )));
+                }
+                final_cgroups_path = normalized;
+            }
+        }
+
         let cgroup_config = libcgroups::common::CgroupConfig {
-            cgroup_path: cgroups_path,
+            cgroup_path: final_cgroups_path,
             systemd_cgroup: self.use_systemd || self.user_ns_config.is_some(),
             container_name: self.container_id.to_owned(),
         };
