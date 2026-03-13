@@ -7360,6 +7360,7 @@ dependencies = [
  "pentacle",
  "pkg-config",
  "procfs",
+ "rust-criu",
  "scopeguard",
  "serde_json",
  "serial_test",
