@@ -40,10 +40,17 @@ pub(crate) fn preserve_fds_test() -> TestResult {
             &[],
         );
 
+        // We use pre_exec to run this closure in the child process after fork()
+        // but before exec(). This is critical because `contest` runs tests concurrently.
+        // If we duplicate the file descriptor or clear O_CLOEXEC in the parent (test runner)
+        // process, it will race with other tests (like `hello_world`) and leak into their
+        // child processes, causing broken pipes or EPERM errors.
         unsafe {
             command.pre_exec(move || {
-                let flags = FdFlag::from_bits_truncate(fcntl(fd, FcntlArg::F_GETFD).expect(""));
-                fcntl(fd, FcntlArg::F_SETFD(flags & !FdFlag::FD_CLOEXEC)).expect("");
+                let flags = FdFlag::from_bits_truncate(
+                    fcntl(fd, FcntlArg::F_GETFD).expect("from_bits_truncate failed"),
+                );
+                fcntl(fd, FcntlArg::F_SETFD(flags & !FdFlag::FD_CLOEXEC)).expect("fcntl failed");
                 dup2(fd, 3).expect("dup2 failed");
                 Ok(())
             });
