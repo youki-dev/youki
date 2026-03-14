@@ -50,8 +50,8 @@ pub struct Checkpoint {
     /// #[clap(long)]
     /// pub pre_dump: bool,
     /// TODO: Cgroups mode
-    /// #[clap(long)]
-    /// pub manage_cgroups_mode: Option<String>,
+    #[clap(long)]
+    pub manage_cgroups_mode: Option<String>,
     /// TODO: Checkpoint a namespace, but don't save its properties
     /// #[clap(long)]
     /// pub empty_ns: bool,

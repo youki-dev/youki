@@ -81,27 +81,25 @@ fn checkpoint(
     id: &str,
     args: Vec<&str>,
     work_path: Option<&str>,
-) -> TestResult {
-    if let Err(e) = setup_network_namespace(project_path, id) {
-        return e;
-    }
+) -> Result<tempfile::TempDir, TestResult> {
+    setup_network_namespace(project_path, id)?;
 
     let temp_dir = match tempfile::tempdir() {
         Ok(td) => td,
         Err(e) => {
-            return TestResult::Failed(anyhow::anyhow!(
+            return Err(TestResult::Failed(anyhow::anyhow!(
                 "failed creating temporary directory {:?}",
                 e
-            ));
+            )));
         }
     };
     let checkpoint_dir = temp_dir.as_ref().join("checkpoint");
     if let Err(e) = std::fs::create_dir(&checkpoint_dir) {
-        return TestResult::Failed(anyhow::anyhow!(
+        return Err(TestResult::Failed(anyhow::anyhow!(
             "failed creating checkpoint directory ({:?}): {}",
             &checkpoint_dir,
             e
-        ));
+        )));
     }
 
     let additional_args = match work_path {
@@ -130,22 +128,24 @@ fn checkpoint(
         .wait_with_output();
 
     if let Err(e) = get_result_from_output(checkpoint) {
-        return TestResult::Failed(anyhow::anyhow!("failed to execute checkpoint command: {e}"));
+        return Err(TestResult::Failed(anyhow::anyhow!(
+            "failed to execute checkpoint command: {e}"
+        )));
     }
 
     // Check for complete checkpoint
     if !Path::new(&checkpoint_dir.join("inventory.img")).exists() {
-        return TestResult::Failed(anyhow::anyhow!(
+        return Err(TestResult::Failed(anyhow::anyhow!(
             "resulting checkpoint does not seem to be complete. {:?}/inventory.img is missing",
             &checkpoint_dir,
-        ));
+        )));
     }
 
     if !Path::new(&checkpoint_dir.join("descriptors.json")).exists() {
-        return TestResult::Failed(anyhow::anyhow!(
+        return Err(TestResult::Failed(anyhow::anyhow!(
             "resulting checkpoint does not seem to be complete. {:?}/descriptors.json is missing",
             &checkpoint_dir,
-        ));
+        )));
     }
 
     let dump_log = match work_path {
@@ -154,19 +154,97 @@ fn checkpoint(
     };
 
     if !dump_log.exists() {
-        return TestResult::Failed(anyhow::anyhow!(
+        return Err(TestResult::Failed(anyhow::anyhow!(
             "resulting checkpoint log file {:?} not found.",
             &dump_log,
+        )));
+    }
+
+    Ok(temp_dir)
+}
+
+pub fn checkpoint_leave_running_work_path_tmp(project_path: &Path, id: &str) -> TestResult {
+    match checkpoint(project_path, id, vec!["--leave-running"], Some("/tmp/")) {
+        Ok(_) => TestResult::Passed,
+        Err(e) => e,
+    }
+}
+
+pub fn checkpoint_leave_running(project_path: &Path, id: &str) -> TestResult {
+    match checkpoint(project_path, id, vec!["--leave-running"], None) {
+        Ok(_) => TestResult::Passed,
+        Err(e) => e,
+    }
+}
+
+pub fn checkpoint_manage_cgroups_mode_ignore(project_path: &Path, id: &str) -> TestResult {
+    let temp_dir = match checkpoint(
+        project_path,
+        id,
+        vec!["--leave-running", "--manage-cgroups-mode", "ignore"],
+        None,
+    ) {
+        Ok(td) => td,
+        Err(e) => return e,
+    };
+
+    let cgroup_img = temp_dir.as_ref().join("checkpoint/cgroup.img");
+    let content = match std::fs::read(&cgroup_img) {
+        Ok(c) => c,
+        Err(e) => {
+            return TestResult::Failed(anyhow::anyhow!(
+                "failed to read cgroup.img at {:?}: {}",
+                cgroup_img,
+                e
+            ));
+        }
+    };
+
+    if content
+        .windows(b"cgroup.subtree_control".len())
+        .any(|w| w == b"cgroup.subtree_control")
+    {
+        return TestResult::Failed(anyhow::anyhow!(
+            "cgroup.img should not contain cgroup properties with --manage-cgroups-mode ignore, \
+             but found 'cgroup.subtree_control'",
         ));
     }
 
     TestResult::Passed
 }
 
-pub fn checkpoint_leave_running_work_path_tmp(project_path: &Path, id: &str) -> TestResult {
-    checkpoint(project_path, id, vec!["--leave-running"], Some("/tmp/"))
-}
+pub fn checkpoint_manage_cgroups_mode_soft(project_path: &Path, id: &str) -> TestResult {
+    let temp_dir = match checkpoint(
+        project_path,
+        id,
+        vec!["--leave-running", "--manage-cgroups-mode", "soft"],
+        None,
+    ) {
+        Ok(td) => td,
+        Err(e) => return e,
+    };
 
-pub fn checkpoint_leave_running(project_path: &Path, id: &str) -> TestResult {
-    checkpoint(project_path, id, vec!["--leave-running"], None)
+    let cgroup_img = temp_dir.as_ref().join("checkpoint/cgroup.img");
+    let content = match std::fs::read(&cgroup_img) {
+        Ok(c) => c,
+        Err(e) => {
+            return TestResult::Failed(anyhow::anyhow!(
+                "failed to read cgroup.img at {:?}: {}",
+                cgroup_img,
+                e
+            ));
+        }
+    };
+
+    if !content
+        .windows(b"cgroup.subtree_control".len())
+        .any(|w| w == b"cgroup.subtree_control")
+    {
+        return TestResult::Failed(anyhow::anyhow!(
+            "cgroup.img should contain cgroup properties with --manage-cgroups-mode soft, \
+             but 'cgroup.subtree_control' not found",
+        ));
+    }
+
+    TestResult::Passed
 }

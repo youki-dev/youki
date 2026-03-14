@@ -22,6 +22,20 @@ pub enum CheckpointError {
     CriuError(String),
 }
 
+fn parse_cgroups_mode(s: &str) -> Result<rust_criu::CgMode, LibcontainerError> {
+    match s {
+        "ignore" => Ok(rust_criu::CgMode::IGNORE),
+        "none" => Ok(rust_criu::CgMode::NONE),
+        "props" => Ok(rust_criu::CgMode::PROPS),
+        "full" => Ok(rust_criu::CgMode::FULL),
+        "strict" => Ok(rust_criu::CgMode::STRICT),
+        "soft" => Ok(rust_criu::CgMode::SOFT),
+        _ => Err(LibcontainerError::InvalidInput(format!(
+            "manage-cgroup-mode: {s}"
+        ))),
+    }
+}
+
 impl Container {
     pub fn checkpoint(&mut self, opts: &CheckpointOptions) -> Result<(), LibcontainerError> {
         self.refresh_status()?;
@@ -151,6 +165,11 @@ impl Container {
         )
         .map_err(LibcontainerError::OtherIO)?;
 
+        let cgroups_mode = match &opts.manage_cgroup_mode {
+            Some(s) => parse_cgroups_mode(s)?,
+            None => rust_criu::CgMode::DEFAULT,
+        };
+
         criu.set_log_file(CRIU_CHECKPOINT_LOG_FILE.to_string());
         criu.set_log_level(4);
         criu.set_pid(pid);
@@ -161,6 +180,7 @@ impl Container {
         criu.set_file_locks(opts.file_locks);
         criu.set_orphan_pts_master(true);
         criu.set_manage_cgroups(true);
+        criu.cgroups_mode(cgroups_mode);
         criu.set_root(
             self.bundle()
                 .clone()
@@ -180,5 +200,46 @@ impl Container {
 
         tracing::debug!("container {} checkpointed", self.id());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_cgroups_mode_ok() {
+        assert!(matches!(
+            parse_cgroups_mode("ignore"),
+            Ok(rust_criu::CgMode::IGNORE)
+        ));
+        assert!(matches!(
+            parse_cgroups_mode("none"),
+            Ok(rust_criu::CgMode::NONE)
+        ));
+        assert!(matches!(
+            parse_cgroups_mode("props"),
+            Ok(rust_criu::CgMode::PROPS)
+        ));
+        assert!(matches!(
+            parse_cgroups_mode("full"),
+            Ok(rust_criu::CgMode::FULL)
+        ));
+        assert!(matches!(
+            parse_cgroups_mode("strict"),
+            Ok(rust_criu::CgMode::STRICT)
+        ));
+        assert!(matches!(
+            parse_cgroups_mode("soft"),
+            Ok(rust_criu::CgMode::SOFT)
+        ));
+    }
+
+    #[test]
+    fn test_parse_cgroups_mode_ng() {
+        assert!(parse_cgroups_mode("IGNORE").is_err());
+        assert!(parse_cgroups_mode("Ignore").is_err());
+        assert!(parse_cgroups_mode("unknown").is_err());
+        assert!(parse_cgroups_mode("").is_err());
     }
 }

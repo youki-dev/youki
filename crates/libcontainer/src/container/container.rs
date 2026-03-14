@@ -223,6 +223,7 @@ pub struct CheckpointOptions {
     pub shell_job: bool,
     pub tcp_established: bool,
     pub work_path: Option<PathBuf>,
+    pub manage_cgroup_mode: Option<String>,
 }
 
 #[cfg(test)]
