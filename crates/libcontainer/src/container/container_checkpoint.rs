@@ -202,3 +202,44 @@ impl Container {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_cgroups_mode_ok() {
+        assert!(matches!(
+            parse_cgroups_mode("ignore"),
+            Ok(rust_criu::CgMode::IGNORE)
+        ));
+        assert!(matches!(
+            parse_cgroups_mode("none"),
+            Ok(rust_criu::CgMode::NONE)
+        ));
+        assert!(matches!(
+            parse_cgroups_mode("props"),
+            Ok(rust_criu::CgMode::PROPS)
+        ));
+        assert!(matches!(
+            parse_cgroups_mode("full"),
+            Ok(rust_criu::CgMode::FULL)
+        ));
+        assert!(matches!(
+            parse_cgroups_mode("strict"),
+            Ok(rust_criu::CgMode::STRICT)
+        ));
+        assert!(matches!(
+            parse_cgroups_mode("soft"),
+            Ok(rust_criu::CgMode::SOFT)
+        ));
+    }
+
+    #[test]
+    fn test_parse_cgroups_mode_ng() {
+        assert!(parse_cgroups_mode("IGNORE").is_err());
+        assert!(parse_cgroups_mode("Ignore").is_err());
+        assert!(parse_cgroups_mode("unknown").is_err());
+        assert!(parse_cgroups_mode("").is_err());
+    }
+}
