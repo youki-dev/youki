@@ -4220,7 +4220,7 @@ dependencies = [
 [[package]]
 name = "rust-criu"
 version = "0.5.0"
-source = "git+https://github.com/checkpoint-restore/rust-criu?rev=f405cdc1401f642a0640d3704be54618872b7811#f405cdc1401f642a0640d3704be54618872b7811"
+source = "git+https://github.com/checkpoint-restore/rust-criu?rev=fd2fe0a#fd2fe0ad1e9e5030c6d0d2defad916a0c8d3c803"
 dependencies = [
  "anyhow",
  "libc",

@@ -44,4 +44,3 @@ pub struct Restore {
     #[clap(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
     pub container_id: String,
 }
-

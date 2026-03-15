@@ -29,10 +29,10 @@ struct RestoreContext {
 }
 
 thread_local! {
-    static RESTORE_CTX: RefCell<Option<RestoreContext>> = RefCell::new(None);
+    static RESTORE_CTX: RefCell<Option<RestoreContext>> = const { RefCell::new(None) };
 }
 
-fn restore_callback(script: &str, notify: &Criu_notify, fds: &[RawFd]) -> i32 {
+fn restore_callback(script: &str, notify: &Criu_notify, fd: Option<RawFd>) -> i32 {
     match script {
         "post-restore" => {
             let pid = notify.pid();
@@ -64,8 +64,8 @@ fn restore_callback(script: &str, notify: &Criu_notify, fds: &[RawFd]) -> i32 {
             })
         }
         "orphan-pts-master" => {
-            let master_fd = match fds.first() {
-                Some(&fd) => fd,
+            let master_fd = match fd {
+                Some(fd) => fd,
                 None => {
                     tracing::error!("orphan-pts-master: no fd received from CRIU");
                     return -1;
