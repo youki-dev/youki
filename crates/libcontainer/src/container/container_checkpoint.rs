@@ -8,7 +8,9 @@ use libcgroups::common::CgroupSetup::{Hybrid, Legacy};
 use libcgroups::common::DEFAULT_CGROUP_ROOT;
 use oci_spec::runtime::{LinuxNamespaceType, Spec};
 
-use super::container_criu::{CRIU_VERSION_MINIMUM, check_criu_version, handle_checkpointing_external_namespaces};
+use super::container_criu::{
+    CRIU_VERSION_MINIMUM, check_criu_version, handle_checkpointing_external_namespaces,
+};
 use super::{Container, ContainerStatus};
 use crate::container::container::CheckpointOptions;
 use crate::error::LibcontainerError;
