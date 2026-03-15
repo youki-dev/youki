@@ -378,29 +378,43 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     Ok((init_pid, need_to_clean_up_intel_rdt_subdirectory))
 }
 
-fn create_userns_fd(uid_mappings: &[LinuxIdMapping], gid_mappings: &[LinuxIdMapping]) -> Result<OwnedFd> {
-    let (read_fd, write_fd) = pipe().map_err(|err| {
-        ProcessError::MountRequest(format!("failed to create userns pipe: {err}"))
+fn create_userns_fd(
+    syscall: &dyn Syscall,
+    uid_mappings: &[LinuxIdMapping],
+    gid_mappings: &[LinuxIdMapping],
+) -> Result<OwnedFd> {
+    let (ready_read, ready_write) = pipe().map_err(|err| {
+        ProcessError::MountRequest(format!("failed to create userns ready pipe: {err}"))
+    })?;
+    let (cont_read, cont_write) = pipe().map_err(|err| {
+        ProcessError::MountRequest(format!("failed to create userns continue pipe: {err}"))
     })?;
     match unsafe { fork() } {
         Ok(ForkResult::Child) => {
-            drop(write_fd);
+            drop(ready_read);
+            drop(cont_write);
             if let Err(err) = nix::sched::unshare(CloneFlags::CLONE_NEWUSER) {
                 tracing::error!(?err, "failed to unshare user namespace");
                 std::process::exit(1);
             }
 
+            let _ = nix_write(ready_write, &[1]);
             let mut buf = [0u8; 1];
-            let _ = nix_read(read_fd.as_raw_fd(), &mut buf);
+            let _ = nix_read(cont_read.as_raw_fd(), &mut buf);
             std::process::exit(0);
         }
         Ok(ForkResult::Parent { child }) => {
-            drop(read_fd);
+            drop(ready_write);
+            drop(cont_read);
+            let mut buf = [0u8; 1];
+            let _ = nix_read(ready_read.as_raw_fd(), &mut buf);
             let result = (|| -> Result<OwnedFd> {
                 let setgroups_path = format!("/proc/{}/setgroups", child.as_raw());
                 if let Err(err) = std::fs::write(&setgroups_path, "deny") {
                     if err.kind() != ErrorKind::NotFound {
-                        return Err(ProcessError::SetGroupsDeny(err));
+                        return Err(ProcessError::MountRequest(format!(
+                            "failed to write deny to setgroups path={setgroups_path}: {err}"
+                        )));
                     }
                 }
 
@@ -413,7 +427,7 @@ fn create_userns_fd(uid_mappings: &[LinuxIdMapping], gid_mappings: &[LinuxIdMapp
                 })?;
                 Ok(fd.into())
             })();
-            let _ = nix_write(write_fd, &[1]);
+            let _ = nix_write(cont_write, &[1]);
             let _ = waitpid(child, None);
             return result;
         }
@@ -451,7 +465,7 @@ fn mount_idmapped_fd(syscall: &dyn Syscall, req: &MountMsg) -> Result<OwnedFd> {
         ProcessError::MountRequest("idmapped mount request missing mappings".to_string())
     })?;
 
-    let userns_fd = create_userns_fd(&idmap.uid_mappings, &idmap.gid_mappings)?;
+    let userns_fd = create_userns_fd(syscall, &idmap.uid_mappings, &idmap.gid_mappings)?;
     let mut open_flags = linux::OPEN_TREE_CLONE | linux::OPEN_TREE_CLOEXEC | linux::AT_EMPTY_PATH;
     if idmap.recursive {
         open_flags |= linux::AT_RECURSIVE;
