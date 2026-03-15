@@ -459,6 +459,123 @@ pub fn check_container_created(data: &ContainerData) -> Result<()> {
     }
 }
 
+/// Checkpoint a running container into `image_dir`.
+/// `global_args` are passed before `--root` (e.g. `&["--debug"]`).
+/// Run a container with `run -d`.
+/// Uses `Stdio::null()` to avoid the detached child process inheriting
+/// pipe write-ends and blocking `wait()`.
+pub fn run_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
+    let res = Command::new(get_runtime_path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .arg("--root")
+        .arg(dir.as_ref().join("runtime"))
+        .arg("run")
+        .arg("-d")
+        .arg("--bundle")
+        .arg(dir.as_ref().join("bundle"))
+        .arg(id)
+        .spawn()
+        .context("could not run container")?;
+    Ok(res)
+}
+
+/// Wait until a container reaches `Running` state (10 s timeout).
+pub fn wait_container_running<P: AsRef<Path>>(id: &str, dir: P) -> Result<()> {
+    wait_for_state(
+        id,
+        dir,
+        WaitTarget::Status(LifecycleStatus::Running),
+        Duration::from_secs(10),
+        Duration::from_millis(100),
+    )
+}
+
+pub fn checkpoint_container(
+    bundle_path: &Path,
+    id: &str,
+    image_dir: &Path,
+    work_dir: Option<&Path>,
+    global_args: &[&str],
+) -> Result<()> {
+    let mut args: Vec<std::ffi::OsString> = global_args.iter().map(Into::into).collect();
+    args.extend(["--root".into(), bundle_path.join("runtime").into()]);
+    args.extend(["checkpoint".into(), "--image-path".into(), image_dir.into()]);
+    if let Some(wp) = work_dir {
+        args.extend(["--work-path".into(), wp.into()]);
+    }
+    args.push(id.into());
+
+    let output = Command::new(get_runtime_path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .args(&args)
+        .spawn()
+        .context("failed to spawn checkpoint")?
+        .wait_with_output()
+        .context("failed to wait for checkpoint")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        bail!(
+            "checkpoint failed ({}): stdout={stdout}, stderr={stderr}",
+            output.status,
+        );
+    }
+
+    if !image_dir.join("inventory.img").exists() {
+        bail!("checkpoint incomplete: {image_dir:?}/inventory.img missing");
+    }
+
+    Ok(())
+}
+
+/// Restore a checkpointed container from `image_dir` using `restore -d`.
+/// `global_args` are passed before `--root` (e.g. `&["--debug"]`).
+pub fn restore_container(
+    bundle_path: &Path,
+    id: &str,
+    image_dir: &Path,
+    work_dir: Option<&Path>,
+    global_args: &[&str],
+) -> Result<()> {
+    let stderr_file = tempfile::NamedTempFile::new().context("failed to create temp file")?;
+
+    let mut args: Vec<std::ffi::OsString> = global_args.iter().map(Into::into).collect();
+    args.extend(["--root".into(), bundle_path.join("runtime").into()]);
+    args.extend(["restore".into(), "-d".into()]);
+    args.extend(["--bundle".into(), bundle_path.join("bundle").into()]);
+    args.extend(["--image-path".into(), image_dir.into()]);
+    if let Some(wp) = work_dir {
+        args.extend(["--work-path".into(), wp.into()]);
+    }
+    args.push(id.into());
+
+    let status = Command::new(get_runtime_path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(stderr_file.reopen().context("failed to reopen temp file")?)
+        .args(&args)
+        .spawn()
+        .context("failed to spawn restore")?
+        .wait()
+        .context("failed to wait for restore")?;
+
+    if !status.success() {
+        let stderr = std::fs::read_to_string(stderr_file.path()).unwrap_or_default();
+        bail!("restore failed ({}): {}", status, stderr);
+    }
+
+    Ok(())
+}
+
+/// Returns true if CRIU is installed on the host.
+pub fn criu_installed() -> bool {
+    which::which("criu").is_ok()
+}
+
 pub fn exec_container<P: AsRef<Path>>(
     id: &str,
     dir: P,
