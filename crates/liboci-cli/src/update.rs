@@ -66,6 +66,7 @@ pub struct Update {
     #[clap(long)]
     pub mem_bw_schema: Option<String>,
 
+    /// Identifier of the container
     #[clap(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
     pub container_id: String,
 }
