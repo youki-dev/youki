@@ -17,6 +17,7 @@
 ---
 
 - [Community](./community/introduction.md)
+    - [Adopters and Use Cases](./community/adopters_and_use_cases.md)
     - [Maintainer](./community/maintainer.md)
     - [Governance](./community/governance.md)
     - [Contributing](./community/contributing.md)
