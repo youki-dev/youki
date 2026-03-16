@@ -35,6 +35,10 @@ pub const BPF_JSET: u16 = 0x40;
 // Test against the value in the K register.
 pub const BPF_K: u16 = 0x00;
 
+// Limitation on the number of jumps for the bpf instruction
+// https://github.com/seccomp/libseccomp/blob/main/src/gen_bpf.c#L104
+pub const BPF_JMP_MAX: usize = 255;
+
 // Return codes for BPF programs.
 // See /usr/include/linux/seccomp.h .
 pub const SECCOMP_RET_ALLOW: u32 = 0x7fff_0000;

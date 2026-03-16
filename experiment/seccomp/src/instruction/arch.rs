@@ -16,9 +16,9 @@ pub fn gen_validate(arc: &Arch, def_action: u32, jump_num: usize) -> Vec<Instruc
         Arch::AArch64 => AUDIT_ARCH_AARCH64,
     };
 
-    if jump_num <= 255 {
+    if jump_num <= BPF_JMP_MAX {
         vec![
-            //  load offset architecture
+            // load offset architecture
             Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, seccomp_data_arch_offset() as u32),
             // if not match architecture, jump to default action
             Instruction::jump(
