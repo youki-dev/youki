@@ -2590,20 +2590,20 @@ dependencies = [
 
 [[package]]
 name = "libbpf-sys"
-version = "1.6.3+v1.6.3"
+version = "1.6.4+v1.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95f55336f7dbde4fbbaae7b5e271f9efc65bf1d0b69c6fcb1e5026a385e95f70"
+checksum = "1a11fa02b211d2d94003d0f5ef29b50f74668e405af9d0b8eba424e8f42e5d33"
 dependencies = [
  "cc",
- "nix 0.31.1",
+ "nix 0.31.2",
  "pkg-config",
 ]
 
 [[package]]
 name = "libc"
-version = "0.2.180"
+version = "0.2.183"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bcc35a38544a891a5f7c865aca548a982ccb3b8650a5b06d0fd33a10283c56fc"
+checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
 
 [[package]]
 name = "libcgroups"
@@ -3040,9 +3040,9 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.31.1"
+version = "0.31.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "225e7cfe711e0ba79a68baeddb2982723e4235247aefce1482f2f16c27865b66"
+checksum = "5d6d0705320c1e6ba1d912b5e37cf18071b6c2e9b7fa8215a1e8a7651966f5d3"
 dependencies = [
  "bitflags 2.11.0",
  "cfg-if",
@@ -3537,7 +3537,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "059a34f111a9dee2ce1ac2826a68b24601c4298cfeb1a587c3cb493d5ab46f52"
 dependencies = [
  "libc",
- "nix 0.31.1",
+ "nix 0.31.2",
 ]
 
 [[package]]
@@ -5394,9 +5394,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-subscriber"
-version = "0.3.22"
+version = "0.3.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f30143827ddab0d256fd843b7a66d164e9f271cfa0dde49142c5ca0ca291f1e"
+checksum = "cb7f578e5945fb242538965c2d0b04418d38ec25c79d160cd279bf0731c8d319"
 dependencies = [
  "matchers",
  "nu-ansi-term",
