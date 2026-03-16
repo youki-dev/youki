@@ -20,12 +20,14 @@ pub fn generate_seccomp_instruction(file_path: &Path) -> anyhow::Result<()> {
     if let Some(syscalls) = seccomp.syscalls() {
         for syscall in syscalls {
             let mut build_syscall: LinuxSyscall = if let Some(args) = syscall.args() {
+                println!("--- test case {} with args---", cnt);
                 LinuxSyscallBuilder::default()
                     .names(syscall.names().to_vec())
                     .action(syscall.action())
                     .args(args.to_vec())
                     .build()?
             } else {
+                println!("--- test case {}---", cnt);
                 LinuxSyscallBuilder::default()
                     .names(syscall.names().to_vec())
                     .action(syscall.action())
@@ -46,7 +48,7 @@ pub fn generate_seccomp_instruction(file_path: &Path) -> anyhow::Result<()> {
                 seccomp.set_flags(inst_data.flags.clone());
             }
             seccomp.filters = Vec::try_from(inst_data)?;
-            println!("--- test case {}---", cnt);
+            // println!("--- test case {}---", cnt);
             for filter in &seccomp.filters {
                 println!(
                     "code: {:02x}, jt: {:02x}, jf: {:02x}, k: {:08x}",

@@ -56,6 +56,7 @@
 	],
 	"syscalls": [
 		{
+			"case": 0,
 			"names": [
 				"accept",
 				"accept4",
@@ -352,6 +353,7 @@
 			"action": "SCMP_ACT_ALLOW"
 		},
 		{
+			"case": 1,
 			"names": [
 				"process_vm_readv",
 				"process_vm_writev",
@@ -363,6 +365,7 @@
 			}
 		},
 		{
+			"case": 2,
 			"names": [
 				"socket"
 			],
@@ -376,6 +379,7 @@
 			]
 		},
 		{
+			"case": 3,
 			"names": [
 				"personality"
 			],
@@ -389,6 +393,7 @@
 			]
 		},
 		{
+			"case": 4,
 			"names": [
 				"personality"
 			],
@@ -402,6 +407,7 @@
 			]
 		},
 		{
+			"case": 5,
 			"names": [
 				"personality"
 			],
@@ -415,6 +421,7 @@
 			]
 		},
 		{
+			"case": 6,
 			"names": [
 				"personality"
 			],
@@ -428,6 +435,7 @@
 			]
 		},
 		{
+			"case": 7,
 			"names": [
 				"personality"
 			],
@@ -441,6 +449,7 @@
 			]
 		},
 		{
+			"case": 8,
 			"names": [
 				"arch_prctl"
 			],
@@ -453,6 +462,7 @@
 			}
 		},
 		{
+			"case": 9,
 			"names": [
 				"modify_ldt"
 			],
@@ -466,6 +476,7 @@
 			}
 		},
 		{
+			"case": 10,
 			"names": [
 				"open_by_handle_at"
 			],
@@ -477,6 +488,7 @@
 			}
 		},
 		{
+			"case": 11,
 			"names": [
 				"bpf",
 				"clone",
@@ -509,6 +521,7 @@
 			}
 		},
 		{
+			"case": 12,
 			"names": [
 				"clone"
 			],
@@ -531,6 +544,7 @@
 			}
 		},
 		{
+			"case": 13,
 			"names": [
 				"clone"
 			],
@@ -556,6 +570,7 @@
 			}
 		},
 		{
+			"case": 14,
 			"names": [
 				"clone3"
 			],
@@ -568,6 +583,7 @@
 			}
 		},
 		{
+			"case": 15,
 			"names": [
 				"reboot"
 			],
@@ -579,6 +595,7 @@
 			}
 		},
 		{
+			"case": 16,
 			"names": [
 				"chroot"
 			],
@@ -590,6 +607,7 @@
 			}
 		},
 		{
+			"case": 17,
 			"names": [
 				"delete_module",
 				"init_module",
@@ -603,6 +621,7 @@
 			}
 		},
 		{
+			"case": 18,
 			"names": [
 				"acct"
 			],
@@ -614,6 +633,7 @@
 			}
 		},
 		{
+			"case": 19,
 			"names": [
 				"kcmp",
 				"pidfd_getfd",
@@ -630,6 +650,7 @@
 			}
 		},
 		{
+			"case": 20,
 			"names": [
 				"iopl",
 				"ioperm"
@@ -642,6 +663,7 @@
 			}
 		},
 		{
+			"case": 21,
 			"names": [
 				"settimeofday",
 				"clock_settime"
@@ -654,6 +676,7 @@
 			}
 		},
 		{
+			"case": 22,
 			"names": [
 				"vhangup"
 			],
@@ -665,6 +688,7 @@
 			}
 		},
 		{
+			"case": 23,
 			"names": [
 				"get_mempolicy",
 				"mbind",
@@ -679,6 +703,7 @@
 			}
 		},
 		{
+			"case": 24,
 			"names": [
 				"syslog"
 			],
@@ -690,6 +715,7 @@
 			}
 		},
 		{
+			"case": 25,
 			"names": [
 				"bpf"
 			],
@@ -701,6 +727,7 @@
 			}
 		},
 		{
+			"case": 26,
 			"names": [
 				"perf_event_open"
 			],
