@@ -6,9 +6,11 @@ use std::os::unix::io::AsRawFd;
 use libcgroups::common::CgroupSetup::{Hybrid, Legacy};
 #[cfg(feature = "v1")]
 use libcgroups::common::DEFAULT_CGROUP_ROOT;
-use oci_spec::runtime::Spec;
+use oci_spec::runtime::{LinuxNamespaceType, Spec};
 
-use super::container_criu::{CRIU_VERSION_MINIMUM, check_criu_version};
+use super::container_criu::{
+    CRIU_VERSION_MINIMUM, check_criu_version, handle_checkpointing_external_namespaces,
+};
 use super::{Container, ContainerStatus};
 use crate::container::container::CheckpointOptions;
 use crate::error::LibcontainerError;
@@ -169,6 +171,30 @@ impl Container {
                 .unwrap(),
         );
         criu.cgroups_mode(opts.manage_cgroups_mode.clone());
+
+        // Register network and PID namespaces as external to CRIU.
+        //
+        // Both namespaces are created by the container runtime (e.g. Podman) on
+        // the host side before the container process starts, so CRIU must not
+        // try to save or recreate them itself.
+        //
+        // Network namespace: CRIU would otherwise save the full network
+        // configuration (ifaddr, route, iptables, netdev, ...) and attempt to
+        // recreate the veth pair on restore. That fails with "Unknown peer net
+        // namespace" because the peer end lives in the host namespace which
+        // CRIU cannot see. Marking it external tells CRIU to store only a
+        // netns reference (netns-*.img) and inherit the existing namespace fd
+        // on restore via --inherit-fd.
+        //
+        // PID namespace: similarly created by the runtime via clone(CLONE_NEWPID).
+        // Without external registration CRIU would create a new PID namespace
+        // on restore, causing PID reassignment and breaking rst_sibling-based
+        // restore where the restored process must be a sibling of the runtime
+        // process inside the same existing PID namespace.
+        //
+        // This follows runc's handleCheckpointingExternalNamespaces.
+        handle_checkpointing_external_namespaces(&mut criu, &spec, LinuxNamespaceType::Network)?;
+        handle_checkpointing_external_namespaces(&mut criu, &spec, LinuxNamespaceType::Pid)?;
 
         criu.dump().map_err(|err| {
             tracing::error!(?err, id = ?self.id(), logfile = ?opts.image_path.join(CRIU_CHECKPOINT_LOG_FILE), "checkpointing container failed");

@@ -327,3 +327,84 @@ pub fn checkpoint_manage_cgroups_mode_soft(project_path: &Path, id: &str) -> Tes
 
     TestResult::Passed
 }
+
+/// Check that the network namespace was treated as external by CRIU.
+/// Fails if netns-*.img is absent or lacks ext_key="extRootNetNS".
+/// CRIU img files embed protobuf strings as raw UTF-8, so a byte search suffices.
+pub fn check_external_netns(checkpoint_dir: &Path) -> Result<(), TestResult> {
+    let netns_img = std::fs::read_dir(checkpoint_dir)
+        .map_err(|e| TestResult::Failed(anyhow::anyhow!("failed to read dir: {}", e)))?
+        .flatten()
+        .find(|e| e.file_name().to_string_lossy().starts_with("netns-"))
+        .map(|e| e.path());
+
+    let img = netns_img.ok_or_else(|| {
+        TestResult::Failed(anyhow::anyhow!(
+            "netns-*.img not found in {:?}: network namespace image is missing",
+            checkpoint_dir,
+        ))
+    })?;
+
+    let bytes = std::fs::read(&img)
+        .map_err(|e| TestResult::Failed(anyhow::anyhow!("failed to read {:?}: {}", img, e)))?;
+    if !bytes.windows(12).any(|w| w == b"extRootNetNS") {
+        return Err(TestResult::Failed(anyhow::anyhow!(
+            "{:?} does not contain ext_key=extRootNetNS: network namespace was not treated as external",
+            img,
+        )));
+    }
+
+    Ok(())
+}
+
+/// Check that the PID namespace was treated as external by CRIU.
+/// Fails if pidns-*.img is absent or lacks ext_key="extRootPidNS".
+pub fn check_external_pidns(checkpoint_dir: &Path) -> Result<(), TestResult> {
+    let pidns_img = std::fs::read_dir(checkpoint_dir)
+        .map_err(|e| TestResult::Failed(anyhow::anyhow!("failed to read dir: {}", e)))?
+        .flatten()
+        .find(|e| e.file_name().to_string_lossy().starts_with("pidns-"))
+        .map(|e| e.path());
+
+    let img = pidns_img.ok_or_else(|| {
+        TestResult::Failed(anyhow::anyhow!(
+            "pidns-*.img not found in {:?}: PID namespace image is missing",
+            checkpoint_dir,
+        ))
+    })?;
+
+    let bytes = std::fs::read(&img)
+        .map_err(|e| TestResult::Failed(anyhow::anyhow!("failed to read {:?}: {}", img, e)))?;
+    if !bytes.windows(12).any(|w| w == b"extRootPidNS") {
+        return Err(TestResult::Failed(anyhow::anyhow!(
+            "{:?} does not contain ext_key=extRootPidNS: PID namespace was not treated as external",
+            img,
+        )));
+    }
+
+    Ok(())
+}
+
+/// Checkpoint a container started with external network and PID namespaces.
+/// Verifies that CRIU recorded both namespaces as external.
+pub fn checkpoint_with_external_namespaces(project_path: &Path, id: &str) -> TestResult {
+    let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+
+    let result = checkpoint(project_path, id, &image_path, vec!["--leave-running"], None);
+    if !matches!(result, TestResult::Passed) {
+        return result;
+    }
+
+    if let Err(e) = check_external_netns(&image_path) {
+        return e;
+    }
+
+    if let Err(e) = check_external_pidns(&image_path) {
+        return e;
+    }
+
+    TestResult::Passed
+}
