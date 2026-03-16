@@ -19,6 +19,8 @@ pub struct Container {
     pub state: State,
     // indicated the directory for the root path in the container
     pub root: PathBuf,
+    // CRIU version (set during checkpoint/restore operations)
+    pub criu_version: Option<u32>,
 }
 
 impl Default for Container {
@@ -26,6 +28,7 @@ impl Default for Container {
         Self {
             state: State::default(),
             root: PathBuf::from("/run/youki"),
+            criu_version: None,
         }
     }
 }
@@ -51,6 +54,7 @@ impl Container {
         Ok(Self {
             state,
             root: container_root,
+            criu_version: None,
         })
     }
 
@@ -196,6 +200,7 @@ impl Container {
         let mut container = Self {
             state,
             root: container_root,
+            criu_version: None,
         };
         container.refresh_status()?;
         Ok(container)
@@ -220,6 +225,17 @@ pub struct CheckpointOptions {
     pub file_locks: bool,
     pub image_path: PathBuf,
     pub leave_running: bool,
+    pub shell_job: bool,
+    pub tcp_established: bool,
+    pub work_path: Option<PathBuf>,
+}
+
+/// Restore parameter structure
+pub struct RestoreOptions {
+    pub console_socket: Option<PathBuf>,
+    pub ext_unix_sk: bool,
+    pub file_locks: bool,
+    pub image_path: PathBuf,
     pub shell_job: bool,
     pub tcp_established: bool,
     pub work_path: Option<PathBuf>,

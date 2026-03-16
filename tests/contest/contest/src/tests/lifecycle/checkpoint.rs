@@ -116,10 +116,7 @@ fn checkpoint(
         .stderr(Stdio::piped())
         .arg("--root")
         .arg(project_path.join("runtime"))
-        .arg(match runtime_path {
-            _ if runtime_path.ends_with("youki") => "checkpointt",
-            _ => "checkpoint",
-        })
+        .arg("checkpoint")
         .arg("--image-path")
         .arg(&checkpoint_dir)
         .args(additional_args)
