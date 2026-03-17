@@ -26,7 +26,7 @@ use std::{
         unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd},
     },
 };
-use syscalls::{syscall_args, SyscallArgs};
+use syscalls::{SyscallArgs, syscall_args};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SeccompError {
