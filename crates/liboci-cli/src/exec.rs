@@ -56,7 +56,7 @@ pub struct Exec {
     #[clap(long)]
     pub cgroup: Option<String>,
 
-    /// Identifier of the container
+    /// Container identifier
     #[clap(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
     pub container_id: String,
 
