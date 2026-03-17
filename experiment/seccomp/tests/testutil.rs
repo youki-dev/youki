@@ -1,8 +1,8 @@
-use crate::seccomp::{Seccomp, SeccompProgramPlan};
 use oci_spec::runtime::{
     Arch as OciSpecArch, LinuxSeccomp, LinuxSeccompBuilder, LinuxSyscall, LinuxSyscallBuilder,
 };
 
+use seccomp::seccomp::{Seccomp, SeccompProgramPlan};
 use std::fs;
 use std::io;
 use std::path::Path;

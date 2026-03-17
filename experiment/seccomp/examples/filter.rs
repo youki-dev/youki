@@ -7,7 +7,6 @@ use std::slice;
 
 use anyhow::Result;
 use nix::{
-    libc,
     sys::{
         signal::Signal,
         socket::{
@@ -19,14 +18,11 @@ use nix::{
     unistd::{close, mkdir},
 };
 use oci_spec::runtime::{
-    Arch as OciSpecArch, LinuxSeccompAction, LinuxSeccompArgBuilder, LinuxSeccompBuilder,
-    LinuxSeccompOperator, LinuxSyscallBuilder,
+    Arch as OciSpecArch, LinuxSeccompAction, LinuxSeccompBuilder, LinuxSyscallBuilder,
 };
 use seccomp::seccomp::SeccompProgramPlan;
-use seccomp::testutil::*;
 use syscall_numbers::x86_64;
 
-#[allow(dead_code)]
 fn send_fd<F: AsRawFd>(sock: OwnedFd, fd: &F) -> nix::Result<()> {
     let fd = fd.as_raw_fd();
     let cmsgs = [ControlMessage::ScmRights(slice::from_ref(&fd))];
@@ -37,7 +33,6 @@ fn send_fd<F: AsRawFd>(sock: OwnedFd, fd: &F) -> nix::Result<()> {
     Ok(())
 }
 
-#[allow(dead_code)]
 fn recv_fd<F: FromRawFd>(sock: RawFd) -> nix::Result<Option<F>> {
     let mut iov_buf = [];
     let mut iov = [IoSliceMut::new(&mut iov_buf)];
@@ -53,7 +48,6 @@ fn recv_fd<F: FromRawFd>(sock: RawFd) -> nix::Result<Option<F>> {
     }
 }
 
-#[allow(dead_code)]
 async fn handle_notifications(notify_fd: NotifyFd) -> nix::Result<()> {
     loop {
         println!("Waiting on next");
@@ -68,7 +62,6 @@ async fn handle_notifications(notify_fd: NotifyFd) -> nix::Result<()> {
     }
 }
 
-#[allow(dead_code)]
 async fn handle_signal(pid: nix::unistd::Pid) -> Result<()> {
     let status = wait::waitpid(pid, None)?;
     match status {
@@ -87,16 +80,8 @@ async fn handle_signal(pid: nix::unistd::Pid) -> Result<()> {
     }
 }
 
-fn main() -> Result<()> {
-    if let Err(e) = generate_seccomp_instruction("tests/default_x86_64.json".as_ref()) {
-        eprintln!("Something wrong : {}", e);
-    }
-    Ok(())
-}
-
 #[tokio::main]
-#[allow(dead_code)]
-async fn sub() -> Result<()> {
+async fn main() -> Result<()> {
     let (sock_for_child, sock_for_parent) = socket::socketpair(
         socket::AddressFamily::Unix,
         SockType::Stream,
@@ -106,36 +91,22 @@ async fn sub() -> Result<()> {
 
     let _ = prctl::set_no_new_privileges(true);
 
-    let _getcwd = LinuxSyscallBuilder::default()
+    let getcwd = LinuxSyscallBuilder::default()
         .names(vec!["getcwd".to_string()])
         .build()?;
-    let _write = LinuxSyscallBuilder::default()
+    let write = LinuxSyscallBuilder::default()
         .names(vec!["write".to_string()])
-        .args(vec![LinuxSeccompArgBuilder::default()
-            .index(1usize)
-            .value(libc::STDERR_FILENO as u64)
-            .op(LinuxSeccompOperator::ScmpCmpEq)
-            .build()?])
         .build()?;
-    let _syscall_mkdir = LinuxSyscallBuilder::default()
+    let syscall_mkdir = LinuxSyscallBuilder::default()
         .names(vec!["mkdir".to_string()])
         .action(LinuxSeccompAction::ScmpActNotify)
-        .build()?;
-    let _personality = LinuxSyscallBuilder::default()
-        .names(vec!["clone3".to_string()])
-        // .args(vec![LinuxSeccompArgBuilder::default()
-        //     .index(0usize)
-        //     .value(2114060288u64)
-        //     .op(LinuxSeccompOperator::ScmpCmpLe)
-        //     .build()?])
-        .action(LinuxSeccompAction::ScmpActErrno)
         .build()?;
 
     let spec_seccomp = LinuxSeccompBuilder::default()
         .architectures(vec![OciSpecArch::ScmpArchX86_64])
         .default_action(LinuxSeccompAction::ScmpActErrno)
         .default_errno_ret(1u32)
-        .syscalls(vec![_personality])
+        .syscalls(vec![getcwd, write, syscall_mkdir])
         .build()?;
 
     let inst_data = SeccompProgramPlan::try_from(spec_seccomp)?;
@@ -144,14 +115,6 @@ async fn sub() -> Result<()> {
         seccomp.set_flags(inst_data.flags.clone());
     }
     seccomp.filters = Vec::try_from(inst_data)?;
-
-    for filter in &seccomp.filters {
-        println!(
-            "code: {:02x}, jt: {:02x}, jf: {:02x}, k: {:08x}",
-            filter.code, filter.offset_jump_true, filter.offset_jump_false, filter.multiuse_field
-        )
-    }
-
     tokio::spawn(async move {
         tokio::signal::ctrl_c()
             .await
