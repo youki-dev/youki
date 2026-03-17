@@ -520,7 +520,7 @@ impl Rule {
             SeccompCompareOp::NotEqual => {
                 // if system call number is not match, skip args check jf 4 to default action
                 bpf_prog.push(Instruction::jump(BPF_JEQ | BPF_K, 0, 4, *syscall as c_uint));
-                // uppper 32bit check of args
+                // upper 32bit check of args
                 bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     (offset + 4).into(),
@@ -543,7 +543,7 @@ impl Rule {
             SeccompCompareOp::LessThan => {
                 // if system call number is not match, skip args check jf 4 to default action
                 bpf_prog.push(Instruction::jump(BPF_JEQ | BPF_K, 0, 5, *syscall as c_uint));
-                // uppper 32bit check of args
+                // upper 32bit check of args
                 bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     (offset + 4).into(),
@@ -571,7 +571,7 @@ impl Rule {
             }
             SeccompCompareOp::LessOrEqual => {
                 bpf_prog.push(Instruction::jump(BPF_JEQ | BPF_K, 0, 5, *syscall as c_uint));
-                // uppper 32bit check of args
+                // upper 32bit check of args
                 bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     (offset + 4).into(),
@@ -600,7 +600,7 @@ impl Rule {
             SeccompCompareOp::Equal => {
                 // if system call number is not match, skip args check jf 4 to default action
                 bpf_prog.push(Instruction::jump(BPF_JEQ | BPF_K, 0, 4, *syscall as c_uint));
-                // uppper 32bit check of args
+                // upper 32bit check of args
                 bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     (offset + 4).into(),
@@ -623,7 +623,7 @@ impl Rule {
             SeccompCompareOp::GreaterOrEqual => {
                 // if system call number is not match, skip args check jf 4 to default action
                 bpf_prog.push(Instruction::jump(BPF_JEQ | BPF_K, 0, 5, *syscall as c_uint));
-                // uppper 32bit check of args
+                // upper 32bit check of args
                 bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     (offset + 4).into(),
@@ -652,7 +652,7 @@ impl Rule {
             SeccompCompareOp::GreaterThan => {
                 // if system call number is not match, skip args check jf 4 to default action
                 bpf_prog.push(Instruction::jump(BPF_JEQ | BPF_K, 0, 5, *syscall as c_uint));
-                // uppper 32bit check of args
+                // upper 32bit check of args
                 bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     (offset + 4).into(),
@@ -682,7 +682,7 @@ impl Rule {
                 // if system call number is not match, skip args check jf 4 to default action
                 bpf_prog.push(Instruction::jump(BPF_JEQ | BPF_K, 0, 4, *syscall as c_uint));
 
-                // uppper 32bit check of args
+                // upper 32bit check of args
                 bpf_prog.push(Instruction::stmt(
                     BPF_LD | BPF_W | BPF_ABS,
                     (offset + 4).into(),
@@ -775,7 +775,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_instruction_with_args_x86_euqal() {
+    fn test_build_instruction_with_args_x86_equal() {
         let persolality = get_syscall_number(&Arch::X86, "personality").unwrap();
         let personality_args: SyscallArgs = SyscallArgs {
             arg0: 8,
