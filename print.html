@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-5617cbfc.js";
+            window.path_to_searchindex_js = "searchindex-ea13659e.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-c02ff5a4.js"></script>
+        <script src="toc-0bc41377.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -767,11 +767,29 @@ ENTRYPOINT ["wasm-module.wasm"]
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="community"><a class="header" href="#community">Community</a></h1>
 <ul>
+<li><a href="#adopters-and-use-cases">Adopters and Use Cases</a></li>
 <li><a href="#current-maintainers">Maintainer</a></li>
 <li><a href="#code-of-conduct">Governance</a></li>
 <li><a href="#contributing">Contributing</a></li>
 <li><a href="#chat">Chat</a></li>
 </ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="adopters-and-use-cases"><a class="header" href="#adopters-and-use-cases">Adopters and Use Cases</a></h1>
+<p>This page collects public examples of projects that use youki or its crates.</p>
+<p>If you would like to add your project, please open a pull request with:</p>
+<ul>
+<li>project name and link</li>
+<li>a one-line summary</li>
+<li>crates being used, if you want to share them</li>
+</ul>
+<h2 id="rk8s"><a class="header" href="#rk8s"><a href="https://github.com/rk8s-dev/rk8s">rk8s</a></a></h2>
+<p>A lightweight Kubernetes-compatible container orchestration system written in Rust, implementing the Container Runtime Interface (CRI) with support for single containers, Kubernetes-style pods, and Docker Compose-style multi-container applications.</p>
+<p>Uses: <code>libcontainer</code>, <code>libcgroups</code></p>
+<h2 id="runwasi"><a class="header" href="#runwasi"><a href="https://github.com/containerd/runwasi">runwasi</a></a></h2>
+<p>A containerd shim that runs WebAssembly workloads in Docker and Kubernetes while using an OCI-compatible sandbox.</p>
+<p>Uses: <code>libcontainer</code></p>
+<h2 id="spinkube"><a class="header" href="#spinkube"><a href="https://www.spinkube.dev/">SpinKube</a></a></h2>
+<p>A platform for running Spin applications on Kubernetes. SpinKube uses <code>runwasi</code>, which in turn uses <code>libcontainer</code> to provide an OCI-compatible sandbox for workloads.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="current-maintainers"><a class="header" href="#current-maintainers">Current Maintainers</a></h1>
 <div class="table-wrapper">
