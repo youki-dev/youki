@@ -85,7 +85,7 @@ Here is why we are writing a new container runtime in Rust.
 
 # 📍 Status of youki
 
-**youki** has aced real-world use cases, including containerd's e2e test, and is now adopted by several production environments.
+**youki** has aced real-world use cases, including containerd's e2e test, and is now adopted by several production environments. See [Adopters and Use Cases](https://youki-dev.github.io/youki/community/adopters_and_use_cases.html) for public examples.
 We have [our roadmap](https://github.com/orgs/containers/projects/15).
 
 ![youki demo](docs/demo.gif)
