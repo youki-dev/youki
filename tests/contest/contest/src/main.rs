@@ -9,6 +9,7 @@ use contest::logger;
 use test_framework::TestManager;
 use tests::cgroups;
 
+use crate::tests::checkpoint_restore::get_checkpoint_restore_tests;
 use crate::tests::create_runtime::get_create_runtime_tests;
 use crate::tests::delete::get_delete_test;
 use crate::tests::devices::get_devices_test;
@@ -172,6 +173,7 @@ fn main() -> Result<()> {
     let personality = get_personality_test();
     let prohibit_symlink = get_prohibit_symlink_test();
     let net_devices = get_net_devices_test();
+    let checkpoint_restore = get_checkpoint_restore_tests();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -226,6 +228,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(personality));
     tm.add_test_group(Box::new(prohibit_symlink));
     tm.add_test_group(Box::new(io_priority_test));
+    tm.add_test_group(Box::new(checkpoint_restore));
     tm.add_cleanup(Box::new(cgroups::cleanup_v1));
     tm.add_cleanup(Box::new(cgroups::cleanup_v2));
 
