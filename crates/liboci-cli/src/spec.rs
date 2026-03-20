@@ -1,15 +1,15 @@
 use std::path::PathBuf;
 
-use clap::Parser;
+use clap::Args;
 
 /// Command generates a config.json
-#[derive(Parser, Debug)]
+#[derive(Args, Debug)]
 pub struct Spec {
     /// Set path to the root of the bundle directory
-    #[clap(long, short)]
+    #[arg(long, short)]
     pub bundle: Option<PathBuf>,
 
     /// Generate a configuration for a rootless container
-    #[clap(long)]
+    #[arg(long)]
     pub rootless: bool,
 }
