@@ -5,13 +5,13 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::Args;
 #[cfg(feature = "v2")]
 use libcgroups::{common::CgroupSetup, v2::controller_type::ControllerType};
 use libcontainer::user_ns;
 use procfs::{CpuInfo, Current, Meminfo};
 /// Show information about the system
-#[derive(Parser, Debug)]
+#[derive(Args, Debug)]
 pub struct Info {}
 
 pub fn info(_: Info) -> Result<()> {

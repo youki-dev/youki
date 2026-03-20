@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::path::PathBuf;
 
-use clap::Parser;
+use clap::{Args, Subcommand};
 
 // Subcommands that are specified in https://github.com/opencontainers/runtime-tools/blob/master/docs/command-line-interface.md
 
@@ -46,7 +46,7 @@ pub use update::Update;
 // runtime-spec](https://github.com/opencontainers/runtime-spec/blob/master/runtime.md)
 // and specifically the [OCI Command Line
 // Interface](https://github.com/opencontainers/runtime-tools/blob/master/docs/command-line-interface.md)
-#[derive(Parser, Debug)]
+#[derive(Subcommand, Debug)]
 pub enum StandardCmd {
     Create(Create),
     Start(Start),
@@ -59,7 +59,7 @@ pub enum StandardCmd {
 // but found in
 // [runc](https://github.com/opencontainers/runc/blob/master/man/runc.8.md)
 // and other runtimes.
-#[derive(Parser, Debug)]
+#[derive(Subcommand, Debug)]
 pub enum CommonCmd {
     Checkpointt(Checkpoint),
     Events(Events),
@@ -67,7 +67,6 @@ pub enum CommonCmd {
     Features(Features),
     List(List),
     Pause(Pause),
-    #[clap(allow_hyphen_values = true)]
     Ps(Ps),
     Resume(Resume),
     Run(Run),
@@ -77,21 +76,21 @@ pub enum CommonCmd {
 
 // The OCI Command Line Interface document doesn't define any global
 // flags, but these are commonly accepted by runtimes
-#[derive(Parser, Debug)]
+#[derive(Args, Debug)]
 pub struct GlobalOpts {
     /// set the log file to write youki logs to (default is '/dev/stderr')
-    #[clap(short, long, overrides_with("log"))]
+    #[arg(short, long, overrides_with("log"))]
     pub log: Option<PathBuf>,
     /// change log level to debug, but the `log-level` flag takes precedence
-    #[clap(long)]
+    #[arg(long)]
     pub debug: bool,
     /// set the log format ('text' (default), or 'json') (default: "text")
-    #[clap(long)]
+    #[arg(long)]
     pub log_format: Option<String>,
     /// root directory to store container state
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub root: Option<PathBuf>,
     /// Enable systemd cgroup manager, rather then use the cgroupfs directly.
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub systemd_cgroup: bool,
 }
