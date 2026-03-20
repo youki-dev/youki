@@ -8,55 +8,55 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 pub struct Checkpoint {
     /// Path for saving criu image files
-    #[clap(long, default_value = "checkpoint")]
+    #[arg(long, default_value = "checkpoint")]
     pub image_path: PathBuf,
     /// Path for saving work files and logs
-    #[clap(long)]
+    #[arg(long)]
     pub work_path: Option<PathBuf>,
     // TODO: Path for previous criu image file in pre-dump
-    // #[clap(long)]
+    // #[arg(long)]
     // pub parent_path: Option<PathBuf>,
     /// Leave the process running after checkpointing
-    #[clap(long)]
+    #[arg(long)]
     pub leave_running: bool,
     /// Allow open tcp connections
-    #[clap(long)]
+    #[arg(long)]
     pub tcp_established: bool,
     // TODO: Skip in-flight tcp connections
-    // #[clap(long)]
+    // #[arg(long)]
     // pub tcp_skip_in_flight: bool,
     // TODO: Allow one to link unlinked files back when possible
-    // #[clap(long)]
+    // #[arg(long)]
     // pub link_remap: bool,
     /// Allow external unix sockets
-    #[clap(long)]
+    #[arg(long)]
     pub ext_unix_sk: bool,
     /// Allow shell jobs
-    #[clap(long)]
+    #[arg(long)]
     pub shell_job: bool,
     // TODO: Use lazy migration mechanism
-    // #[clap(long)]
+    // #[arg(long)]
     // pub lazy_pages: bool,
     // TODO: Pass a file descriptor fd to criu. Is u32 the right type?
-    // #[clap(long)]
+    // #[arg(long)]
     // pub status_fd: Option<u32>,
     // TODO: Start a page server at the given URL
-    // #[clap(long)]
+    // #[arg(long)]
     // pub page_server: Option<String>,
     /// Allow file locks
-    #[clap(long)]
+    #[arg(long)]
     pub file_locks: bool,
     // TODO: Do a pre-dump
-    // #[clap(long)]
+    // #[arg(long)]
     // pub pre_dump: bool,
-    #[clap(long, default_value = "soft", value_parser = clap::builder::PossibleValuesParser::new(["ignore", "full", "strict", "soft"]))]
+    #[arg(long, default_value = "soft", value_parser = clap::builder::PossibleValuesParser::new(["ignore", "full", "strict", "soft"]))]
     pub manage_cgroups_mode: String,
     // TODO: Checkpoint a namespace, but don't save its properties
-    // #[clap(long)]
+    // #[arg(long)]
     // pub empty_ns: bool,
     // TODO: Enable auto-deduplication
-    // #[clap(long)]
+    // #[arg(long)]
     // pub auto_dedup: bool,
-    #[clap(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
+    #[arg(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
     pub container_id: String,
 }
