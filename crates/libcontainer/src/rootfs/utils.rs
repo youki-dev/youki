@@ -117,7 +117,19 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
 
                 if let Some(mount_attr) = &mut mount_attr {
                     if is_clear {
-                        mount_attr.attr_clr |= flag;
+                        if flag != 0 && flag & linux::MOUNT_ATTR__ATIME == flag {
+                            // https://man7.org/linux/man-pages/man2/mount_setattr.2.html
+                            // When clearing an atime mode (e.g. ratime, rnostrictatime), the full
+                            // MOUNT_ATTR__ATIME mask (0x70) must be used in attr_clr. The kernel
+                            // rejects partial atime masks with EINVAL because the three atime modes
+                            // (relatime/noatime/strictatime) are mutually exclusive and can only be
+                            // changed atomically: clear all three bits, then set the desired one.
+                            // Note: flag != 0 excludes rnorelatime (MOUNT_ATTR_RELATIME = 0x00),
+                            // which has no bits to clear and should be a no-op.
+                            mount_attr.attr_clr |= linux::MOUNT_ATTR__ATIME;
+                        } else {
+                            mount_attr.attr_clr |= flag;
+                        }
                     } else {
                         mount_attr.attr_set |= flag;
                         if flag & linux::MOUNT_ATTR__ATIME == flag {
