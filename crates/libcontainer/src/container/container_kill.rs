@@ -86,10 +86,13 @@ impl Container {
                         libcgroups::common::CgroupConfig {
                             cgroup_path: self.spec()?.cgroup_path,
                             systemd_cgroup: self.systemd(),
+                            rootless_container: self.rootless(),
                             container_name: self.id().to_string(),
                         },
                     )?;
-                    cmanager.freeze(libcgroups::common::FreezerState::Thawed)?;
+                    if let Some(cmanager) = cmanager {
+                        cmanager.freeze(libcgroups::common::FreezerState::Thawed)?;
+                    }
                 }
                 libcgroups::common::CgroupSetup::Unified => {}
             }
@@ -103,37 +106,40 @@ impl Container {
             libcgroups::common::create_cgroup_manager(libcgroups::common::CgroupConfig {
                 cgroup_path: self.spec()?.cgroup_path,
                 systemd_cgroup: self.systemd(),
+                rootless_container: self.rootless(),
                 container_name: self.id().to_string(),
             })?;
 
-        if let Err(e) = cmanager.freeze(libcgroups::common::FreezerState::Frozen) {
-            tracing::warn!(
-                err = ?e,
-                id = ?self.id(),
-                "failed to freeze container",
-            );
-        }
+        if let Some(cmanager) = cmanager {
+            if let Err(e) = cmanager.freeze(libcgroups::common::FreezerState::Frozen) {
+                tracing::warn!(
+                    err = ?e,
+                    id = ?self.id(),
+                    "failed to freeze container",
+                );
+            }
 
-        let pids = cmanager.get_all_pids()?;
-        pids.iter()
-            .try_for_each(|&pid| {
-                tracing::debug!("kill signal {} to {}", signal, pid);
-                let res = signal::kill(pid, signal);
-                match res {
-                    Err(nix::errno::Errno::ESRCH) => {
-                        // the process does not exist, which is what we want
-                        Ok(())
+            let pids = cmanager.get_all_pids()?;
+            pids.iter()
+                .try_for_each(|&pid| {
+                    tracing::debug!("kill signal {} to {}", signal, pid);
+                    let res = signal::kill(pid, signal);
+                    match res {
+                        Err(nix::errno::Errno::ESRCH) => {
+                            // the process does not exist, which is what we want
+                            Ok(())
+                        }
+                        _ => res,
                     }
-                    _ => res,
-                }
-            })
-            .map_err(LibcontainerError::OtherSyscall)?;
-        if let Err(err) = cmanager.freeze(libcgroups::common::FreezerState::Thawed) {
-            tracing::warn!(
-                err = ?err,
-                id = ?self.id(),
-                "failed to thaw container",
-            );
+                })
+                .map_err(LibcontainerError::OtherSyscall)?;
+            if let Err(err) = cmanager.freeze(libcgroups::common::FreezerState::Thawed) {
+                tracing::warn!(
+                    err = ?err,
+                    id = ?self.id(),
+                    "failed to thaw container",
+                );
+            }
         }
 
         Ok(())
