@@ -348,7 +348,7 @@ mod test {
                 .args(vec![
                     String::from("sh"),
                     String::from("-c"),
-                    String::from("printenv TEST_ENV > /dev/null"),
+                    String::from("test \"$TEST_ENV\" = 'default_value'"),
                 ])
                 .build()?;
             let hooks = Some(vec![hook]);
