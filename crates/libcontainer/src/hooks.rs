@@ -344,9 +344,9 @@ mod test {
         {
             let default_container: Container = Default::default();
             let hook = HookBuilder::default()
-                .path("bash")
+                .path("sh")
                 .args(vec![
-                    String::from("bash"),
+                    String::from("sh"),
                     String::from("-c"),
                     String::from("printenv TEST_ENV > /dev/null"),
                 ])
@@ -368,9 +368,9 @@ mod test {
         {
             let default_container: Container = Default::default();
             let hook = HookBuilder::default()
-                .path("bash")
+                .path("sh")
                 .args(vec![
-                    String::from("bash"),
+                    String::from("sh"),
                     String::from("-c"),
                     String::from("test \"$TEST_ENV\" = 'explicit_value'"),
                 ])
@@ -393,9 +393,9 @@ mod test {
         {
             let default_container: Container = Default::default();
             let hook = HookBuilder::default()
-                .path("bash")
+                .path("sh")
                 .args(vec![
-                    String::from("bash"),
+                    String::from("sh"),
                     String::from("-c"),
                     // Verify that the environment is empty (no TEST_ENV, etc.)
                     String::from("test -z \"$TEST_ENV\""),
