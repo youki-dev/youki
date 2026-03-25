@@ -108,6 +108,7 @@ pub fn container_init_process(
                 ctx.container.map(|c| &c.state),
                 None,
                 None,
+                None,
             )
             .map_err(|err| {
                 tracing::error!(?err, "failed to run create container hooks");
@@ -407,6 +408,12 @@ pub fn container_init_process(
     // add HOME into envs if not exists
     set_home_env_if_not_exists(&mut ctx.envs, ctx.process.user().uid().into());
 
+    // Save a copy of the process environment for StartContainer hooks before
+    // setup_envs consumes ctx.envs. This matches runc's behavior where
+    // StartContainer hooks without explicit env use the container init
+    // process's environment.
+    let start_container_env = ctx.envs.clone();
+
     args.executor.validate(ctx.spec)?;
     args.executor.setup_envs(ctx.envs)?;
 
@@ -447,6 +454,7 @@ pub fn container_init_process(
                 ctx.container.map(|c| &c.state),
                 None,
                 None,
+                Some(&start_container_env),
             )
             .map_err(|err| {
                 tracing::error!(?err, "failed to run start container hooks");
