@@ -17,8 +17,52 @@ pub fn checkpoint(args: Checkpoint, root_path: PathBuf) -> Result<()> {
         shell_job: args.shell_job,
         tcp_established: args.tcp_established,
         work_path: args.work_path,
+        manage_cgroup_mode: parse_cgroups_mode(&args.manage_cgroups_mode)?,
     };
     container
         .checkpoint(&opts)
         .with_context(|| format!("failed to checkpoint container {}", args.container_id))
+}
+
+fn parse_cgroups_mode(s: &str) -> Result<rust_criu::CgMode, anyhow::Error> {
+    match s {
+        "ignore" => Ok(rust_criu::CgMode::IGNORE),
+        "full" => Ok(rust_criu::CgMode::FULL),
+        "strict" => Ok(rust_criu::CgMode::STRICT),
+        "soft" => Ok(rust_criu::CgMode::SOFT),
+        _ => Err(anyhow::anyhow!("manage-cgroup-mode: {s}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_cgroups_mode_ok() {
+        assert!(matches!(
+            parse_cgroups_mode("ignore"),
+            Ok(rust_criu::CgMode::IGNORE)
+        ));
+        assert!(matches!(
+            parse_cgroups_mode("full"),
+            Ok(rust_criu::CgMode::FULL)
+        ));
+        assert!(matches!(
+            parse_cgroups_mode("strict"),
+            Ok(rust_criu::CgMode::STRICT)
+        ));
+        assert!(matches!(
+            parse_cgroups_mode("soft"),
+            Ok(rust_criu::CgMode::SOFT)
+        ));
+    }
+
+    #[test]
+    fn test_parse_cgroups_mode_ng() {
+        assert!(parse_cgroups_mode("IGNORE").is_err());
+        assert!(parse_cgroups_mode("Ignore").is_err());
+        assert!(parse_cgroups_mode("unknown").is_err());
+        assert!(parse_cgroups_mode("").is_err());
+    }
 }
