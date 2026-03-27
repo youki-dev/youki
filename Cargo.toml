@@ -26,7 +26,7 @@ nix = { version = "0.29.0" }
 num_cpus = "1.17"
 oci-spec = { version = "~0.9.0", features = ["runtime"] }
 pathrs = "0.2.4"
-procfs = "0.17.0"
+procfs = "0.18.0"
 quickcheck = "1"
 rand = "0.10.0"
 regex = { version = "1", default-features = false, features = ["std", "unicode-perl"] }
