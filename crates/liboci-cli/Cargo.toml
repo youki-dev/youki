@@ -10,7 +10,5 @@ authors = ["youki team"]
 edition = "2024"
 keywords = ["youki", "container", "oci"]
 
-[dependencies.clap]
-version = "4.5.13"
-default-features = false
-features = ["std", "suggestions", "derive", "cargo", "help", "usage", "error-context"]
+[dependencies]
+clap = { workspace = true }
