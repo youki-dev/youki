@@ -1,9 +1,9 @@
-use clap::Parser;
+use clap::Args;
 
 /// Show the container state
-#[derive(Parser, Debug)]
+#[derive(Args, Debug)]
 pub struct State {
     /// Container identifier
-    #[clap(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
+    #[arg(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
     pub container_id: String,
 }
