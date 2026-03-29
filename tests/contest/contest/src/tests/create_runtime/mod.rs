@@ -4,9 +4,7 @@ use anyhow::anyhow;
 use oci_spec::runtime::{HooksBuilder, ProcessBuilder, RootBuilder, Spec, SpecBuilder};
 use test_framework::{Test, TestGroup, TestResult};
 
-use crate::tests::hooks::{
-    build_write_to_file_hook, delete_hook_output_file, get_hook_output_file_path,
-};
+use crate::tests::hooks::{delete_hook_output_file, get_hook_output_path, write_log_hook};
 use crate::utils::test_utils::CreateOptions;
 use crate::utils::{create_container, delete_container, generate_uuid, prepare_bundle, set_config};
 
@@ -31,7 +29,7 @@ fn get_spec(host_output_file: &str) -> Spec {
         )
         .hooks(
             HooksBuilder::default()
-                .create_runtime(vec![build_write_to_file_hook(
+                .create_runtime(vec![write_log_hook(
                     "create-runtime called",
                     host_output_file,
                 )])
@@ -53,7 +51,7 @@ fn get_test(test_name: &'static str) -> Test {
             let id = generate_uuid().to_string();
             let bundle = prepare_bundle().unwrap();
 
-            let host_output_file = get_hook_output_file_path(&bundle);
+            let host_output_file = get_hook_output_path(&bundle);
 
             let spec = get_spec(host_output_file.to_str().unwrap());
             set_config(&bundle, &spec).unwrap();

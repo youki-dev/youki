@@ -17,7 +17,7 @@ const STATE_POLL_INTERVAL_MILLIS: u64 = 100;
 
 const HOOK_OUTPUT_FILE: &str = "output";
 
-pub fn get_hook_output_file_path(bundle: &TempDir) -> PathBuf {
+pub fn get_hook_output_path(bundle: &TempDir) -> PathBuf {
     bundle
         .as_ref()
         .join("bundle")
@@ -25,7 +25,7 @@ pub fn get_hook_output_file_path(bundle: &TempDir) -> PathBuf {
         .join(HOOK_OUTPUT_FILE)
 }
 
-pub fn delete_hook_output_file(path: &PathBuf) -> anyhow::Result<()> {
+pub fn delete_hook_output_file(path: &Path) -> anyhow::Result<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -33,20 +33,20 @@ pub fn delete_hook_output_file(path: &PathBuf) -> anyhow::Result<()> {
     }
 }
 
-pub fn build_write_to_file_hook(content: &str, host_output_file_path: &str) -> Hook {
+pub fn write_log_hook(content: &str, host_output_file_path: &str) -> Hook {
     HookBuilder::default()
         .path("/bin/sh")
         .args(vec![
             "sh".to_string(),
             "-c".to_string(),
-            format!("echo '{content}' >> {host_output_file_path}"),
+            format!("echo '{content}' >> {host_output_file_path}",),
         ])
         .build()
         .expect("could not build hook")
 }
 
 fn get_spec(host_output_file: &str) -> Spec {
-    let write_format = |content: &str| build_write_to_file_hook(content, host_output_file);
+    let write_format = |content: &str| write_log_hook(content, host_output_file);
 
     SpecBuilder::default()
         .process(
@@ -106,7 +106,7 @@ fn get_test(test_name: &'static str) -> Test {
             let id = generate_uuid();
             let id_str = id.to_string();
             let bundle = prepare_bundle().unwrap();
-            let host_output_file = get_hook_output_file_path(&bundle);
+            let host_output_file = get_hook_output_path(&bundle);
             let host_output_file_str = host_output_file.to_str().unwrap();
 
             let spec = get_spec(host_output_file_str);
