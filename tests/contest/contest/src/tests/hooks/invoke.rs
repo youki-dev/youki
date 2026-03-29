@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use anyhow::{anyhow, bail};
 use oci_spec::runtime::{Hook, HookBuilder, HooksBuilder, ProcessBuilder, Spec, SpecBuilder};
-use tempfile::TempDir;
 use test_framework::{Test, TestGroup, TestResult};
 
 use crate::utils::{
@@ -17,7 +16,7 @@ const STATE_POLL_INTERVAL_MILLIS: u64 = 100;
 
 const HOOK_OUTPUT_FILE: &str = "output";
 
-pub fn get_hook_output_path(bundle: &TempDir) -> PathBuf {
+pub fn get_hook_output_path(bundle: &tempfile::TempDir) -> PathBuf {
     bundle
         .as_ref()
         .join("bundle")
