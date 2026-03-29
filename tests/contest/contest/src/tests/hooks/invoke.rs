@@ -2,8 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{anyhow, bail};
+use anyhow::anyhow;
 use oci_spec::runtime::{Hook, HookBuilder, HooksBuilder, ProcessBuilder, Spec, SpecBuilder};
+use tempfile::TempDir;
 use test_framework::{Test, TestGroup, TestResult};
 
 use crate::utils::{
@@ -14,32 +15,36 @@ use crate::utils::{
 const STATE_WAIT_TIMEOUT_SECS: u64 = 5;
 const STATE_POLL_INTERVAL_MILLIS: u64 = 100;
 
-fn get_hook_output_path(bundle: &tempfile::TempDir) -> PathBuf {
-    bundle.as_ref().join("bundle").join("rootfs").join("output")
+const HOOK_OUTPUT_FILE: &str = "output";
+
+pub fn get_hook_output_file_path(bundle: &TempDir) -> PathBuf {
+    bundle
+        .as_ref()
+        .join("bundle")
+        .join("rootfs")
+        .join(HOOK_OUTPUT_FILE)
 }
 
-fn delete_hook_output_file(path: &Path) -> anyhow::Result<()> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => bail!("failed to remove output file: {}", e),
+pub fn delete_hook_output_file(path: &PathBuf) {
+    if path.exists() {
+        fs::remove_file(path).expect("failed to remove output file");
     }
 }
 
-fn write_log_hook(content: &str, host_output_file_path: &str) -> Hook {
+pub fn build_write_to_file_hook(content: &str, host_output_file: &str) -> Hook {
     HookBuilder::default()
         .path("/bin/sh")
         .args(vec![
             "sh".to_string(),
             "-c".to_string(),
-            format!("echo '{content}' >> {host_output_file_path}",),
+            format!("echo '{content}' >> {host_output_file}"),
         ])
         .build()
         .expect("could not build hook")
 }
 
 fn get_spec(host_output_file: &str) -> Spec {
-    let write_format = |content: &str| write_log_hook(content, host_output_file);
+    let write_format = |content: &str| build_write_to_file_hook(content, host_output_file);
 
     SpecBuilder::default()
         .process(
@@ -99,7 +104,7 @@ fn get_test(test_name: &'static str) -> Test {
             let id = generate_uuid();
             let id_str = id.to_string();
             let bundle = prepare_bundle().unwrap();
-            let host_output_file = get_hook_output_path(&bundle);
+            let host_output_file = get_hook_output_file_path(&bundle);
             let host_output_file_str = host_output_file.to_str().unwrap();
 
             let spec = get_spec(host_output_file_str);
@@ -118,7 +123,7 @@ fn get_test(test_name: &'static str) -> Test {
             delete_container(&id_str, &bundle).unwrap().wait().unwrap();
             wait_for_target(&id_str, bundle.path(), WaitTarget::Deleted);
             let log = fs::read_to_string(&host_output_file).expect("cannot read output file");
-            delete_hook_output_file(&host_output_file).unwrap();
+            delete_hook_output_file(&host_output_file);
             let expected = "pre-start1 called\n\
                     pre-start2 called\n\
                     create-runtime1 called\n\

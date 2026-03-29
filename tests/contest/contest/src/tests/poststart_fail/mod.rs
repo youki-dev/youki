@@ -6,10 +6,13 @@ use oci_spec::runtime::{
 };
 use test_framework::{ConditionalTest, TestGroup, TestResult};
 
+use crate::tests::hooks::{
+    build_write_to_file_hook, delete_hook_output_file, get_hook_output_file_path,
+};
 use crate::utils::test_utils::CreateOptions;
 use crate::utils::{
-    build_hook, create_container, delete_container, delete_hook_output_file, generate_uuid,
-    get_hook_output_file_path, is_runtime_runc, prepare_bundle, set_config, start_container,
+    create_container, delete_container, generate_uuid, is_runtime_runc, prepare_bundle, set_config,
+    start_container,
 };
 
 fn get_spec(host_output_file: &str) -> Spec {
@@ -35,7 +38,7 @@ fn get_spec(host_output_file: &str) -> Spec {
         .hooks(
             HooksBuilder::default()
                 .poststart(vec![
-                    build_hook("hook_1 called", host_output_file),
+                    build_write_to_file_hook("hook_1 called", host_output_file),
                     HookBuilder::default()
                         .path("/bin/sh")
                         .args(vec![
@@ -45,7 +48,7 @@ fn get_spec(host_output_file: &str) -> Spec {
                         ])
                         .build()
                         .expect("could not build hook"),
-                    build_hook("hook_3 called", host_output_file),
+                    build_write_to_file_hook("hook_3 called", host_output_file),
                 ])
                 .build()
                 .expect("could not build hooks"),

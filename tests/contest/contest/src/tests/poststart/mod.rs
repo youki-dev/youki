@@ -4,10 +4,12 @@ use anyhow::anyhow;
 use oci_spec::runtime::{HooksBuilder, ProcessBuilder, RootBuilder, Spec, SpecBuilder};
 use test_framework::{Test, TestGroup, TestResult};
 
+use crate::tests::hooks::{
+    build_write_to_file_hook, delete_hook_output_file, get_hook_output_file_path,
+};
 use crate::utils::test_utils::CreateOptions;
 use crate::utils::{
-    build_hook, create_container, delete_container, delete_hook_output_file, generate_uuid,
-    get_hook_output_file_path, is_runtime_runc, prepare_bundle, set_config, start_container,
+    create_container, delete_container, generate_uuid, is_runtime_runc, prepare_bundle, set_config,
     wait_for_file_content,
 };
 
@@ -38,7 +40,10 @@ fn get_spec(host_output_file: &str) -> Spec {
         )
         .hooks(
             HooksBuilder::default()
-                .poststart(vec![build_hook("post-start called", host_output_file)])
+                .poststart(vec![build_write_to_file_hook(
+                    "post-start called",
+                    host_output_file,
+                )])
                 .build()
                 .expect("could not build hooks"),
         )
@@ -93,7 +98,10 @@ fn get_test(test_name: &'static str) -> Test {
                 }
             }
 
-            start_container(&id_str, &bundle).unwrap().wait().unwrap();
+            crate::utils::start_container(&id_str, &bundle)
+                .unwrap()
+                .wait()
+                .unwrap();
 
             let wait_result = wait_for_file_content(
                 &host_output_file,
