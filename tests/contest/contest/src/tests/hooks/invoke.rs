@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use oci_spec::runtime::{Hook, HookBuilder, HooksBuilder, ProcessBuilder, Spec, SpecBuilder};
 use tempfile::TempDir;
 use test_framework::{Test, TestGroup, TestResult};
@@ -25,19 +25,21 @@ pub fn get_hook_output_file_path(bundle: &TempDir) -> PathBuf {
         .join(HOOK_OUTPUT_FILE)
 }
 
-pub fn delete_hook_output_file(path: &PathBuf) {
-    if path.exists() {
-        fs::remove_file(path).expect("failed to remove output file");
+pub fn delete_hook_output_file(path: &PathBuf) -> anyhow::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => bail!("failed to remove output file: {}", e),
     }
 }
 
-pub fn build_write_to_file_hook(content: &str, host_output_file: &str) -> Hook {
+pub fn build_write_to_file_hook(content: &str, host_output_file_path: &str) -> Hook {
     HookBuilder::default()
         .path("/bin/sh")
         .args(vec![
             "sh".to_string(),
             "-c".to_string(),
-            format!("echo '{content}' >> {host_output_file}"),
+            format!("echo '{content}' >> {host_output_file_path}"),
         ])
         .build()
         .expect("could not build hook")
@@ -123,7 +125,7 @@ fn get_test(test_name: &'static str) -> Test {
             delete_container(&id_str, &bundle).unwrap().wait().unwrap();
             wait_for_target(&id_str, bundle.path(), WaitTarget::Deleted);
             let log = fs::read_to_string(&host_output_file).expect("cannot read output file");
-            delete_hook_output_file(&host_output_file);
+            delete_hook_output_file(&host_output_file).unwrap();
             let expected = "pre-start1 called\n\
                     pre-start2 called\n\
                     create-runtime1 called\n\

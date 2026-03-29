@@ -99,7 +99,7 @@ fn get_test(test_name: &'static str) -> Test {
             delete_container(&id_str, &bundle).unwrap().wait().unwrap();
 
             if let TestResult::Failed(_) = result {
-                delete_hook_output_file(&host_output_file);
+                delete_hook_output_file(&host_output_file).unwrap();
                 return result;
             }
 
@@ -129,7 +129,7 @@ fn get_test(test_name: &'static str) -> Test {
                 }
             };
 
-            delete_hook_output_file(&host_output_file);
+            delete_hook_output_file(&host_output_file).unwrap();
             result
         }),
     )

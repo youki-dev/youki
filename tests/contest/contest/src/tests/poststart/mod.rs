@@ -80,7 +80,7 @@ fn get_test(test_name: &'static str) -> Test {
                     .expect("failed to read output file after create");
                 if !content.is_empty() {
                     let _ = delete_container(&id_str, &bundle);
-                    delete_hook_output_file(&host_output_file);
+                    delete_hook_output_file(&host_output_file).unwrap();
                     let has_poststart = content.contains("post-start called");
                     let has_process = content.contains("process called");
                     return match (has_poststart, has_process) {
@@ -136,7 +136,7 @@ fn get_test(test_name: &'static str) -> Test {
             };
 
             let _ = delete_container(&id_str, &bundle);
-            delete_hook_output_file(&host_output_file);
+            delete_hook_output_file(&host_output_file).unwrap();
             result
         }),
     )

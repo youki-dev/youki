@@ -90,7 +90,7 @@ fn get_test(test_name: &'static str) -> ConditionalTest {
 
             if create_failed {
                 let _ = delete_container(&id, &bundle);
-                delete_hook_output_file(&host_output_file);
+                delete_hook_output_file(&host_output_file).unwrap();
                 return TestResult::Failed(anyhow!("runtime failed at create"));
             }
 
@@ -98,7 +98,7 @@ fn get_test(test_name: &'static str) -> ConditionalTest {
                 let code = cmd.wait().unwrap().code().unwrap();
                 if code != 1 {
                     let _ = delete_container(&id, &bundle);
-                    delete_hook_output_file(&host_output_file);
+                    delete_hook_output_file(&host_output_file).unwrap();
                     return TestResult::Failed(anyhow!(
                         "start should exit with code 1, got {code}"
                     ));
@@ -127,7 +127,7 @@ fn get_test(test_name: &'static str) -> ConditionalTest {
             };
 
             let _ = delete_container(&id, &bundle);
-            delete_hook_output_file(&host_output_file);
+            delete_hook_output_file(&host_output_file).unwrap();
             result
         }),
     )

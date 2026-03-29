@@ -81,7 +81,7 @@ fn get_test(test_name: &'static str) -> Test {
             };
 
             let _ = delete_container(&id, &bundle);
-            delete_hook_output_file(&host_output_file);
+            delete_hook_output_file(&host_output_file).unwrap();
             result
         }),
     )
