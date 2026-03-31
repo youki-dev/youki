@@ -100,6 +100,13 @@ pub fn is_runtime_runc() -> bool {
     }
 }
 
+pub fn is_runtime_youki() -> bool {
+    match std::env::var("RUNTIME_KIND") {
+        Err(_) => true,
+        Ok(s) => s == "youki",
+    }
+}
+
 pub fn wait_for_file_content(
     file_path: &PathBuf,
     expected_content: &str,
