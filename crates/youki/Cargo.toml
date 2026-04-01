@@ -49,6 +49,7 @@ tracing = { version = "0.1.44", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
 tracing-journald = "0.3.2"
 oci-spec = { version = "0.9.0", features = ["runtime"] }
+rust-criu = "0.5.0"
 
 [dev-dependencies]
 serial_test = "3.4.0"
