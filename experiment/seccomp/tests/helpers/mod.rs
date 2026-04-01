@@ -1,12 +1,43 @@
-use oci_spec::runtime::{
-    Arch as OciSpecArch, LinuxSeccomp, LinuxSeccompBuilder, LinuxSyscall, LinuxSyscallBuilder,
-};
-
+use oci_spec::runtime::{Arch as OciSpecArch, LinuxSeccomp, LinuxSeccompAction, LinuxSeccompBuilder, LinuxSeccompOperator, LinuxSyscall, LinuxSyscallBuilder};
+use libseccomp::ScmpAction::{Allow, Errno, KillProcess, KillThread, Log, Notify, Trace, Trap};
 use seccomp::seccomp::{Seccomp, SeccompProgramPlan};
 use std::fs;
 use std::io;
 use std::path::Path;
+use libseccomp::{ScmpAction, ScmpCompareOp};
+use anyhow::Error;
 
+pub fn convert_action(
+    action: LinuxSeccompAction,
+    option: Option<u32>,
+) -> Result<ScmpAction, Error> {
+    match action {
+        LinuxSeccompAction::ScmpActKill => Ok(KillProcess),
+        LinuxSeccompAction::ScmpActKillThread => Ok(KillThread),
+        LinuxSeccompAction::ScmpActKillProcess => Ok(KillProcess),
+        LinuxSeccompAction::ScmpActTrap => Ok(Trap),
+        LinuxSeccompAction::ScmpActErrno => Ok(Errno(option.unwrap() as i32)),
+        LinuxSeccompAction::ScmpActNotify => Ok(Notify),
+        LinuxSeccompAction::ScmpActTrace => Ok(Trace(option.unwrap() as u16)),
+        LinuxSeccompAction::ScmpActLog => Ok(Log),
+        LinuxSeccompAction::ScmpActAllow => Ok(Allow),
+    }
+}
+
+pub fn convert_operation(
+    op: LinuxSeccompOperator,
+    value: Option<u64>,
+) -> Result<ScmpCompareOp, Error> {
+    match op {
+        LinuxSeccompOperator::ScmpCmpNe => Ok(ScmpCompareOp::NotEqual),
+        LinuxSeccompOperator::ScmpCmpLt => Ok(ScmpCompareOp::Less),
+        LinuxSeccompOperator::ScmpCmpLe => Ok(ScmpCompareOp::LessOrEqual),
+        LinuxSeccompOperator::ScmpCmpEq => Ok(ScmpCompareOp::Equal),
+        LinuxSeccompOperator::ScmpCmpGe => Ok(ScmpCompareOp::GreaterEqual),
+        LinuxSeccompOperator::ScmpCmpGt => Ok(ScmpCompareOp::Greater),
+        LinuxSeccompOperator::ScmpCmpMaskedEq => Ok(ScmpCompareOp::MaskedEqual(value.unwrap())),
+    }
+}
 pub fn read_seccomp_testdata(file_path: &Path) -> Result<LinuxSeccomp, io::Error> {
     let contents = fs::read_to_string(file_path)?;
     let seccomp: LinuxSeccomp = serde_json::from_str(&contents)?;

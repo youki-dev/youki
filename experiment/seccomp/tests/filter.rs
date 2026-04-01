@@ -81,7 +81,8 @@ async fn handle_signal(pid: nix::unistd::Pid) -> Result<()> {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+#[test]
+async fn filter() -> Result<()> {
     let (sock_for_child, sock_for_parent) = socket::socketpair(
         socket::AddressFamily::Unix,
         SockType::Stream,
