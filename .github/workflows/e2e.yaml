@@ -56,8 +56,10 @@ jobs:
         with:
           go-version: '1.20.12'
           cache: true
+      - name: Add CRIU PPA
+        run: sudo add-apt-repository -y ppa:criu/ppa
       - run: sudo apt-get -y update
-      - run: sudo apt-get install -y pkg-config libsystemd-dev libelf-dev libseccomp-dev btrfs-progs libbtrfs-dev
+      - run: sudo apt-get install -y pkg-config libsystemd-dev libelf-dev libseccomp-dev btrfs-progs libbtrfs-dev criu
       - name: Build containerd
         run: |
           make build
@@ -76,7 +78,11 @@ jobs:
           sudo cp youki /usr/bin/runc
           runc --version
       - name: Integration Test
-        run: sudo make RUNC_FLAVOR=crun TEST_RUNTIME=io.containerd.runc.v2 TESTFLAGS="-timeout 40m" integration
+        run: |
+          # The following tests are skipped because youki does not yet support
+          # checkpoint/restore functionality.
+          # TODO: https://github.com/youki-dev/youki/issues/142
+          sudo make RUNC_FLAVOR=crun TEST_RUNTIME=io.containerd.runc.v2 TESTFLAGS="-timeout 40m -skip TestCheckpoint" integration
 
   k8s-tests:
     runs-on: ubuntu-24.04
