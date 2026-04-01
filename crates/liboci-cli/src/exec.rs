@@ -16,6 +16,7 @@ pub struct Exec {
     /// Environment variables that should be set in the container
     #[clap(short, long, value_parser = parse_env::<String, String>, number_of_values = 1)]
     pub env: Vec<(String, String)>,
+    /// Allocate a pseudo-TTY for the process
     #[clap(short, long)]
     pub tty: bool,
     /// Run the command as a user
@@ -54,7 +55,7 @@ pub struct Exec {
     /// Execute a process in a sub-cgroup
     #[clap(long)]
     pub cgroup: Option<String>,
-    /// Identifier of the container
+    /// Container identifier
     #[clap(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
     pub container_id: String,
     /// Command that should be executed in the container

@@ -27,7 +27,7 @@ pub struct Run {
     /// Pass N additional file descriptors to the container (stdio + $LISTEN_FDS + N in total)
     #[clap(long, default_value = "0")]
     pub preserve_fds: i32,
-    // Keep container's state directory and cgroup
+    /// Keep container's state directory and cgroup after the container exits
     #[clap(long)]
     pub keep: bool,
     /// name of the container instance to be started
