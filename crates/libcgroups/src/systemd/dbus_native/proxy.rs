@@ -104,10 +104,9 @@ impl<'conn> Proxy<'conn> {
             let mut ctr = 0;
             let message = String::deserialize(&msg.body, &mut ctr)?;
 
-            // to check if error is EBUSY at process/container_intermediate_process.rs:262,
-            // we check the ErrorName header and switch error type
-            // see https://github.com/youki-dev/youki/issues/3342
-            const EBUSY_ERROR_NAME: &str = "System.Error.EBUSY";
+            // To check if error is EBUSY in the intermediate_process, detect EBUSY via the
+            // ErrorName header and map it to the more specific error type.
+            // See https://github.com/youki-dev/youki/issues/3342 for context.
             if let Some(error_name) = msg
                 .headers
                 .iter()
