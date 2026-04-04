@@ -262,11 +262,19 @@ fn setup_userns(
     Ok(())
 }
 
-fn is_ebusy<E: std::error::Error + Send + Sync + 'static>(err: &E) -> bool {
-    matches!(
-      (err as &(dyn  std::error::Error + 'static)).downcast_ref::<libcgroups::common::AnyManagerError>(),
-        Some(libcgroups::common::AnyManagerError::Systemd(e)) if e.is_ebusy()
-    )
+fn is_ebusy<E: std::error::Error + Send + Sync + 'static>(_err: &E) -> bool {
+    #[cfg(not(feature = "systemd"))]
+    {
+        false
+    }
+
+    #[cfg(feature = "systemd")]
+    {
+        matches!(
+          (_err as &(dyn  std::error::Error + 'static)).downcast_ref::<libcgroups::common::AnyManagerError>(),
+            Some(libcgroups::common::AnyManagerError::Systemd(e)) if e.is_ebusy()
+        )
+    }
 }
 
 fn apply_cgroups<
