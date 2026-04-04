@@ -1,26 +1,20 @@
-use seccomp::seccomp::{NotifyFd, Seccomp};
-
 use std::io::{IoSlice, IoSliceMut};
 use std::os::fd::{IntoRawFd, OwnedFd};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::slice;
 
 use anyhow::Result;
-use nix::{
-    sys::{
-        signal::Signal,
-        socket::{
-            self, ControlMessage, ControlMessageOwned, MsgFlags, SockFlag, SockType, UnixAddr,
-        },
-        stat::Mode,
-        wait::{self, WaitStatus},
-    },
-    unistd::{close, mkdir},
+use nix::sys::signal::Signal;
+use nix::sys::socket::{
+    self, ControlMessage, ControlMessageOwned, MsgFlags, SockFlag, SockType, UnixAddr,
 };
+use nix::sys::stat::Mode;
+use nix::sys::wait::{self, WaitStatus};
+use nix::unistd::{close, mkdir};
 use oci_spec::runtime::{
     Arch as OciSpecArch, LinuxSeccompAction, LinuxSeccompBuilder, LinuxSyscallBuilder,
 };
-use seccomp::seccomp::SeccompProgramPlan;
+use seccomp::seccomp::{NotifyFd, Seccomp, SeccompProgramPlan};
 use syscall_numbers::x86_64;
 
 fn send_fd<F: AsRawFd>(sock: OwnedFd, fd: &F) -> nix::Result<()> {

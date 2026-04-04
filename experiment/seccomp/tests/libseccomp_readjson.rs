@@ -1,7 +1,8 @@
-use libseccomp::*;
-use oci_spec::runtime::LinuxSeccompOperator;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+
+use libseccomp::*;
+use oci_spec::runtime::LinuxSeccompOperator;
 
 #[path = "./helpers/mod.rs"]
 mod utils;
@@ -14,13 +15,14 @@ fn read_json() -> anyhow::Result<()> {
     if let Some(seccomp_syscalls) = seccomp.syscalls() {
         for linux_syscall in seccomp_syscalls {
             let mut filter = ScmpFilterContext::new(
-                utils::convert_action(seccomp.default_action(), seccomp.default_errno_ret()).unwrap(),
+                utils::convert_action(seccomp.default_action(), seccomp.default_errno_ret())
+                    .unwrap(),
             )?;
             filter.add_arch(ScmpArch::Native)?;
 
             let action = utils::convert_action(linux_syscall.action(), linux_syscall.errno_ret())?;
-            let mut has_args: bool = false; 
-			for syscall in linux_syscall.names().iter() {
+            let mut has_args: bool = false;
+            for syscall in linux_syscall.names().iter() {
                 let scmp_syscall = ScmpSyscall::from_name(syscall)?;
                 if let Some(args) = linux_syscall.args() {
                     has_args = true;
@@ -50,11 +52,11 @@ fn read_json() -> anyhow::Result<()> {
 
             let mut buffer = Vec::new();
             read_handle.read_to_end(&mut buffer)?;
-			if has_args {
-				println!("--- test case {} with args---", cnt);
-			} else {
-            	println!("--- test case {}---", cnt);
-			}
+            if has_args {
+                println!("--- test case {} with args---", cnt);
+            } else {
+                println!("--- test case {}---", cnt);
+            }
             for chunk in buffer.chunks(8) {
                 if chunk.len() == 8 {
                     let code = u16::from_le_bytes([chunk[0], chunk[1]]);

@@ -1,12 +1,16 @@
-use oci_spec::runtime::{Arch as OciSpecArch, LinuxSeccomp, LinuxSeccompAction, LinuxSeccompBuilder, LinuxSeccompOperator, LinuxSyscall, LinuxSyscallBuilder};
-use libseccomp::ScmpAction::{Allow, Errno, KillProcess, KillThread, Log, Notify, Trace, Trap};
-use seccomp::seccomp::{Seccomp, SeccompProgramPlan};
-use std::fs;
-use std::io;
 use std::path::Path;
-use libseccomp::{ScmpAction, ScmpCompareOp};
-use anyhow::Error;
+use std::{fs, io};
 
+use anyhow::Error;
+use libseccomp::ScmpAction::{Allow, Errno, KillProcess, KillThread, Log, Notify, Trace, Trap};
+use libseccomp::{ScmpAction, ScmpCompareOp};
+use oci_spec::runtime::{
+    Arch as OciSpecArch, LinuxSeccomp, LinuxSeccompAction, LinuxSeccompBuilder,
+    LinuxSeccompOperator, LinuxSyscall, LinuxSyscallBuilder,
+};
+use seccomp::seccomp::{Seccomp, SeccompProgramPlan};
+
+#[allow(dead_code)]
 pub fn convert_action(
     action: LinuxSeccompAction,
     option: Option<u32>,
@@ -24,6 +28,7 @@ pub fn convert_action(
     }
 }
 
+#[allow(dead_code)]
 pub fn convert_operation(
     op: LinuxSeccompOperator,
     value: Option<u64>,
@@ -44,6 +49,7 @@ pub fn read_seccomp_testdata(file_path: &Path) -> Result<LinuxSeccomp, io::Error
     Ok(seccomp)
 }
 
+#[allow(dead_code)]
 pub fn generate_seccomp_instruction(file_path: &Path) -> anyhow::Result<()> {
     let seccomp = read_seccomp_testdata(file_path)?;
     let mut cnt = 0;

@@ -1,5 +1,7 @@
+use std::mem::offset_of;
+use std::os::raw::c_int;
+
 use crate::seccomp::SeccompError;
-use std::{mem::offset_of, os::raw::c_int};
 
 // BPF Instruction classes.
 // See /usr/include/linux/bpf_common.h .

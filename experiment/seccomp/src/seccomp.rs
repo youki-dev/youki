@@ -1,32 +1,24 @@
-use crate::instruction::*;
-use crate::instruction::{Arch, Instruction, SECCOMP_IOC_MAGIC};
-use anyhow::Result;
 use core::fmt;
+use std::mem::MaybeUninit;
+use std::os::raw::{c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void};
+use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
+use std::str::FromStr;
+
+use anyhow::Result;
 use derive_builder::Builder;
+use nix::errno::Errno;
 use nix::libc::{
-    SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_SPEC_ALLOW, SECCOMP_FILTER_FLAG_TSYNC,
-    SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV,
+    SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_NEW_LISTENER, SECCOMP_FILTER_FLAG_SPEC_ALLOW,
+    SECCOMP_FILTER_FLAG_TSYNC, SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV, SECCOMP_SET_MODE_FILTER,
 };
-use nix::{
-    errno::Errno,
-    ioctl_readwrite, ioctl_write_ptr, libc,
-    libc::{SECCOMP_FILTER_FLAG_NEW_LISTENER, SECCOMP_SET_MODE_FILTER},
-    unistd,
-};
+use nix::{ioctl_readwrite, ioctl_write_ptr, libc, unistd};
 use oci_spec::runtime::{
     Arch as OciSpecArch, LinuxSeccomp, LinuxSeccompAction, LinuxSeccompFilterFlag,
     LinuxSeccompOperator,
 };
-use std::os::raw::c_uchar;
-use std::str::FromStr;
-use std::{
-    mem::MaybeUninit,
-    os::{
-        raw::{c_long, c_uint, c_ulong, c_ushort, c_void},
-        unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd},
-    },
-};
 use syscalls::{SyscallArgs, syscall_args};
+
+use crate::instruction::{Arch, Instruction, SECCOMP_IOC_MAGIC, *};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SeccompError {
@@ -203,8 +195,9 @@ impl<'f> fmt::Debug for Notification<'f> {
     }
 }
 
+#[warn(mismatched_lifetime_syntaxes)]
 impl NotifyFd {
-    pub fn recv(&self) -> nix::Result<Notification> {
+    pub fn recv(&self) -> nix::Result<Notification<'_>> {
         let mut res = MaybeUninit::zeroed();
         let notif = unsafe {
             seccomp_notif_ioctl_recv(self.fd, res.as_mut_ptr())?;
@@ -216,7 +209,7 @@ impl NotifyFd {
 }
 
 unsafe fn seccomp(op: c_uint, flags: c_ulong, args: *mut c_void) -> c_long {
-    libc::syscall(libc::SYS_seccomp, op, flags, args)
+    unsafe { libc::syscall(libc::SYS_seccomp, op, flags, args) }
 }
 
 #[repr(C)]

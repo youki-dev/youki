@@ -1,7 +1,8 @@
-use crate::instruction::Instruction;
-use crate::instruction::*;
-use nix::errno::Errno::ENOSYS;
 use std::os::raw::c_uchar;
+
+use nix::errno::Errno::ENOSYS;
+
+use crate::instruction::{Instruction, *};
 
 #[derive(PartialEq, Debug, Default)]
 pub enum Arch {
