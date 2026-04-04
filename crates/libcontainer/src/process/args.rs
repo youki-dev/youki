@@ -16,7 +16,7 @@ pub enum ContainerType {
     InitContainer,
     TenantContainer {
         exec_notify_fd: RawFd,
-        parent_init_pid: Option<Pid>,
+        landlord_init_pid: Option<Pid>,
     },
 }
 

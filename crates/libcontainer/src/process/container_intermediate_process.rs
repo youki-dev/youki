@@ -283,22 +283,23 @@ fn apply_cgroups<
 
             if let ContainerType::TenantContainer {
                 exec_notify_fd: _,
-                parent_init_pid,
+                landlord_init_pid,
             } = container_type
-                && let Some(parent_init_pid) = parent_init_pid
-                && let Some(parent_proc_cgroup) =
+                && let Some(landlord_init_pid) = landlord_init_pid
+                && let Some(landlord_init_proc_cgroup) =
                     ProcessCGroups::from_read(ProcfsHandle::new()?.open(
-                        ProcfsBase::ProcPid(parent_init_pid.as_raw() as u32),
+                        ProcfsBase::ProcPid(landlord_init_pid.as_raw() as u32),
                         "cgroup",
                         OpenFlags::O_RDONLY | OpenFlags::O_CLOEXEC,
                     )?)?
                     .into_iter()
                     .find(|c| c.controllers.is_empty())
-                && let Some(parent_init_cgroup) = parent_proc_cgroup.pathname.strip_prefix("/")
+                && let Some(landlord_init_proc_cgroup_path) =
+                    landlord_init_proc_cgroup.pathname.strip_prefix("/")
             {
                 libcgroups::common::write_cgroup_file(
                     Path::new(libcgroups::common::DEFAULT_CGROUP_ROOT)
-                        .join(Path::new(parent_init_cgroup))
+                        .join(Path::new(landlord_init_proc_cgroup_path))
                         .join(libcgroups::common::CGROUP_PROCS),
                     pid,
                 )
