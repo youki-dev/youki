@@ -115,7 +115,7 @@ impl<'conn> Proxy<'conn> {
                     HeaderValue::String(s) => Some(s.as_str()),
                     _ => None,
                 })
-                && error_name == EBUSY_ERROR_NAME
+                && error_name == ERROR_NAME_EBUSY
             {
                 return Err(DbusError::DeviceOrResourceBusy(message).into());
             }
