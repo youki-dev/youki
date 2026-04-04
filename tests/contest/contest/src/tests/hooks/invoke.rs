@@ -14,11 +14,17 @@ use crate::utils::{
 const STATE_WAIT_TIMEOUT_SECS: u64 = 5;
 const STATE_POLL_INTERVAL_MILLIS: u64 = 100;
 
-fn get_hook_output_path(bundle: &tempfile::TempDir) -> PathBuf {
-    bundle.as_ref().join("bundle").join("rootfs").join("output")
+const HOOK_OUTPUT_FILE: &str = "output";
+
+pub fn get_hook_output_path(bundle: &tempfile::TempDir) -> PathBuf {
+    bundle
+        .as_ref()
+        .join("bundle")
+        .join("rootfs")
+        .join(HOOK_OUTPUT_FILE)
 }
 
-fn delete_hook_output_file(path: &Path) -> anyhow::Result<()> {
+pub fn delete_hook_output_file(path: &Path) -> anyhow::Result<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -26,7 +32,7 @@ fn delete_hook_output_file(path: &Path) -> anyhow::Result<()> {
     }
 }
 
-fn write_log_hook(content: &str, host_output_file_path: &str) -> Hook {
+pub fn write_log_hook(content: &str, host_output_file_path: &str) -> Hook {
     HookBuilder::default()
         .path("/bin/sh")
         .args(vec![
