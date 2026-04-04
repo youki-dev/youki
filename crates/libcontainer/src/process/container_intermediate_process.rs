@@ -262,6 +262,13 @@ fn setup_userns(
     Ok(())
 }
 
+fn is_ebusy<E: std::error::Error + Send + Sync + 'static>(err: &E) -> bool {
+    matches!(
+      (err as &(dyn  std::error::Error + 'static)).downcast_ref::<libcgroups::common::AnyManagerError>(),
+        Some(libcgroups::common::AnyManagerError::Systemd(e)) if e.is_ebusy()
+    )
+}
+
 fn apply_cgroups<
     C: libcgroups::common::CgroupManager<Error = E> + ?Sized,
     E: std::error::Error + Send + Sync + 'static,
@@ -274,7 +281,7 @@ fn apply_cgroups<
 
     let pid = getpid();
     if let Err(err) = cmanager.add_task(pid) {
-        if !init && err.to_string().contains("Device or resource busy") {
+        if !init && is_ebusy(&err) {
             // If adding the process to the cgroup fails due to a "Device or resource busy" error,
             // manager tries to join the cgroup of the init process of the parent container.
             tracing::debug!(
@@ -372,7 +379,7 @@ mod tests {
             Some(&resources),
             ContainerType::TenantContainer {
                 exec_notify_fd: 0,
-                parent_init_pid: None,
+                landlord_init_pid: None,
             },
         )?;
 

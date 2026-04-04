@@ -15,7 +15,7 @@ use super::cpu::Cpu;
 use super::cpuset::CpuSet;
 use super::dbus_native::client::SystemdClient;
 use super::dbus_native::dbus::DbusConnection;
-use super::dbus_native::utils::SystemdClientError;
+use super::dbus_native::utils::{DbusError, SystemdClientError};
 use super::memory::Memory;
 use super::pids::Pids;
 use crate::common::{
@@ -176,6 +176,17 @@ pub enum SystemdManagerError {
     Pids(Infallible),
     #[error("in pids unified controller: {0}")]
     Unified(#[from] super::unified::SystemdUnifiedError),
+}
+
+impl SystemdManagerError {
+    pub fn is_ebusy(&self) -> bool {
+        matches!(
+            self,
+            SystemdManagerError::SystemdClient(SystemdClientError::DBus(
+                DbusError::DeviceOrResourceBusy(_)
+            ))
+        )
+    }
 }
 
 impl Manager {
