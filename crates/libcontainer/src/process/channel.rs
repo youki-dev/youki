@@ -9,9 +9,15 @@ use crate::process::message::{Message, MountMsg};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ChannelError {
-    #[error("received unexpected message: {received:?}, expected: {expected:?}")]
+    #[error(
+        "received unexpected message: {received:?}{expected_suffix}",
+        expected_suffix = .expected
+            .as_ref()
+            .map(|msg| format!(", expected: {msg:?}"))
+            .unwrap_or_default()
+    )]
     UnexpectedMessage {
-        expected: Box<Message>,
+        expected: Option<Box<Message>>,
         received: Box<Message>,
     },
     #[error("failed to receive. {msg:?}. {source:?}")]
@@ -141,7 +147,7 @@ impl MainReceiver {
             Message::ExecFailed(err) => Err(ChannelError::ExecError(err)),
             Message::OtherError(err) => Err(ChannelError::OtherError(err)),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Box::new(Message::IntermediateReady(0)),
+                expected: Some(Box::new(Message::IntermediateReady(0))),
                 received: Box::new(msg),
             }),
         }
@@ -158,7 +164,7 @@ impl MainReceiver {
         match msg {
             Message::WriteMapping => Ok(()),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Box::new(Message::WriteMapping),
+                expected: Some(Box::new(Message::WriteMapping)),
                 received: Box::new(msg),
             }),
         }
@@ -176,11 +182,7 @@ impl MainReceiver {
         match msg {
             Message::MountFdPlease(req) => Ok(req),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Box::new(Message::MountFdPlease(MountMsg {
-                    source: String::new(),
-                    idmap: None,
-                    recursive: false,
-                })),
+                expected: None,
                 received: Box::new(msg),
             }),
         }
@@ -218,7 +220,7 @@ impl MainReceiver {
                 Ok(fd)
             }
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Box::new(Message::SeccompNotify),
+                expected: Some(Box::new(Message::SeccompNotify)),
                 received: Box::new(msg),
             }),
         }
@@ -235,7 +237,7 @@ impl MainReceiver {
         match msg {
             Message::SetupNetworkDeviceReady => Ok(()),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Box::new(Message::SetupNetworkDeviceReady),
+                expected: Some(Box::new(Message::SetupNetworkDeviceReady)),
                 received: Box::new(msg),
             }),
         }
@@ -258,7 +260,7 @@ impl MainReceiver {
                 "error in executing process : {err}"
             ))),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Box::new(Message::InitReady),
+                expected: Some(Box::new(Message::InitReady)),
                 received: Box::new(msg),
             }),
         }
@@ -275,7 +277,7 @@ impl MainReceiver {
         match msg {
             Message::HookRequest => Ok(()),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Box::new(Message::HookRequest),
+                expected: Some(Box::new(Message::HookRequest)),
                 received: Box::new(msg),
             }),
         }
@@ -333,7 +335,7 @@ impl IntermediateReceiver {
         match msg {
             Message::MappingWritten => Ok(()),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Box::new(Message::MappingWritten),
+                expected: Some(Box::new(Message::MappingWritten)),
                 received: Box::new(msg),
             }),
         }
@@ -411,7 +413,7 @@ impl InitReceiver {
         match msg {
             Message::SeccompNotifyDone => Ok(()),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Box::new(Message::SeccompNotifyDone),
+                expected: Some(Box::new(Message::SeccompNotifyDone)),
                 received: Box::new(msg),
             }),
         }
@@ -430,7 +432,7 @@ impl InitReceiver {
         match msg {
             Message::MoveNetworkDevice(addr) => Ok(addr),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Box::new(Message::WriteMapping),
+                expected: Some(Box::new(Message::WriteMapping)),
                 received: Box::new(msg),
             }),
         }
@@ -447,7 +449,7 @@ impl InitReceiver {
         match msg {
             Message::HookDone => Ok(()),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Box::new(Message::HookDone),
+                expected: Some(Box::new(Message::HookDone)),
                 received: Box::new(msg),
             }),
         }
@@ -477,7 +479,7 @@ impl InitReceiver {
             }
             Message::MountFdError(err) => Err(ChannelError::MountFdError(err)),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Box::new(Message::MountFdReply),
+                expected: Some(Box::new(Message::MountFdReply)),
                 received: Box::new(msg),
             }),
         }
@@ -610,6 +612,34 @@ mod tests {
         sender.send(Message::MountFdReply)?;
         let err = receiver.wait_for_mount_fd_reply().unwrap_err();
         assert!(matches!(err, ChannelError::MissingMountFds));
+
+        sender.close()?;
+        receiver.close()?;
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_channel_mount_fd_request() -> Result<()> {
+        let (sender, receiver) = &mut main_channel()?;
+        let request = MountMsg {
+            source: "/proc/self/ns/user".to_string(),
+            idmap: Some(crate::process::message::MountIdMap {
+                uid_mappings: vec![],
+                gid_mappings: vec![],
+                recursive: true,
+            }),
+        };
+
+        sender.request_mount_fd(request.clone())?;
+        let received = receiver.wait_for_mount_fd_request()?;
+
+        assert_eq!(received.source, request.source);
+        let received_idmap = received.idmap.context("missing idmap in mount request")?;
+        let request_idmap = request.idmap.context("missing idmap in mount request")?;
+        assert_eq!(received_idmap.recursive, request_idmap.recursive);
+        assert_eq!(received_idmap.uid_mappings, request_idmap.uid_mappings);
+        assert_eq!(received_idmap.gid_mappings, request_idmap.gid_mappings);
 
         sender.close()?;
         receiver.close()?;

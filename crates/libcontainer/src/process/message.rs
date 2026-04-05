@@ -52,7 +52,6 @@ impl fmt::Display for Message {
 pub struct MountMsg {
     pub source: String,
     pub idmap: Option<MountIdMap>,
-    pub recursive: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
