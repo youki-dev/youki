@@ -1145,8 +1145,8 @@ mod tests {
             );
 
             let want = vec![MountArgs {
-                source: Some(tmp_dir.path().join("null")),
-                target: tmp_dir.path().join("dev/null"),
+                source: Some(tmp_dir.path().join("tmp.sock")),
+                target: tmp_dir.path().join("tmp.sock"),
                 fstype: Some("bind".to_string()),
                 flags: MsFlags::empty(),
                 data: Some("".to_string()),
