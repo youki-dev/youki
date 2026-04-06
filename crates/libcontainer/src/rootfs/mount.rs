@@ -1022,9 +1022,9 @@ pub fn find_parent_mount(
 mod tests {
     #[cfg(feature = "v1")]
     use std::fs;
-    use std::fs::OpenOptions;
     use std::os::unix::fs::symlink;
     use std::str::FromStr;
+    use std::{fs::OpenOptions, os::unix::net::UnixListener};
 
     use anyhow::{Context, Ok, Result};
 
@@ -1117,6 +1117,39 @@ mod tests {
                     data: None,
                 },
             ];
+            let got = &m
+                .syscall
+                .as_any()
+                .downcast_ref::<TestHelperSyscall>()
+                .unwrap()
+                .get_mount_args();
+            assert_eq!(want, *got);
+            assert_eq!(got.len(), 2);
+        }
+        {
+            // Socket file bind-mount
+            // https://github.com/youki-dev/youki/issues/3483
+            let m = Mount::new();
+            let mount = &SpecMountBuilder::default()
+                .destination(PathBuf::from("/tmp.sock"))
+                .typ("bind")
+                .source(tmp_dir.path().join("tmp.sock"))
+                .build()?;
+            let mount_option_config = parse_mount(mount)?;
+            UnixListener::bind(tmp_dir.path().join("tmp.sock"))?;
+
+            assert!(
+                m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
+                    .is_ok()
+            );
+
+            let want = vec![MountArgs {
+                source: Some(tmp_dir.path().join("null")),
+                target: tmp_dir.path().join("dev/null"),
+                fstype: Some("bind".to_string()),
+                flags: MsFlags::empty(),
+                data: Some("".to_string()),
+            }];
             let got = &m
                 .syscall
                 .as_any()
