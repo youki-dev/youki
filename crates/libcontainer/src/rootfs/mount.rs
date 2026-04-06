@@ -1022,9 +1022,10 @@ pub fn find_parent_mount(
 mod tests {
     #[cfg(feature = "v1")]
     use std::fs;
+    use std::fs::OpenOptions;
     use std::os::unix::fs::symlink;
+    use std::os::unix::net::UnixListener;
     use std::str::FromStr;
-    use std::{fs::OpenOptions, os::unix::net::UnixListener};
 
     use anyhow::{Context, Ok, Result};
 
