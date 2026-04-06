@@ -595,7 +595,9 @@ impl Mount {
                 err
             })?;
 
-            if src.is_file() {
+            if src.is_dir() {
+                root.mkdir_all(container_dest, &dir_perm)?;
+            } else {
                 let parent = container_dest
                     .parent()
                     .ok_or(MountError::Custom("destination has no parent".to_string()))?;
@@ -616,8 +618,6 @@ impl Mount {
                         .map(|_| ())
                         .map_err(|_| create_err),
                 }?;
-            } else {
-                root.mkdir_all(container_dest, &dir_perm)?;
             };
 
             src
