@@ -55,11 +55,9 @@ pub struct Exec {
     /// Execute a process in a sub-cgroup
     #[clap(long)]
     pub cgroup: Option<String>,
-
     /// Container identifier
     #[clap(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
     pub container_id: String,
-
     /// Command that should be executed in the container
     #[clap(required = false, trailing_var_arg = true)]
     pub command: Vec<String>,
