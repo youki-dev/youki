@@ -687,7 +687,7 @@ impl Rule {
                     (rule.args.unwrap().arg0 >> 32) as c_uint,
                 ));
 
-                // lower 32bit check of
+                // lower 32bit check of args
                 bpf_prog.push(Instruction::stmt(BPF_LD | BPF_W | BPF_ABS, offset.into()));
                 bpf_prog.push(Instruction::jump(
                     BPF_JSET | BPF_K,
@@ -769,7 +769,7 @@ mod tests {
 
     #[test]
     fn test_build_instruction_with_args_x86_equal() {
-        let persolality = get_syscall_number(&Arch::X86, "personality").unwrap();
+        let personality = get_syscall_number(&Arch::X86, "personality").unwrap();
         let personality_args: SyscallArgs = SyscallArgs {
             arg0: 8,
             arg1: 0,
@@ -779,20 +779,20 @@ mod tests {
             arg5: 0,
         };
         let rule = RuleBuilder::default()
-            .syscall(vec![persolality])
+            .syscall(vec![personality])
             .action(SECCOMP_RET_ALLOW)
-            .check_arg_syscall(vec![persolality])
+            .check_arg_syscall(vec![personality])
             .arg_cnt(1)
             .args(Option::from(personality_args))
             .op(Option::from(SeccompCompareOp::Equal))
             .build()
             .expect("failed to build rule");
         let offset = seccomp_data_args_offset(rule.arg_cnt.unwrap()).unwrap();
-        let inst = Rule::build_instruction_with_args(&rule, &persolality).unwrap();
+        let inst = Rule::build_instruction_with_args(&rule, &personality).unwrap();
 
         assert_eq!(
             inst[0],
-            Instruction::jump(BPF_JEQ | BPF_K, 0, 4, persolality as c_uint)
+            Instruction::jump(BPF_JEQ | BPF_K, 0, 4, personality as c_uint)
         );
         assert_eq!(
             inst[1],
