@@ -22,6 +22,13 @@ nix = { version = "0.29.0", features = [
 thiserror = "1.0.57"
 prctl = "1.0.0"
 anyhow = "1.0"
-tokio = { version = "1", features = ["full"] }
 syscall-numbers = "3.1.1"
 syscalls = { version = "0.6.18", features = ["std", "serde", "aarch64", "x86_64"]}
+oci-spec = { version = "0.9.0", features = ["runtime"] }
+serde_json = "1.0.138"
+derive_builder = "0.20.2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+libseccomp = "0.4.0"
+tempfile = "3.27.0"
