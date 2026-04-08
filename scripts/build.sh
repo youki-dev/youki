@@ -57,6 +57,9 @@ case "$TARGET" in
     amd64|x86_64)
         TARGET="x86_64-unknown-linux-musl"
         ;;
+    ppc64le)
+        TARGET="powerpc64le-unknown-linux-gnu"
+        ;;
 esac
 
 FEATURES=()
