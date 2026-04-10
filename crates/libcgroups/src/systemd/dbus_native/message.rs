@@ -88,6 +88,8 @@ impl HeaderKind {
     }
 }
 
+pub const ERROR_NAME_EBUSY: &str = "System.Error.EBUSY";
+
 // This is separated from header kind, because I wanted
 // HeaderKind to be u8 like directly comparable, passable thing
 #[derive(Debug, PartialEq, Eq)]

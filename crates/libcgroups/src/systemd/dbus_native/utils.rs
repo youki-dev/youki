@@ -38,6 +38,8 @@ pub enum DbusError {
     DeserializationError(String),
     #[error("dbus function call error: {0}")]
     MethodCallErr(String),
+    #[error("dbus resource busy error: {0}")]
+    DeviceOrResourceBusy(String),
     #[error("dbus bus address error: {0}")]
     BusAddressError(String),
     #[error("dbus busctl error")]
