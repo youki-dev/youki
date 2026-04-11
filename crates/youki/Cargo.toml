@@ -21,6 +21,12 @@ seccomp = ["libcontainer/libseccomp"]
 wasm-wasmer = ["wasmer", "wasmer-wasix"]
 wasm-wasmedge = ["wasmedge-sdk/standalone", "wasmedge-sdk/static"]
 wasm-wasmtime = ["wasmtime", "wasi-common"]
+libkrun = ["libloading", "thiserror", "pathrs"]
+
+[dependencies.clap]
+version = "4.5.13"
+default-features = false
+features = ["std", "suggestions", "derive", "cargo", "help", "usage", "error-context"]
 
 [dependencies]
 clap = { workspace = true, features = ["std", "suggestions", "derive", "cargo", "help", "usage", "error-context"] }
