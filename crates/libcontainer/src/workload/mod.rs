@@ -62,6 +62,13 @@ pub trait CloneBoxExecutor {
     fn clone_box(&self) -> Box<dyn Executor>;
 }
 
+/// Trait for executor operations that run on the host side before the
+/// container process is created.
+///
+/// This is separated from ContainerExecutor because the two traits are
+/// invoked in different execution contexts: HostExecutor methods run in the
+/// host process during container setup, while ContainerExecutor methods run
+/// in the container process.
 pub trait HostExecutor {
     /// Adjusts an oci spec on the host before container execution.
     fn modify_spec(&self, spec: Spec) -> Result<Spec, ExecutorError> {
@@ -69,6 +76,10 @@ pub trait HostExecutor {
     }
 }
 
+/// Trait for executor operations that run in the container process.
+///
+/// See HostExecutor for the corresponding host-side operations that run
+/// before the container process is created.
 pub trait ContainerExecutor {
     /// Executes the workload
     fn exec(&self, spec: &Spec) -> Result<(), ExecutorError>;

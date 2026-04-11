@@ -1,4 +1,4 @@
-# Libkrun
+# VM Support (libkrun)
 
 youki can launch microVM-based containers by dynamically loading the libkrun shared library. Here, we describe how to launch a container with youki using libkrun.
 
@@ -18,7 +18,7 @@ Run `build.sh` with `-f libkrun` option.
 
 ## Prepare KVM on the host
 
-Libkrun uses KVM to start a microVM.
+libkrun uses KVM to start a microVM.
 Therefore, KVM must be enabled on the host.
 
 Verify that the KVM kernel modules are loaded.
@@ -32,13 +32,13 @@ irqbypass              12288  1 kvm
 
 ## Install libkrun and libkrunfw
 
-To use libkrun with youki, you need to install libkrun and libkrunfw in advance.
+To use youki with libkrun, you need to install libkrun and libkrunfw in advance.
 
 Please follow the official installation instructions:
 - libkrun: [Building and installing](https://github.com/containers/libkrun?tab=readme-ov-file#building-and-installing)
 - libkrunfw: [Building](https://github.com/containers/libkrunfw?tab=readme-ov-file#building)
 
-## Run container with youki
+## Run a container with youki
 
 ### Edit config.json
 
@@ -54,9 +54,10 @@ Update the following top-level annotations:
 
 ### Run
 
+Make sure `libkrun` and `libkrunfw` are available in the library path. For example:
+
 ```bash
-ls /usr/local/lib64 
-libkrun.so  libkrun.so.1  libkrun.so.1.17.0  libkrunfw.so  libkrunfw.so.5  libkrunfw.so.5.1.0  pkgconfig
+ls /usr/local/lib64/libkrun.so* /usr/local/lib64/libkrunfw.so*
 ```
 
 Run the command with LD_LIBRARY_PATH set.
@@ -65,7 +66,7 @@ Run the command with LD_LIBRARY_PATH set.
 LD_LIBRARY_PATH=/usr/local/lib64 youki run -b tutorial container
 ```
 
-### Keys
+### Configuration
 
 You can configure the libkrun handler via the following annotations:
 
@@ -95,3 +96,7 @@ You can configure the libkrun handler via the following annotations:
   * otherwise => `"trace"`
 
 * `krun.libkrun.path`: Path to the libkrun shared library
+
+## Limitations
+
+* `exec` is not supported
