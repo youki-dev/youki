@@ -40,10 +40,11 @@ struct Krun {
 }
 
 impl Krun {
-    fn load(libkrun_path: String) -> Result<Self, ExecutorError> {
+    fn load<P: AsRef<Path>>(libkrun_path: P) -> Result<Self, ExecutorError> {
+        let libkrun_path = libkrun_path.as_ref();
         unsafe {
-            let lib = Library::new(&libkrun_path)
-                .map_err(|e| ExecutorError::Other(format!("load {libkrun_path}: {e}")))?;
+            let lib = Library::new(libkrun_path)
+                .map_err(|e| ExecutorError::Other(format!("load {}: {e}", libkrun_path.display())))?;
             let krun_create_ctx = *lib
                 .get(b"krun_create_ctx")
                 .map_err(|e| ExecutorError::Other(format!("krun_create_ctx: {e}")))?;
