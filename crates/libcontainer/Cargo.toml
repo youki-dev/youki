@@ -38,7 +38,7 @@ nix = { version = "0.29.0", features = [
     "hostname",
     "personality",
 ] }
-oci-spec = { version = "0.9.0", features = ["runtime"] }
+oci-spec = { version = "~0.9.0", features = ["runtime"] }
 procfs = "0.17.0"
 prctl = "1.0.0"
 libcgroups = { path = "../libcgroups", default-features = false, version = "0.6.0" } # MARK: Version
