@@ -3,5 +3,62 @@ resolver = "2"
 members = ["crates/*", "tests/contest/*", "tools/*"]
 exclude = ["experiment/seccomp", "experiment/selinux"]
 
+[workspace.dependencies]
+anyhow = "1.0.102"
+caps = "0.5.6"
+chrono = { version = "0.4", default-features = false }
+clap = { version = "4.5.13", default-features = false }
+clap_complete = "4.5.13"
+crossbeam = "0.8.4"
+env_logger = "0.11"
+errno = "0.3.14"
+fastrand = "2.3.0"
+fixedbitset = "0.5.7"
+flate2 = "1.1"
+libbpf-sys = "1.6.4"
+libc = "0.2.184"
+liboci-cli = { version = "0.6.0", path = "crates/liboci-cli" }
+libseccomp = "0.4.0"
+mockall = "0.14.0"
+nc = "0.9.7"
+netlink-packet-core = "0.8.1"
+netlink-packet-route = "0.26.0"
+netlink-sys = "0.8.8"
+nix = "0.29.0"
+num_cpus = "1.17"
+oci-spec = "~0.9.0"
+pathrs = "0.2.4"
+pentacle = "1.1.0"
+pkg-config = "0.3.32"
+pnet_datalink = "0.35.0"
+prctl = "1.0.0"
+procfs = "0.17.0"
+quickcheck = "1"
+rand = "0.10.0"
+rbpf = "0.4.1"
+regex = { version = "1.12.3", default-features = false }
+rust-criu = "0.5.0"
+safe-path = "0.1.0"
+scopeguard = "1.2.0"
+serde = "1.0"
+serde_json = "1.0"
+serial_test = "3.4.0"
+tabwriter = "1"
+tar = "0.4"
+tempfile = "3"
+test_framework = { path = "tests/contest/test_framework" }
+thiserror = "2.0.18"
+tracing = "0.1.44"
+tracing-journald = "0.3.2"
+tracing-subscriber = "0.3.23"
+uuid = "1.23"
+vergen-gitcl = "9.1.0"
+wasi-common = "43.0.1"
+wasmedge-sdk = "0.14.0"
+wasmer = "7.0.1"
+wasmer-wasix = "0.700.1"
+wasmtime = "43.0.0"
+which = "8.0.2"
+
 [profile.release]
 lto = true

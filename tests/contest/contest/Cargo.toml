@@ -4,37 +4,25 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0"
-flate2 = "1.1"
+anyhow = { workspace = true }
+flate2 = { workspace = true }
 libcgroups = { path = "../../../crates/libcgroups" }
 libcontainer = { path = "../../../crates/libcontainer" }
-nix = "0.29.0"
-num_cpus = "1.17"
-oci-spec = { version = "0.9.0", features = ["runtime"] }
-pnet_datalink = "0.35.0"
-procfs = "0.17.0"
-rand = "0.10.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-tar = "0.4"
-test_framework = { path = "../test_framework" }
-uuid = "1.23"
-which = "8.0.2"
-tempfile = "3"
-thiserror = "2.0"
-tracing = { version = "0.1.44", features = ["attributes"] }
-tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
-regex = "1"
-
-[dependencies.clap]
-version = "4.5.13"
-default-features = false
-features = [
-    "std",
-    "suggestions",
-    "derive",
-    "cargo",
-    "help",
-    "usage",
-    "error-context",
-]
+nix = { workspace = true }
+num_cpus = { workspace = true }
+oci-spec = { workspace = true, features = ["runtime"] }
+pnet_datalink = { workspace = true }
+procfs = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tar = { workspace = true }
+test_framework = { workspace = true }
+uuid = { workspace = true }
+which = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true, features = ["attributes"] }
+tracing-subscriber = { workspace = true, features = ["json", "env-filter"] }
+regex = { workspace = true }
+clap = { workspace = true, features = ["std", "suggestions", "derive", "cargo", "help", "usage", "error-context"] }
