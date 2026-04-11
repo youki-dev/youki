@@ -72,6 +72,8 @@ pub enum LibcontainerError {
     NetworkError(#[from] crate::network::NetworkError),
     #[error(transparent)]
     IntelRdt(#[from] crate::process::intel_rdt::IntelRdtError),
+    #[error(transparent)]
+    Executor(#[from] crate::workload::ExecutorError),
 
     // Catch all errors that are not covered by the above
     #[error("syscall error")]
