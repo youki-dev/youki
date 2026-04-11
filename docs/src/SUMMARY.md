@@ -14,6 +14,7 @@
     - [libseccomp](./user/libseccomp.md)
   - [Webassembly](./user/webassembly.md)
   - [Kubernetes](./user/kubernetes.md)
+  - [Libkrun](./user/libkrun.md)
 
 ---
 
