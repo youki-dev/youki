@@ -67,6 +67,8 @@ impl InitContainerBuilder {
         let spec = self.load_spec()?;
         let container_dir = self.create_container_dir()?;
 
+        let spec = self.base.executor.modify_spec(spec)?;
+
         let mut container = self.create_container_state(&container_dir)?;
         container
             .set_systemd(self.use_systemd)
