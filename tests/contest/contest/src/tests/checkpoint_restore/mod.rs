@@ -394,6 +394,119 @@ fn checkpoint_pre_dump_bad_parent_path() -> TestResult {
     TestResult::Passed
 }
 
+// Test: checkpoint --pre-dump and restore
+// (runc: @test "checkpoint --pre-dump and restore")
+fn checkpoint_pre_dump_and_restore() -> TestResult {
+    let id = generate_uuid().to_string();
+    let bundle = prepare_bundle().unwrap();
+
+    let mut spec = oci_spec::runtime::Spec::default();
+    let mut process = oci_spec::runtime::Process::default();
+    process.set_args(Some(vec!["sleep".into(), "10".into()]));
+    spec.set_process(Some(process));
+    set_config(&bundle, &spec).unwrap();
+
+    let run_result = (|| -> anyhow::Result<()> {
+        let status = run_container(&id, &bundle)?.wait()?;
+        if !status.success() {
+            anyhow::bail!("run -d failed ({})", status);
+        }
+        wait_container_running(&id, &bundle)
+    })();
+    if let Err(e) = run_result {
+        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
+    }
+
+    let _guard = ContainerGuard {
+        bundle: &bundle,
+        id: &id,
+    };
+
+    let pre_dump_dir = bundle.path().join("pre-dump");
+    let final_dump_dir = bundle.path().join("final-dump");
+    if let Err(e) = std::fs::create_dir_all(&pre_dump_dir) {
+        return TestResult::Failed(anyhow!("failed to create pre-dump dir: {e}"));
+    }
+    if let Err(e) = std::fs::create_dir_all(&final_dump_dir) {
+        return TestResult::Failed(anyhow!("failed to create final-dump dir: {e}"));
+    }
+
+    // Execute pre-dump
+    let output1 = try_checkpoint_container(
+        bundle.path(),
+        &id,
+        &pre_dump_dir,
+        None,
+        &["--pre-dump"],
+        &[],
+    )
+    .unwrap();
+
+    if !output1.status.success() {
+        let stderr = String::from_utf8_lossy(&output1.stderr);
+        return TestResult::Failed(anyhow!("pre-dump checkpoint failed: {}", stderr));
+    }
+
+    // After pre-dump, container must still be running
+    if let Err(e) = wait_for_state(
+        &id,
+        &bundle,
+        WaitTarget::Status(LifecycleStatus::Running),
+        Duration::from_secs(5),
+        Duration::from_millis(100),
+    ) {
+        return TestResult::Failed(anyhow!("container not running after pre-dump: {e}"));
+    }
+
+    // Execute final dump using relative parent path pointing to pre-dump
+    let relative_parent = "../pre-dump";
+    let output2 = try_checkpoint_container(
+        bundle.path(),
+        &id,
+        &final_dump_dir,
+        None,
+        &["--parent-path", relative_parent],
+        &[],
+    )
+    .unwrap();
+
+    if !output2.status.success() {
+        let stderr = String::from_utf8_lossy(&output2.stderr);
+        return TestResult::Failed(anyhow!("final checkpoint failed: {}", stderr));
+    }
+
+    // After final dump, container must be deleted
+    if let Err(e) = wait_for_state(
+        &id,
+        &bundle,
+        WaitTarget::Deleted,
+        Duration::from_secs(5),
+        Duration::from_millis(100),
+    ) {
+        return TestResult::Failed(anyhow!(
+            "container state still accessible after final checkpoint: {e}"
+        ));
+    }
+
+    // Restore the container from the final dump directory
+    if let Err(e) = restore_container(bundle.path(), &id, &final_dump_dir, None, &[]) {
+        return TestResult::Failed(anyhow!("restore failed: {e}"));
+    }
+
+    // After restore, container must be running again
+    if let Err(e) = wait_for_state(
+        &id,
+        &bundle,
+        WaitTarget::Status(LifecycleStatus::Running),
+        Duration::from_secs(10),
+        Duration::from_millis(100),
+    ) {
+        return TestResult::Failed(anyhow!("not running after restore: {e}"));
+    }
+
+    TestResult::Passed
+}
+
 pub fn get_checkpoint_restore_tests() -> TestGroup {
     let mut tg = TestGroup::new("checkpoint_restore");
     // Run sequentially: CRIU uses global kernel resources and parallel
@@ -429,6 +542,10 @@ pub fn get_checkpoint_restore_tests() -> TestGroup {
     tg.add(vec![Box::new(cr_test!(
         "checkpoint_pre_dump_bad_parent_path",
         checkpoint_pre_dump_bad_parent_path
+    ))]);
+    tg.add(vec![Box::new(cr_test!(
+        "checkpoint_pre_dump_and_restore",
+        checkpoint_pre_dump_and_restore
     ))]);
 
     tg
