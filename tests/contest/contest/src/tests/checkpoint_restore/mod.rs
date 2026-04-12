@@ -14,8 +14,8 @@ use test_framework::{ConditionalTest, TestGroup, TestResult};
 
 use crate::utils::{
     LifecycleStatus, WaitTarget, checkpoint_container, criu_installed, delete_container,
-    generate_uuid, is_runtime_youki, kill_container, prepare_bundle, restore_container,
-    run_container, set_config, wait_container_running, wait_for_state,
+    exec_container, generate_uuid, is_runtime_youki, kill_container, prepare_bundle,
+    restore_container, run_container, set_config, wait_container_running, wait_for_state,
 };
 
 /// Used as check_fn for all ConditionalTests in this module:
@@ -70,6 +70,7 @@ fn make_cr_dirs(bundle_path: &Path) -> Result<(PathBuf, PathBuf), TestResult> {
 fn simple_cr(
     global_args: &[&str],
     setup: impl Fn(&tempfile::TempDir, &mut oci_spec::runtime::Spec),
+    verify: impl Fn(&str, &Path) -> anyhow::Result<()>,
 ) -> TestResult {
     let id = generate_uuid().to_string();
     let bundle = prepare_bundle().unwrap();
@@ -91,6 +92,10 @@ fn simple_cr(
     })();
     if let Err(e) = run_result {
         return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
+    }
+
+    if let Err(e) = verify(&id, bundle.path()) {
+        return TestResult::Failed(anyhow!("verify failed after run: {e}"));
     }
 
     // Container is running: guard ensures kill+delete on any return path.
@@ -141,6 +146,10 @@ fn simple_cr(
         ) {
             return TestResult::Failed(anyhow!("not running after restore: {e}"));
         }
+
+        if let Err(e) = verify(&id, bundle.path()) {
+            return TestResult::Failed(anyhow!("verify failed after restore: {e}"));
+        }
     }
 
     TestResult::Passed
@@ -149,32 +158,36 @@ fn simple_cr(
 // Test: checkpoint and restore
 // (runc: @test "checkpoint and restore")
 fn checkpoint_and_restore() -> TestResult {
-    simple_cr(&[], |_, _| {})
+    simple_cr(&[], |_, _| {}, |_, _| Ok(()))
 }
 
 // Test: checkpoint and restore (bind mount, destination is symlink)
 // (runc: @test "checkpoint and restore (bind mount, destination is symlink)")
 fn checkpoint_and_restore_bind_mount_symlink() -> TestResult {
-    simple_cr(&[], |bundle, spec| {
-        let rootfs = bundle.path().join("bundle").join("rootfs");
-        std::fs::create_dir_all(rootfs.join("real/conf")).unwrap();
-        symlink("/real/conf", rootfs.join("conf")).unwrap();
-        let bind_mount = MountBuilder::default()
-            .source(bundle.path().join("bundle"))
-            .destination("/conf")
-            .options(vec!["bind".to_string()])
-            .build()
-            .unwrap();
-        let mut mounts = spec.mounts().clone().unwrap_or_default();
-        mounts.push(bind_mount);
-        spec.set_mounts(Some(mounts));
-    })
+    simple_cr(
+        &[],
+        |bundle, spec| {
+            let rootfs = bundle.path().join("bundle").join("rootfs");
+            std::fs::create_dir_all(rootfs.join("real/conf")).unwrap();
+            symlink("/real/conf", rootfs.join("conf")).unwrap();
+            let bind_mount = MountBuilder::default()
+                .source(bundle.path().join("bundle"))
+                .destination("/conf")
+                .options(vec!["bind".to_string()])
+                .build()
+                .unwrap();
+            let mut mounts = spec.mounts().clone().unwrap_or_default();
+            mounts.push(bind_mount);
+            spec.set_mounts(Some(mounts));
+        },
+        |_, _| Ok(()),
+    )
 }
 
 // Test: checkpoint and restore (with --debug)
 // (runc: @test "checkpoint and restore (with --debug)")
 fn checkpoint_and_restore_with_debug() -> TestResult {
-    simple_cr(&["--debug"], |_, _| {})
+    simple_cr(&["--debug"], |_, _| {}, |_, _| Ok(()))
 }
 
 // Test: checkpoint and restore (cgroupns)
@@ -185,18 +198,114 @@ fn checkpoint_and_restore_cgroupns() -> TestResult {
     if !is_cgroups_v1() || !has_cgroupns() {
         return TestResult::Skipped;
     }
-    simple_cr(&[], |_, spec| {
-        if let Some(linux) = spec.linux_mut() {
-            let mut namespaces = linux.namespaces().clone().unwrap_or_default();
+    simple_cr(
+        &[],
+        |_, spec| {
+            if let Some(linux) = spec.linux_mut() {
+                let mut namespaces = linux.namespaces().clone().unwrap_or_default();
+                namespaces.push(
+                    LinuxNamespaceBuilder::default()
+                        .typ(LinuxNamespaceType::Cgroup)
+                        .build()
+                        .unwrap(),
+                );
+                linux.set_namespaces(Some(namespaces));
+            }
+        },
+        |_, _| Ok(()),
+    )
+}
+
+// Test: checkpoint and restore with netdevice
+// (runc: @test "checkpoint and restore with netdevice")
+fn checkpoint_and_restore_with_netdevice() -> TestResult {
+    let ns_name = crate::utils::net::create_unique_name("cr-net");
+    let dev_name = crate::utils::net::create_unique_name("cr-dev");
+    let _netns = match crate::utils::net::NetNamespace::create(ns_name.clone()) {
+        Ok(ns) => ns,
+        Err(e) => return TestResult::Failed(anyhow!("Failed to create netns: {e}")),
+    };
+    let _dev = match crate::utils::net::DummyDevice::create(dev_name.clone()) {
+        Ok(d) => d,
+        Err(e) => return TestResult::Failed(anyhow!("Failed to create dummy dev: {e}")),
+    };
+
+    let mtu = "1789";
+    let mac = "00:11:22:33:44:55";
+    let ip = "169.254.169.77/32";
+
+    if let Err(e) = std::process::Command::new("ip")
+        .args(["link", "set", "mtu", mtu, "dev", &dev_name])
+        .output()
+    {
+        return TestResult::Failed(anyhow!("ip link set mtu failed: {e}"));
+    }
+    if let Err(e) = std::process::Command::new("ip")
+        .args(["link", "set", "address", mac, "dev", &dev_name])
+        .output()
+    {
+        return TestResult::Failed(anyhow!("ip link set address failed: {e}"));
+    }
+    if let Err(e) = std::process::Command::new("ip")
+        .args(["address", "add", ip, "dev", &dev_name])
+        .output()
+    {
+        return TestResult::Failed(anyhow!("ip address add failed: {e}"));
+    }
+
+    let dev_name_clone = dev_name.clone();
+    let ns_path = format!("/run/netns/{}", ns_name);
+
+    simple_cr(
+        &[],
+        move |_, spec| {
+            let mut namespaces = spec
+                .linux()
+                .as_ref()
+                .and_then(|l| l.namespaces().clone())
+                .unwrap_or_default();
+            namespaces.retain(|ns| ns.typ() != LinuxNamespaceType::Network);
             namespaces.push(
                 LinuxNamespaceBuilder::default()
-                    .typ(LinuxNamespaceType::Cgroup)
+                    .typ(LinuxNamespaceType::Network)
+                    .path(ns_path.clone())
                     .build()
                     .unwrap(),
             );
-            linux.set_namespaces(Some(namespaces));
-        }
-    })
+
+            let mut net_devices = std::collections::HashMap::new();
+            net_devices.insert(
+                dev_name_clone.clone(),
+                oci_spec::runtime::LinuxNetDeviceBuilder::default()
+                    .build()
+                    .unwrap(),
+            );
+
+            if let Some(linux) = spec.linux_mut() {
+                linux.set_namespaces(Some(namespaces));
+                linux.set_net_devices(Some(net_devices));
+            }
+        },
+        move |id, bundle_path| {
+            let (stdout, _) = exec_container(
+                id,
+                bundle_path,
+                &["ip", "address", "show", "dev", &dev_name],
+                None,
+                &[],
+            )?;
+            if !stdout.contains(ip) {
+                anyhow::bail!("ip address not found in {stdout}");
+            }
+            if !stdout.contains(&format!("ether {}", mac)) {
+                anyhow::bail!("mac address not found in {stdout}");
+            }
+            if !stdout.contains(&format!("mtu {}", mtu)) {
+                anyhow::bail!("mtu not found in {stdout}");
+            }
+            Ok(())
+        },
+    )
 }
 
 pub fn get_checkpoint_restore_tests() -> TestGroup {
@@ -226,6 +335,10 @@ pub fn get_checkpoint_restore_tests() -> TestGroup {
     tg.add(vec![Box::new(cr_test!(
         "checkpoint_and_restore_cgroupns",
         checkpoint_and_restore_cgroupns
+    ))]);
+    tg.add(vec![Box::new(cr_test!(
+        "checkpoint_and_restore_with_netdevice",
+        checkpoint_and_restore_with_netdevice
     ))]);
 
     tg
