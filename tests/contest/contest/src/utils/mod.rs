@@ -1,3 +1,4 @@
+pub mod net;
 pub mod support;
 pub mod test_utils;
 
