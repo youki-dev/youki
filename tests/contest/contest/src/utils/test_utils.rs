@@ -535,7 +535,37 @@ pub fn checkpoint_container(
     Ok(())
 }
 
-/// Execute checkpoint command and return the raw output instead of bailing on failure.
+pub fn build_checkpoint_command(
+    bundle_path: &Path,
+    id: &str,
+    image_dir: &Path,
+    work_dir: Option<&Path>,
+    checkpoint_args: &[&str],
+    global_args: &[&str],
+) -> Command {
+    let mut command = Command::new(get_runtime_path());
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    for a in global_args {
+        command.arg(a);
+    }
+
+    command.arg("--root").arg(bundle_path.join("runtime"));
+    command.arg("checkpoint").arg("--image-path").arg(image_dir);
+
+    if let Some(wp) = work_dir {
+        command.arg("--work-path").arg(wp);
+    }
+
+    for a in checkpoint_args {
+        command.arg(a);
+    }
+
+    command.arg(id);
+    command
+}
+
+// Execute checkpoint command and return the raw output instead of bailing on failure.
 pub fn try_checkpoint_container(
     bundle_path: &Path,
     id: &str,
@@ -544,23 +574,18 @@ pub fn try_checkpoint_container(
     checkpoint_args: &[&str],
     global_args: &[&str],
 ) -> Result<std::process::Output> {
-    let mut args: Vec<std::ffi::OsString> = global_args.iter().map(Into::into).collect();
-    args.extend(["--root".into(), bundle_path.join("runtime").into()]);
-    args.extend(["checkpoint".into(), "--image-path".into(), image_dir.into()]);
-    if let Some(wp) = work_dir {
-        args.extend(["--work-path".into(), wp.into()]);
-    }
-    args.extend(checkpoint_args.iter().map(Into::into));
-    args.push(id.into());
-
-    Command::new(get_runtime_path())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .args(&args)
-        .spawn()
-        .context("failed to spawn checkpoint")?
-        .wait_with_output()
-        .context("failed to wait for checkpoint")
+    build_checkpoint_command(
+        bundle_path,
+        id,
+        image_dir,
+        work_dir,
+        checkpoint_args,
+        global_args,
+    )
+    .spawn()
+    .context("failed to spawn checkpoint")?
+    .wait_with_output()
+    .context("failed to wait for checkpoint")
 }
 
 /// Restore a checkpointed container from `image_dir` using `restore -d`.

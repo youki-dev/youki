@@ -5,18 +5,21 @@
 // installed on the host.
 
 use std::os::unix::fs::symlink;
+use std::os::unix::io::AsRawFd;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::anyhow;
+use nix::fcntl::{FcntlArg, FdFlag, fcntl};
 use oci_spec::runtime::{LinuxNamespaceBuilder, LinuxNamespaceType, MountBuilder};
 use test_framework::{ConditionalTest, TestGroup, TestResult};
 
 use crate::utils::{
-    LifecycleStatus, WaitTarget, checkpoint_container, criu_installed, delete_container,
-    exec_container, generate_uuid, is_runtime_youki, kill_container, prepare_bundle,
-    restore_container, run_container, set_config, try_checkpoint_container, wait_container_running,
-    wait_for_state,
+    LifecycleStatus, WaitTarget, build_checkpoint_command, checkpoint_container, criu_installed,
+    delete_container, exec_container, generate_uuid, is_runtime_youki, kill_container,
+    prepare_bundle, restore_container, run_container, set_config, try_checkpoint_container,
+    wait_container_running, wait_for_state,
 };
 
 /// Used as check_fn for all ConditionalTests in this module:
@@ -507,6 +510,165 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
     TestResult::Passed
 }
 
+// Test: checkpoint --lazy-pages and restore
+// (runc: @test "checkpoint --lazy-pages and restore")
+fn checkpoint_lazy_pages_and_restore() -> TestResult {
+    let id = generate_uuid().to_string();
+    let bundle = prepare_bundle().unwrap();
+
+    let mut spec = oci_spec::runtime::Spec::default();
+    let mut process = oci_spec::runtime::Process::default();
+    process.set_args(Some(vec!["sleep".into(), "10".into()]));
+    spec.set_process(Some(process));
+    set_config(&bundle, &spec).unwrap();
+
+    let run_result = (|| -> anyhow::Result<()> {
+        let status = run_container(&id, &bundle)?.wait()?;
+        if !status.success() {
+            anyhow::bail!("run -d failed ({})", status);
+        }
+        wait_container_running(&id, &bundle)
+    })();
+    if let Err(e) = run_result {
+        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
+    }
+
+    let _guard = ContainerGuard {
+        bundle: &bundle,
+        id: &id,
+    };
+
+    let (image_dir, work_dir) = match make_cr_dirs(bundle.path()) {
+        Ok(d) => d,
+        Err(r) => return r,
+    };
+
+    // For lazy migration we need to know when CRIU is ready to serve
+    // the memory pages via TCP. We use a pipe to get the readiness status.
+    let (pipe_r, pipe_w) = match nix::unistd::pipe() {
+        Ok(p) => p,
+        Err(e) => return TestResult::Failed(anyhow!("failed to create pipe: {e}")),
+    };
+
+    let port = "27277";
+    let status_fd_str = pipe_w.as_raw_fd().to_string();
+
+    // Spawn checkpoint command in background
+    let port_str = format!("0.0.0.0:{}", port);
+    let mut checkpoint_cmd = build_checkpoint_command(
+        bundle.path(),
+        &id,
+        &image_dir,
+        Some(&work_dir),
+        &[
+            "--lazy-pages",
+            "--page-server",
+            &port_str,
+            "--status-fd",
+            &status_fd_str,
+            "--manage-cgroups-mode=ignore",
+        ],
+        &[],
+    );
+
+    let pipe_w_raw = pipe_w.as_raw_fd();
+
+    // Ensure the child process inherits the write end of the pipe
+    unsafe {
+        checkpoint_cmd.pre_exec(move || {
+            let flags = FdFlag::from_bits_truncate(
+                fcntl(pipe_w_raw, FcntlArg::F_GETFD).expect("from_bits_truncate failed"),
+            );
+            fcntl(pipe_w_raw, FcntlArg::F_SETFD(flags & !FdFlag::FD_CLOEXEC))
+                .expect("fcntl failed");
+            Ok(())
+        });
+    }
+
+    let mut checkpoint_child = match checkpoint_cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return TestResult::Failed(anyhow!("failed to spawn checkpoint: {e}")),
+    };
+
+    // Wait for CRIU to become ready by reading from the pipe
+    let mut buf = [0u8; 1];
+    let mut ready = false;
+    // Timeout reading after 2 seconds
+    for _ in 0..20 {
+        match nix::unistd::read(pipe_r.as_raw_fd(), &mut buf) {
+            Ok(1) => {
+                ready = true;
+                break;
+            }
+            _ => std::thread::sleep(Duration::from_millis(100)),
+        }
+    }
+
+    // Cleanup pipes
+    let _ = nix::unistd::close(pipe_r.as_raw_fd());
+    let _ = nix::unistd::close(pipe_w.as_raw_fd());
+
+    if !ready {
+        let _ = checkpoint_child.wait();
+        return TestResult::Failed(anyhow!("lazy-page server readiness timeout"));
+    }
+
+    // Start CRIU in lazy-daemon mode
+    let criu_daemon_child = match std::process::Command::new("criu")
+        .args([
+            "lazy-pages",
+            "--page-server",
+            "--address",
+            "127.0.0.1",
+            "--port",
+            port,
+            "-D",
+            image_dir.to_str().unwrap(),
+        ])
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = checkpoint_child.kill();
+            return TestResult::Failed(anyhow!("failed to spawn criu lazy-pages: {e}"));
+        }
+    };
+
+    // Restore lazily from checkpoint
+    let restore_result = restore_container(
+        bundle.path(),
+        &id,
+        &image_dir,
+        Some(&work_dir),
+        &["--lazy-pages", "--manage-cgroups-mode=ignore"],
+    );
+
+    // Wait for background jobs to finish
+    let _ = checkpoint_child.wait();
+
+    // Terminate criu daemon if it's still running, it might stay alive if restore failed
+    let mut criu_daemon = criu_daemon_child;
+    let _ = criu_daemon.kill();
+    let _ = criu_daemon.wait();
+
+    if let Err(e) = restore_result {
+        return TestResult::Failed(anyhow!("restore --lazy-pages failed: {e}"));
+    }
+
+    // After restore, container must be running again
+    if let Err(e) = wait_for_state(
+        &id,
+        &bundle,
+        WaitTarget::Status(LifecycleStatus::Running),
+        Duration::from_secs(10),
+        Duration::from_millis(100),
+    ) {
+        return TestResult::Failed(anyhow!("not running after restore: {e}"));
+    }
+
+    TestResult::Passed
+}
+
 pub fn get_checkpoint_restore_tests() -> TestGroup {
     let mut tg = TestGroup::new("checkpoint_restore");
     // Run sequentially: CRIU uses global kernel resources and parallel
@@ -546,6 +708,10 @@ pub fn get_checkpoint_restore_tests() -> TestGroup {
     tg.add(vec![Box::new(cr_test!(
         "checkpoint_pre_dump_and_restore",
         checkpoint_pre_dump_and_restore
+    ))]);
+    tg.add(vec![Box::new(cr_test!(
+        "checkpoint_lazy_pages_and_restore",
+        checkpoint_lazy_pages_and_restore
     ))]);
 
     tg
