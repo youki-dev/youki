@@ -15,7 +15,8 @@ use test_framework::{ConditionalTest, TestGroup, TestResult};
 use crate::utils::{
     LifecycleStatus, WaitTarget, checkpoint_container, criu_installed, delete_container,
     exec_container, generate_uuid, is_runtime_youki, kill_container, prepare_bundle,
-    restore_container, run_container, set_config, wait_container_running, wait_for_state,
+    restore_container, run_container, set_config, try_checkpoint_container, wait_container_running,
+    wait_for_state,
 };
 
 /// Used as check_fn for all ConditionalTests in this module:
@@ -308,6 +309,91 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
     )
 }
 
+// Test: checkpoint --pre-dump (bad --parent-path)
+// (runc: @test "checkpoint --pre-dump (bad --parent-path)")
+fn checkpoint_pre_dump_bad_parent_path() -> TestResult {
+    let id = generate_uuid().to_string();
+    let bundle = prepare_bundle().unwrap();
+
+    let mut spec = oci_spec::runtime::Spec::default();
+    let mut process = oci_spec::runtime::Process::default();
+    process.set_args(Some(vec!["sleep".into(), "10".into()]));
+    spec.set_process(Some(process));
+    set_config(&bundle, &spec).unwrap();
+
+    let run_result = (|| -> anyhow::Result<()> {
+        let status = run_container(&id, &bundle)?.wait()?;
+        if !status.success() {
+            anyhow::bail!("run -d failed ({})", status);
+        }
+        wait_container_running(&id, &bundle)
+    })();
+    if let Err(e) = run_result {
+        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
+    }
+
+    let _guard = ContainerGuard {
+        bundle: &bundle,
+        id: &id,
+    };
+
+    let (image_dir, work_dir) = match make_cr_dirs(bundle.path()) {
+        Ok(d) => d,
+        Err(r) => return r,
+    };
+
+    let absolute_parent = bundle.path().join("parent-dir");
+    let output1 = try_checkpoint_container(
+        bundle.path(),
+        &id,
+        &image_dir,
+        Some(&work_dir),
+        &[
+            "--pre-dump",
+            "--parent-path",
+            absolute_parent.to_str().unwrap(),
+        ],
+        &[],
+    )
+    .unwrap();
+
+    if output1.status.success() {
+        return TestResult::Failed(anyhow!(
+            "expected checkpoint to fail with absolute --parent-path"
+        ));
+    }
+    let stderr1 = String::from_utf8_lossy(&output1.stderr);
+    if !stderr1.contains("--parent-path must be relative") {
+        return TestResult::Failed(anyhow!(
+            "expected '--parent-path must be relative' but got stderr: {stderr1}"
+        ));
+    }
+
+    let output2 = try_checkpoint_container(
+        bundle.path(),
+        &id,
+        &image_dir,
+        Some(&work_dir),
+        &["--pre-dump", "--parent-path", "../parent-dir"],
+        &[],
+    )
+    .unwrap();
+
+    if output2.status.success() {
+        return TestResult::Failed(anyhow!(
+            "expected checkpoint to fail with non-existent relative --parent-path"
+        ));
+    }
+    let stderr2 = String::from_utf8_lossy(&output2.stderr);
+    if !stderr2.contains("invalid --parent-path") {
+        return TestResult::Failed(anyhow!(
+            "expected 'invalid --parent-path' but got stderr: {stderr2}"
+        ));
+    }
+
+    TestResult::Passed
+}
+
 pub fn get_checkpoint_restore_tests() -> TestGroup {
     let mut tg = TestGroup::new("checkpoint_restore");
     // Run sequentially: CRIU uses global kernel resources and parallel
@@ -339,6 +425,10 @@ pub fn get_checkpoint_restore_tests() -> TestGroup {
     tg.add(vec![Box::new(cr_test!(
         "checkpoint_and_restore_with_netdevice",
         checkpoint_and_restore_with_netdevice
+    ))]);
+    tg.add(vec![Box::new(cr_test!(
+        "checkpoint_pre_dump_bad_parent_path",
+        checkpoint_pre_dump_bad_parent_path
     ))]);
 
     tg
