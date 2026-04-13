@@ -4,6 +4,7 @@
 // not yet implemented in youki.  They are also skipped when CRIU is not
 // installed on the host.
 
+use std::collections::HashMap;
 use std::os::unix::fs::symlink;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::process::CommandExt;
@@ -776,6 +777,101 @@ fn checkpoint_and_restore_in_external_netns() -> TestResult {
     TestResult::Passed
 }
 
+// Test: checkpoint and restore with container specific CRIU config
+// (runc: @test "checkpoint and restore with container specific CRIU config")
+fn checkpoint_and_restore_with_container_specific_criu_config() -> TestResult {
+    let id = generate_uuid().to_string();
+    let bundle = prepare_bundle().unwrap();
+
+    let mut spec = oci_spec::runtime::Spec::default();
+    let mut process = oci_spec::runtime::Process::default();
+    process.set_args(Some(vec!["sleep".into(), "10".into()]));
+    spec.set_process(Some(process));
+
+    // Create custom CRIU config inside the bundle
+    let custom_config_path = bundle.path().join("custom_criu.conf");
+    let custom_log_name = "custom_criu.log";
+    std::fs::write(&custom_config_path, format!("log-file={custom_log_name}\n")).unwrap();
+
+    // Add annotation for youki to pick up the CRIU config
+    let mut annotations = HashMap::new();
+    annotations.insert(
+        "org.criu.config".to_string(),
+        custom_config_path.to_str().unwrap().to_string(),
+    );
+    spec.set_annotations(Some(annotations));
+
+    set_config(&bundle, &spec).unwrap();
+
+    let run_result = (|| -> anyhow::Result<()> {
+        let status = run_container(&id, &bundle)?.wait()?;
+        if !status.success() {
+            anyhow::bail!("run -d failed ({status})");
+        }
+        wait_container_running(&id, &bundle)
+    })();
+    if let Err(e) = run_result {
+        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
+    }
+
+    let _guard = ContainerGuard {
+        bundle: &bundle,
+        id: &id,
+    };
+
+    let (image_dir, work_dir) = match make_cr_dirs(bundle.path()) {
+        Ok(d) => d,
+        Err(r) => return r,
+    };
+
+    let log_file_path = work_dir.join(custom_log_name);
+
+    if let Err(e) =
+        try_checkpoint_container(bundle.path(), &id, &image_dir, Some(&work_dir), &[], &[])
+    {
+        return TestResult::Failed(anyhow!("checkpoint failed: {e:?}"));
+    }
+
+    // Verify custom log file was created during checkpoint
+    if !log_file_path.exists() {
+        return TestResult::Failed(anyhow!("custom log file was not created during checkpoint"));
+    }
+
+    // Delete the log file so we can verify it's created again during restore
+    std::fs::remove_file(&log_file_path).unwrap();
+
+    if let Err(e) = wait_for_state(
+        &id,
+        &bundle,
+        WaitTarget::Deleted,
+        Duration::from_secs(10),
+        Duration::from_millis(100),
+    ) {
+        return TestResult::Failed(anyhow!("container not deleted after checkpoint: {e}"));
+    }
+
+    if let Err(e) = restore_container(bundle.path(), &id, &image_dir, Some(&work_dir), &[]) {
+        return TestResult::Failed(anyhow!("restore failed: {e}"));
+    }
+
+    // Verify custom log file was created during restore
+    if !log_file_path.exists() {
+        return TestResult::Failed(anyhow!("custom log file was not created during restore"));
+    }
+
+    if let Err(e) = wait_for_state(
+        &id,
+        &bundle,
+        WaitTarget::Status(LifecycleStatus::Running),
+        Duration::from_secs(10),
+        Duration::from_millis(100),
+    ) {
+        return TestResult::Failed(anyhow!("not running after restore: {e}"));
+    }
+
+    TestResult::Passed
+}
+
 pub fn get_checkpoint_restore_tests() -> TestGroup {
     let mut tg = TestGroup::new("checkpoint_restore");
     // Run sequentially: CRIU uses global kernel resources and parallel
@@ -823,6 +919,10 @@ pub fn get_checkpoint_restore_tests() -> TestGroup {
     tg.add(vec![Box::new(cr_test!(
         "checkpoint_and_restore_in_external_netns",
         checkpoint_and_restore_in_external_netns
+    ))]);
+    tg.add(vec![Box::new(cr_test!(
+        "checkpoint_and_restore_with_container_specific_criu_config",
+        checkpoint_and_restore_with_container_specific_criu_config
     ))]);
 
     tg
