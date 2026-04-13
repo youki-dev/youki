@@ -85,24 +85,25 @@ impl Memory {
         properties: &mut HashMap<&str, Variant>,
     ) -> Result<(), SystemdMemoryError> {
         let value: Variant = match (limit, swap) {
-            // memory is unlimited and swap not specified -> assume swap unlimited
+            // If memory is unlimited and swap not specified, assume swap unlimited
             (Some(-1), None) => Variant::U64(u64::MAX),
-            // if swap is unlimited it can be set to unlimited regardless of memory limit value
+            // If swap is unlimited it can be set to unlimited regardless of memory limit value
             (_, Some(-1)) => Variant::U64(u64::MAX),
-            // if swap is zero, then it needs to be rejected regardless of memory limit value
+            // If swap is zero, then it needs to be rejected regardless of memory limit value
             // as memory limit would be either bigger (invariant violation) or zero which would
             // leave the container with no memory and no swap.
-            // if swap is greater than zero and memory limit is unspecified swap cannot be
-            // calculated. If memory limit is zero the container would have only swap. If
-            // memory is unlimited it would be bigger than swap.
+            //
+            // If swap is greater than zero
+            //      and memory limit is unspecified swap cannot be calculated.
+            //      and memory limit is zero the container would have only swap.
+            //      and memory is unlimited it would be bigger than swap.
             (_, Some(0)) | (None | Some(0) | Some(-1), Some(1..=i64::MAX)) => {
                 return Err(SystemdMemoryError::SwapValue {
                     swap: swap.unwrap(),
                     limit: limit.map_or("none".to_owned(), |v| v.to_string()),
                 });
             }
-
-            (Some(l), Some(s)) if l < s => Variant::U64((s - l) as u64),
+            (Some(l), Some(s)) if l <= s => Variant::U64((s - l) as u64),
             _ => return Ok(()),
         };
 
@@ -148,12 +149,15 @@ mod tests {
 
     #[test]
     fn test_set_valid_memory_max() -> Result<()> {
-        let values = vec![(536870912, 536870912u64, 1), (-1, u64::MAX, 2)];
+        let values = vec![
+            (536870912, 536870912u64, 1), // limit = 536870912, set MemoryMax
+            (-1, u64::MAX, 2),            // limit = -1       , set MemoryMax & MemorySwapMax
+        ];
 
-        for (reservation, mem_low, prop_count) in values {
+        for (limit, expected, prop_count) in values {
             // arrange
             let memory = LinuxMemoryBuilder::default()
-                .limit(reservation)
+                .limit(limit)
                 .build()
                 .context("build memory spec")?;
             let mut properties: HashMap<&str, Variant> = HashMap::new();
@@ -166,7 +170,38 @@ mod tests {
             assert!(properties.contains_key(MEMORY_MAX));
             let actual = &properties[MEMORY_MAX];
             let val = recast!(actual, Variant)?;
-            assert_eq!(val, Variant::U64(mem_low));
+            assert_eq!(val, Variant::U64(expected));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_set_valid_memory_swap_max() -> Result<()> {
+        let values = vec![
+            (536870912, 536870912, 0, 2),    // swap == limit
+            (536870912, 536871936, 1024, 2), // swap  > limit
+            (536870912, -1, u64::MAX, 2),    // swap  > limit (swap = -1, unlimited)
+        ];
+
+        for (limit, swap, expected, prop_count) in values {
+            // arrange
+            let memory = LinuxMemoryBuilder::default()
+                .limit(limit)
+                .swap(swap)
+                .build()
+                .context("build memory spec")?;
+            let mut properties: HashMap<&str, Variant> = HashMap::new();
+
+            // act
+            Memory::apply(&memory, &mut properties).context("apply memory")?;
+
+            // assert
+            assert_eq!(properties.len(), prop_count);
+            assert!(properties.contains_key(MEMORY_SWAP));
+            let actual = &properties[MEMORY_SWAP];
+            let val = recast!(actual, Variant)?;
+            assert_eq!(val, Variant::U64(expected));
         }
 
         Ok(())
