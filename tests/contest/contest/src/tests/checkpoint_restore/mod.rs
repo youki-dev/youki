@@ -872,6 +872,103 @@ fn checkpoint_and_restore_with_container_specific_criu_config() -> TestResult {
     TestResult::Passed
 }
 
+// Test: checkpoint and restore with nested bind mounts
+// (runc: @test "checkpoint and restore with nested bind mounts")
+fn checkpoint_and_restore_with_nested_bind_mounts() -> TestResult {
+    let id = generate_uuid().to_string();
+    let bundle = prepare_bundle().unwrap();
+
+    let mut spec = oci_spec::runtime::Spec::default();
+    let mut process = oci_spec::runtime::Process::default();
+    process.set_args(Some(vec!["sleep".into(), "10".into()]));
+    spec.set_process(Some(process));
+
+    // Create bind mount source directories
+    let bind1 = bundle.path().join("bind1");
+    let bind2 = bundle.path().join("bind2");
+    std::fs::create_dir_all(&bind1).unwrap();
+    std::fs::create_dir_all(&bind2).unwrap();
+
+    let mnt1 = MountBuilder::default()
+        .typ("bind".to_string())
+        .source(&bind1)
+        .destination(PathBuf::from("/test"))
+        .options(vec!["rw".to_string(), "bind".to_string()])
+        .build()
+        .unwrap();
+
+    let mnt2 = MountBuilder::default()
+        .typ("bind".to_string())
+        .source(&bind2)
+        .destination(PathBuf::from("/test/for/nested"))
+        .options(vec!["rw".to_string(), "bind".to_string()])
+        .build()
+        .unwrap();
+
+    let mut mounts = spec.mounts().clone().unwrap_or_default();
+    mounts.push(mnt1);
+    mounts.push(mnt2);
+    spec.set_mounts(Some(mounts));
+
+    set_config(&bundle, &spec).unwrap();
+
+    let run_result = (|| -> anyhow::Result<()> {
+        let status = run_container(&id, &bundle)?.wait()?;
+        if !status.success() {
+            anyhow::bail!("run -d failed ({})", status);
+        }
+        wait_container_running(&id, &bundle)
+    })();
+    if let Err(e) = run_result {
+        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
+    }
+
+    let _guard = ContainerGuard {
+        bundle: &bundle,
+        id: &id,
+    };
+
+    let (image_dir, work_dir) = match make_cr_dirs(bundle.path()) {
+        Ok(d) => d,
+        Err(r) => return r,
+    };
+
+    if let Err(e) = checkpoint_container(bundle.path(), &id, &image_dir, Some(&work_dir), &[]) {
+        return TestResult::Failed(anyhow!("checkpoint failed: {e}"));
+    }
+
+    if let Err(e) = wait_for_state(
+        &id,
+        &bundle,
+        WaitTarget::Deleted,
+        Duration::from_secs(10),
+        Duration::from_millis(100),
+    ) {
+        return TestResult::Failed(anyhow!("container not deleted after checkpoint: {e}"));
+    }
+
+    // cleanup mountpoints created by runc/youki during creation
+    // the mountpoints should be recreated during restore - that is the actual thing tested here
+    std::fs::remove_dir_all(&bind1).unwrap();
+    std::fs::create_dir_all(&bind1).unwrap();
+
+    if let Err(e) = restore_container(bundle.path(), &id, &image_dir, Some(&work_dir), &[]) {
+        return TestResult::Failed(anyhow!("restore failed: {e}"));
+    }
+
+    if let Err(e) = wait_for_state(
+        &id,
+        &bundle,
+        WaitTarget::Status(LifecycleStatus::Running),
+        Duration::from_secs(10),
+        Duration::from_millis(100),
+    ) {
+        return TestResult::Failed(anyhow!("container not running after restore: {e}"));
+    }
+
+    TestResult::Passed
+}
+
 pub fn get_checkpoint_restore_tests() -> TestGroup {
     let mut tg = TestGroup::new("checkpoint_restore");
     // Run sequentially: CRIU uses global kernel resources and parallel
@@ -923,6 +1020,10 @@ pub fn get_checkpoint_restore_tests() -> TestGroup {
     tg.add(vec![Box::new(cr_test!(
         "checkpoint_and_restore_with_container_specific_criu_config",
         checkpoint_and_restore_with_container_specific_criu_config
+    ))]);
+    tg.add(vec![Box::new(cr_test!(
+        "checkpoint_and_restore_with_nested_bind_mounts",
+        checkpoint_and_restore_with_nested_bind_mounts
     ))]);
 
     tg
