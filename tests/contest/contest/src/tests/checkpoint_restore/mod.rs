@@ -17,10 +17,10 @@ use oci_spec::runtime::{LinuxNamespaceBuilder, LinuxNamespaceType, MountBuilder}
 use test_framework::{ConditionalTest, TestGroup, TestResult};
 
 use crate::utils::{
-    build_checkpoint_command, checkpoint_container, criu_installed, delete_container,
-    exec_container, generate_uuid, get_state, is_runtime_youki, kill_container, prepare_bundle,
-    restore_container, run_container, set_config, try_checkpoint_container, wait_container_running,
-    wait_for_state, LifecycleStatus, WaitTarget,
+    LifecycleStatus, WaitTarget, build_checkpoint_command, checkpoint_container, criu_installed,
+    delete_container, exec_container, generate_uuid, get_state, is_runtime_youki, kill_container,
+    prepare_bundle, restore_container, run_container, set_config, try_checkpoint_container,
+    wait_container_running, wait_for_state,
 };
 
 /// Used as check_fn for all ConditionalTests in this module:
@@ -979,10 +979,10 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
     let mut process = oci_spec::runtime::Process::default();
     process.set_args(Some(vec!["sleep".into(), "10".into()]));
     spec.set_process(Some(process));
-    
+
     // Set initial cgroup path
     let mut linux = oci_spec::runtime::Linux::default();
-    let initial_cgroup = format!("/runtime-test/cgroup-1-{}", id);
+    let initial_cgroup = format!("/runtime-test/cgroup-1-{id}");
     linux.set_cgroups_path(Some(PathBuf::from(&initial_cgroup)));
     spec.set_linux(Some(linux));
     set_config(&bundle, &spec).unwrap();
@@ -990,7 +990,7 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
     let run_result = (|| -> anyhow::Result<()> {
         let status = run_container(&id, &bundle)?.wait()?;
         if !status.success() {
-            anyhow::bail!("run -d failed ({})", status);
+            anyhow::bail!("run -d failed ({status})");
         }
         wait_container_running(&id, &bundle)
     })();
@@ -1012,21 +1012,25 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
     let (stdout, _) = get_state(&id, bundle.path()).unwrap();
     let state: oci_spec::runtime::State = serde_json::from_str(&stdout).unwrap();
     let pid = state.pid().unwrap();
-    let cgroup_data = std::fs::read_to_string(format!("/proc/{}/cgroup", pid)).unwrap();
+    let cgroup_data = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).unwrap();
     // Parse the /proc/<pid>/cgroup file.
     // Format is typically `0::/path/to/cgroup` for v2, or `N:name:/path` for v1.
     // We'll just grab the path from the end of the line.
-    let cgroup_path_suffix = cgroup_data.lines()
+    let cgroup_path_suffix = cgroup_data
+        .lines()
         .next()
-        .map(|line| line.split(':').last().unwrap())
+        .map(|line| line.split(':').next_back().unwrap())
         .unwrap();
 
     // The actual mount point of the cgroup fs is typically /sys/fs/cgroup.
     // So the host path to this container's cgroup is /sys/fs/cgroup + cgroup_path_suffix.
-    let host_cgroup_path = PathBuf::from("/sys/fs/cgroup").join(cgroup_path_suffix.trim_start_matches('/'));
+    let host_cgroup_path =
+        PathBuf::from("/sys/fs/cgroup").join(cgroup_path_suffix.trim_start_matches('/'));
 
     if !host_cgroup_path.exists() {
-        return TestResult::Failed(anyhow!("initial cgroup path does not exist: {:?}", host_cgroup_path));
+        return TestResult::Failed(anyhow!(
+            "initial cgroup path does not exist: {host_cgroup_path:?}",
+        ));
     }
 
     // Checkpoint with --manage-cgroups-mode ignore
@@ -1044,7 +1048,7 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
             return TestResult::Failed(anyhow!(
                 "checkpoint failed: {}",
                 String::from_utf8_lossy(&output.stderr)
-            ))
+            ));
         }
         Err(e) => return TestResult::Failed(anyhow!("failed to spawn checkpoint: {e}")),
     }
@@ -1056,17 +1060,25 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
         Duration::from_secs(5),
         Duration::from_millis(100),
     ) {
-        return TestResult::Failed(anyhow!("container state still accessible after checkpoint: {e}"));
+        return TestResult::Failed(anyhow!(
+            "container state still accessible after checkpoint: {e}"
+        ));
     }
 
     // Verify the original cgroup is gone
     if host_cgroup_path.exists() {
-        return TestResult::Failed(anyhow!("initial cgroup path still exists after checkpoint: {:?}", host_cgroup_path));
+        return TestResult::Failed(anyhow!(
+            "initial cgroup path still exists after checkpoint: {:?}",
+            host_cgroup_path
+        ));
     }
 
     // Update config to a DIFFERENT cgroup
     let new_cgroup = format!("/runtime-test/cgroup-2-{}", id);
-    spec.linux_mut().as_mut().unwrap().set_cgroups_path(Some(PathBuf::from(&new_cgroup)));
+    spec.linux_mut()
+        .as_mut()
+        .unwrap()
+        .set_cgroups_path(Some(PathBuf::from(&new_cgroup)));
     set_config(&bundle, &spec).unwrap();
 
     // Restore into the new cgroup
@@ -1094,21 +1106,30 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
     let (stdout_restored, _) = get_state(&id, bundle.path()).unwrap();
     let state_restored: oci_spec::runtime::State = serde_json::from_str(&stdout_restored).unwrap();
     let pid_restored = state_restored.pid().unwrap();
-    let cgroup_data_restored = std::fs::read_to_string(format!("/proc/{}/cgroup", pid_restored)).unwrap();
-    let cgroup_path_suffix_restored = cgroup_data_restored.lines()
+    let cgroup_data_restored =
+        std::fs::read_to_string(format!("/proc/{}/cgroup", pid_restored)).unwrap();
+    let cgroup_path_suffix_restored = cgroup_data_restored
+        .lines()
         .next()
-        .map(|line| line.split(':').last().unwrap())
+        .map(|line| line.split(':').next_back().unwrap())
         .unwrap();
-    
-    let new_host_cgroup_path = PathBuf::from("/sys/fs/cgroup").join(cgroup_path_suffix_restored.trim_start_matches('/'));
+
+    let new_host_cgroup_path =
+        PathBuf::from("/sys/fs/cgroup").join(cgroup_path_suffix_restored.trim_start_matches('/'));
 
     if !new_host_cgroup_path.exists() {
-        return TestResult::Failed(anyhow!("new cgroup path does not exist after restore: {:?}", new_host_cgroup_path));
+        return TestResult::Failed(anyhow!(
+            "new cgroup path does not exist after restore: {:?}",
+            new_host_cgroup_path
+        ));
     }
 
     // Verify the old one still does NOT exist
     if host_cgroup_path.exists() {
-        return TestResult::Failed(anyhow!("initial cgroup path magically reappeared after restore: {:?}", host_cgroup_path));
+        return TestResult::Failed(anyhow!(
+            "initial cgroup path magically reappeared after restore: {:?}",
+            host_cgroup_path
+        ));
     }
 
     TestResult::Passed
