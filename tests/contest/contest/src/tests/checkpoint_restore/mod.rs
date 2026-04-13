@@ -17,7 +17,7 @@ use test_framework::{ConditionalTest, TestGroup, TestResult};
 
 use crate::utils::{
     LifecycleStatus, WaitTarget, build_checkpoint_command, checkpoint_container, criu_installed,
-    delete_container, exec_container, generate_uuid, is_runtime_youki, kill_container,
+    delete_container, exec_container, generate_uuid, get_state, is_runtime_youki, kill_container,
     prepare_bundle, restore_container, run_container, set_config, try_checkpoint_container,
     wait_container_running, wait_for_state,
 };
@@ -669,6 +669,113 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
     TestResult::Passed
 }
 
+// Test: checkpoint and restore in external network namespace
+// (runc: @test "checkpoint and restore in external network namespace")
+fn checkpoint_and_restore_in_external_netns() -> TestResult {
+    let id = generate_uuid().to_string();
+    let bundle = prepare_bundle().unwrap();
+
+    let ns_name = format!("contest-{}", generate_uuid());
+
+    // Ensure we delete the netns when the test finishes
+    let _netns_guard = crate::utils::net::NetNamespace::create(ns_name.clone()).unwrap();
+
+    let mut spec = oci_spec::runtime::Spec::default();
+    let mut process = oci_spec::runtime::Process::default();
+    process.set_args(Some(vec!["sleep".into(), "10".into()]));
+    spec.set_process(Some(process));
+
+    let ext_netns_path = format!("/run/netns/{ns_name}");
+
+    // Modify the spec to point the network namespace to the external path
+    if let Some(linux) = spec.linux_mut()
+        && let Some(namespaces) = linux.namespaces_mut()
+    {
+        namespaces
+            .iter_mut()
+            .filter(|ns| ns.typ() == LinuxNamespaceType::Network)
+            .for_each(|ns| {
+                ns.set_path(Some(PathBuf::from(&ext_netns_path)));
+            });
+    }
+
+    set_config(&bundle, &spec).unwrap();
+
+    let run_result = (|| -> anyhow::Result<()> {
+        let status = run_container(&id, &bundle)?.wait()?;
+        if !status.success() {
+            anyhow::bail!("run -d failed ({status})");
+        }
+        wait_container_running(&id, &bundle)
+    })();
+    if let Err(e) = run_result {
+        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
+    }
+
+    let _guard = ContainerGuard {
+        bundle: &bundle,
+        id: &id,
+    };
+
+    let (image_dir, work_dir) = match make_cr_dirs(bundle.path()) {
+        Ok(d) => d,
+        Err(r) => return r,
+    };
+
+    let (stdout, _) = get_state(&id, bundle.path()).unwrap();
+    let state: crate::utils::State = serde_json::from_str(&stdout).unwrap();
+    let pid = state.pid.unwrap();
+    let original_inode = std::fs::read_link(format!("/proc/{}/ns/net", pid)).unwrap();
+
+    let cp_result =
+        try_checkpoint_container(bundle.path(), &id, &image_dir, Some(&work_dir), &[], &[])
+            .unwrap();
+
+    if !cp_result.status.success() {
+        return TestResult::Failed(anyhow!(
+            "checkpoint failed: {}",
+            String::from_utf8_lossy(&cp_result.stderr)
+        ));
+    }
+
+    if let Err(e) = wait_for_state(
+        &id,
+        &bundle,
+        WaitTarget::Deleted,
+        Duration::from_secs(10),
+        Duration::from_millis(100),
+    ) {
+        return TestResult::Failed(anyhow!("not deleted after checkpoint: {e}"));
+    }
+
+    if let Err(e) = restore_container(bundle.path(), &id, &image_dir, Some(&work_dir), &[]) {
+        return TestResult::Failed(anyhow!("restore failed: {e}"));
+    }
+
+    if let Err(e) = wait_for_state(
+        &id,
+        &bundle,
+        WaitTarget::Status(LifecycleStatus::Running),
+        Duration::from_secs(10),
+        Duration::from_millis(100),
+    ) {
+        return TestResult::Failed(anyhow!("not running after restore: {e}"));
+    }
+
+    let (stdout, _) = get_state(&id, bundle.path()).unwrap();
+    let state: crate::utils::State = serde_json::from_str(&stdout).unwrap();
+    let new_pid = state.pid.unwrap();
+    let new_inode = std::fs::read_link(format!("/proc/{new_pid}/ns/net")).unwrap();
+
+    if original_inode != new_inode {
+        return TestResult::Failed(anyhow!(
+            "inode mismatch: original {original_inode:?}, new {new_inode:?}",
+        ));
+    }
+
+    TestResult::Passed
+}
+
 pub fn get_checkpoint_restore_tests() -> TestGroup {
     let mut tg = TestGroup::new("checkpoint_restore");
     // Run sequentially: CRIU uses global kernel resources and parallel
@@ -712,6 +819,10 @@ pub fn get_checkpoint_restore_tests() -> TestGroup {
     tg.add(vec![Box::new(cr_test!(
         "checkpoint_lazy_pages_and_restore",
         checkpoint_lazy_pages_and_restore
+    ))]);
+    tg.add(vec![Box::new(cr_test!(
+        "checkpoint_and_restore_in_external_netns",
+        checkpoint_and_restore_in_external_netns
     ))]);
 
     tg
