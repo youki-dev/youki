@@ -175,8 +175,14 @@ fn simple_cr(
             ));
         }
 
-        if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), global_args)
-        {
+        if let Err(e) = restore_container(
+            bundle.path(),
+            id,
+            image_dir,
+            Some(work_dir),
+            &[],
+            global_args,
+        ) {
             return TestResult::Failed(anyhow!("restore failed: {e}"));
         }
 
@@ -488,7 +494,7 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
     }
 
     // Restore the container from the final dump directory
-    if let Err(e) = restore_container(bundle.path(), id, &final_dump_dir, None, &[]) {
+    if let Err(e) = restore_container(bundle.path(), id, &final_dump_dir, None, &[], &[]) {
         return TestResult::Failed(anyhow!("restore failed: {e}"));
     }
 
@@ -547,6 +553,9 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
         &[],
     );
 
+    checkpoint_cmd.stdout(std::process::Stdio::piped());
+    checkpoint_cmd.stderr(std::process::Stdio::piped());
+
     let pipe_w_raw = pipe_w.as_raw_fd();
 
     // Ensure the child process inherits the write end of the pipe
@@ -566,6 +575,20 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
         Err(e) => return TestResult::Failed(anyhow!("failed to spawn checkpoint: {e}")),
     };
 
+    // Close the write end in the parent immediately so read() will get EOF if CRIU exits
+    let _ = nix::unistd::close(pipe_w.as_raw_fd());
+
+    // Set read pipe to non-blocking so the timeout loop isn't blocked forever if no data arrives
+    let flags = nix::fcntl::OFlag::from_bits_truncate(
+        nix::fcntl::fcntl(pipe_r.as_raw_fd(), nix::fcntl::FcntlArg::F_GETFL)
+            .expect("F_GETFL failed"),
+    );
+    nix::fcntl::fcntl(
+        pipe_r.as_raw_fd(),
+        nix::fcntl::FcntlArg::F_SETFL(flags | nix::fcntl::OFlag::O_NONBLOCK),
+    )
+    .expect("F_SETFL failed");
+
     // Wait for CRIU to become ready by reading from the pipe
     let mut buf = [0u8; 1];
     let mut ready = false;
@@ -576,15 +599,22 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
                 ready = true;
                 break;
             }
+            Ok(0) => {
+                // EOF - CRIU died or closed its end early
+                break;
+            }
+            Err(nix::errno::Errno::EAGAIN) => {
+                std::thread::sleep(Duration::from_millis(100));
+            }
             _ => std::thread::sleep(Duration::from_millis(100)),
         }
     }
 
-    // Cleanup pipes
+    // Cleanup read pipe
     let _ = nix::unistd::close(pipe_r.as_raw_fd());
-    let _ = nix::unistd::close(pipe_w.as_raw_fd());
 
     if !ready {
+        let _ = checkpoint_child.kill();
         let _ = checkpoint_child.wait();
         return TestResult::Failed(anyhow!("lazy-page server readiness timeout"));
     }
@@ -610,6 +640,15 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
         }
     };
 
+    let restore_id = format!("{id}-restore");
+    let new_cgroup = format!("/runtime-test/cgroup-2-{restore_id}");
+    let mut spec =
+        oci_spec::runtime::Spec::load(bundle.path().join("bundle").join("config.json")).unwrap();
+    if let Some(linux) = spec.linux_mut() {
+        linux.set_cgroups_path(Some(PathBuf::from(&new_cgroup)));
+    }
+    set_config(bundle.path(), &spec).unwrap();
+
     // Restore lazily from checkpoint
     let restore_result = restore_container(
         bundle.path(),
@@ -617,6 +656,7 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
         image_dir,
         Some(work_dir),
         &["--lazy-pages", "--manage-cgroups-mode=ignore"],
+        &[],
     );
 
     // Wait for background jobs to finish
@@ -700,7 +740,7 @@ fn checkpoint_and_restore_in_external_netns() -> TestResult {
         return TestResult::Failed(anyhow!("not deleted after checkpoint: {e}"));
     }
 
-    if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[]) {
+    if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
         return TestResult::Failed(anyhow!("restore failed: {e}"));
     }
 
@@ -779,7 +819,7 @@ fn checkpoint_and_restore_with_container_specific_criu_config() -> TestResult {
         return TestResult::Failed(anyhow!("container not deleted after checkpoint: {e}"));
     }
 
-    if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[]) {
+    if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
         return TestResult::Failed(anyhow!("restore failed: {e}"));
     }
 
@@ -863,7 +903,7 @@ fn checkpoint_and_restore_with_nested_bind_mounts() -> TestResult {
     std::fs::remove_dir_all(&bind1).unwrap();
     std::fs::create_dir_all(&bind1).unwrap();
 
-    if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[]) {
+    if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
         return TestResult::Failed(anyhow!("restore failed: {e}"));
     }
 
@@ -933,7 +973,7 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
         id,
         image_dir,
         Some(work_dir),
-        &["--manage-cgroups-mode", "ignore"],
+        &["--manage-cgroups-mode=ignore"],
         &[],
     );
     match cp_result {
@@ -969,7 +1009,8 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
 
     // Update config to a DIFFERENT cgroup
     let new_cgroup = format!("/runtime-test/cgroup-2-{}", id);
-    let mut spec = oci_spec::runtime::Spec::load(bundle.path().join("config.json")).unwrap();
+    let mut spec =
+        oci_spec::runtime::Spec::load(bundle.path().join("bundle").join("config.json")).unwrap();
     spec.linux_mut()
         .as_mut()
         .unwrap()
@@ -982,7 +1023,8 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
         id,
         image_dir,
         Some(work_dir),
-        &["--manage-cgroups-mode", "ignore"],
+        &["--manage-cgroups-mode=ignore"],
+        &[],
     ) {
         return TestResult::Failed(anyhow!("restore failed: {e}"));
     }
@@ -1002,7 +1044,7 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
     let state_restored: oci_spec::runtime::State = serde_json::from_str(&stdout_restored).unwrap();
     let pid_restored = state_restored.pid().unwrap();
     let cgroup_data_restored =
-        std::fs::read_to_string(format!("/proc/{}/cgroup", pid_restored)).unwrap();
+        std::fs::read_to_string(format!("/proc/{pid_restored}/cgroup")).unwrap();
     let cgroup_path_suffix_restored = cgroup_data_restored
         .lines()
         .next()
@@ -1014,16 +1056,14 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
 
     if !new_host_cgroup_path.exists() {
         return TestResult::Failed(anyhow!(
-            "new cgroup path does not exist after restore: {:?}",
-            new_host_cgroup_path
+            "new cgroup path does not exist after restore: {new_host_cgroup_path:?}",
         ));
     }
 
     // Verify the old one still does NOT exist
     if host_cgroup_path.exists() {
         return TestResult::Failed(anyhow!(
-            "initial cgroup path magically reappeared after restore: {:?}",
-            host_cgroup_path
+            "initial cgroup path magically reappeared after restore: {host_cgroup_path:?}",
         ));
     }
 
@@ -1059,7 +1099,7 @@ fn checkpoint_and_restore_and_exec() -> TestResult {
             ));
         }
 
-        if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[]) {
+        if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
             return TestResult::Failed(anyhow!("restore failed: {e}"));
         }
 
@@ -1168,12 +1208,10 @@ pub fn get_checkpoint_restore_tests() -> TestGroup {
         "checkpoint_and_restore_with_nested_bind_mounts",
         checkpoint_and_restore_with_nested_bind_mounts
     ))]);
-
     tg.add(vec![Box::new(cr_test!(
         "checkpoint_then_restore_into_a_different_cgroup",
         checkpoint_then_restore_into_a_different_cgroup
     ))]);
-
     tg.add(vec![Box::new(cr_test!(
         "checkpoint_and_restore_and_exec",
         checkpoint_and_restore_and_exec

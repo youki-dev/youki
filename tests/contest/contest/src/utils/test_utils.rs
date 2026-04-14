@@ -595,6 +595,7 @@ pub fn restore_container(
     id: &str,
     image_dir: &Path,
     work_dir: Option<&Path>,
+    restore_args: &[&str],
     global_args: &[&str],
 ) -> Result<()> {
     let stderr_file = tempfile::NamedTempFile::new().context("failed to create temp file")?;
@@ -606,6 +607,9 @@ pub fn restore_container(
     args.extend(["--image-path".into(), image_dir.into()]);
     if let Some(wp) = work_dir {
         args.extend(["--work-path".into(), wp.into()]);
+    }
+    for arg in restore_args {
+        args.push(arg.into());
     }
     args.push(id.into());
 
