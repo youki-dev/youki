@@ -4,7 +4,6 @@
 // not yet implemented in youki.  They are also skipped when CRIU is not
 // installed on the host.
 
-use std::collections::HashMap;
 use std::os::unix::fs::symlink;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::process::CommandExt;
@@ -38,22 +37,86 @@ fn has_cgroupns() -> bool {
     Path::new("/proc/self/ns/cgroup").exists()
 }
 
-/// RAII guard that kills and deletes the container on drop.
-struct ContainerGuard<'a> {
-    bundle: &'a tempfile::TempDir,
-    id: &'a str,
+struct CrTestContext {
+    pub id: String,
+    pub bundle: tempfile::TempDir,
+    pub image_dir: std::path::PathBuf,
+    pub work_dir: std::path::PathBuf,
 }
 
-impl Drop for ContainerGuard<'_> {
+impl Drop for CrTestContext {
     fn drop(&mut self) {
-        if let Ok(mut child) = kill_container(self.id, self.bundle) {
+        if let Ok(mut child) = kill_container(&self.id, &self.bundle) {
             let _ = child.wait();
         }
         std::thread::sleep(Duration::from_millis(100));
-        if let Ok(mut child) = delete_container(self.id, self.bundle) {
+        if let Ok(mut child) = delete_container(&self.id, &self.bundle) {
             let _ = child.wait();
         }
     }
+}
+
+fn setup_cr_test(
+    setup_spec: impl FnOnce(&tempfile::TempDir, &mut oci_spec::runtime::Spec),
+) -> Result<CrTestContext, TestResult> {
+    let id = generate_uuid().to_string();
+    let bundle = match prepare_bundle() {
+        Ok(b) => b,
+        Err(e) => return Err(TestResult::Failed(anyhow!("prepare bundle: {e}"))),
+    };
+
+    let mut spec = oci_spec::runtime::Spec::default();
+    let mut process = oci_spec::runtime::Process::default();
+    process.set_args(Some(vec!["sleep".into(), "10".into()]));
+    spec.set_process(Some(process));
+
+    setup_spec(&bundle, &mut spec);
+
+    if let Err(e) = set_config(&bundle, &spec) {
+        return Err(TestResult::Failed(anyhow!("set_config: {e}")));
+    }
+
+    let run_result = (|| -> anyhow::Result<()> {
+        let status = run_container(&id, &bundle)?.wait()?;
+        if !status.success() {
+            anyhow::bail!("run -d failed ({})", status);
+        }
+        wait_container_running(&id, &bundle)
+    })();
+
+    if let Err(e) = run_result {
+        if let Ok(mut child) = kill_container(&id, &bundle) {
+            let _ = child.wait();
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        if let Ok(mut child) = delete_container(&id, &bundle) {
+            let _ = child.wait();
+        }
+        return Err(TestResult::Failed(anyhow!(
+            "container did not reach running state: {e}"
+        )));
+    }
+
+    let (image_dir, work_dir) = match make_cr_dirs(bundle.path()) {
+        Ok(d) => d,
+        Err(r) => {
+            if let Ok(mut child) = kill_container(&id, &bundle) {
+                let _ = child.wait();
+            }
+            std::thread::sleep(Duration::from_millis(100));
+            if let Ok(mut child) = delete_container(&id, &bundle) {
+                let _ = child.wait();
+            }
+            return Err(r);
+        }
+    };
+
+    Ok(CrTestContext {
+        id,
+        bundle,
+        image_dir,
+        work_dir,
+    })
 }
 
 /// Create image-dir and work-dir inside the bundle temp directory.
@@ -77,46 +140,22 @@ fn simple_cr(
     setup: impl Fn(&tempfile::TempDir, &mut oci_spec::runtime::Spec),
     verify: impl Fn(&str, &Path) -> anyhow::Result<()>,
 ) -> TestResult {
-    let id = generate_uuid().to_string();
-    let bundle = prepare_bundle().unwrap();
+    let ctx = match setup_cr_test(setup) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    let id = &ctx.id;
+    let bundle = &ctx.bundle;
+    let image_dir = &ctx.image_dir;
+    let work_dir = &ctx.work_dir;
 
-    // Apply caller-specific spec customisations on top of the base spec
-    let mut spec = oci_spec::runtime::Spec::default();
-    let mut process = oci_spec::runtime::Process::default();
-    process.set_args(Some(vec!["sleep".into(), "10".into()]));
-    spec.set_process(Some(process));
-    setup(&bundle, &mut spec);
-    set_config(&bundle, &spec).unwrap();
-
-    let run_result = (|| -> anyhow::Result<()> {
-        let status = run_container(&id, &bundle)?.wait()?;
-        if !status.success() {
-            anyhow::bail!("run -d failed ({})", status);
-        }
-        wait_container_running(&id, &bundle)
-    })();
-    if let Err(e) = run_result {
-        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
-    }
-
-    if let Err(e) = verify(&id, bundle.path()) {
+    if let Err(e) = verify(id, bundle.path()) {
         return TestResult::Failed(anyhow!("verify failed after run: {e}"));
     }
 
-    // Container is running: guard ensures kill+delete on any return path.
-    let _guard = ContainerGuard {
-        bundle: &bundle,
-        id: &id,
-    };
-
-    let (image_dir, work_dir) = match make_cr_dirs(bundle.path()) {
-        Ok(d) => d,
-        Err(r) => return r,
-    };
-
     for _ in 0..2 {
         if let Err(e) =
-            checkpoint_container(bundle.path(), &id, &image_dir, Some(&work_dir), global_args)
+            checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), global_args)
         {
             return TestResult::Failed(anyhow!("checkpoint failed: {e}"));
         }
@@ -125,8 +164,8 @@ fn simple_cr(
         // from its state, so `state <id>` should fail (exit code != 0).
         // This mirrors runc's `testcontainer "$CT_ID" checkpointed` check.
         if let Err(e) = wait_for_state(
-            &id,
-            &bundle,
+            id,
+            bundle,
             WaitTarget::Deleted,
             Duration::from_secs(5),
             Duration::from_millis(100),
@@ -136,15 +175,14 @@ fn simple_cr(
             ));
         }
 
-        if let Err(e) =
-            restore_container(bundle.path(), &id, &image_dir, Some(&work_dir), global_args)
+        if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), global_args)
         {
             return TestResult::Failed(anyhow!("restore failed: {e}"));
         }
 
         if let Err(e) = wait_for_state(
-            &id,
-            &bundle,
+            id,
+            bundle,
             WaitTarget::Status(LifecycleStatus::Running),
             Duration::from_secs(10),
             Duration::from_millis(100),
@@ -152,7 +190,7 @@ fn simple_cr(
             return TestResult::Failed(anyhow!("not running after restore: {e}"));
         }
 
-        if let Err(e) = verify(&id, bundle.path()) {
+        if let Err(e) = verify(id, bundle.path()) {
             return TestResult::Failed(anyhow!("verify failed after restore: {e}"));
         }
     }
@@ -316,42 +354,22 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
 // Test: checkpoint --pre-dump (bad --parent-path)
 // (runc: @test "checkpoint --pre-dump (bad --parent-path)")
 fn checkpoint_pre_dump_bad_parent_path() -> TestResult {
-    let id = generate_uuid().to_string();
-    let bundle = prepare_bundle().unwrap();
-
-    let mut spec = oci_spec::runtime::Spec::default();
-    let mut process = oci_spec::runtime::Process::default();
-    process.set_args(Some(vec!["sleep".into(), "10".into()]));
-    spec.set_process(Some(process));
-    set_config(&bundle, &spec).unwrap();
-
-    let run_result = (|| -> anyhow::Result<()> {
-        let status = run_container(&id, &bundle)?.wait()?;
-        if !status.success() {
-            anyhow::bail!("run -d failed ({})", status);
-        }
-        wait_container_running(&id, &bundle)
-    })();
-    if let Err(e) = run_result {
-        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
-    }
-
-    let _guard = ContainerGuard {
-        bundle: &bundle,
-        id: &id,
+    let ctx = match setup_cr_test(|_, _| {}) {
+        Ok(c) => c,
+        Err(e) => return e,
     };
 
-    let (image_dir, work_dir) = match make_cr_dirs(bundle.path()) {
-        Ok(d) => d,
-        Err(r) => return r,
-    };
+    let id = &ctx.id;
+    let bundle = &ctx.bundle;
+    let image_dir = &ctx.image_dir;
+    let work_dir = &ctx.work_dir;
 
     let absolute_parent = bundle.path().join("parent-dir");
     let output1 = try_checkpoint_container(
         bundle.path(),
-        &id,
-        &image_dir,
-        Some(&work_dir),
+        id,
+        image_dir,
+        Some(work_dir),
         &[
             "--pre-dump",
             "--parent-path",
@@ -375,9 +393,9 @@ fn checkpoint_pre_dump_bad_parent_path() -> TestResult {
 
     let output2 = try_checkpoint_container(
         bundle.path(),
-        &id,
-        &image_dir,
-        Some(&work_dir),
+        id,
+        image_dir,
+        Some(work_dir),
         &["--pre-dump", "--parent-path", "../parent-dir"],
         &[],
     )
@@ -401,30 +419,13 @@ fn checkpoint_pre_dump_bad_parent_path() -> TestResult {
 // Test: checkpoint --pre-dump and restore
 // (runc: @test "checkpoint --pre-dump and restore")
 fn checkpoint_pre_dump_and_restore() -> TestResult {
-    let id = generate_uuid().to_string();
-    let bundle = prepare_bundle().unwrap();
-
-    let mut spec = oci_spec::runtime::Spec::default();
-    let mut process = oci_spec::runtime::Process::default();
-    process.set_args(Some(vec!["sleep".into(), "10".into()]));
-    spec.set_process(Some(process));
-    set_config(&bundle, &spec).unwrap();
-
-    let run_result = (|| -> anyhow::Result<()> {
-        let status = run_container(&id, &bundle)?.wait()?;
-        if !status.success() {
-            anyhow::bail!("run -d failed ({})", status);
-        }
-        wait_container_running(&id, &bundle)
-    })();
-    if let Err(e) = run_result {
-        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
-    }
-
-    let _guard = ContainerGuard {
-        bundle: &bundle,
-        id: &id,
+    let ctx = match setup_cr_test(|_, _| {}) {
+        Ok(c) => c,
+        Err(e) => return e,
     };
+
+    let id = &ctx.id;
+    let bundle = &ctx.bundle;
 
     let pre_dump_dir = bundle.path().join("pre-dump");
     let final_dump_dir = bundle.path().join("final-dump");
@@ -436,15 +437,9 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
     }
 
     // Execute pre-dump
-    let output1 = try_checkpoint_container(
-        bundle.path(),
-        &id,
-        &pre_dump_dir,
-        None,
-        &["--pre-dump"],
-        &[],
-    )
-    .unwrap();
+    let output1 =
+        try_checkpoint_container(bundle.path(), id, &pre_dump_dir, None, &["--pre-dump"], &[])
+            .unwrap();
 
     if !output1.status.success() {
         let stderr = String::from_utf8_lossy(&output1.stderr);
@@ -453,8 +448,8 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
 
     // After pre-dump, container must still be running
     if let Err(e) = wait_for_state(
-        &id,
-        &bundle,
+        id,
+        bundle,
         WaitTarget::Status(LifecycleStatus::Running),
         Duration::from_secs(5),
         Duration::from_millis(100),
@@ -466,7 +461,7 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
     let relative_parent = "../pre-dump";
     let output2 = try_checkpoint_container(
         bundle.path(),
-        &id,
+        id,
         &final_dump_dir,
         None,
         &["--parent-path", relative_parent],
@@ -481,8 +476,8 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
 
     // After final dump, container must be deleted
     if let Err(e) = wait_for_state(
-        &id,
-        &bundle,
+        id,
+        bundle,
         WaitTarget::Deleted,
         Duration::from_secs(5),
         Duration::from_millis(100),
@@ -493,14 +488,14 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
     }
 
     // Restore the container from the final dump directory
-    if let Err(e) = restore_container(bundle.path(), &id, &final_dump_dir, None, &[]) {
+    if let Err(e) = restore_container(bundle.path(), id, &final_dump_dir, None, &[]) {
         return TestResult::Failed(anyhow!("restore failed: {e}"));
     }
 
     // After restore, container must be running again
     if let Err(e) = wait_for_state(
-        &id,
-        &bundle,
+        id,
+        bundle,
         WaitTarget::Status(LifecycleStatus::Running),
         Duration::from_secs(10),
         Duration::from_millis(100),
@@ -514,35 +509,15 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
 // Test: checkpoint --lazy-pages and restore
 // (runc: @test "checkpoint --lazy-pages and restore")
 fn checkpoint_lazy_pages_and_restore() -> TestResult {
-    let id = generate_uuid().to_string();
-    let bundle = prepare_bundle().unwrap();
-
-    let mut spec = oci_spec::runtime::Spec::default();
-    let mut process = oci_spec::runtime::Process::default();
-    process.set_args(Some(vec!["sleep".into(), "10".into()]));
-    spec.set_process(Some(process));
-    set_config(&bundle, &spec).unwrap();
-
-    let run_result = (|| -> anyhow::Result<()> {
-        let status = run_container(&id, &bundle)?.wait()?;
-        if !status.success() {
-            anyhow::bail!("run -d failed ({})", status);
-        }
-        wait_container_running(&id, &bundle)
-    })();
-    if let Err(e) = run_result {
-        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
-    }
-
-    let _guard = ContainerGuard {
-        bundle: &bundle,
-        id: &id,
+    let ctx = match setup_cr_test(|_, _| {}) {
+        Ok(c) => c,
+        Err(e) => return e,
     };
 
-    let (image_dir, work_dir) = match make_cr_dirs(bundle.path()) {
-        Ok(d) => d,
-        Err(r) => return r,
-    };
+    let id = &ctx.id;
+    let bundle = &ctx.bundle;
+    let image_dir = &ctx.image_dir;
+    let work_dir = &ctx.work_dir;
 
     // For lazy migration we need to know when CRIU is ready to serve
     // the memory pages via TCP. We use a pipe to get the readiness status.
@@ -558,9 +533,9 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
     let port_str = format!("0.0.0.0:{}", port);
     let mut checkpoint_cmd = build_checkpoint_command(
         bundle.path(),
-        &id,
-        &image_dir,
-        Some(&work_dir),
+        id,
+        image_dir,
+        Some(work_dir),
         &[
             "--lazy-pages",
             "--page-server",
@@ -638,9 +613,9 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
     // Restore lazily from checkpoint
     let restore_result = restore_container(
         bundle.path(),
-        &id,
-        &image_dir,
-        Some(&work_dir),
+        id,
+        image_dir,
+        Some(work_dir),
         &["--lazy-pages", "--manage-cgroups-mode=ignore"],
     );
 
@@ -658,8 +633,8 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
 
     // After restore, container must be running again
     if let Err(e) = wait_for_state(
-        &id,
-        &bundle,
+        id,
+        bundle,
         WaitTarget::Status(LifecycleStatus::Running),
         Duration::from_secs(10),
         Duration::from_millis(100),
@@ -673,64 +648,40 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
 // Test: checkpoint and restore in external network namespace
 // (runc: @test "checkpoint and restore in external network namespace")
 fn checkpoint_and_restore_in_external_netns() -> TestResult {
-    let id = generate_uuid().to_string();
-    let bundle = prepare_bundle().unwrap();
-
     let ns_name = format!("contest-{}", generate_uuid());
 
     // Ensure we delete the netns when the test finishes
     let _netns_guard = crate::utils::net::NetNamespace::create(ns_name.clone()).unwrap();
-
-    let mut spec = oci_spec::runtime::Spec::default();
-    let mut process = oci_spec::runtime::Process::default();
-    process.set_args(Some(vec!["sleep".into(), "10".into()]));
-    spec.set_process(Some(process));
-
     let ext_netns_path = format!("/run/netns/{ns_name}");
 
-    // Modify the spec to point the network namespace to the external path
-    if let Some(linux) = spec.linux_mut()
-        && let Some(namespaces) = linux.namespaces_mut()
-    {
-        namespaces
-            .iter_mut()
-            .filter(|ns| ns.typ() == LinuxNamespaceType::Network)
-            .for_each(|ns| {
-                ns.set_path(Some(PathBuf::from(&ext_netns_path)));
-            });
-    }
-
-    set_config(&bundle, &spec).unwrap();
-
-    let run_result = (|| -> anyhow::Result<()> {
-        let status = run_container(&id, &bundle)?.wait()?;
-        if !status.success() {
-            anyhow::bail!("run -d failed ({status})");
+    let ctx = match setup_cr_test(|_, spec| {
+        // Modify the spec to point the network namespace to the external path
+        if let Some(linux) = spec.linux_mut()
+            && let Some(namespaces) = linux.namespaces_mut()
+        {
+            namespaces
+                .iter_mut()
+                .filter(|ns| ns.typ() == LinuxNamespaceType::Network)
+                .for_each(|ns| {
+                    ns.set_path(Some(PathBuf::from(&ext_netns_path)));
+                });
         }
-        wait_container_running(&id, &bundle)
-    })();
-    if let Err(e) = run_result {
-        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
-    }
-
-    let _guard = ContainerGuard {
-        bundle: &bundle,
-        id: &id,
+    }) {
+        Ok(c) => c,
+        Err(e) => return e,
     };
+    let id = &ctx.id;
+    let bundle = &ctx.bundle;
+    let image_dir = &ctx.image_dir;
+    let work_dir = &ctx.work_dir;
 
-    let (image_dir, work_dir) = match make_cr_dirs(bundle.path()) {
-        Ok(d) => d,
-        Err(r) => return r,
-    };
-
-    let (stdout, _) = get_state(&id, bundle.path()).unwrap();
+    let (stdout, _) = get_state(id, bundle.path()).unwrap();
     let state: crate::utils::State = serde_json::from_str(&stdout).unwrap();
     let pid = state.pid.unwrap();
     let original_inode = std::fs::read_link(format!("/proc/{}/ns/net", pid)).unwrap();
 
     let cp_result =
-        try_checkpoint_container(bundle.path(), &id, &image_dir, Some(&work_dir), &[], &[])
-            .unwrap();
+        try_checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]).unwrap();
 
     if !cp_result.status.success() {
         return TestResult::Failed(anyhow!(
@@ -740,8 +691,8 @@ fn checkpoint_and_restore_in_external_netns() -> TestResult {
     }
 
     if let Err(e) = wait_for_state(
-        &id,
-        &bundle,
+        id,
+        bundle,
         WaitTarget::Deleted,
         Duration::from_secs(10),
         Duration::from_millis(100),
@@ -749,13 +700,13 @@ fn checkpoint_and_restore_in_external_netns() -> TestResult {
         return TestResult::Failed(anyhow!("not deleted after checkpoint: {e}"));
     }
 
-    if let Err(e) = restore_container(bundle.path(), &id, &image_dir, Some(&work_dir), &[]) {
+    if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[]) {
         return TestResult::Failed(anyhow!("restore failed: {e}"));
     }
 
     if let Err(e) = wait_for_state(
-        &id,
-        &bundle,
+        id,
+        bundle,
         WaitTarget::Status(LifecycleStatus::Running),
         Duration::from_secs(10),
         Duration::from_millis(100),
@@ -763,7 +714,7 @@ fn checkpoint_and_restore_in_external_netns() -> TestResult {
         return TestResult::Failed(anyhow!("not running after restore: {e}"));
     }
 
-    let (stdout, _) = get_state(&id, bundle.path()).unwrap();
+    let (stdout, _) = get_state(id, bundle.path()).unwrap();
     let state: crate::utils::State = serde_json::from_str(&stdout).unwrap();
     let new_pid = state.pid.unwrap();
     let new_inode = std::fs::read_link(format!("/proc/{new_pid}/ns/net")).unwrap();
@@ -780,54 +731,32 @@ fn checkpoint_and_restore_in_external_netns() -> TestResult {
 // Test: checkpoint and restore with container specific CRIU config
 // (runc: @test "checkpoint and restore with container specific CRIU config")
 fn checkpoint_and_restore_with_container_specific_criu_config() -> TestResult {
-    let id = generate_uuid().to_string();
-    let bundle = prepare_bundle().unwrap();
-
-    let mut spec = oci_spec::runtime::Spec::default();
-    let mut process = oci_spec::runtime::Process::default();
-    process.set_args(Some(vec!["sleep".into(), "10".into()]));
-    spec.set_process(Some(process));
-
-    // Create custom CRIU config inside the bundle
-    let custom_config_path = bundle.path().join("custom_criu.conf");
     let custom_log_name = "custom_criu.log";
-    std::fs::write(&custom_config_path, format!("log-file={custom_log_name}\n")).unwrap();
+    let ctx = match setup_cr_test(|bundle, spec| {
+        // Create custom CRIU config inside the bundle
+        let custom_config_path = bundle.path().join("custom_criu.conf");
+        std::fs::write(&custom_config_path, format!("log-file={custom_log_name}\n")).unwrap();
 
-    // Add annotation for youki to pick up the CRIU config
-    let mut annotations = HashMap::new();
-    annotations.insert(
-        "org.criu.config".to_string(),
-        custom_config_path.to_str().unwrap().to_string(),
-    );
-    spec.set_annotations(Some(annotations));
-
-    set_config(&bundle, &spec).unwrap();
-
-    let run_result = (|| -> anyhow::Result<()> {
-        let status = run_container(&id, &bundle)?.wait()?;
-        if !status.success() {
-            anyhow::bail!("run -d failed ({status})");
-        }
-        wait_container_running(&id, &bundle)
-    })();
-    if let Err(e) = run_result {
-        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
-    }
-
-    let _guard = ContainerGuard {
-        bundle: &bundle,
-        id: &id,
+        // Add annotation for youki to pick up the CRIU config
+        let mut annotations = std::collections::HashMap::new();
+        annotations.insert(
+            "org.criu.config".to_string(),
+            custom_config_path.to_str().unwrap().to_string(),
+        );
+        spec.set_annotations(Some(annotations));
+    }) {
+        Ok(c) => c,
+        Err(e) => return e,
     };
 
-    let (image_dir, work_dir) = match make_cr_dirs(bundle.path()) {
-        Ok(d) => d,
-        Err(r) => return r,
-    };
+    let id = &ctx.id;
+    let bundle = &ctx.bundle;
+    let image_dir = &ctx.image_dir;
+    let work_dir = &ctx.work_dir;
 
     let log_file_path = work_dir.join(custom_log_name);
 
-    if let Err(e) =
-        try_checkpoint_container(bundle.path(), &id, &image_dir, Some(&work_dir), &[], &[])
+    if let Err(e) = try_checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[])
     {
         return TestResult::Failed(anyhow!("checkpoint failed: {e:?}"));
     }
@@ -841,8 +770,8 @@ fn checkpoint_and_restore_with_container_specific_criu_config() -> TestResult {
     std::fs::remove_file(&log_file_path).unwrap();
 
     if let Err(e) = wait_for_state(
-        &id,
-        &bundle,
+        id,
+        bundle,
         WaitTarget::Deleted,
         Duration::from_secs(10),
         Duration::from_millis(100),
@@ -850,7 +779,7 @@ fn checkpoint_and_restore_with_container_specific_criu_config() -> TestResult {
         return TestResult::Failed(anyhow!("container not deleted after checkpoint: {e}"));
     }
 
-    if let Err(e) = restore_container(bundle.path(), &id, &image_dir, Some(&work_dir), &[]) {
+    if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[]) {
         return TestResult::Failed(anyhow!("restore failed: {e}"));
     }
 
@@ -860,8 +789,8 @@ fn checkpoint_and_restore_with_container_specific_criu_config() -> TestResult {
     }
 
     if let Err(e) = wait_for_state(
-        &id,
-        &bundle,
+        id,
+        bundle,
         WaitTarget::Status(LifecycleStatus::Running),
         Duration::from_secs(10),
         Duration::from_millis(100),
@@ -875,71 +804,53 @@ fn checkpoint_and_restore_with_container_specific_criu_config() -> TestResult {
 // Test: checkpoint and restore with nested bind mounts
 // (runc: @test "checkpoint and restore with nested bind mounts")
 fn checkpoint_and_restore_with_nested_bind_mounts() -> TestResult {
-    let id = generate_uuid().to_string();
-    let bundle = prepare_bundle().unwrap();
+    let mut bind1_path = PathBuf::new();
+    let ctx = match setup_cr_test(|bundle, spec| {
+        // Create bind mount source directories
+        let bind1 = bundle.path().join("bind1");
+        let bind2 = bundle.path().join("bind2");
+        std::fs::create_dir_all(&bind1).unwrap();
+        std::fs::create_dir_all(&bind2).unwrap();
+        bind1_path = bind1.clone();
 
-    let mut spec = oci_spec::runtime::Spec::default();
-    let mut process = oci_spec::runtime::Process::default();
-    process.set_args(Some(vec!["sleep".into(), "10".into()]));
-    spec.set_process(Some(process));
+        let mnt1 = MountBuilder::default()
+            .typ("bind".to_string())
+            .source(&bind1)
+            .destination(PathBuf::from("/test"))
+            .options(vec!["rw".to_string(), "bind".to_string()])
+            .build()
+            .unwrap();
 
-    // Create bind mount source directories
-    let bind1 = bundle.path().join("bind1");
-    let bind2 = bundle.path().join("bind2");
-    std::fs::create_dir_all(&bind1).unwrap();
-    std::fs::create_dir_all(&bind2).unwrap();
+        let mnt2 = MountBuilder::default()
+            .typ("bind".to_string())
+            .source(&bind2)
+            .destination(PathBuf::from("/test/for/nested"))
+            .options(vec!["rw".to_string(), "bind".to_string()])
+            .build()
+            .unwrap();
 
-    let mnt1 = MountBuilder::default()
-        .typ("bind".to_string())
-        .source(&bind1)
-        .destination(PathBuf::from("/test"))
-        .options(vec!["rw".to_string(), "bind".to_string()])
-        .build()
-        .unwrap();
-
-    let mnt2 = MountBuilder::default()
-        .typ("bind".to_string())
-        .source(&bind2)
-        .destination(PathBuf::from("/test/for/nested"))
-        .options(vec!["rw".to_string(), "bind".to_string()])
-        .build()
-        .unwrap();
-
-    let mut mounts = spec.mounts().clone().unwrap_or_default();
-    mounts.push(mnt1);
-    mounts.push(mnt2);
-    spec.set_mounts(Some(mounts));
-
-    set_config(&bundle, &spec).unwrap();
-
-    let run_result = (|| -> anyhow::Result<()> {
-        let status = run_container(&id, &bundle)?.wait()?;
-        if !status.success() {
-            anyhow::bail!("run -d failed ({})", status);
-        }
-        wait_container_running(&id, &bundle)
-    })();
-    if let Err(e) = run_result {
-        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
-    }
-
-    let _guard = ContainerGuard {
-        bundle: &bundle,
-        id: &id,
+        let mut mounts = spec.mounts().clone().unwrap_or_default();
+        mounts.push(mnt1);
+        mounts.push(mnt2);
+        spec.set_mounts(Some(mounts));
+    }) {
+        Ok(c) => c,
+        Err(e) => return e,
     };
 
-    let (image_dir, work_dir) = match make_cr_dirs(bundle.path()) {
-        Ok(d) => d,
-        Err(r) => return r,
-    };
+    let id = &ctx.id;
+    let bundle = &ctx.bundle;
+    let image_dir = &ctx.image_dir;
+    let work_dir = &ctx.work_dir;
+    let bind1 = bind1_path;
 
-    if let Err(e) = checkpoint_container(bundle.path(), &id, &image_dir, Some(&work_dir), &[]) {
+    if let Err(e) = checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), &[]) {
         return TestResult::Failed(anyhow!("checkpoint failed: {e}"));
     }
 
     if let Err(e) = wait_for_state(
-        &id,
-        &bundle,
+        id,
+        bundle,
         WaitTarget::Deleted,
         Duration::from_secs(10),
         Duration::from_millis(100),
@@ -952,13 +863,13 @@ fn checkpoint_and_restore_with_nested_bind_mounts() -> TestResult {
     std::fs::remove_dir_all(&bind1).unwrap();
     std::fs::create_dir_all(&bind1).unwrap();
 
-    if let Err(e) = restore_container(bundle.path(), &id, &image_dir, Some(&work_dir), &[]) {
+    if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[]) {
         return TestResult::Failed(anyhow!("restore failed: {e}"));
     }
 
     if let Err(e) = wait_for_state(
-        &id,
-        &bundle,
+        id,
+        bundle,
         WaitTarget::Status(LifecycleStatus::Running),
         Duration::from_secs(10),
         Duration::from_millis(100),
@@ -972,44 +883,27 @@ fn checkpoint_and_restore_with_nested_bind_mounts() -> TestResult {
 // Test: checkpoint then restore into a different cgroup (via --manage-cgroups-mode ignore)
 // (runc: @test "checkpoint then restore into a different cgroup (via --manage-cgroups-mode ignore)")
 fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
-    let id = generate_uuid().to_string();
-    let bundle = prepare_bundle().unwrap();
-
-    let mut spec = oci_spec::runtime::Spec::default();
-    let mut process = oci_spec::runtime::Process::default();
-    process.set_args(Some(vec!["sleep".into(), "10".into()]));
-    spec.set_process(Some(process));
-
-    // Set initial cgroup path
-    let mut linux = oci_spec::runtime::Linux::default();
-    let initial_cgroup = format!("/runtime-test/cgroup-1-{id}");
-    linux.set_cgroups_path(Some(PathBuf::from(&initial_cgroup)));
-    spec.set_linux(Some(linux));
-    set_config(&bundle, &spec).unwrap();
-
-    let run_result = (|| -> anyhow::Result<()> {
-        let status = run_container(&id, &bundle)?.wait()?;
-        if !status.success() {
-            anyhow::bail!("run -d failed ({status})");
-        }
-        wait_container_running(&id, &bundle)
-    })();
-    if let Err(e) = run_result {
-        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
-    }
-
-    let _guard = ContainerGuard {
-        bundle: &bundle,
-        id: &id,
+    let mut initial_cgroup_val = String::new();
+    let ctx = match setup_cr_test(|_, spec| {
+        // Set initial cgroup path
+        let mut linux = oci_spec::runtime::Linux::default();
+        // Since id is inside ctx which is built later, we just generate one here
+        let initial_cgroup = format!("/runtime-test/cgroup-1-{}", generate_uuid());
+        linux.set_cgroups_path(Some(PathBuf::from(&initial_cgroup)));
+        spec.set_linux(Some(linux));
+        initial_cgroup_val = initial_cgroup;
+    }) {
+        Ok(c) => c,
+        Err(e) => return e,
     };
 
-    let (image_dir, work_dir) = match make_cr_dirs(bundle.path()) {
-        Ok(d) => d,
-        Err(r) => return r,
-    };
+    let id = &ctx.id;
+    let bundle = &ctx.bundle;
+    let image_dir = &ctx.image_dir;
+    let work_dir = &ctx.work_dir;
 
     // Get the container PID and use it to find the real cgroup path on the host
-    let (stdout, _) = get_state(&id, bundle.path()).unwrap();
+    let (stdout, _) = get_state(id, bundle.path()).unwrap();
     let state: oci_spec::runtime::State = serde_json::from_str(&stdout).unwrap();
     let pid = state.pid().unwrap();
     let cgroup_data = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).unwrap();
@@ -1036,9 +930,9 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
     // Checkpoint with --manage-cgroups-mode ignore
     let cp_result = try_checkpoint_container(
         bundle.path(),
-        &id,
-        &image_dir,
-        Some(&work_dir),
+        id,
+        image_dir,
+        Some(work_dir),
         &["--manage-cgroups-mode", "ignore"],
         &[],
     );
@@ -1054,8 +948,8 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
     }
 
     if let Err(e) = wait_for_state(
-        &id,
-        &bundle,
+        id,
+        bundle,
         WaitTarget::Deleted,
         Duration::from_secs(5),
         Duration::from_millis(100),
@@ -1075,26 +969,27 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
 
     // Update config to a DIFFERENT cgroup
     let new_cgroup = format!("/runtime-test/cgroup-2-{}", id);
+    let mut spec = oci_spec::runtime::Spec::load(bundle.path().join("config.json")).unwrap();
     spec.linux_mut()
         .as_mut()
         .unwrap()
         .set_cgroups_path(Some(PathBuf::from(&new_cgroup)));
-    set_config(&bundle, &spec).unwrap();
+    set_config(bundle.path(), &spec).unwrap();
 
     // Restore into the new cgroup
     if let Err(e) = restore_container(
         bundle.path(),
-        &id,
-        &image_dir,
-        Some(&work_dir),
+        id,
+        image_dir,
+        Some(work_dir),
         &["--manage-cgroups-mode", "ignore"],
     ) {
         return TestResult::Failed(anyhow!("restore failed: {e}"));
     }
 
     if let Err(e) = wait_for_state(
-        &id,
-        &bundle,
+        id,
+        bundle,
         WaitTarget::Status(LifecycleStatus::Running),
         Duration::from_secs(10),
         Duration::from_millis(100),
@@ -1103,7 +998,7 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
     }
 
     // Verify the new cgroup
-    let (stdout_restored, _) = get_state(&id, bundle.path()).unwrap();
+    let (stdout_restored, _) = get_state(id, bundle.path()).unwrap();
     let state_restored: oci_spec::runtime::State = serde_json::from_str(&stdout_restored).unwrap();
     let pid_restored = state_restored.pid().unwrap();
     let cgroup_data_restored =
@@ -1136,46 +1031,25 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
 }
 
 fn checkpoint_and_restore_and_exec() -> TestResult {
-    let id = generate_uuid().to_string();
-    let bundle = prepare_bundle().unwrap();
-
-    let mut spec = oci_spec::runtime::Spec::default();
-    let mut process = oci_spec::runtime::Process::default();
-    process.set_args(Some(vec!["sleep".into(), "10".into()]));
-    spec.set_process(Some(process));
-    set_config(&bundle, &spec).unwrap();
-
-    let run_result = (|| -> anyhow::Result<()> {
-        let status = run_container(&id, &bundle)?.wait()?;
-        if !status.success() {
-            anyhow::bail!("run -d failed ({status})");
-        }
-        wait_container_running(&id, &bundle)
-    })();
-    if let Err(e) = run_result {
-        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
-    }
-
-    let _guard = ContainerGuard {
-        bundle: &bundle,
-        id: &id,
+    let ctx = match setup_cr_test(|_, _| {}) {
+        Ok(c) => c,
+        Err(e) => return e,
     };
-
-    let (image_dir, work_dir) = match make_cr_dirs(bundle.path()) {
-        Ok(d) => d,
-        Err(r) => return r,
-    };
+    let id = &ctx.id;
+    let bundle = &ctx.bundle;
+    let image_dir = &ctx.image_dir;
+    let work_dir = &ctx.work_dir;
 
     let mut execed_pid: Option<String> = None;
 
     for _ in 0..2 {
-        if let Err(e) = checkpoint_container(bundle.path(), &id, &image_dir, Some(&work_dir), &[]) {
+        if let Err(e) = checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), &[]) {
             return TestResult::Failed(anyhow!("checkpoint failed: {e}"));
         }
 
         if let Err(e) = wait_for_state(
-            &id,
-            &bundle,
+            id,
+            bundle,
             WaitTarget::Deleted,
             Duration::from_secs(5),
             Duration::from_millis(100),
@@ -1185,13 +1059,13 @@ fn checkpoint_and_restore_and_exec() -> TestResult {
             ));
         }
 
-        if let Err(e) = restore_container(bundle.path(), &id, &image_dir, Some(&work_dir), &[]) {
+        if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[]) {
             return TestResult::Failed(anyhow!("restore failed: {e}"));
         }
 
         if let Err(e) = wait_for_state(
-            &id,
-            &bundle,
+            id,
+            bundle,
             WaitTarget::Status(LifecycleStatus::Running),
             Duration::from_secs(10),
             Duration::from_millis(100),
@@ -1202,8 +1076,7 @@ fn checkpoint_and_restore_and_exec() -> TestResult {
         // Verify that previously exec'd process is restored
         if let Some(pid) = &execed_pid {
             let proc_path = format!("/proc/{pid}");
-            if let Err(e) =
-                exec_container(&id, bundle.path(), &["ls", "-ld", &proc_path], None, &[])
+            if let Err(e) = exec_container(id, bundle.path(), &["ls", "-ld", &proc_path], None, &[])
             {
                 return TestResult::Failed(anyhow!(
                     "failed to verify restored exec'd process: {e}"
@@ -1213,7 +1086,7 @@ fn checkpoint_and_restore_and_exec() -> TestResult {
 
         // Exec a new background process
         match exec_container(
-            &id,
+            id,
             bundle.path(),
             &[
                 "sh",
