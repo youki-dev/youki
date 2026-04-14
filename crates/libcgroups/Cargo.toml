@@ -29,7 +29,7 @@ serde = { version = "1.0", features = ["derive"] }
 rbpf = { version = "0.4.1", optional = true }
 libbpf-sys = { version = "1.6.4", optional = true }
 errno = { version = "0.3.14", optional = true }
-libc = { version = "0.2.184", optional = true }
+libc = { version = "0.2.185", optional = true }
 thiserror = "2.0.18"
 tracing = { version = "0.1.44", features = ["attributes"] }
 
