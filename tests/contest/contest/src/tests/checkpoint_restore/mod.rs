@@ -1135,6 +1135,110 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
     TestResult::Passed
 }
 
+fn checkpoint_and_restore_and_exec() -> TestResult {
+    let id = generate_uuid().to_string();
+    let bundle = prepare_bundle().unwrap();
+
+    let mut spec = oci_spec::runtime::Spec::default();
+    let mut process = oci_spec::runtime::Process::default();
+    process.set_args(Some(vec!["sleep".into(), "10".into()]));
+    spec.set_process(Some(process));
+    set_config(&bundle, &spec).unwrap();
+
+    let run_result = (|| -> anyhow::Result<()> {
+        let status = run_container(&id, &bundle)?.wait()?;
+        if !status.success() {
+            anyhow::bail!("run -d failed ({status})");
+        }
+        wait_container_running(&id, &bundle)
+    })();
+    if let Err(e) = run_result {
+        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
+    }
+
+    let _guard = ContainerGuard {
+        bundle: &bundle,
+        id: &id,
+    };
+
+    let (image_dir, work_dir) = match make_cr_dirs(bundle.path()) {
+        Ok(d) => d,
+        Err(r) => return r,
+    };
+
+    let mut execed_pid: Option<String> = None;
+
+    for _ in 0..2 {
+        if let Err(e) = checkpoint_container(bundle.path(), &id, &image_dir, Some(&work_dir), &[]) {
+            return TestResult::Failed(anyhow!("checkpoint failed: {e}"));
+        }
+
+        if let Err(e) = wait_for_state(
+            &id,
+            &bundle,
+            WaitTarget::Deleted,
+            Duration::from_secs(5),
+            Duration::from_millis(100),
+        ) {
+            return TestResult::Failed(anyhow!(
+                "container state still accessible after checkpoint: {e}"
+            ));
+        }
+
+        if let Err(e) = restore_container(bundle.path(), &id, &image_dir, Some(&work_dir), &[]) {
+            return TestResult::Failed(anyhow!("restore failed: {e}"));
+        }
+
+        if let Err(e) = wait_for_state(
+            &id,
+            &bundle,
+            WaitTarget::Status(LifecycleStatus::Running),
+            Duration::from_secs(10),
+            Duration::from_millis(100),
+        ) {
+            return TestResult::Failed(anyhow!("not running after restore: {e}"));
+        }
+
+        // Verify that previously exec'd process is restored
+        if let Some(pid) = &execed_pid {
+            let proc_path = format!("/proc/{pid}");
+            if let Err(e) =
+                exec_container(&id, bundle.path(), &["ls", "-ld", &proc_path], None, &[])
+            {
+                return TestResult::Failed(anyhow!(
+                    "failed to verify restored exec'd process: {e}"
+                ));
+            }
+        }
+
+        // Exec a new background process
+        match exec_container(
+            &id,
+            bundle.path(),
+            &[
+                "sh",
+                "-c",
+                "sleep 1000 < /dev/null > /dev/null 2>&1 & echo $!",
+            ],
+            None,
+            &[],
+        ) {
+            Ok((stdout, _stderr)) => {
+                let pid = stdout.trim().to_string();
+                if pid.is_empty() {
+                    return TestResult::Failed(anyhow!("exec'd process pid is empty"));
+                }
+                execed_pid = Some(pid);
+            }
+            Err(e) => {
+                return TestResult::Failed(anyhow!("failed to exec new background process: {e}"));
+            }
+        }
+    }
+
+    TestResult::Passed
+}
+
 pub fn get_checkpoint_restore_tests() -> TestGroup {
     let mut tg = TestGroup::new("checkpoint_restore");
     // Run sequentially: CRIU uses global kernel resources and parallel
@@ -1195,6 +1299,11 @@ pub fn get_checkpoint_restore_tests() -> TestGroup {
     tg.add(vec![Box::new(cr_test!(
         "checkpoint_then_restore_into_a_different_cgroup",
         checkpoint_then_restore_into_a_different_cgroup
+    ))]);
+
+    tg.add(vec![Box::new(cr_test!(
+        "checkpoint_and_restore_and_exec",
+        checkpoint_and_restore_and_exec
     ))]);
 
     tg
