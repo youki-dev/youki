@@ -802,7 +802,7 @@ fn checkpoint_and_restore_in_external_netns() -> TestResult {
     let ns_name = format!("contest-{}", generate_uuid());
 
     // Ensure we delete the netns when the test finishes
-    let _netns_guard = crate::utils::net::NetNamespace::create(ns_name.clone()).unwrap();
+    let _netns_guard = net::NetNamespace::create(ns_name.clone()).unwrap();
     let ext_netns_path = format!("/run/netns/{ns_name}");
 
     let ctx = match setup_cr_test(|_, spec| {
@@ -831,53 +831,56 @@ fn checkpoint_and_restore_in_external_netns() -> TestResult {
     let pid = state.pid.unwrap();
     let original_inode = std::fs::read_link(format!("/proc/{}/ns/net", pid)).unwrap();
 
-    let cp_result =
-        try_checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]).unwrap();
+    for _ in 0..2 {
+        let cp_result =
+            try_checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[])
+                .unwrap();
 
-    if !cp_result.status.success() {
-        return TestResult::Failed(anyhow!(
-            "checkpoint failed: {}",
-            String::from_utf8_lossy(&cp_result.stderr)
-        ));
-    }
+        if !cp_result.status.success() {
+            return TestResult::Failed(anyhow!(
+                "checkpoint failed: {}",
+                String::from_utf8_lossy(&cp_result.stderr)
+            ));
+        }
 
-    if let Err(e) = wait_for_state(
-        id,
-        bundle,
-        WaitTarget::Deleted,
-        Duration::from_secs(10),
-        Duration::from_millis(100),
-    ) {
-        return TestResult::Failed(anyhow!("not deleted after checkpoint: {e}"));
-    }
+        if let Err(e) = wait_for_state(
+            id,
+            bundle,
+            WaitTarget::Deleted,
+            Duration::from_secs(10),
+            Duration::from_millis(100),
+        ) {
+            return TestResult::Failed(anyhow!("not deleted after checkpoint: {e}"));
+        }
 
-    if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
-        return TestResult::Failed(anyhow!("restore failed: {e}"));
-    }
+        if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
+            return TestResult::Failed(anyhow!("restore failed: {e}"));
+        }
 
-    if let Err(e) = wait_for_state(
-        id,
-        bundle,
-        WaitTarget::Status(LifecycleStatus::Running),
-        Duration::from_secs(10),
-        Duration::from_millis(100),
-    ) {
-        return TestResult::Failed(anyhow!("not running after restore: {e}"));
-    }
+        if let Err(e) = wait_for_state(
+            id,
+            bundle,
+            WaitTarget::Status(LifecycleStatus::Running),
+            Duration::from_secs(10),
+            Duration::from_millis(100),
+        ) {
+            return TestResult::Failed(anyhow!("not running after restore: {e}"));
+        }
 
-    if let Err(e) = ping_container(bundle.path()) {
-        return TestResult::Failed(anyhow!("ping container failed after restore: {e}"));
-    }
+        if let Err(e) = ping_container(bundle.path()) {
+            return TestResult::Failed(anyhow!("ping container failed after restore: {e}"));
+        }
 
-    let (stdout, _) = get_state(id, bundle.path()).unwrap();
-    let state: crate::utils::State = serde_json::from_str(&stdout).unwrap();
-    let new_pid = state.pid.unwrap();
-    let new_inode = std::fs::read_link(format!("/proc/{new_pid}/ns/net")).unwrap();
+        let (stdout, _) = get_state(id, bundle.path()).unwrap();
+        let state: crate::utils::State = serde_json::from_str(&stdout).unwrap();
+        let new_pid = state.pid.unwrap();
+        let new_inode = std::fs::read_link(format!("/proc/{new_pid}/ns/net")).unwrap();
 
-    if original_inode != new_inode {
-        return TestResult::Failed(anyhow!(
-            "inode mismatch: original {original_inode:?}, new {new_inode:?}",
-        ));
+        if original_inode != new_inode {
+            return TestResult::Failed(anyhow!(
+                "inode mismatch: original {original_inode:?}, new {new_inode:?}",
+            ));
+        }
     }
 
     TestResult::Passed
