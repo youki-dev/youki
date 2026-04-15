@@ -56,6 +56,35 @@ impl Drop for CrTestContext {
     }
 }
 
+fn ping_container(bundle: &Path) -> anyhow::Result<()> {
+    let fifo_path = bundle.join("fifo");
+    let (tx, rx) = std::sync::mpsc::channel();
+    
+    std::thread::spawn(move || {
+        let res = (|| -> anyhow::Result<()> {
+            let mut f_out = std::fs::OpenOptions::new().write(true).open(&fifo_path)?;
+            std::io::Write::write_all(&mut f_out, b"Ping\n")?;
+            drop(f_out);
+
+            let f_in = std::fs::OpenOptions::new().read(true).open(&fifo_path)?;
+            let mut reader = std::io::BufReader::new(f_in);
+            let mut line = String::new();
+            std::io::BufRead::read_line(&mut reader, &mut line)?;
+            if line.trim() != "ponG Ping" {
+                anyhow::bail!("Unexpected response from container: {:?}", line);
+            }
+            Ok(())
+        })();
+        let _ = tx.send(res);
+    });
+
+    match rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(e),
+        Err(_) => Err(anyhow::anyhow!("ping_container timed out")),
+    }
+}
+
 fn setup_cr_test(
     setup_spec: impl FnOnce(&tempfile::TempDir, &mut oci_spec::runtime::Spec),
 ) -> Result<CrTestContext, TestResult> {
@@ -65,10 +94,31 @@ fn setup_cr_test(
         Err(e) => return Err(TestResult::Failed(anyhow!("prepare bundle: {e}"))),
     };
 
+    let fifo_path = bundle.path().join("fifo");
+    if let Err(e) = nix::unistd::mkfifo(&fifo_path, nix::sys::stat::Mode::S_IRWXU) {
+        return Err(TestResult::Failed(anyhow!("mkfifo failed: {e}")));
+    }
+
     let mut spec = oci_spec::runtime::Spec::default();
     let mut process = oci_spec::runtime::Process::default();
-    process.set_args(Some(vec!["sleep".into(), "10000".into()]));
+    process.set_args(Some(vec![
+        "sh".into(),
+        "-c".into(),
+        "while true; do read line < /fifo; echo ponG $line > /fifo; done".into(),
+    ]));
     spec.set_process(Some(process));
+
+    let fifo_mount = oci_spec::runtime::MountBuilder::default()
+        .source(fifo_path)
+        .destination(PathBuf::from("/fifo"))
+        .typ("bind".to_string())
+        .options(vec!["bind".to_string(), "rw".to_string()])
+        .build()
+        .unwrap();
+
+    let mut mounts = spec.mounts().clone().unwrap_or_default();
+    mounts.push(fifo_mount);
+    spec.set_mounts(Some(mounts));
 
     setup_spec(&bundle, &mut spec);
 
@@ -81,7 +131,8 @@ fn setup_cr_test(
         if !status.success() {
             anyhow::bail!("run -d failed ({})", status);
         }
-        wait_container_running(&id, &bundle)
+        wait_container_running(&id, &bundle)?;
+        ping_container(bundle.path())
     })();
 
     if let Err(e) = run_result {
@@ -194,6 +245,10 @@ fn simple_cr(
             Duration::from_millis(100),
         ) {
             return TestResult::Failed(anyhow!("not running after restore: {e}"));
+        }
+
+        if let Err(e) = ping_container(bundle.path()) {
+            return TestResult::Failed(anyhow!("ping container failed after restore: {e}"));
         }
 
         if let Err(e) = verify(id, bundle.path()) {
@@ -523,6 +578,10 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
         return TestResult::Failed(anyhow!("not running after restore: {e}"));
     }
 
+    if let Err(e) = ping_container(bundle.path()) {
+        return TestResult::Failed(anyhow!("ping container failed after restore: {e}"));
+    }
+
     TestResult::Passed
 }
 
@@ -714,6 +773,12 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
         return TestResult::Failed(anyhow!("not running after restore: {e}"));
     }
 
+    if let Err(e) = ping_container(bundle.path()) {
+        let _ = kill_container(&restore_id, bundle).map(|mut c| c.wait());
+        let _ = delete_container(&restore_id, bundle).map(|mut c| c.wait());
+        return TestResult::Failed(anyhow!("ping container failed after restore: {e}"));
+    }
+
     let _ = kill_container(&restore_id, bundle).map(|mut c| c.wait());
     let _ = delete_container(&restore_id, bundle).map(|mut c| c.wait());
 
@@ -787,6 +852,10 @@ fn checkpoint_and_restore_in_external_netns() -> TestResult {
         Duration::from_millis(100),
     ) {
         return TestResult::Failed(anyhow!("not running after restore: {e}"));
+    }
+
+    if let Err(e) = ping_container(bundle.path()) {
+        return TestResult::Failed(anyhow!("ping container failed after restore: {e}"));
     }
 
     let (stdout, _) = get_state(id, bundle.path()).unwrap();
@@ -873,6 +942,10 @@ fn checkpoint_and_restore_with_container_specific_criu_config() -> TestResult {
         return TestResult::Failed(anyhow!("not running after restore: {e}"));
     }
 
+    if let Err(e) = ping_container(bundle.path()) {
+        return TestResult::Failed(anyhow!("ping container failed after restore: {e}"));
+    }
+
     TestResult::Passed
 }
 
@@ -950,6 +1023,10 @@ fn checkpoint_and_restore_with_nested_bind_mounts() -> TestResult {
         Duration::from_millis(100),
     ) {
         return TestResult::Failed(anyhow!("container not running after restore: {e}"));
+    }
+
+    if let Err(e) = ping_container(bundle.path()) {
+        return TestResult::Failed(anyhow!("ping container failed after restore: {e}"));
     }
 
     TestResult::Passed
@@ -1074,6 +1151,10 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
         return TestResult::Failed(anyhow!("not running after restore: {e}"));
     }
 
+    if let Err(e) = ping_container(bundle.path()) {
+        return TestResult::Failed(anyhow!("ping container failed after restore: {e}"));
+    }
+
     // Verify the new cgroup
     let (stdout_restored, _) = get_state(id, bundle.path()).unwrap();
     let state_restored: oci_spec::runtime::State = serde_json::from_str(&stdout_restored).unwrap();
@@ -1146,6 +1227,10 @@ fn checkpoint_and_restore_and_exec() -> TestResult {
             Duration::from_millis(100),
         ) {
             return TestResult::Failed(anyhow!("not running after restore: {e}"));
+        }
+
+        if let Err(e) = ping_container(bundle.path()) {
+            return TestResult::Failed(anyhow!("ping container failed after restore: {e}"));
         }
 
         // Verify that previously exec'd process is restored
