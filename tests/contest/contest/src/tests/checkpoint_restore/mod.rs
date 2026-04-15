@@ -18,7 +18,7 @@ use test_framework::{ConditionalTest, TestGroup, TestResult};
 use crate::utils::{
     LifecycleStatus, WaitTarget, build_checkpoint_command, checkpoint_container, criu_installed,
     delete_container, exec_container, generate_uuid, get_state, is_runtime_youki, kill_container,
-    prepare_bundle, restore_container, run_container, set_config, try_checkpoint_container,
+    net, prepare_bundle, restore_container, run_container, set_config, try_checkpoint_container,
     wait_container_running, wait_for_state,
 };
 
@@ -67,7 +67,7 @@ fn setup_cr_test(
 
     let mut spec = oci_spec::runtime::Spec::default();
     let mut process = oci_spec::runtime::Process::default();
-    process.set_args(Some(vec!["sleep".into(), "10".into()]));
+    process.set_args(Some(vec!["sleep".into(), "10000".into()]));
     spec.set_process(Some(process));
 
     setup_spec(&bundle, &mut spec);
@@ -268,13 +268,13 @@ fn checkpoint_and_restore_cgroupns() -> TestResult {
 // Test: checkpoint and restore with netdevice
 // (runc: @test "checkpoint and restore with netdevice")
 fn checkpoint_and_restore_with_netdevice() -> TestResult {
-    let ns_name = crate::utils::net::create_unique_name("cr-net");
-    let dev_name = crate::utils::net::create_unique_name("cr-dev");
-    let _netns = match crate::utils::net::NetNamespace::create(ns_name.clone()) {
+    let ns_name = net::create_unique_name("cr-net");
+    let dev_name = net::create_unique_name("cr-dev");
+    let _netns = match net::NetNamespace::create(ns_name.clone()) {
         Ok(ns) => ns,
         Err(e) => return TestResult::Failed(anyhow!("Failed to create netns: {e}")),
     };
-    let _dev = match crate::utils::net::DummyDevice::create(dev_name.clone()) {
+    let _dev = match net::DummyDevice::create(dev_name.clone()) {
         Ok(d) => d,
         Err(e) => return TestResult::Failed(anyhow!("Failed to create dummy dev: {e}")),
     };
@@ -283,27 +283,41 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
     let mac = "00:11:22:33:44:55";
     let ip = "169.254.169.77/32";
 
-    if let Err(e) = std::process::Command::new("ip")
+    let out = match std::process::Command::new("ip")
         .args(["link", "set", "mtu", mtu, "dev", &dev_name])
         .output()
     {
-        return TestResult::Failed(anyhow!("ip link set mtu failed: {e}"));
+        Ok(out) => out,
+        Err(e) => return TestResult::Failed(anyhow!("ip link set mtu execution failed: {e}")),
+    };
+    if !out.status.success() {
+        return TestResult::Failed(anyhow!("ip link set mtu failed: {}", String::from_utf8_lossy(&out.stderr)));
     }
-    if let Err(e) = std::process::Command::new("ip")
+
+    let out = match std::process::Command::new("ip")
         .args(["link", "set", "address", mac, "dev", &dev_name])
         .output()
     {
-        return TestResult::Failed(anyhow!("ip link set address failed: {e}"));
+        Ok(out) => out,
+        Err(e) => return TestResult::Failed(anyhow!("ip link set address execution failed: {e}")),
+    };
+    if !out.status.success() {
+        return TestResult::Failed(anyhow!("ip link set address failed: {}", String::from_utf8_lossy(&out.stderr)));
     }
-    if let Err(e) = std::process::Command::new("ip")
+
+    let out = match std::process::Command::new("ip")
         .args(["address", "add", ip, "dev", &dev_name])
         .output()
     {
-        return TestResult::Failed(anyhow!("ip address add failed: {e}"));
+        Ok(out) => out,
+        Err(e) => return TestResult::Failed(anyhow!("ip address add execution failed: {e}")),
+    };
+    if !out.status.success() {
+        return TestResult::Failed(anyhow!("ip address add failed: {}", String::from_utf8_lossy(&out.stderr)));
     }
 
     let dev_name_clone = dev_name.clone();
-    let ns_path = format!("/run/netns/{}", ns_name);
+    let ns_path = format!("/run/netns/{ns_name}");
 
     simple_cr(
         &[],
@@ -346,10 +360,10 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
             if !stdout.contains(ip) {
                 anyhow::bail!("ip address not found in {stdout}");
             }
-            if !stdout.contains(&format!("ether {}", mac)) {
+            if !stdout.contains(&format!("ether {mac}")) {
                 anyhow::bail!("mac address not found in {stdout}");
             }
-            if !stdout.contains(&format!("mtu {}", mtu)) {
+            if !stdout.contains(&format!("mtu {mtu}")) {
                 anyhow::bail!("mtu not found in {stdout}");
             }
             Ok(())
