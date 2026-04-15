@@ -712,6 +712,13 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
         ));
     }
 
+    // Check if inventory.img was written
+    if !image_dir.join("inventory.img").exists() {
+        let _ = checkpoint_child.kill();
+        let _ = checkpoint_child.wait();
+        return TestResult::Failed(anyhow!("inventory.img was not written to image-dir"));
+    }
+
     // Start CRIU in lazy-daemon mode
     let criu_daemon_child = match std::process::Command::new("criu")
         .args([
@@ -723,8 +730,6 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
             port.as_str(),
             "-D",
             image_dir.to_str().unwrap(),
-            "-W",
-            work_dir.to_str().unwrap(),
         ])
         .spawn()
     {
@@ -744,12 +749,11 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
     }
     set_config(bundle.path(), &spec).unwrap();
 
-    // Restore lazily from checkpoint
     let restore_result = restore_container(
         bundle.path(),
         &restore_id,
         image_dir,
-        Some(work_dir),
+        Some(image_dir),
         &["--lazy-pages", "--manage-cgroups-mode=ignore"],
         &[],
     );
@@ -768,7 +772,6 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
     // Wait for background jobs to finish
     let _ = checkpoint_child.wait();
 
-    // After restore, container must be running again
     if let Err(e) = wait_for_state(
         &restore_id,
         bundle,
