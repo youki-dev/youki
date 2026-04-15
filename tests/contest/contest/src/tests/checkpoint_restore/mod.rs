@@ -1020,10 +1020,17 @@ fn checkpoint_and_restore_with_nested_bind_mounts() -> TestResult {
         return TestResult::Failed(anyhow!("container not deleted after checkpoint: {e}"));
     }
 
-    // cleanup mountpoints created by runc/youki during creation
-    // the mountpoints should be recreated during restore - that is the actual thing tested here
-    std::fs::remove_dir_all(&bind1).unwrap();
-    std::fs::create_dir_all(&bind1).unwrap();
+    // Cleanup mountpoints created by runc/youki during creation
+    // The mountpoints should be recreated during restore - that is the actual thing tested here
+    // Simulating `rm -rf "${bind1:?}"/*` to delete the contents only and preserve the bind1 folder's inode.
+    for entry in std::fs::read_dir(&bind1).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path).unwrap();
+        } else {
+            std::fs::remove_file(&path).unwrap();
+        }
+    }
 
     if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
         return TestResult::Failed(anyhow!("restore failed: {e}"));
