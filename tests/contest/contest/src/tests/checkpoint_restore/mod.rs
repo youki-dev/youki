@@ -454,10 +454,7 @@ fn checkpoint_pre_dump_bad_parent_path() -> TestResult {
         id,
         image_dir,
         Some(work_dir),
-        &[
-            "--parent-path",
-            absolute_parent.to_str().unwrap(),
-        ],
+        &["--parent-path", absolute_parent.to_str().unwrap()],
         &[],
     )
     .unwrap();
@@ -510,26 +507,28 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
     let id = &ctx.id;
     let bundle = &ctx.bundle;
 
-    let pre_dump_dir = bundle.path().join("pre-dump");
-    let final_dump_dir = bundle.path().join("final-dump");
-    if let Err(e) = std::fs::create_dir_all(&pre_dump_dir) {
-        return TestResult::Failed(anyhow!("failed to create pre-dump dir: {e}"));
+    let parent_dir = bundle.path().join("parent-dir");
+    let image_dir = bundle.path().join("image-dir");
+    let work_dir = bundle.path().join("work-dir");
+    if let Err(e) = std::fs::create_dir_all(&parent_dir) {
+        return TestResult::Failed(anyhow!("failed to create parent dir: {e}"));
     }
-    if let Err(e) = std::fs::create_dir_all(&final_dump_dir) {
-        return TestResult::Failed(anyhow!("failed to create final-dump dir: {e}"));
+    if let Err(e) = std::fs::create_dir_all(&image_dir) {
+        return TestResult::Failed(anyhow!("failed to create image dir: {e}"));
+    }
+    if let Err(e) = std::fs::create_dir_all(&work_dir) {
+        return TestResult::Failed(anyhow!("failed to create work dir: {e}"));
     }
 
-    // Execute pre-dump
     let output1 =
-        try_checkpoint_container(bundle.path(), id, &pre_dump_dir, None, &["--pre-dump"], &[])
+        try_checkpoint_container(bundle.path(), id, &parent_dir, None, &["--pre-dump"], &[])
             .unwrap();
 
     if !output1.status.success() {
         let stderr = String::from_utf8_lossy(&output1.stderr);
-        return TestResult::Failed(anyhow!("pre-dump checkpoint failed: {}", stderr));
+        return TestResult::Failed(anyhow!("pre-dump checkpoint failed: {stderr}"));
     }
 
-    // After pre-dump, container must still be running
     if let Err(e) = wait_for_state(
         id,
         bundle,
@@ -540,13 +539,12 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
         return TestResult::Failed(anyhow!("container not running after pre-dump: {e}"));
     }
 
-    // Execute final dump using relative parent path pointing to pre-dump
-    let relative_parent = "../pre-dump";
+    let relative_parent = "../parent-dir";
     let output2 = try_checkpoint_container(
         bundle.path(),
         id,
-        &final_dump_dir,
-        None,
+        &image_dir,
+        Some(&work_dir),
         &["--parent-path", relative_parent],
         &[],
     )
@@ -554,10 +552,14 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
 
     if !output2.status.success() {
         let stderr = String::from_utf8_lossy(&output2.stderr);
-        return TestResult::Failed(anyhow!("final checkpoint failed: {}", stderr));
+        return TestResult::Failed(anyhow!("final checkpoint failed: {stderr}"));
     }
 
-    // After final dump, container must be deleted
+    // Check parent path is valid
+    if !image_dir.join("parent").exists() {
+        return TestResult::Failed(anyhow!("parent link in image-dir was not created"));
+    }
+
     if let Err(e) = wait_for_state(
         id,
         bundle,
@@ -570,12 +572,10 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
         ));
     }
 
-    // Restore the container from the final dump directory
-    if let Err(e) = restore_container(bundle.path(), id, &final_dump_dir, None, &[], &[]) {
+    if let Err(e) = restore_container(bundle.path(), id, &image_dir, Some(&work_dir), &[], &[]) {
         return TestResult::Failed(anyhow!("restore failed: {e}"));
     }
 
-    // After restore, container must be running again
     if let Err(e) = wait_for_state(
         id,
         bundle,
