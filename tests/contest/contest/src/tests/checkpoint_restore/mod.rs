@@ -59,7 +59,7 @@ impl Drop for CrTestContext {
 fn ping_container(bundle: &Path) -> anyhow::Result<()> {
     let fifo_path = bundle.join("fifo");
     let (tx, rx) = std::sync::mpsc::channel();
-    
+
     std::thread::spawn(move || {
         let res = (|| -> anyhow::Result<()> {
             let mut f_out = std::fs::OpenOptions::new().write(true).open(&fifo_path)?;
@@ -346,7 +346,10 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
         Err(e) => return TestResult::Failed(anyhow!("ip link set mtu execution failed: {e}")),
     };
     if !out.status.success() {
-        return TestResult::Failed(anyhow!("ip link set mtu failed: {}", String::from_utf8_lossy(&out.stderr)));
+        return TestResult::Failed(anyhow!(
+            "ip link set mtu failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
     }
 
     let out = match std::process::Command::new("ip")
@@ -357,7 +360,10 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
         Err(e) => return TestResult::Failed(anyhow!("ip link set address execution failed: {e}")),
     };
     if !out.status.success() {
-        return TestResult::Failed(anyhow!("ip link set address failed: {}", String::from_utf8_lossy(&out.stderr)));
+        return TestResult::Failed(anyhow!(
+            "ip link set address failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
     }
 
     let out = match std::process::Command::new("ip")
@@ -368,7 +374,10 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
         Err(e) => return TestResult::Failed(anyhow!("ip address add execution failed: {e}")),
     };
     if !out.status.success() {
-        return TestResult::Failed(anyhow!("ip address add failed: {}", String::from_utf8_lossy(&out.stderr)));
+        return TestResult::Failed(anyhow!(
+            "ip address add failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
     }
 
     let dev_name_clone = dev_name.clone();
