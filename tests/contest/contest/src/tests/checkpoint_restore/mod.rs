@@ -532,7 +532,12 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
         Err(e) => return TestResult::Failed(anyhow!("failed to create pipe: {e}")),
     };
 
-    let port = "27277";
+    // Dynamically allocate a free ephemeral port for the CRIU lazy-pages server.
+    // Hardcoding a port (like 27277) causes "Address already in use" errors and subsequent
+    // test hangs if a previous test run failed/panicked and leaked the page server daemon.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port().to_string();
+    drop(listener);
     let status_fd_str = pipe_w.as_raw_fd().to_string();
 
     // Spawn checkpoint command in background
@@ -553,8 +558,8 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
         &[],
     );
 
-    checkpoint_cmd.stdout(std::process::Stdio::piped());
-    checkpoint_cmd.stderr(std::process::Stdio::piped());
+    checkpoint_cmd.stdout(std::process::Stdio::null());
+    checkpoint_cmd.stderr(std::process::Stdio::null());
 
     let pipe_w_raw = pipe_w.as_raw_fd();
 
@@ -616,7 +621,14 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
     if !ready {
         let _ = checkpoint_child.kill();
         let _ = checkpoint_child.wait();
-        return TestResult::Failed(anyhow!("lazy-page server readiness timeout"));
+        let mut stderr_msg = String::new();
+        if let Some(mut stderr) = checkpoint_child.stderr.take() {
+            let _ = std::io::Read::read_to_string(&mut stderr, &mut stderr_msg);
+        }
+        return TestResult::Failed(anyhow!(
+            "lazy-page server readiness timeout. stderr: {}",
+            stderr_msg.trim()
+        ));
     }
 
     // Start CRIU in lazy-daemon mode
@@ -627,9 +639,11 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
             "--address",
             "127.0.0.1",
             "--port",
-            port,
+            port.as_str(),
             "-D",
             image_dir.to_str().unwrap(),
+            "-W",
+            work_dir.to_str().unwrap(),
         ])
         .spawn()
     {
@@ -652,15 +666,12 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
     // Restore lazily from checkpoint
     let restore_result = restore_container(
         bundle.path(),
-        id,
+        &restore_id,
         image_dir,
         Some(work_dir),
         &["--lazy-pages", "--manage-cgroups-mode=ignore"],
         &[],
     );
-
-    // Wait for background jobs to finish
-    let _ = checkpoint_child.wait();
 
     // Terminate criu daemon if it's still running, it might stay alive if restore failed
     let mut criu_daemon = criu_daemon_child;
@@ -668,19 +679,29 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
     let _ = criu_daemon.wait();
 
     if let Err(e) = restore_result {
+        let _ = checkpoint_child.kill();
+        let _ = checkpoint_child.wait();
         return TestResult::Failed(anyhow!("restore --lazy-pages failed: {e}"));
     }
 
+    // Wait for background jobs to finish
+    let _ = checkpoint_child.wait();
+
     // After restore, container must be running again
     if let Err(e) = wait_for_state(
-        id,
+        &restore_id,
         bundle,
         WaitTarget::Status(LifecycleStatus::Running),
         Duration::from_secs(10),
         Duration::from_millis(100),
     ) {
+        let _ = kill_container(&restore_id, bundle).map(|mut c| c.wait());
+        let _ = delete_container(&restore_id, bundle).map(|mut c| c.wait());
         return TestResult::Failed(anyhow!("not running after restore: {e}"));
     }
+
+    let _ = kill_container(&restore_id, bundle).map(|mut c| c.wait());
+    let _ = delete_container(&restore_id, bundle).map(|mut c| c.wait());
 
     TestResult::Passed
 }
