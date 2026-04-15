@@ -455,7 +455,6 @@ fn checkpoint_pre_dump_bad_parent_path() -> TestResult {
         image_dir,
         Some(work_dir),
         &[
-            "--pre-dump",
             "--parent-path",
             absolute_parent.to_str().unwrap(),
         ],
@@ -480,7 +479,7 @@ fn checkpoint_pre_dump_bad_parent_path() -> TestResult {
         id,
         image_dir,
         Some(work_dir),
-        &["--pre-dump", "--parent-path", "../parent-dir"],
+        &["--parent-path", "./parent-dir"],
         &[],
     )
     .unwrap();
