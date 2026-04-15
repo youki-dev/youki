@@ -1,18 +1,18 @@
 # VM Support (libkrun)
 
-youki can launch microVM-based containers by dynamically loading the libkrun shared library. Here, we describe how to launch a container with youki using libkrun.
+youki can launch microVM-based containers using the libkrun microVM library. Here, we describe how to launch a container with youki using libkrun.
 
-1. Build youki with libkrun feature flag enabled
+1. Build youki with krun feature flag enabled
 2. Prepare KVM on the host
-3. Install libkrun and libkrunfw
+3. Install libkrunfw
 4. Run the bundle with youki using the krun handler
 
-## Build youki with `libkrun` feature flag enabled
+## Build youki with `krun` feature flag enabled
 
-Run `build.sh` with `-f libkrun` option.
+Run `build.sh` with `-f krun` option.
 
 ```bash
-./scripts/build.sh -o . -r -f libkrun
+./scripts/build.sh -o . -r -f krun
 ```
 
 
@@ -30,13 +30,14 @@ kvm                  1425408  1 kvm_intel
 irqbypass              12288  1 kvm
 ```
 
-## Install libkrun and libkrunfw
+## Install libkrunfw
 
-To use youki with libkrun, you need to install libkrun and libkrunfw in advance.
+To use youki with libkrun, you need to install libkrunfw in advance.
 
 Please follow the official installation instructions:
-- libkrun: [Building and installing](https://github.com/containers/libkrun?tab=readme-ov-file#building-and-installing)
 - libkrunfw: [Building](https://github.com/containers/libkrunfw?tab=readme-ov-file#building)
+
+Note: libkrun itself is statically linked into youki via its Rust crate, so only libkrunfw needs to be installed as a runtime shared library.
 
 ## Run a container with youki
 
@@ -54,10 +55,10 @@ Update the following top-level annotations:
 
 ### Run
 
-Make sure `libkrun` and `libkrunfw` are available in the library path. For example:
+Make sure `libkrunfw` is available in the library path. For example:
 
 ```bash
-ls /usr/local/lib64/libkrun.so* /usr/local/lib64/libkrunfw.so*
+ls /usr/local/lib64/libkrunfw.so*
 ```
 
 Run the command with LD_LIBRARY_PATH set.
@@ -77,25 +78,14 @@ You can configure the libkrun handler via the following annotations:
   "annotations": {
     "run.oci.handler": "krun",
     "krun.cpus": "2",
-    "krun.ram_mib": "2048",
-    "krun.log_level": "1",
-    "krun.libkrun.path": "/usr/local/lib64/libkrun.so.1"
+    "krun.ram_mib": "2048"
   }
 }
 ```
 
 * `run.oci.handler`: Set to `krun` (tells youki to use the libkrun handler)
-* `krun.cpus`: Number of vCPUs assigned to the guest
-* `krun.ram_mib`: Guest RAM in MiB
-* `krun.log_level`: libkrun log level (Use a numeric value)
-  * `0` => `"off"`
-  * `1` => `"error"`
-  * `2` => `"warn"`
-  * `3` => `"info"`
-  * `4` => `"debug"`
-  * otherwise => `"trace"`
-
-* `krun.libkrun.path`: Path to the libkrun shared library
+* `krun.cpus`: Number of vCPUs assigned to the guest (default: 1)
+* `krun.ram_mib`: Guest RAM in MiB (default: 2048)
 
 ## Limitations
 

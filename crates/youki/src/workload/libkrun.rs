@@ -1,12 +1,10 @@
-use std::cell::OnceCell;
+use std::cell::Cell;
 use std::ffi::CString;
 use std::fs::Permissions;
 use std::io;
 use std::io::Write;
-use std::os::raw::c_char;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 
 use libcontainer::error::MissingSpecError;
 use libcontainer::oci_spec::runtime::{
@@ -16,150 +14,76 @@ use libcontainer::oci_spec::runtime::{
 use libcontainer::workload::{
     ContainerExecutor, EMPTY, Executor, ExecutorError, ExecutorValidationError, HostExecutor,
 };
-use libloading::Library;
 use nix::errno::Errno;
 use nix::sys::stat::{major, minor, stat};
 use pathrs::Root;
 use pathrs::flags::{OpenFlags, ResolverFlags};
 
-const EXECUTOR_NAME: &str = "libkrun";
+const EXECUTOR_NAME: &str = "krun";
 const KRUN_CONFIG_FILE: &str = ".krun_config.json";
 
-const DEFAULT_LIBKRUN_PATH: &str = "libkrun.so.1";
 const DEFAULT_VCPUS: u8 = 1;
 const DEFAULT_RAM_MIB: u32 = 2 * 1024; // 2GiB
-const DEFAULT_LOG_LEVEL: u32 = 1;
 
-struct Krun {
-    _lib: Library,
-    krun_create_ctx: unsafe extern "C" fn() -> i32,
-    krun_set_vm_config: unsafe extern "C" fn(u32, u8, u32) -> i32,
-    krun_set_root: unsafe extern "C" fn(u32, *const c_char) -> i32,
-    krun_set_log_level: unsafe extern "C" fn(u32) -> i32,
-    krun_start_enter: unsafe extern "C" fn(u32) -> i32,
-}
-
-impl Krun {
-    fn load<P: AsRef<Path>>(libkrun_path: P) -> Result<Self, ExecutorError> {
-        let libkrun_path = libkrun_path.as_ref();
-        unsafe {
-            let lib = Library::new(libkrun_path)
-                .map_err(|e| ExecutorError::Other(format!("load {}: {e}", libkrun_path.display())))?;
-            let krun_create_ctx = *lib
-                .get(b"krun_create_ctx")
-                .map_err(|e| ExecutorError::Other(format!("krun_create_ctx: {e}")))?;
-            let krun_set_vm_config = *lib
-                .get(b"krun_set_vm_config")
-                .map_err(|e| ExecutorError::Other(format!("krun_set_vm_config: {e}")))?;
-            let krun_set_root = *lib
-                .get(b"krun_set_root")
-                .map_err(|e| ExecutorError::Other(format!("krun_set_root: {e}")))?;
-            let krun_set_log_level = *lib
-                .get(b"krun_set_log_level")
-                .map_err(|e| ExecutorError::Other(format!("krun_set_log_level: {e}")))?;
-            let krun_start_enter = *lib
-                .get(b"krun_start_enter")
-                .map_err(|e| ExecutorError::Other(format!("krun_start_enter: {e}")))?;
-
-            Ok(Self {
-                _lib: lib,
-                krun_create_ctx,
-                krun_set_vm_config,
-                krun_set_root,
-                krun_set_log_level,
-                krun_start_enter,
-            })
-        }
-    }
-
-    fn create_ctx(&self) -> Result<u32, ExecutorError> {
-        let id = unsafe { (self.krun_create_ctx)() };
-        if id < 0 {
-            Err(ExecutorError::Other(format!("krun_create_ctx rc={id}")))
-        } else {
-            Ok(id as u32)
-        }
-    }
-
-    fn set_log_level(&self, level: u32) -> Result<(), ExecutorError> {
-        let rc = unsafe { (self.krun_set_log_level)(level) };
-        if rc < 0 {
-            Err(ExecutorError::Other(format!("set_log_level rc={rc}")))
-        } else {
-            Ok(())
-        }
-    }
-
-    fn set_vm_config(&self, ctx: u32, vcpus: u8, mem_mb: u32) -> Result<(), ExecutorError> {
-        let rc = unsafe { (self.krun_set_vm_config)(ctx, vcpus, mem_mb) };
-        if rc < 0 {
-            Err(ExecutorError::Other(format!("set_vm_config rc={rc}")))
-        } else {
-            Ok(())
-        }
-    }
-
-    fn set_root(&self, ctx: u32, root: &CString) -> Result<(), ExecutorError> {
-        let rc = unsafe { (self.krun_set_root)(ctx, root.as_ptr()) };
-        if rc < 0 {
-            Err(ExecutorError::Other(format!("krun_set_root rc={rc}")))
-        } else {
-            Ok(())
-        }
-    }
-
-    fn start_enter(&self, ctx: u32) -> Result<i32, ExecutorError> {
-        let rc = unsafe { (self.krun_start_enter)(ctx) };
-        if rc < 0 {
-            Err(ExecutorError::Other(format!("krun_start_enter rc={rc}")))
-        } else {
-            Ok(rc)
-        }
-    }
-}
-
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct LibkrunExecutor {
-    lib: Rc<OnceCell<Rc<Krun>>>,
-    ctx_id: Rc<OnceCell<u32>>,
+    ctx_id: Cell<Option<u32>>,
 }
 
 impl LibkrunExecutor {
-    fn get_or_load_krun(&self, krun_path: String) -> Result<Rc<Krun>, ExecutorError> {
-        if let Some(krun) = self.lib.get() {
-            return Ok(krun.clone());
-        }
-        let krun = Rc::new(Krun::load(krun_path)?);
-        let _ = self.lib.set(krun.clone());
-        Ok(krun)
-    }
-
-    fn lib_loaded(&self) -> Result<Rc<Krun>, ExecutorError> {
-        self.lib
-            .get()
-            .cloned()
-            .ok_or_else(|| ExecutorError::Other("libkrun not preloaded".into()))
-    }
-
-    fn set_ctx_id(&self, value: u32) -> Result<(), ExecutorError> {
-        self.ctx_id
-            .set(value)
-            .map_err(|_| ExecutorError::Other("ctx_id already initialized".into()))
+    fn set_ctx_id(&self, value: u32) {
+        self.ctx_id.set(Some(value));
     }
 
     fn get_ctx_id(&self) -> Result<u32, ExecutorError> {
         self.ctx_id
             .get()
-            .copied()
             .ok_or_else(|| ExecutorError::Other("ctx_id not initialized".into()))
     }
 }
 
 pub fn get_executor() -> LibkrunExecutor {
-    LibkrunExecutor {
-        lib: Rc::new(OnceCell::new()),
-        ctx_id: Rc::new(OnceCell::new()),
+    LibkrunExecutor::default()
+}
+
+fn krun_create_ctx() -> Result<u32, ExecutorError> {
+    let id = krun::krun_create_ctx();
+    if id < 0 {
+        Err(ExecutorError::Other(format!("krun_create_ctx rc={id}")))
+    } else {
+        Ok(id as u32)
     }
+}
+
+fn krun_set_vm_config(ctx: u32, vcpus: u8, mem_mb: u32) -> Result<(), ExecutorError> {
+    let rc = krun::krun_set_vm_config(ctx, vcpus, mem_mb);
+    if rc < 0 {
+        Err(ExecutorError::Other(format!("set_vm_config rc={rc}")))
+    } else {
+        Ok(())
+    }
+}
+
+fn krun_set_root(ctx: u32, root: &CString) -> Result<(), ExecutorError> {
+    let rc = unsafe { krun::krun_set_root(ctx, root.as_ptr()) };
+    if rc < 0 {
+        Err(ExecutorError::Other(format!("krun_set_root rc={rc}")))
+    } else {
+        Ok(())
+    }
+}
+
+// libkrun does not return to Rust on success:
+//   - event_manager runs in an infinite loop:
+//     https://github.com/containers/libkrun/blob/a3b7ae213195c9f871a17c72f0d020e46ed90584/src/libkrun/src/lib.rs#L2746
+//   - VM exit terminates the process via libc::_exit:
+//     https://github.com/containers/libkrun/blob/a3b7ae213195c9f871a17c72f0d020e46ed90584/src/vmm/src/lib.rs#L369
+fn krun_start_enter(ctx: u32) -> Result<(), ExecutorError> {
+    let rc = krun::krun_start_enter(ctx);
+    if rc < 0 {
+        return Err(ExecutorError::Other(format!("krun_start_enter rc={rc}")));
+    }
+    unreachable!("krun_start_enter returned {rc} but libkrun should _exit on success");
 }
 
 impl HostExecutor for LibkrunExecutor {
@@ -174,10 +98,13 @@ impl HostExecutor for LibkrunExecutor {
 
         let spec = configure_spec_for_libkrun(spec)
             .map_err(|e| ExecutorError::Other(format!("configure_for_libkrun: {e}")))?;
-        let krun_path = read_krun_path_from_annotations(&spec);
-        let krun = self.get_or_load_krun(krun_path)?;
-        let ctx_id = krun.create_ctx()?;
-        self.set_ctx_id(ctx_id)?;
+
+        // krun_create_ctx must be called here (host side, before pivot_root), not in exec.
+        // It triggers the lazy dlopen of libkrunfw.so.5 inside libkrun (via a LazyLock in KrunfwBindings::new).
+        // After pivot_root, libkrunfw.so.5 is unreachable from the container rootfs,
+        // so deferring this call would make krun_start_enter later fail with -ENOENT.
+        let ctx_id = krun_create_ctx()?;
+        self.set_ctx_id(ctx_id);
         Ok(spec)
     }
 }
@@ -196,22 +123,17 @@ impl ContainerExecutor for LibkrunExecutor {
             return Err(ExecutorError::InvalidArg);
         }
 
-        let krun = self.lib_loaded()?;
         let ctx_id = self.get_ctx_id()?;
 
-        let log_level = read_krun_log_level_from_annotations(spec);
-        krun.set_log_level(log_level)?;
-
         let (vcpus, ram_mib) = read_krun_vm_config_from_annotations(spec);
-        tracing::debug!(vcpus = vcpus, ram_mib = ram_mib, "using VM config");
-        krun.set_vm_config(ctx_id, vcpus, ram_mib)?;
+        krun_set_vm_config(ctx_id, vcpus, ram_mib)?;
 
+        // At this point pivot_root has run, so "/" is the rootfs containing .krun_config.json.
         let root = CString::new("/")
             .map_err(|e| ExecutorError::Other(format!("CString for root: {e}")))?;
-        krun.set_root(ctx_id, &root)?;
+        krun_set_root(ctx_id, &root)?;
 
-        let res = krun.start_enter(ctx_id)?;
-        std::process::exit(res)
+        krun_start_enter(ctx_id)
     }
 
     fn validate(&self, spec: &Spec) -> Result<(), ExecutorValidationError> {
@@ -412,65 +334,15 @@ fn make_oci_spec_device(
 }
 
 fn read_krun_vm_config_from_annotations(spec: &Spec) -> (u8, u32) {
-    let mut vcpus = DEFAULT_VCPUS;
-    let mut ram_mib = DEFAULT_RAM_MIB;
-
-    if let Some(ann) = spec.annotations().as_ref() {
-        let cpus = ann
-            .get("krun.cpus")
-            .and_then(|s| s.trim().parse::<u8>().ok());
-        let ram = ann
-            .get("krun.ram_mib")
-            .and_then(|s| s.trim().parse::<u32>().ok());
-
-        match (cpus, ram) {
-            (Some(c), Some(r)) => {
-                vcpus = c;
-                ram_mib = r;
-            }
-            _ => {
-                tracing::debug!(
-                    "invalid or incomplete annotations; using defaults: vcpus={}, ram_mib={}",
-                    DEFAULT_VCPUS,
-                    DEFAULT_RAM_MIB
-                );
-            }
-        }
-    } else {
-        tracing::debug!(
-            "no annotations; using defaults: vcpus={}, ram_mib={}",
-            DEFAULT_VCPUS,
-            DEFAULT_RAM_MIB
-        );
-    }
-
+    let ann = spec.annotations().as_ref();
+    let vcpus = ann
+        .and_then(|a| a.get("krun.cpus"))
+        .and_then(|s| s.trim().parse::<u8>().ok())
+        .unwrap_or(DEFAULT_VCPUS);
+    let ram_mib = ann
+        .and_then(|a| a.get("krun.ram_mib"))
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(DEFAULT_RAM_MIB);
+    tracing::debug!(vcpus, ram_mib, "libkrun VM config");
     (vcpus, ram_mib)
-}
-
-fn read_krun_log_level_from_annotations(spec: &Spec) -> u32 {
-    let from_ann = spec
-        .annotations()
-        .as_ref()
-        .and_then(|m| m.get("krun.log_level"))
-        .map(|s| s.trim())
-        .and_then(|s| s.parse::<u32>().ok());
-
-    let log_level = from_ann.unwrap_or(DEFAULT_LOG_LEVEL);
-
-    tracing::debug!(?log_level, "log level selected");
-    log_level
-}
-
-fn read_krun_path_from_annotations(spec: &Spec) -> String {
-    let from_ann = spec
-        .annotations()
-        .as_ref()
-        .and_then(|m| m.get("krun.libkrun.path"))
-        .map(|s| s.trim())
-        .map(|s| s.to_string());
-
-    let libkrun_path = from_ann.unwrap_or_else(|| DEFAULT_LIBKRUN_PATH.to_string());
-    tracing::debug!(?libkrun_path, "libkrun library selected");
-
-    libkrun_path
 }
