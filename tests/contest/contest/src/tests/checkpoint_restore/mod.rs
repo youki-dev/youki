@@ -1151,12 +1151,17 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
     set_config(bundle.path(), &spec).unwrap();
 
     // Restore into the new cgroup
+    let pid_file = bundle.path().join("pid");
     if let Err(e) = restore_container(
         bundle.path(),
         id,
         image_dir,
         Some(work_dir),
-        &["--manage-cgroups-mode=ignore"],
+        &[
+            "--manage-cgroups-mode=ignore",
+            "--pid-file",
+            pid_file.to_str().unwrap(),
+        ],
         &[],
     ) {
         return TestResult::Failed(anyhow!("restore failed: {e}"));
@@ -1177,9 +1182,11 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
     }
 
     // Verify the new cgroup
-    let (stdout_restored, _) = get_state(id, bundle.path()).unwrap();
-    let state_restored: oci_spec::runtime::State = serde_json::from_str(&stdout_restored).unwrap();
-    let pid_restored = state_restored.pid().unwrap();
+    let pid_restored = std::fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .parse::<i32>()
+        .unwrap();
     let cgroup_data_restored =
         std::fs::read_to_string(format!("/proc/{pid_restored}/cgroup")).unwrap();
     let cgroup_path_suffix_restored = cgroup_data_restored
@@ -1194,6 +1201,12 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
     if !new_host_cgroup_path.exists() {
         return TestResult::Failed(anyhow!(
             "new cgroup path does not exist after restore: {new_host_cgroup_path:?}",
+        ));
+    }
+
+    if !cgroup_path_suffix_restored.ends_with(&new_cgroup) {
+        return TestResult::Failed(anyhow!(
+            "restored container is not in the expected cgroup. Expected suffix to end with {new_cgroup}, found {cgroup_path_suffix_restored}",
         ));
     }
 
