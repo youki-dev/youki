@@ -240,3 +240,19 @@ impl InitContainerBuilder {
         Ok(container)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::container::builder::ContainerBuilder;
+    use crate::syscall::syscall::SyscallType;
+
+    #[test]
+    fn test_with_bundle() {
+        let builder = ContainerBuilder::new("test-id".to_owned(), SyscallType::default())
+            .as_init("/original/bundle")
+            .with_bundle("/new/bundle");
+
+        assert_eq!(builder.bundle, PathBuf::from("/new/bundle"));
+    }
+}
