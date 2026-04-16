@@ -9,15 +9,9 @@ use crate::process::message::{Message, MountMsg};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ChannelError {
-    #[error(
-        "received unexpected message: {received:?}{expected_suffix}",
-        expected_suffix = .expected
-            .as_ref()
-            .map(|msg| format!(", expected: {msg:?}"))
-            .unwrap_or_default()
-    )]
+    #[error("received unexpected message: {received:?}, expected: {expected}")]
     UnexpectedMessage {
-        expected: Option<Box<Message>>,
+        expected: &'static str,
         received: Box<Message>,
     },
     #[error("failed to receive. {msg:?}. {source:?}")]
@@ -147,7 +141,7 @@ impl MainReceiver {
             Message::ExecFailed(err) => Err(ChannelError::ExecError(err)),
             Message::OtherError(err) => Err(ChannelError::OtherError(err)),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Some(Box::new(Message::IntermediateReady(0))),
+                expected: "IntermediateReady",
                 received: Box::new(msg),
             }),
         }
@@ -164,7 +158,7 @@ impl MainReceiver {
         match msg {
             Message::WriteMapping => Ok(()),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Some(Box::new(Message::WriteMapping)),
+                expected: "WriteMapping",
                 received: Box::new(msg),
             }),
         }
@@ -182,7 +176,7 @@ impl MainReceiver {
         match msg {
             Message::MountFdPlease(req) => Ok(req),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: None,
+                expected: "MountFdPlease",
                 received: Box::new(msg),
             }),
         }
@@ -220,7 +214,7 @@ impl MainReceiver {
                 Ok(fd)
             }
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Some(Box::new(Message::SeccompNotify)),
+                expected: "SeccompNotify",
                 received: Box::new(msg),
             }),
         }
@@ -237,7 +231,7 @@ impl MainReceiver {
         match msg {
             Message::SetupNetworkDeviceReady => Ok(()),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Some(Box::new(Message::SetupNetworkDeviceReady)),
+                expected: "SetupNetworkDeviceReady",
                 received: Box::new(msg),
             }),
         }
@@ -260,7 +254,7 @@ impl MainReceiver {
                 "error in executing process : {err}"
             ))),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Some(Box::new(Message::InitReady)),
+                expected: "InitReady",
                 received: Box::new(msg),
             }),
         }
@@ -277,7 +271,7 @@ impl MainReceiver {
         match msg {
             Message::HookRequest => Ok(()),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Some(Box::new(Message::HookRequest)),
+                expected: "HookRequest",
                 received: Box::new(msg),
             }),
         }
@@ -335,7 +329,7 @@ impl IntermediateReceiver {
         match msg {
             Message::MappingWritten => Ok(()),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Some(Box::new(Message::MappingWritten)),
+                expected: "MappingWritten",
                 received: Box::new(msg),
             }),
         }
@@ -413,7 +407,7 @@ impl InitReceiver {
         match msg {
             Message::SeccompNotifyDone => Ok(()),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Some(Box::new(Message::SeccompNotifyDone)),
+                expected: "SeccompNotifyDone",
                 received: Box::new(msg),
             }),
         }
@@ -432,7 +426,7 @@ impl InitReceiver {
         match msg {
             Message::MoveNetworkDevice(addr) => Ok(addr),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Some(Box::new(Message::WriteMapping)),
+                expected: "MoveNetworkDevice",
                 received: Box::new(msg),
             }),
         }
@@ -449,7 +443,7 @@ impl InitReceiver {
         match msg {
             Message::HookDone => Ok(()),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Some(Box::new(Message::HookDone)),
+                expected: "HookDone",
                 received: Box::new(msg),
             }),
         }
@@ -479,7 +473,7 @@ impl InitReceiver {
             }
             Message::MountFdError(err) => Err(ChannelError::MountFdError(err)),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: Some(Box::new(Message::MountFdReply)),
+                expected: "MountFdReply",
                 received: Box::new(msg),
             }),
         }
