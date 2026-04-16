@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::num::TryFromIntError;
 use std::os::unix::io;
 
@@ -213,34 +214,65 @@ pub fn initialize_seccomp(seccomp: &LinuxSeccomp) -> Result<Option<io::RawFd>> {
                     }
                 };
                 match syscall.args() {
+                    // libseccomp allows multiple argument comparisons in a single rule,
+                    // but each syscall argument can only be compared once per rule.
+                    // When multiple comparisons target the same argument index,
+                    // we follow runc's behavior and add each condition as a separate rule.
+                    // Ref: libseccomp seccomp_rule_add(3)
+                    // https://github.com/seccomp/libseccomp/blob/9d7a3cd937e7841ece62ac19f0f06aafd0fdaaa9/doc/man/man3/seccomp_rule_add.3#L137
+                    // Ref: runc seccomp_linux.go
+                    // https://github.com/opencontainers/runc/blob/4b97e12fccdfca981a296d9ef82df5f3ae95e288/libcontainer/seccomp/seccomp_linux.go#L327
                     Some(args) => {
-                        // The `seccomp_rule_add` requires us to break multiple
-                        // args attaching to the same rules into multiple rules.
-                        // Breaking this rule will cause `seccomp_rule_add` to
-                        // return EINVAL.
-                        //
-                        // From the man page: when adding syscall argument
-                        // comparisons to the filter it is important to remember
-                        // that while it is possible to have multiple
-                        // comparisons in a single rule, you can only compare
-                        // each argument once in a single rule.  In other words,
-                        // you can not have multiple comparisons of the 3rd
-                        // syscall argument in a single rule.
+                        let mut comparators = Vec::<ScmpArgCompare>::with_capacity(args.len());
+                        let mut seen = HashSet::new();
+                        let mut has_duplicate_index = false;
+
                         for arg in args {
-                            let cmp = ScmpArgCompare::new(
-                                arg.index() as u32,
+                            let index = arg.index() as u32;
+                            let comparator = ScmpArgCompare::new(
+                                index,
                                 translate_op(arg.op(), arg.value_two()),
                                 arg.value(),
                             );
-                            tracing::trace!(?name, ?action, ?arg, "add seccomp conditional rule");
-                            ctx.add_rule_conditional(action, sc, &[cmp])
+                            if !seen.insert(index) {
+                                has_duplicate_index = true;
+                            }
+                            comparators.push(comparator);
+                        }
+
+                        if has_duplicate_index {
+                            for comparator in &comparators {
+                                tracing::trace!(
+                                    ?name,
+                                    ?action,
+                                    ?comparator,
+                                    "add seccomp conditional rule separately"
+                                );
+                                ctx.add_rule_conditional(action, sc, std::slice::from_ref(comparator))
+                                    .map_err(|err| {
+                                        tracing::error!(
+                                            "failed to add seccomp action: {:?}. Comparator: {:?} Syscall: {name}",
+                                            &action,
+                                            comparator,
+                                        );
+                                        SeccompError::AddRule { source: err }
+                                    })?;
+                            }
+                        } else {
+                            tracing::trace!(
+                                ?name,
+                                ?action,
+                                ?comparators,
+                                "add seccomp conditional rule"
+                            );
+                            ctx.add_rule_conditional(action, sc, &comparators)
                                 .map_err(|err| {
                                     tracing::error!(
-                                        "failed to add seccomp action: {:?}. Cmp: {:?} Syscall: {name}", &action, cmp,
+                                        "failed to add seccomp action: {:?}. Comparators: {:?} Syscall: {name}",
+                                        &action,
+                                        comparators,
                                     );
-                                    SeccompError::AddRule {
-                                        source: err,
-                                    }
+                                    SeccompError::AddRule { source: err }
                                 })?;
                         }
                     }
@@ -291,7 +323,9 @@ mod tests {
     use std::path;
 
     use anyhow::{Context, Result};
-    use oci_spec::runtime::{Arch, LinuxSeccompBuilder, LinuxSyscallBuilder};
+    use oci_spec::runtime::{
+        Arch, LinuxSeccompArgBuilder, LinuxSeccompBuilder, LinuxSyscallBuilder,
+    };
     use serial_test::serial;
 
     use super::*;
@@ -389,6 +423,128 @@ mod tests {
                     "failed to get a seccomp notify fd with notify seccomp profile".to_string(),
                 ))?;
             }
+
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_seccomp_conditional_rule_multiple_distinct_args() -> Result<()> {
+        let syscall = LinuxSyscallBuilder::default()
+            .names(vec![String::from("socket")])
+            .action(LinuxSeccompAction::ScmpActErrno)
+            .errno_ret(libc::EAGAIN as u32)
+            .args(vec![
+                LinuxSeccompArgBuilder::default()
+                    .index(0_usize)
+                    .value(libc::AF_INET as u64)
+                    .op(LinuxSeccompOperator::ScmpCmpEq)
+                    .build()?,
+                LinuxSeccompArgBuilder::default()
+                    .index(1_usize)
+                    .value(libc::SOCK_STREAM as u64)
+                    .op(LinuxSeccompOperator::ScmpCmpEq)
+                    .build()?,
+            ])
+            .build()?;
+
+        let seccomp_profile = LinuxSeccompBuilder::default()
+            .default_action(LinuxSeccompAction::ScmpActAllow)
+            .architectures(vec![Arch::ScmpArchNative])
+            .syscalls(vec![syscall])
+            .build()?;
+
+        test_utils::test_in_child_process(|| {
+            let _ = prctl::set_no_new_privileges(true);
+            initialize_seccomp(&seccomp_profile).expect("failed to initialize seccomp");
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_seccomp_conditional_rule_duplicate_arg_index() -> Result<()> {
+        let syscall = LinuxSyscallBuilder::default()
+            .names(vec![String::from("socket")])
+            .action(LinuxSeccompAction::ScmpActErrno)
+            .errno_ret(libc::EAGAIN as u32)
+            .args(vec![
+                LinuxSeccompArgBuilder::default()
+                    .index(0_usize)
+                    .value(libc::AF_INET as u64)
+                    .op(LinuxSeccompOperator::ScmpCmpEq)
+                    .build()?,
+                LinuxSeccompArgBuilder::default()
+                    .index(0_usize)
+                    .value(libc::AF_UNIX as u64)
+                    .op(LinuxSeccompOperator::ScmpCmpNe)
+                    .build()?,
+            ])
+            .build()?;
+
+        let seccomp_profile = LinuxSeccompBuilder::default()
+            .default_action(LinuxSeccompAction::ScmpActAllow)
+            .architectures(vec![Arch::ScmpArchNative])
+            .syscalls(vec![syscall])
+            .build()?;
+
+        test_utils::test_in_child_process(|| {
+            let _ = prctl::set_no_new_privileges(true);
+            initialize_seccomp(&seccomp_profile).expect("failed to initialize seccomp");
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_seccomp_multiple_syscall_entries_for_same_name() -> Result<()> {
+        let rule1 = LinuxSyscallBuilder::default()
+            .names(vec!["socket".into()])
+            .action(LinuxSeccompAction::ScmpActErrno)
+            .errno_ret(libc::EAGAIN as u32)
+            .args(vec![
+                LinuxSeccompArgBuilder::default()
+                    .index(0_usize)
+                    .value(libc::AF_NETLINK as u64)
+                    .op(LinuxSeccompOperator::ScmpCmpEq)
+                    .build()?,
+                LinuxSeccompArgBuilder::default()
+                    .index(2_usize)
+                    .value(libc::NETLINK_AUDIT as u64)
+                    .op(LinuxSeccompOperator::ScmpCmpNe)
+                    .build()?,
+            ])
+            .build()?;
+
+        let rule2 = LinuxSyscallBuilder::default()
+            .names(vec!["socket".into()])
+            .action(LinuxSeccompAction::ScmpActErrno)
+            .errno_ret(libc::EAGAIN as u32)
+            .args(vec![
+                LinuxSeccompArgBuilder::default()
+                    .index(0_usize)
+                    .value(libc::AF_INET as u64)
+                    .op(LinuxSeccompOperator::ScmpCmpNe)
+                    .build()?,
+            ])
+            .build()?;
+
+        let profile = LinuxSeccompBuilder::default()
+            .default_action(LinuxSeccompAction::ScmpActAllow)
+            .architectures(vec![Arch::ScmpArchNative])
+            .syscalls(vec![rule1, rule2])
+            .build()?;
+
+        test_utils::test_in_child_process(|| {
+            let _ = prctl::set_no_new_privileges(true);
+            initialize_seccomp(&profile).expect("failed to initialize seccomp");
 
             Ok(())
         })?;
