@@ -4,7 +4,9 @@ updates:
     directory: "."
     schedule:
       interval: daily
-    open-pull-requests-limit: 10
+    # Temporarily disable Dependabot version update PRs for Cargo.
+    # Re-enable this after https://github.com/youki-dev/youki/pull/3477 is merged.
+    open-pull-requests-limit: 0
     allow:
       - dependency-type: direct
     groups:
