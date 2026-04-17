@@ -45,7 +45,7 @@ libcgroups = { path = "../libcgroups", default-features = false, version = "0.6.
 libseccomp = { version = "0.4.0", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-rust-criu = "0.5.0"
+rust-criu = { git = "https://github.com/checkpoint-restore/rust-criu", branch = "main" }
 regex = { version = "1.12.3", default-features = false, features = [
     "std",
     "unicode-perl",
