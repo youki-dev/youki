@@ -62,6 +62,12 @@ impl InitContainerBuilder {
         self
     }
 
+    /// Sets the OCI bundle path for the container
+    pub fn with_bundle<P: Into<PathBuf>>(mut self, bundle: P) -> Self {
+        self.bundle = bundle.into();
+        self
+    }
+
     /// Creates a new container
     pub fn build(self) -> Result<Container, LibcontainerError> {
         let spec = self.load_spec()?;
@@ -232,5 +238,21 @@ impl InitContainerBuilder {
         )?;
         container.save()?;
         Ok(container)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::container::builder::ContainerBuilder;
+    use crate::syscall::syscall::SyscallType;
+
+    #[test]
+    fn test_with_bundle() {
+        let builder = ContainerBuilder::new("test-id".to_owned(), SyscallType::default())
+            .as_init("/original/bundle")
+            .with_bundle("/new/bundle");
+
+        assert_eq!(builder.bundle, PathBuf::from("/new/bundle"));
     }
 }
