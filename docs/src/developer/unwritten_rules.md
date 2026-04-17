@@ -12,7 +12,7 @@ Also for the error messages, we follow the convention all small-case letters and
 
 #### Logs
 
-youki uses [log](https://crates.io/crates/log) crate to log information while running. Whenever adding code to interact with system or kernel features or such, make sure to add debug logs so that if youki crashes, you can trace the errors and zero-in on the reasons using logs.
+youki uses the [tracing](https://crates.io/crates/tracing) crate for logging at runtime. When adding code that interacts with system or kernel features, please add logs at an appropriate level. Use `tracing::debug!` for information useful during debugging, `tracing::trace!` for very verbose details, and `tracing::error!` when reporting an actual error. These logs help trace failures and narrow down their causes.
 
 #### Comments
 
