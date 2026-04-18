@@ -43,7 +43,13 @@ pub enum ChannelError {
 
 pub fn main_channel() -> Result<(MainSender, MainReceiver), ChannelError> {
     let (sender, receiver) = channel::<Message>()?;
-    Ok((MainSender { sender }, MainReceiver { receiver }))
+    Ok((
+        MainSender { sender },
+        MainReceiver {
+            receiver,
+            init_ready_cached: false,
+        },
+    ))
 }
 
 pub struct MainSender {
@@ -112,28 +118,40 @@ impl MainSender {
 
 pub struct MainReceiver {
     receiver: Receiver<Message>,
+    init_ready_cached: bool,
 }
 
 impl MainReceiver {
     /// Waits for associated intermediate process to send ready message
     /// and return the pid of init process which is forked by intermediate process
     pub fn wait_for_intermediate_ready(&mut self) -> Result<Pid, ChannelError> {
-        let msg = self
-            .receiver
-            .recv()
-            .map_err(|err| ChannelError::ReceiveError {
-                msg: "waiting for intermediate process".to_string(),
-                source: err,
-            })?;
+        loop {
+            let msg = self
+                .receiver
+                .recv()
+                .map_err(|err| ChannelError::ReceiveError {
+                    msg: "waiting for intermediate process".to_string(),
+                    source: err,
+                })?;
 
-        match msg {
-            Message::IntermediateReady(pid) => Ok(Pid::from_raw(pid)),
-            Message::ExecFailed(err) => Err(ChannelError::ExecError(err)),
-            Message::OtherError(err) => Err(ChannelError::OtherError(err)),
-            msg => Err(ChannelError::UnexpectedMessage {
-                expected: Message::IntermediateReady(0),
-                received: msg,
-            }),
+            match msg {
+                Message::IntermediateReady(pid) => return Ok(Pid::from_raw(pid)),
+                Message::ExecFailed(err) => return Err(ChannelError::ExecError(err)),
+                Message::OtherError(err) => return Err(ChannelError::OtherError(err)),
+                Message::InitReady => {
+                    tracing::debug!(
+                        "received InitReady before IntermediateReady, caching for later"
+                    );
+                    self.init_ready_cached = true;
+                    continue;
+                }
+                msg => {
+                    return Err(ChannelError::UnexpectedMessage {
+                        expected: Message::IntermediateReady(0),
+                        received: msg,
+                    });
+                }
+            }
         }
     }
 
@@ -203,6 +221,12 @@ impl MainReceiver {
     /// Waits for associated init process to send ready message
     /// and return the pid of init process which is forked by init process
     pub fn wait_for_init_ready(&mut self) -> Result<(), ChannelError> {
+        if self.init_ready_cached {
+            tracing::debug!("consuming cached InitReady");
+            self.init_ready_cached = false;
+            return Ok(());
+        }
+
         let msg = self
             .receiver
             .recv()
