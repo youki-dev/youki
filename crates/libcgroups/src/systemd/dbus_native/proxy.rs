@@ -97,13 +97,30 @@ impl<'conn> Proxy<'conn> {
             if msg.body.is_empty() {
                 // this should rarely be the case
                 return Err(DbusError::MethodCallErr("Unknown Dbus Error".into()).into());
-            } else {
-                // in error message, first item of the body (if present) is always a string
-                // indicating the error
-                let mut ctr = 0;
-                let msg = String::deserialize(&msg.body, &mut ctr)?;
-                return Err(DbusError::MethodCallErr(msg).into());
             }
+
+            // in error message, first item of the body (if present) is always a string
+            // indicating the error
+            let mut ctr = 0;
+            let message = String::deserialize(&msg.body, &mut ctr)?;
+
+            // To check if error is EBUSY in the intermediate_process, detect EBUSY via the
+            // ErrorName header and map it to the more specific error type.
+            // See https://github.com/youki-dev/youki/issues/3342 for context.
+            if let Some(error_name) = msg
+                .headers
+                .iter()
+                .find(|h| h.kind == HeaderKind::ErrorName)
+                .and_then(|h| match &h.value {
+                    HeaderValue::String(s) => Some(s.as_str()),
+                    _ => None,
+                })
+                && error_name == ERROR_NAME_EBUSY
+            {
+                return Err(DbusError::DeviceOrResourceBusy(message).into());
+            }
+
+            return Err(DbusError::MethodCallErr(message).into());
         }
 
         // we basically ignore all type of messages apart from method return
