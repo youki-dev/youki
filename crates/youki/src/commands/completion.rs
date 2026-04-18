@@ -1,13 +1,13 @@
 use std::io;
 
 use anyhow::Result;
-use clap::{Command, Parser};
+use clap::{Args, Command};
 use clap_complete::{Shell, generate};
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 /// Generate scripts for shell completion
 pub struct Completion {
-    #[clap(long = "shell", short = 's', value_enum)]
+    #[arg(long = "shell", short = 's', value_enum)]
     pub shell: Shell,
 }
 
