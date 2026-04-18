@@ -176,7 +176,12 @@ impl Container {
         })?;
 
         if !opts.leave_running {
+            // Set status to Stopped first so delete() can proceed without force.
             self.set_status(ContainerStatus::Stopped).save()?;
+            // Remove cgroups, run poststop hooks, and delete the container state
+            // directory, matching runc's behavior where a checkpoint without
+            // --leave-running fully removes the container from runtime state.
+            self.delete(false)?;
         }
 
         tracing::debug!("container {} checkpointed", self.id());

@@ -76,6 +76,13 @@ fn setup_network_namespace(project_path: &Path, id: &str) -> Result<(), TestResu
     Ok(())
 }
 
+fn is_process_running(pid: i32) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    Path::new(&format!("/proc/{pid}")).exists()
+}
+
 fn checkpoint(
     project_path: &Path,
     id: &str,
@@ -83,9 +90,16 @@ fn checkpoint(
     args: Vec<&str>,
     work_path: Option<&str>,
 ) -> TestResult {
+    let pid_before = match get_container_pid(project_path, id) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+
     if let Err(e) = setup_network_namespace(project_path, id) {
         return e;
     }
+
+    let leave_running = args.contains(&"--leave-running");
 
     let additional_args = match work_path {
         Some(wp) => vec!["--work-path", wp],
@@ -142,6 +156,47 @@ fn checkpoint(
             "resulting checkpoint log file {:?} not found.",
             &dump_log,
         ));
+    }
+
+    // Verify process state based on --leave-running flag
+    if leave_running {
+        if !is_process_running(pid_before) {
+            return TestResult::Failed(anyhow::anyhow!(
+                "process (pid {}) should still be running after checkpoint with --leave-running, \
+                 but it is gone",
+                pid_before,
+            ));
+        }
+    } else {
+        if is_process_running(pid_before) {
+            return TestResult::Failed(anyhow::anyhow!(
+                "process (pid {}) should have stopped after checkpoint without --leave-running, \
+                 but it is still running",
+                pid_before,
+            ));
+        }
+
+        // Without --leave-running the runtime must fully remove the container
+        // from its state (matching runc's behavior), so `state <id>` must fail.
+        let state_output = Command::new(get_runtime_path())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .arg("--root")
+            .arg(project_path.join("runtime"))
+            .arg("state")
+            .arg(id)
+            .spawn()
+            .expect("failed to execute state command")
+            .wait_with_output()
+            .expect("failed to wait for state command");
+
+        if state_output.status.success() {
+            return TestResult::Failed(anyhow::anyhow!(
+                "container {} should have been removed from runtime state after checkpoint \
+                 without --leave-running, but `state` command still succeeded",
+                id,
+            ));
+        }
     }
 
     TestResult::Passed
