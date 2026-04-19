@@ -43,7 +43,13 @@ pub enum ChannelError {
 
 pub fn main_channel() -> Result<(MainSender, MainReceiver), ChannelError> {
     let (sender, receiver) = channel::<Message>()?;
-    Ok((MainSender { sender }, MainReceiver { receiver }))
+    Ok((
+        MainSender { sender },
+        MainReceiver {
+            receiver,
+            init_ready_cached: false,
+        },
+    ))
 }
 
 pub struct MainSender {
@@ -112,28 +118,40 @@ impl MainSender {
 
 pub struct MainReceiver {
     receiver: Receiver<Message>,
+    init_ready_cached: bool,
 }
 
 impl MainReceiver {
     /// Waits for associated intermediate process to send ready message
     /// and return the pid of init process which is forked by intermediate process
     pub fn wait_for_intermediate_ready(&mut self) -> Result<Pid, ChannelError> {
-        let msg = self
-            .receiver
-            .recv()
-            .map_err(|err| ChannelError::ReceiveError {
-                msg: "waiting for intermediate process".to_string(),
-                source: err,
-            })?;
+        loop {
+            let msg = self
+                .receiver
+                .recv()
+                .map_err(|err| ChannelError::ReceiveError {
+                    msg: "waiting for intermediate process".to_string(),
+                    source: err,
+                })?;
 
-        match msg {
-            Message::IntermediateReady(pid) => Ok(Pid::from_raw(pid)),
-            Message::ExecFailed(err) => Err(ChannelError::ExecError(err)),
-            Message::OtherError(err) => Err(ChannelError::OtherError(err)),
-            msg => Err(ChannelError::UnexpectedMessage {
-                expected: Message::IntermediateReady(0),
-                received: msg,
-            }),
+            match msg {
+                Message::IntermediateReady(pid) => return Ok(Pid::from_raw(pid)),
+                Message::ExecFailed(err) => return Err(ChannelError::ExecError(err)),
+                Message::OtherError(err) => return Err(ChannelError::OtherError(err)),
+                Message::InitReady => {
+                    tracing::debug!(
+                        "received InitReady before IntermediateReady, caching for later"
+                    );
+                    self.init_ready_cached = true;
+                    continue;
+                }
+                msg => {
+                    return Err(ChannelError::UnexpectedMessage {
+                        expected: Message::IntermediateReady(0),
+                        received: msg,
+                    });
+                }
+            }
         }
     }
 
@@ -203,6 +221,12 @@ impl MainReceiver {
     /// Waits for associated init process to send ready message
     /// and return the pid of init process which is forked by init process
     pub fn wait_for_init_ready(&mut self) -> Result<(), ChannelError> {
+        if self.init_ready_cached {
+            tracing::debug!("consuming cached InitReady");
+            self.init_ready_cached = false;
+            return Ok(());
+        }
+
         let msg = self
             .receiver
             .recv()
@@ -621,6 +645,74 @@ mod tests {
                     .network_setup_ready()
                     .with_context(|| "Failed to send network setup ready")?;
                 sender.close()?;
+                std::process::exit(0);
+            }
+        };
+
+        Ok(())
+    }
+
+    /// Regression test for the race condition where InitReady arrives before
+    /// IntermediateReady. In tenant mode the init process can complete its
+    /// lightweight setup (setns, chdir, caps) and send InitReady faster than
+    /// the intermediate process sends IntermediateReady.
+    #[test]
+    #[serial]
+    fn test_channel_init_ready_before_intermediate_ready() -> Result<()> {
+        let (sender, receiver) = &mut main_channel()?;
+        match unsafe { unistd::fork()? } {
+            unistd::ForkResult::Parent { child } => {
+                wait::waitpid(child, None)?;
+                // InitReady was sent first, then IntermediateReady.
+                // wait_for_intermediate_ready must cache InitReady and
+                // continue waiting for IntermediateReady.
+                let pid = receiver
+                    .wait_for_intermediate_ready()
+                    .with_context(|| "Failed to wait for intermediate ready")?;
+                // The cached InitReady must be consumed here.
+                receiver
+                    .wait_for_init_ready()
+                    .with_context(|| "Failed to wait for init ready")?;
+                receiver.close()?;
+                assert_eq!(pid, child);
+            }
+            unistd::ForkResult::Child => {
+                // Simulate the init process being faster than intermediate:
+                // send InitReady first.
+                sender.init_ready()?;
+                // Then send IntermediateReady (as the intermediate would).
+                let pid = unistd::getpid();
+                sender.intermediate_ready(pid)?;
+                sender.close()?;
+                std::process::exit(0);
+            }
+        };
+
+        Ok(())
+    }
+
+    /// Verify that if InitReady arrives but the channel breaks before
+    /// IntermediateReady, wait_for_intermediate_ready returns an error
+    /// rather than spinning forever.
+    #[test]
+    #[serial]
+    fn test_channel_init_ready_then_broken_channel() -> Result<()> {
+        let (sender, receiver) = &mut main_channel()?;
+        match unsafe { unistd::fork()? } {
+            unistd::ForkResult::Parent { child } => {
+                wait::waitpid(child, None)?;
+                // Child sent InitReady and exited without IntermediateReady.
+                // The channel is broken, so we should get an error.
+                let ret = receiver.wait_for_intermediate_ready();
+                assert!(
+                    ret.is_err(),
+                    "Expected error when channel breaks before IntermediateReady"
+                );
+            }
+            unistd::ForkResult::Child => {
+                // Send InitReady then exit without IntermediateReady.
+                sender.init_ready()?;
+                // Deliberately do NOT send IntermediateReady.
                 std::process::exit(0);
             }
         };
