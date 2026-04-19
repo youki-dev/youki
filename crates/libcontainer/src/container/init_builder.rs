@@ -62,7 +62,9 @@ impl InitContainerBuilder {
         self
     }
 
-    /// Sets the OCI bundle path for the container
+    /// Overrides the OCI bundle path for the container
+    ///                                                                                                                                                                             
+    /// Replaces the bundle set by [`ContainerBuilder::as_init`].  
     pub fn with_bundle<P: Into<PathBuf>>(mut self, bundle: P) -> Self {
         self.bundle = bundle.into();
         self
