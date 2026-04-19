@@ -28,8 +28,8 @@ use crate::network::network_device::{resolve_device_name, setup_addresses_in_net
 use crate::network::wrapper::create_network_client;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::{channel, memory_policy};
-use crate::rootfs::{MountChannels, RootFS};
 use crate::rootfs::device::{open_device_fd, verify_dev_null};
+use crate::rootfs::{MountChannels, RootFS};
 #[cfg(feature = "libseccomp")]
 use crate::seccomp;
 use crate::syscall::{Syscall, SyscallError};

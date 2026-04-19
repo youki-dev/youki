@@ -1,10 +1,10 @@
 use core::fmt;
 use std::collections::HashMap;
 
+use oci_spec::runtime::LinuxIdMapping;
 use serde::{Deserialize, Serialize};
 
 use crate::network::cidr::CidrAddress;
-use oci_spec::runtime::LinuxIdMapping;
 
 /// Used as a wrapper for messages to be sent between child and parent processes
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -56,8 +56,10 @@ pub struct MountMsg {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct MountIdMap {
-    pub uid_mappings: Vec<LinuxIdMapping>,
-    pub gid_mappings: Vec<LinuxIdMapping>,
-    pub recursive: bool,
+pub enum MountIdMap {
+    Mappings {
+        uid_mappings: Vec<LinuxIdMapping>,
+        gid_mappings: Vec<LinuxIdMapping>,
+    },
+    ContainerUserns,
 }

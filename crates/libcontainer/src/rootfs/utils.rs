@@ -97,6 +97,10 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
     let mut apply_idmap = false;
     let mut apply_recursive_idmap = false;
 
+    if m.uid_mappings().is_some() || m.gid_mappings().is_some() {
+        apply_idmap = true;
+    }
+
     if let Some(options) = &m.options() {
         for option in options {
             match option.as_str() {
@@ -215,7 +219,7 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
-    use oci_spec::runtime::MountBuilder;
+    use oci_spec::runtime::{LinuxIdMappingBuilder, MountBuilder};
 
     use super::*;
     use crate::syscall::linux::MountAttr;
@@ -523,6 +527,20 @@ mod tests {
         )?;
         assert!(mount_option_config.apply_idmap);
         assert!(mount_option_config.apply_recursive_idmap);
+
+        let mapping = LinuxIdMappingBuilder::default()
+            .container_id(0)
+            .host_id(0)
+            .size(1)
+            .build()?;
+        let mount_option_config = parse_mount(
+            &MountBuilder::default()
+                .uid_mappings(vec![mapping.clone()])
+                .gid_mappings(vec![mapping])
+                .build()?,
+        )?;
+        assert!(mount_option_config.apply_idmap);
+        assert!(!mount_option_config.apply_recursive_idmap);
 
         Ok(())
     }

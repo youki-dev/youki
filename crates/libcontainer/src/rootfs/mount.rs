@@ -1,27 +1,24 @@
-use nix::sys::stat::Mode;
-use nix::fcntl::OFlag;
-use nix::dir::Dir;
 use std::fs::{Permissions, canonicalize};
 use std::io::{BufRead, BufReader, ErrorKind};
-use std::os::fd::{AsFd, OwnedFd, AsRawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 #[cfg(feature = "v1")]
 use std::{borrow::Cow, collections::HashMap};
 use std::{fs, mem};
-use crate::process::channel;
-use crate::process::message::{MountIdMap, MountMsg};
-use std::os::fd::{BorrowedFd};
 
 use libcgroups::common::CgroupSetup::{Hybrid, Legacy, Unified};
 #[cfg(feature = "v1")]
 use libcgroups::common::DEFAULT_CGROUP_ROOT;
 use nix::NixPath;
+use nix::dir::Dir;
 use nix::errno::Errno;
+use nix::fcntl::OFlag;
 use nix::mount::MsFlags;
+use nix::sys::stat::Mode;
 use nix::sys::statfs::{PROC_SUPER_MAGIC, statfs};
-use oci_spec::runtime::{Mount as SpecMount, MountBuilder as SpecMountBuilder, LinuxIdMapping};
+use oci_spec::runtime::{Mount as SpecMount, MountBuilder as SpecMountBuilder};
 use pathrs::Root;
 use pathrs::error::ErrorKind as PathrsErrorKind;
 use pathrs::flags::OpenFlags;
@@ -35,6 +32,8 @@ use procfs::{FromRead, ProcessCGroups};
 use super::symlink::Symlink;
 use super::symlink::SymlinkError;
 use super::utils::{MountOptionConfig, parse_mount};
+use crate::process::channel;
+use crate::process::message::{MountIdMap, MountMsg};
 use crate::syscall::syscall::create_syscall;
 use crate::syscall::{Syscall, SyscallError, linux};
 use crate::utils::{PathBufExt, retry};
@@ -121,23 +120,6 @@ pub struct MountOptions<'a> {
     pub cgroup_ns: bool,
 }
 
-fn extract_id_mappings(
-    mount: &SpecMount,
-) -> (Option<&[LinuxIdMapping]>, Option<&[LinuxIdMapping]>) {
-    let uid_mappings = mount
-        .uid_mappings()
-        .as_ref()
-        .filter(|mappings| !mappings.is_empty())
-        .map(|mappings| mappings.as_slice());
-    let gid_mappings = mount
-        .gid_mappings()
-        .as_ref()
-        .filter(|mappings| !mappings.is_empty())
-        .map(|mappings| mappings.as_slice());
-
-    (uid_mappings, gid_mappings)
-}
-
 fn map_idmapped_syscall_error(err: SyscallError) -> MountError {
     match err {
         SyscallError::Nix(Errno::ENOSYS) => MountError::Custom(
@@ -176,8 +158,7 @@ impl Mount {
         mount: &SpecMount,
         rootfs: &Path,
         mount_option_config: &MountOptionConfig,
-        uid_mappings: &[LinuxIdMapping],
-        gid_mappings: &[LinuxIdMapping],
+        idmap: MountIdMap,
         comm: &mut MountChannels<'_>,
     ) -> Result<()> {
         let root = Root::open(rootfs)?;
@@ -198,11 +179,7 @@ impl Mount {
         let recursive = mount_option_config.apply_recursive_idmap;
         let msg = MountMsg {
             source: src.to_string_lossy().to_string(),
-            idmap: Some(MountIdMap {
-                uid_mappings: uid_mappings.to_vec(),
-                gid_mappings: gid_mappings.to_vec(),
-                recursive,
-            }),
+            idmap: Some(idmap),
             recursive,
         };
         comm.main.request_mount_fd(msg).map_err(|err| {
@@ -271,44 +248,35 @@ impl Mount {
         Ok(())
     }
 
-    pub fn setup_mount(&self, mount: &SpecMount, options: &MountOptions, mut comm: Option<&mut MountChannels<'_>>) -> Result<()> {
+    pub fn setup_mount(
+        &self,
+        mount: &SpecMount,
+        options: &MountOptions,
+        mut comm: Option<&mut MountChannels<'_>>,
+    ) -> Result<()> {
         tracing::debug!("mounting {:?}", mount);
         let mut mount_option_config = parse_mount(mount)?;
-        let (uid_mappings, gid_mappings) = extract_id_mappings(mount);
-        let is_bind = mount.typ().as_deref() == Some("bind")
-            || mount
-                .options()
-                .as_deref()
-                .is_some_and(|ops| ops.iter().any(|o| o == "bind" || o == "rbind"));
+        let uid_mappings = mount.uid_mappings().as_deref();
+        let gid_mappings = mount.gid_mappings().as_deref();
         if mount_option_config.apply_idmap {
-            if !is_bind {
-                return Err(MountError::Custom(
-                    "idmapped mount requires bind mount".to_string(),
-                ));
-            }
             let comm = comm.take().ok_or_else(|| {
-                MountError::Custom(
-                    "idmapped mount requires mount fd channel".to_string(),
-                )
+                MountError::Custom("idmapped mount requires mount fd channel".to_string())
             })?;
-            let uid_mappings = uid_mappings.ok_or_else(|| {
-                MountError::Custom(
-                    "idmapped mount requires uid/gid mappings".to_string(),
-                )
-            })?;
-            let gid_mappings = gid_mappings.ok_or_else(|| {
-                MountError::Custom(
-                    "idmapped mount requires uid/gid mappings".to_string(),
-                )
-            })?;
-            self.mount_idmapped(
-                mount,
-                options.root,
-                &mount_option_config,
-                uid_mappings,
-                gid_mappings,
-                comm,
-            )?;
+            let idmap = match (uid_mappings, gid_mappings) {
+                (Some(uid_mappings), Some(gid_mappings)) => MountIdMap::Mappings {
+                    uid_mappings: uid_mappings.to_vec(),
+                    gid_mappings: gid_mappings.to_vec(),
+                },
+                // No mount-specific mappings were supplied. In this case the
+                // parent process applies the container user namespace itself.
+                (None, None) => MountIdMap::ContainerUserns,
+                _ => {
+                    return Err(MountError::Custom(
+                        "mount uid/gid mappings must be specified together".to_string(),
+                    ));
+                }
+            };
+            self.mount_idmapped(mount, options.root, &mount_option_config, idmap, comm)?;
             return Ok(());
         }
 
@@ -416,7 +384,12 @@ impl Mount {
     }
 
     #[cfg(feature = "v1")]
-    fn mount_cgroup_v1(&self, cgroup_mount: &SpecMount, options: &MountOptions, mut comm: Option<&mut MountChannels<'_>>) -> Result<()> {
+    fn mount_cgroup_v1(
+        &self,
+        cgroup_mount: &SpecMount,
+        options: &MountOptions,
+        mut comm: Option<&mut MountChannels<'_>>,
+    ) -> Result<()> {
         tracing::debug!("mounting cgroup v1 filesystem");
         // create tmpfs into which the cgroup subsystems will be mounted
         let tmpfs = SpecMountBuilder::default()
@@ -435,10 +408,11 @@ impl Mount {
                 err
             })?;
 
-        self.setup_mount(&tmpfs, options, comm.as_deref_mut()).map_err(|err| {
-            tracing::error!("failed to mount tmpfs for cgroup: {}", err);
-            err
-        })?;
+        self.setup_mount(&tmpfs, options, comm.as_deref_mut())
+            .map_err(|err| {
+                tracing::error!("failed to mount tmpfs for cgroup: {}", err);
+                err
+            })?;
 
         // get all cgroup mounts on the host system
         let host_mounts: Vec<PathBuf> = libcgroups::v1::util::list_subsystem_mount_points()
@@ -636,10 +610,11 @@ impl Mount {
                 .build()?;
             tracing::debug!("Mounting emulated cgroup subsystem: {:?}", emulated);
 
-            self.setup_mount(&emulated, options, comm.as_deref_mut()).map_err(|err| {
-                tracing::error!("failed to mount {subsystem_name} cgroup hierarchy: {}", err);
-                err
-            })?;
+            self.setup_mount(&emulated, options, comm.as_deref_mut())
+                .map_err(|err| {
+                    tracing::error!("failed to mount {subsystem_name} cgroup hierarchy: {}", err);
+                    err
+                })?;
         } else {
             tracing::warn!("Could not mount {:?} cgroup subsystem", subsystem_name);
         }
@@ -1215,11 +1190,11 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use anyhow::{Context, Ok, Result};
+    use oci_spec::runtime::LinuxIdMappingBuilder;
 
     use super::*;
     use crate::process::channel;
     use crate::syscall::test::{ArgName, MountArgs, TestHelperSyscall};
-    use oci_spec::runtime::LinuxIdMappingBuilder;
 
     #[test]
     #[ignore] // TODO: fix fd-based test
@@ -1921,35 +1896,6 @@ mod tests {
     }
 
     #[test]
-    fn setup_mount_idmapped_requires_bind() -> Result<()> {
-        let tmp = tempfile::tempdir()?;
-        let rootfs = tmp.path().join("rootfs");
-        std::fs::create_dir_all(&rootfs)?;
-
-        let mount = SpecMountBuilder::default()
-            .destination(PathBuf::from("/mnt"))
-            .typ("tmpfs")
-            .source("tmpfs")
-            .options(vec!["idmap".to_string()])
-            .build()?;
-
-        let options = MountOptions {
-            root: &rootfs,
-            label: None,
-            cgroup_ns: true,
-        };
-
-        let m = Mount::new();
-        let res = m.setup_mount(&mount, &options, None);
-        assert!(matches!(
-            res,
-            Err(MountError::Custom(msg)) if msg == "idmapped mount requires bind mount"
-        ));
-
-        Ok(())
-    }
-
-    #[test]
     fn setup_mount_idmapped_requires_channel() -> Result<()> {
         let tmp = tempfile::tempdir()?;
         let rootfs = tmp.path().join("rootfs");
@@ -1981,7 +1927,7 @@ mod tests {
     }
 
     #[test]
-    fn setup_mount_idmapped_requires_mappings() -> Result<()> {
+    fn setup_mount_idmapped_uses_container_userns_without_mappings() -> Result<()> {
         let tmp = tempfile::tempdir()?;
         let rootfs = tmp.path().join("rootfs");
         let source_dir = tmp.path().join("source");
@@ -2002,8 +1948,9 @@ mod tests {
         };
 
         let m = Mount::new();
-        let (mut main_sender, mut _main_receiver) = channel::main_channel()?;
+        let (mut main_sender, mut main_receiver) = channel::main_channel()?;
         let (mut init_sender, mut init_receiver) = channel::init_channel()?;
+        init_sender.send_mount_fd_error("boom".to_string())?;
         let mut comm = MountChannels {
             main: &mut main_sender,
             init: &mut init_receiver,
@@ -2012,51 +1959,12 @@ mod tests {
         let res = m.setup_mount(&mount, &options, Some(&mut comm));
         assert!(matches!(
             res,
-            Err(MountError::Custom(msg)) if msg == "idmapped mount requires uid/gid mappings"
+            Err(MountError::Custom(msg)) if msg == "boom"
         ));
-
-        main_sender.close()?;
-        init_sender.close()?;
-        init_receiver.close()?;
-
-        Ok(())
-    }
-
-    #[test]
-    fn setup_mount_idmapped_rejects_empty_mappings() -> Result<()> {
-        let tmp = tempfile::tempdir()?;
-        let rootfs = tmp.path().join("rootfs");
-        let source_dir = tmp.path().join("source");
-        std::fs::create_dir_all(&rootfs)?;
-        std::fs::create_dir_all(&source_dir)?;
-
-        let mount = SpecMountBuilder::default()
-            .destination(PathBuf::from("/mnt"))
-            .typ("bind")
-            .source(&source_dir)
-            .options(vec!["idmap".to_string()])
-            .uid_mappings(Vec::new())
-            .gid_mappings(Vec::new())
-            .build()?;
-
-        let options = MountOptions {
-            root: &rootfs,
-            label: None,
-            cgroup_ns: true,
-        };
-
-        let m = Mount::new();
-        let (mut main_sender, mut _main_receiver) = channel::main_channel()?;
-        let (mut init_sender, mut init_receiver) = channel::init_channel()?;
-        let mut comm = MountChannels {
-            main: &mut main_sender,
-            init: &mut init_receiver,
-        };
-
-        let res = m.setup_mount(&mount, &options, Some(&mut comm));
+        let req = main_receiver.wait_for_mount_fd_request()?;
         assert!(matches!(
-            res,
-            Err(MountError::Custom(msg)) if msg == "idmapped mount requires uid/gid mappings"
+            req.idmap,
+            Some(crate::process::message::MountIdMap::ContainerUserns)
         ));
 
         main_sender.close()?;

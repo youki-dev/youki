@@ -214,7 +214,7 @@ impl InitContainerBuilder {
         }
 
         if let Some(mounts) = spec.mounts() {
-            validate_idmapped_mounts(mounts)?;
+            validate_idmapped_mounts(mounts, spec.linux().as_ref())?;
         }
 
         let syscall = create_syscall();

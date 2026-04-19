@@ -102,7 +102,7 @@ pub enum ErrInvalidSpec {
     IoPriority,
     #[error("invalid scheduler config for process")]
     Scheduler,
-    #[error("idmap option and uid/gid mappings must be specified together")]
+    #[error("idmapped mount requires either mount uid/gid mappings or a container user namespace")]
     MountIdmapInvalidConfig,
     #[error("mount specifies idmap option for non-bind mount")]
     MountIdmapNonBind,

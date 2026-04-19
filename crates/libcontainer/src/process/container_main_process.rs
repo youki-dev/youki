@@ -1,18 +1,15 @@
-use std::mem;
 use std::collections::HashMap;
-use std::io::ErrorKind;
-use std::fs;
 use std::fs::File;
+use std::io::ErrorKind;
+use std::os::fd::{AsFd, AsRawFd, OwnedFd};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::os::fd::{AsRawFd, OwnedFd, AsFd};
-use std::path::Path;
-use std::path::PathBuf;
-use crate::process::message::{Message, MountMsg};
-use nix::unistd::{ForkResult, Pid, fork, pipe, close, read as nix_read, write as nix_write};
+use std::{fs, mem};
 
-use nix::sys::wait::{WaitStatus, waitpid};
 use nix::errno::Errno;
 use nix::sched::CloneFlags;
+use nix::sys::wait::{WaitStatus, waitpid};
+use nix::unistd::{ForkResult, Pid, close, fork, pipe, read as nix_read, write as nix_write};
 use oci_spec::runtime::{Linux, LinuxIdMapping, LinuxNamespaceType};
 #[cfg(feature = "libseccomp")]
 use oci_spec::runtime::{SECCOMP_FD_NAME, VERSION as OCI_VERSION};
@@ -22,12 +19,13 @@ use crate::network::network_device::dev_change_net_namespace;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::fork::{self, CloneCb};
 use crate::process::intel_rdt::setup_intel_rdt;
+use crate::process::message::{Message, MountIdMap, MountMsg};
 use crate::process::{channel, container_intermediate_process};
-use crate::syscall::syscall::SyscallType;
-use crate::syscall::{SyscallError, linux, Syscall};
-use crate::user_ns::UserNamespaceConfig;
 #[cfg(feature = "libseccomp")]
 use crate::seccomp;
+use crate::syscall::syscall::SyscallType;
+use crate::syscall::{Syscall, SyscallError, linux};
+use crate::user_ns::UserNamespaceConfig;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProcessError {
@@ -145,7 +143,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     // process.  The intermediate process should exit after this point.
     let init_pid = main_receiver.wait_for_intermediate_ready()?;
     let mut need_to_clean_up_intel_rdt_subdirectory = false;
-    let  mount_worker_tx = start_mount_worker(init_pid, container_args.syscall);
+    let mount_worker_tx = start_mount_worker(init_pid, container_args.syscall);
     #[cfg(feature = "libseccomp")]
     let mut seccomp_state: Option<(PathBuf, Vec<u8>)> = None;
 
@@ -211,7 +209,9 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                 // Determine OCI status based on container type (matching runc behavior)
                 let oci_status = match container_args.container_type {
                     ContainerType::InitContainer => oci_spec::runtime::ContainerState::Creating,
-                    ContainerType::TenantContainer { .. } => oci_spec::runtime::ContainerState::Running,
+                    ContainerType::TenantContainer { .. } => {
+                        oci_spec::runtime::ContainerState::Running
+                    }
                 };
 
                 // Build OCI-compliant ContainerProcessState using builder pattern
@@ -238,11 +238,11 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                     .listener_path()
                     .as_ref()
                     .ok_or(
-                    crate::process::seccomp_listener::SeccompListenerError::MissingListenerPath,
-                )?
-                .clone();
-                let encoded_state =
-                    serde_json::to_vec(&state).map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
+                        crate::process::seccomp_listener::SeccompListenerError::MissingListenerPath,
+                    )?
+                    .clone();
+                let encoded_state = serde_json::to_vec(&state)
+                    .map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
                 seccomp_state = Some((listener_path, encoded_state));
             }
         }
@@ -257,7 +257,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                 mount_worker_tx
                     .send(MountWorkerRequest {
                         msg: req,
-                        response: resp_tx
+                        response: resp_tx,
                     })
                     .map_err(|err| {
                         ProcessError::MountRequest(format!(
@@ -290,9 +290,9 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                             ));
                         }
                     };
-                    let (listener_path, encoded_state) = seccomp_state.as_ref().ok_or(
-                        seccomp_listener::SeccompListenerError::MissingListenerPath,
-                    )?;
+                    let (listener_path, encoded_state) = seccomp_state
+                        .as_ref()
+                        .ok_or(seccomp_listener::SeccompListenerError::MissingListenerPath)?;
                     seccomp_listener::sync_seccomp_send_msg(
                         listener_path,
                         encoded_state.as_slice(),
@@ -306,23 +306,25 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                     return Err(ProcessError::Channel(
                         channel::ChannelError::UnexpectedMessage {
                             expected: Message::InitReady,
-                            received: Message::SeccompNotify
+                            received: Message::SeccompNotify,
                         },
-                    ))
+                    ));
                 }
             }
             Message::ExecFailed(err) => {
                 return Err(ProcessError::Channel(channel::ChannelError::ExecError(err)));
             }
             Message::OtherError(err) => {
-                return Err(ProcessError::Channel(channel::ChannelError::OtherError(err)));
+                return Err(ProcessError::Channel(channel::ChannelError::OtherError(
+                    err,
+                )));
             }
             msg => {
                 return Err(ProcessError::Channel(
                     channel::ChannelError::UnexpectedMessage {
                         expected: Message::InitReady,
                         received: msg,
-                    }
+                    },
                 ));
             }
         }
@@ -379,7 +381,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
 }
 
 fn create_userns_fd(
-    syscall: &dyn Syscall,
+    _syscall: &dyn Syscall,
     uid_mappings: &[LinuxIdMapping],
     gid_mappings: &[LinuxIdMapping],
 ) -> Result<OwnedFd> {
@@ -434,7 +436,7 @@ fn create_userns_fd(
         Err(err) => Err(ProcessError::MountRequest(format!(
             "failed to fork userns helper: {err}"
         ))),
-    } 
+    }
 }
 
 fn write_id_mapping_file(pid: Pid, file_name: &str, mappings: &[LinuxIdMapping]) -> Result<()> {
@@ -455,24 +457,42 @@ fn write_id_mapping_file(pid: Pid, file_name: &str, mappings: &[LinuxIdMapping])
     let path = format!("/proc/{}/{}", pid.as_raw(), file_name);
     std::fs::write(&path, content).map_err(|err| {
         tracing::error!(?err, ?path, "failed to write id mapping");
-        ProcessError::MountRequest(format!("failed to write {file_name}: {err}" ))
+        ProcessError::MountRequest(format!("failed to write {file_name}: {err}"))
     })?;
     Ok(())
 }
 
-fn mount_idmapped_fd(syscall: &dyn Syscall, req: &MountMsg) -> Result<OwnedFd> {
-    let idmap = req.idmap.as_ref().ok_or_else(|| {
-        ProcessError::MountRequest("idmapped mount request missing mappings".to_string())
+fn container_userns_fd(init_pid: Pid) -> Result<OwnedFd> {
+    let userns_path = format!("/proc/{}/ns/user", init_pid.as_raw());
+    let fd = File::open(&userns_path).map_err(|err| {
+        ProcessError::MountRequest(format!("failed to open user namespace: {err}"))
     })?;
+    Ok(fd.into())
+}
 
-    let userns_fd = create_userns_fd(syscall, &idmap.uid_mappings, &idmap.gid_mappings)?;
+fn mount_idmapped_fd(syscall: &dyn Syscall, req: &MountMsg, init_pid: Pid) -> Result<OwnedFd> {
+    let userns_fd = match req.idmap.as_ref().ok_or_else(|| {
+        ProcessError::MountRequest("idmapped mount request missing mappings".to_string())
+    })? {
+        MountIdMap::Mappings {
+            uid_mappings,
+            gid_mappings,
+        } => create_userns_fd(syscall, uid_mappings, gid_mappings)?,
+        MountIdMap::ContainerUserns => container_userns_fd(init_pid)?,
+    };
     let mut open_flags = linux::OPEN_TREE_CLONE | linux::OPEN_TREE_CLOEXEC | linux::AT_EMPTY_PATH;
-    if idmap.recursive {
+    if req.recursive {
         open_flags |= linux::AT_RECURSIVE;
     }
-    let mount_fd = Syscall::open_tree(syscall, libc::AT_FDCWD, Some(req.source.as_str()), open_flags).map_err(ProcessError::SyscallOther)?;
+    let mount_fd = Syscall::open_tree(
+        syscall,
+        libc::AT_FDCWD,
+        Some(req.source.as_str()),
+        open_flags,
+    )
+    .map_err(ProcessError::SyscallOther)?;
     let mut setattr_flags = linux::AT_EMPTY_PATH;
-    if idmap.recursive {
+    if req.recursive {
         setattr_flags |= linux::AT_RECURSIVE;
     }
     let mount_attr = linux::MountAttr {
@@ -481,14 +501,15 @@ fn mount_idmapped_fd(syscall: &dyn Syscall, req: &MountMsg) -> Result<OwnedFd> {
         propagation: 0,
         userns_fd: userns_fd.as_raw_fd() as u64,
     };
-    syscall.mount_setattr(
-        mount_fd.as_fd(),
-        Path::new(""),
-        setattr_flags,
-        &mount_attr,
-        mem::size_of::<linux::MountAttr>(),
-    )
-    .map_err(ProcessError::SyscallOther)?;
+    syscall
+        .mount_setattr(
+            mount_fd.as_fd(),
+            Path::new(""),
+            setattr_flags,
+            &mount_attr,
+            mem::size_of::<linux::MountAttr>(),
+        )
+        .map_err(ProcessError::SyscallOther)?;
     Ok(mount_fd)
 }
 
@@ -506,7 +527,10 @@ struct MountWorkerRequest {
     response: mpsc::Sender<std::result::Result<OwnedFd, String>>,
 }
 
-fn start_mount_worker(init_pid: Pid, syscall_type: SyscallType) -> mpsc::Sender<MountWorkerRequest> {
+fn start_mount_worker(
+    init_pid: Pid,
+    syscall_type: SyscallType,
+) -> mpsc::Sender<MountWorkerRequest> {
     let (tx, rx) = mpsc::channel::<MountWorkerRequest>();
     std::thread::spawn(move || {
         let syscall = syscall_type.create_syscall();
@@ -522,15 +546,17 @@ fn start_mount_worker(init_pid: Pid, syscall_type: SyscallType) -> mpsc::Sender<
                                 "failed to open init mount namespace: {err}"
                             ))
                         })?;
-                    syscall
-                        .unshare(CloneFlags::CLONE_FS)
-                        .map_err(|e| ProcessError::MountRequest(format!("unshare(CLONE_FS) failed: {e}")))?;
+                    syscall.unshare(CloneFlags::CLONE_FS).map_err(|e| {
+                        ProcessError::MountRequest(format!("unshare(CLONE_FS) failed: {e}"))
+                    })?;
                     let target_fd = target_mnt.as_raw_fd();
                     if let Err(err) = syscall.set_ns(target_fd, CloneFlags::CLONE_NEWNS) {
                         if matches!(err, SyscallError::Nix(Errno::EINVAL)) {
                             syscall
                                 .set_ns(target_fd, CloneFlags::empty())
-                                .map_err(|e| ProcessError::MountRequest(format!("setns failed: {e}")))?;
+                                .map_err(|e| {
+                                    ProcessError::MountRequest(format!("setns failed: {e}"))
+                                })?;
                         } else {
                             return Err(ProcessError::MountRequest(format!("setns failed: {err}")));
                         }
@@ -545,7 +571,7 @@ fn start_mount_worker(init_pid: Pid, syscall_type: SyscallType) -> mpsc::Sender<
 
             let response = match &mountns_error {
                 Some(err) => Err(idmapped_error_message(err)),
-                None => mount_idmapped_fd(syscall.as_ref(), &req.msg)
+                None => mount_idmapped_fd(syscall.as_ref(), &req.msg, init_pid)
                     .map_err(|err| idmapped_error_message(&err)),
             };
             let _ = req.response.send(response);
@@ -643,11 +669,14 @@ fn move_network_devices_to_container(
 #[cfg(test)]
 mod tests {
     use std::fs;
+    #[cfg(target_os = "linux")]
     use std::os::fd::BorrowedFd;
+    #[cfg(target_os = "linux")]
     use std::path::Path;
 
     use anyhow::Result;
-    use nix::mount::{mount, MsFlags};
+    #[cfg(target_os = "linux")]
+    use nix::mount::{MsFlags, mount};
     use nix::sched::{CloneFlags, unshare};
     use nix::unistd::{self, getgid, getuid};
     use oci_spec::runtime::LinuxIdMappingBuilder;
@@ -655,9 +684,11 @@ mod tests {
 
     use super::*;
     use crate::process::channel::{intermediate_channel, main_channel};
-    use crate::user_ns::UserNamespaceIDMapper;
-    use crate::syscall::syscall::SyscallType;
+    #[cfg(target_os = "linux")]
     use crate::syscall::linux;
+    #[cfg(target_os = "linux")]
+    use crate::syscall::syscall::SyscallType;
+    use crate::user_ns::UserNamespaceIDMapper;
 
     #[test]
     #[serial]
@@ -774,10 +805,8 @@ mod tests {
 
     #[test]
     #[serial]
+    #[cfg(target_os = "linux")]
     fn test_idmapped_mount_smoke() -> Result<()> {
-        if !cfg!(target_os = "linux") {
-            return Ok(());
-        }
         if !unistd::geteuid().is_root() {
             return Ok(());
         }
@@ -810,16 +839,15 @@ mod tests {
 
         let msg = MountMsg {
             source: src.to_string_lossy().to_string(),
-            idmap: Some(crate::process::message::MountIdMap {
+            idmap: Some(crate::process::message::MountIdMap::Mappings {
                 uid_mappings: vec![uid_mapping],
                 gid_mappings: vec![gid_mapping],
-                recursive: false,
             }),
             recursive: false,
         };
 
         let syscall = SyscallType::Linux.create_syscall();
-        let mount_fd = match mount_idmapped_fd(syscall.as_ref(), &msg) {
+        let mount_fd = match mount_idmapped_fd(syscall.as_ref(), &msg, Pid::this()) {
             Ok(fd) => fd,
             Err(ProcessError::SyscallOther(SyscallError::Nix(Errno::ENOSYS))) => return Ok(()),
             Err(err) => return Err(err.into()),

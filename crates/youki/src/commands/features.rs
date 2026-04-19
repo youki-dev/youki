@@ -6,6 +6,11 @@ use libcontainer::oci_spec::runtime::{
 };
 use libcontainer::syscall::linux::MountOption;
 use liboci_cli::Features;
+use nix::sys::utsname;
+
+// Idmapped mounts were introduced in Linux 5.12.
+const IDMAP_MIN_KERNEL_MAJOR: u32 = 5;
+const IDMAP_MIN_KERNEL_MINOR: u32 = 12;
 
 // Function to query and return capabilities
 fn query_caps() -> Result<Vec<String>> {
@@ -24,6 +29,28 @@ fn query_supported_namespaces() -> Result<Vec<LinuxNamespaceType>> {
         LinuxNamespaceType::Cgroup,
         LinuxNamespaceType::Time,
     ])
+}
+
+fn kernel_supports_idmapped_mounts() -> bool {
+    let Ok(uname) = utsname::uname() else {
+        return false;
+    };
+    let release = uname.release().to_string_lossy();
+    let Some((major, rest)) = release.split_once('.') else {
+        return false;
+    };
+    let minor = rest
+        .split(|c: char| !c.is_ascii_digit())
+        .next()
+        .unwrap_or_default();
+    let Ok(major) = major.parse::<u32>() else {
+        return false;
+    };
+    let Ok(minor) = minor.parse::<u32>() else {
+        return false;
+    };
+    major > IDMAP_MIN_KERNEL_MAJOR
+        || (major == IDMAP_MIN_KERNEL_MAJOR && minor >= IDMAP_MIN_KERNEL_MINOR)
 }
 
 // Return a list of known hooks supported by youki
@@ -79,8 +106,12 @@ pub fn features(_: Features) -> Result<()> {
         .apparmor(ApparmorBuilder::default().enabled(true).build().unwrap())
         .mount_extensions(
             MountExtensionsBuilder::default()
-                // idmapped mounts is not supported in youki
-                .idmap(IDMapBuilder::default().enabled(false).build().unwrap())
+                .idmap(
+                    IDMapBuilder::default()
+                        .enabled(kernel_supports_idmapped_mounts())
+                        .build()
+                        .unwrap(),
+                )
                 .build()
                 .unwrap(),
         )
