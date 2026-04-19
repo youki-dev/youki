@@ -42,7 +42,8 @@ pub fn container_intermediate_process(
     args: &ContainerArgs,
     intermediate_chan: &mut (channel::IntermediateSender, channel::IntermediateReceiver),
     init_chan: &mut (channel::InitSender, channel::InitReceiver),
-    main_sender: &mut channel::MainSender,
+    intermediate_main_sender: &mut channel::MainSender,
+    init_main_sender: &mut channel::MainSender,
 ) -> Result<()> {
     let (inter_sender, inter_receiver) = intermediate_chan;
     let (init_sender, init_receiver) = init_chan;
@@ -102,7 +103,12 @@ pub fn container_intermediate_process(
     // https://man7.org/linux/man-pages/man7/user_namespaces.7.html for more
     // information
     if let Some(user_namespace) = namespaces.get(LinuxNamespaceType::User)? {
-        setup_userns(&namespaces, user_namespace, main_sender, inter_receiver)?;
+        setup_userns(
+            &namespaces,
+            user_namespace,
+            intermediate_main_sender,
+            inter_receiver,
+        )?;
 
         // After UID and GID mapping is configured correctly in the Youki main
         // process, We want to make sure continue as the root user inside the
@@ -147,11 +153,18 @@ pub fn container_intermediate_process(
                 tracing::error!(?err, "failed to close sender in the intermediate process");
                 return -1;
             }
-            match init_process::container_init_process(args, main_sender, init_receiver) {
+            if let Err(err) = intermediate_main_sender.close() {
+                tracing::error!(
+                    ?err,
+                    "failed to close intermediate main sender in init process"
+                );
+                return -1;
+            }
+            match init_process::container_init_process(args, init_main_sender, init_receiver) {
                 Ok(_) => 0,
                 Err(e) => {
                     tracing::error!("failed to initialize container process: {e}");
-                    if let Err(err) = main_sender.exec_failed(e.to_string()) {
+                    if let Err(err) = init_main_sender.exec_failed(e.to_string()) {
                         tracing::error!(?err, "failed sending error to main sender");
                     }
                     if let ContainerType::TenantContainer { exec_notify_fd } = args.container_type {
@@ -193,14 +206,20 @@ pub fn container_intermediate_process(
         })?;
     }
 
-    main_sender.intermediate_ready(pid).map_err(|err| {
-        tracing::error!("failed to wait on intermediate process: {}", err);
-        err
-    })?;
+    intermediate_main_sender
+        .intermediate_ready(pid)
+        .map_err(|err| {
+            tracing::error!("failed to wait on intermediate process: {}", err);
+            err
+        })?;
 
     // Close unused senders here so we don't have lingering socket around.
-    main_sender.close().map_err(|err| {
+    intermediate_main_sender.close().map_err(|err| {
         tracing::error!("failed to close unused main sender: {}", err);
+        err
+    })?;
+    init_main_sender.close().map_err(|err| {
+        tracing::error!("failed to close unused init main sender: {}", err);
         err
     })?;
     inter_sender.close().map_err(|err| {
