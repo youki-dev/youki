@@ -44,7 +44,7 @@ fn run_hook_env_test(
     };
 
     let mut process = ProcessBuilder::default()
-        .args(vec!["true".to_string()])
+        .args(vec!["sleep".to_string(), "60".to_string()])
         .build()
         .unwrap();
     let mut env = process.env().clone().unwrap();
@@ -76,12 +76,17 @@ fn run_hook_env_test(
         bundle.path(),
         WaitTarget::Status(LifecycleStatus::Created),
     );
-    let start_result =
-        start_container(&id_str, &bundle).and_then(|mut child| child.wait().map_err(Into::into));
-    let test_passed = match &start_result {
-        Ok(status) => status.success(),
-        Err(_) => false,
-    };
+    start_container(&id_str, &bundle)
+        .and_then(|mut child| child.wait().map_err(Into::into))
+        .unwrap();
+    let test_passed = wait_for_state(
+        &id_str,
+        bundle.path(),
+        WaitTarget::Status(LifecycleStatus::Running),
+        Duration::from_secs(STATE_WAIT_TIMEOUT_SECS),
+        Duration::from_millis(STATE_POLL_INTERVAL_MILLIS),
+    )
+    .is_ok();
 
     let _ = kill_container(&id_str, &bundle).and_then(|mut c| c.wait().map_err(Into::into));
     let _ = delete_container(&id_str, &bundle).and_then(|mut c| c.wait().map_err(Into::into));
@@ -97,9 +102,8 @@ fn run_hook_env_test(
         TestResult::Passed
     } else {
         TestResult::Failed(anyhow!(
-            "startContainer hook env check failed — hook exited non-zero \
-             (start result: {:?})",
-            start_result
+            "startContainer hook env check failed — container did not reach Running state \
+             (hook likely exited non-zero)"
         ))
     }
 }
@@ -131,7 +135,7 @@ fn get_test_explicit_env() -> Test {
 }
 
 pub fn get_start_container_env_tests() -> TestGroup {
-    let mut tg = TestGroup::new("start_container_env");
+    let mut tg = TestGroup::new("start_container_hook_env_inherit");
     tg.add(vec![
         Box::new(get_test_inherit_env()),
         Box::new(get_test_explicit_env()),
