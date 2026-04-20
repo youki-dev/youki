@@ -18,8 +18,8 @@ use test_framework::{ConditionalTest, TestGroup, TestResult};
 use crate::utils::{
     LifecycleStatus, WaitTarget, build_checkpoint_command, checkpoint_container, criu_has_feature,
     criu_installed, delete_container, exec_container, generate_uuid, get_state, is_runtime_youki,
-    kill_container, net, prepare_bundle, restore_container, run_container, set_config, try_checkpoint_container,
-    wait_container_running, wait_for_state,
+    kill_container, net, prepare_bundle, restore_container, run_container, set_config,
+    try_checkpoint_container, wait_container_running, wait_for_state,
 };
 
 /// Used as check_fn for all ConditionalTests in this module:
