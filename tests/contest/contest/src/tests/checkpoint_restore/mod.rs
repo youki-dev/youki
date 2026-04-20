@@ -16,9 +16,9 @@ use oci_spec::runtime::{LinuxNamespaceBuilder, LinuxNamespaceType, MountBuilder}
 use test_framework::{ConditionalTest, TestGroup, TestResult};
 
 use crate::utils::{
-    LifecycleStatus, WaitTarget, build_checkpoint_command, checkpoint_container, criu_installed,
-    delete_container, exec_container, generate_uuid, get_state, is_runtime_youki, kill_container,
-    net, prepare_bundle, restore_container, run_container, set_config, try_checkpoint_container,
+    LifecycleStatus, WaitTarget, build_checkpoint_command, checkpoint_container, criu_has_feature,
+    criu_installed, delete_container, exec_container, generate_uuid, get_state, is_runtime_youki,
+    kill_container, net, prepare_bundle, restore_container, run_container, set_config, try_checkpoint_container,
     wait_container_running, wait_for_state,
 };
 
@@ -504,6 +504,10 @@ fn checkpoint_pre_dump_bad_parent_path() -> TestResult {
 // Test: checkpoint --pre-dump and restore
 // (runc: @test "checkpoint --pre-dump and restore")
 fn checkpoint_pre_dump_and_restore() -> TestResult {
+    if !criu_has_feature("mem_dirty_track") {
+        return TestResult::Skipped;
+    }
+
     let ctx = match setup_cr_test(|_, _| {}) {
         Ok(c) => c,
         Err(e) => return e,
@@ -601,6 +605,10 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
 // Test: checkpoint --lazy-pages and restore
 // (runc: @test "checkpoint --lazy-pages and restore")
 fn checkpoint_lazy_pages_and_restore() -> TestResult {
+    if !criu_has_feature("uffd-noncoop") {
+        return TestResult::Skipped;
+    }
+
     let ctx = match setup_cr_test(|_, _| {}) {
         Ok(c) => c,
         Err(e) => return e,
@@ -804,6 +812,10 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
 // Test: checkpoint and restore in external network namespace
 // (runc: @test "checkpoint and restore in external network namespace")
 fn checkpoint_and_restore_in_external_netns() -> TestResult {
+    if !criu_has_feature("external_net_ns") {
+        return TestResult::Skipped;
+    }
+
     let ns_name = format!("contest-{}", generate_uuid());
 
     // Ensure we delete the netns when the test finishes
