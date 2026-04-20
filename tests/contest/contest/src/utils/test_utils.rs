@@ -589,7 +589,8 @@ pub fn try_checkpoint_container(
 }
 
 /// Restore a checkpointed container from `image_dir` using `restore -d`.
-/// `global_args` are passed before `--root` (e.g. `&["--debug"]`).
+/// `global_args` are runtime-level arguments passed before the subcommand (e.g., `youki --debug restore`).
+/// `restore_args` are subcommand-level arguments passed after the subcommand (e.g., `youki restore --tcp-established`).
 pub fn restore_container(
     bundle_path: &Path,
     id: &str,
