@@ -129,7 +129,7 @@ fn setup_cr_test(
     let run_result = (|| -> anyhow::Result<()> {
         let status = run_container(&id, &bundle)?.wait()?;
         if !status.success() {
-            anyhow::bail!("run -d failed ({})", status);
+            anyhow::bail!("run -d failed ({status})");
         }
         wait_container_running(&id, &bundle)?;
         ping_container(bundle.path())
