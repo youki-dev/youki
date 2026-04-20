@@ -186,10 +186,15 @@ fn make_cr_dirs(bundle_path: &Path) -> Result<(PathBuf, PathBuf), TestResult> {
 /// The first cycle verifies a normal container can be checkpointed and restored;
 /// the second verifies the restored container can itself be checkpointed and
 /// restored again.
+///
+/// The `verify_state` closure is used to assert container state. It is executed twice
+/// during the lifecycle:
+/// 1. Immediately after the container initially starts.
+/// 2. Immediately after the container is successfully restored (in each iteration).
 fn simple_cr(
     global_args: &[&str],
     setup: impl Fn(&tempfile::TempDir, &mut oci_spec::runtime::Spec),
-    verify: impl Fn(&str, &Path) -> anyhow::Result<()>,
+    verify_state: impl Fn(&str, &Path) -> anyhow::Result<()>,
 ) -> TestResult {
     let ctx = match setup_cr_test(setup) {
         Ok(c) => c,
@@ -200,8 +205,8 @@ fn simple_cr(
     let image_dir = &ctx.image_dir;
     let work_dir = &ctx.work_dir;
 
-    if let Err(e) = verify(id, bundle.path()) {
-        return TestResult::Failed(anyhow!("verify failed after run: {e}"));
+    if let Err(e) = verify_state(id, bundle.path()) {
+        return TestResult::Failed(anyhow!("verify_state failed after run: {e}"));
     }
 
     for _ in 0..2 {
@@ -251,8 +256,8 @@ fn simple_cr(
             return TestResult::Failed(anyhow!("ping container failed after restore: {e}"));
         }
 
-        if let Err(e) = verify(id, bundle.path()) {
-            return TestResult::Failed(anyhow!("verify failed after restore: {e}"));
+        if let Err(e) = verify_state(id, bundle.path()) {
+            return TestResult::Failed(anyhow!("verify_state failed after restore: {e}"));
         }
     }
 
