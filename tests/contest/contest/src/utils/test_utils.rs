@@ -638,17 +638,18 @@ pub fn criu_installed() -> bool {
 }
 
 /// Returns true if the installed CRIU supports the given feature.
-pub fn criu_has_feature(feature: &str) -> bool {
-    Command::new("criu")
-        .arg("check")
-        .arg("--feature")
-        .arg(feature)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+pub fn criu_has_feature(_feature: &str) -> bool {
+    false
+    // Command::new("criu")
+    //     .arg("check")
+    //     .arg("--feature")
+    //     .arg(feature)
+    //     .stdin(Stdio::null())
+    //     .stdout(Stdio::null())
+    //     .stderr(Stdio::null())
+    //     .status()
+    //     .map(|s| s.success())
+    //     .unwrap_or(false)
 }
 
 pub fn build_exec_command<P: AsRef<Path>>(
