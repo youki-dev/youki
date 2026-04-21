@@ -56,7 +56,7 @@ wasi-common = "43.0.1"
 wasmedge-sdk = "0.14.0"
 wasmer = "7.0.1"
 wasmer-wasix = "0.700.1"
-wasmtime = "43.0.0"
+wasmtime = "44.0.0"
 which = "8.0.2"
 
 [profile.release]
