@@ -88,11 +88,11 @@ jobs:
           #
           # - TestCheckpoint: Checkpoint/restore functionality is not yet supported in youki. 
           #   Tracking issue: https://github.com/youki-dev/youki/issues/142
-          # - TestUserNamespaces.*MultipleMap: youki currently does not support passing 
+          # - MultipleMap: youki currently does not support passing 
           #   multiple ID mappings (uid/gid) in user namespaces.
           # - TestRuntimeInfo: youki currently does not implement the `containerd-shim-* -info` 
           #   command expected by containerd v2+ for fetching runtime features.
-          sudo -E PATH=$PATH make integration TESTFLAGS="-timeout 40m -skip 'TestCheckpoint|TestUserNamespaces.*MultipleMap|TestRuntimeInfo'"
+          sudo -E PATH=$PATH make integration TESTFLAGS="-timeout 40m -skip TestCheckpoint -skip MultipleMap -skip TestRuntimeInfo"
 
       - name: Run containerd CRI integration tests
         env:
@@ -100,7 +100,9 @@ jobs:
           RUNTIME: io.containerd.runc.v2
         run: |
           make bin/cri-integration.test
-          sudo -E PATH=$PATH make cri-integration
+          # We skip MultipleMap and TestRuntimeInfo for the same reasons as the integration tests above.
+          # We invoke the script directly to ensure -test.skip flags are passed to the test binary.
+          sudo -E PATH=$PATH ./script/test/cri-integration.sh -test.skip MultipleMap -test.skip TestRuntimeInfo
 
   k8s-tests:
     runs-on: ubuntu-24.04
