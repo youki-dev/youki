@@ -59,7 +59,7 @@ jobs:
       - name: Add CRIU PPA
         run: sudo add-apt-repository -y ppa:criu/ppa
       - run: sudo apt-get -y update
-      - run: sudo apt-get install -y pkg-config libsystemd-dev libelf-dev libseccomp-dev btrfs-progs libbtrfs-dev criu
+      - run: sudo apt-get install -y pkg-config libsystemd-dev libelf-dev libseccomp-dev btrfs-progs libbtrfs-dev criu gperf
       - name: Setup libseccomp
         run: sudo ./script/setup/install-seccomp
       - name: Build containerd
