@@ -81,7 +81,7 @@ jobs:
           runc --version
       - name: Run containerd integration tests
         env:
-          RUNC_FLAVOR: crun
+          RUNC_FLAVOR: youki
           TEST_RUNTIME: io.containerd.runc.v2
         run: |
           # The following tests are skipped because youki does not yet support:
@@ -92,11 +92,11 @@ jobs:
           #   multiple ID mappings (uid/gid) in user namespaces.
           # - TestRuntimeInfo: youki currently does not implement the `containerd-shim-* -info` 
           #   command expected by containerd v2+ for fetching runtime features.
-          sudo -E PATH=$PATH make integration TESTFLAGS="-timeout 40m -skip TestCheckpoint|TestUserNamespaces.*MultipleMap|TestRuntimeInfo"
+          sudo -E PATH=$PATH make integration TESTFLAGS="-timeout 40m -skip 'TestCheckpoint|TestUserNamespaces.*MultipleMap|TestRuntimeInfo'"
 
       - name: Run containerd CRI integration tests
         env:
-          RUNC_FLAVOR: crun
+          RUNC_FLAVOR: youki
           RUNTIME: io.containerd.runc.v2
         run: |
           make bin/cri-integration.test
