@@ -60,6 +60,8 @@ jobs:
         run: sudo add-apt-repository -y ppa:criu/ppa
       - run: sudo apt-get -y update
       - run: sudo apt-get install -y pkg-config libsystemd-dev libelf-dev libseccomp-dev btrfs-progs libbtrfs-dev criu
+      - name: Setup libseccomp
+        run: sudo ./script/setup/install-seccomp
       - name: Build containerd
         run: |
           make build
@@ -77,12 +79,28 @@ jobs:
           sudo chmod 755 youki
           sudo cp youki /usr/bin/runc
           runc --version
-      - name: Integration Test
+      - name: Run containerd integration tests
+        env:
+          RUNC_FLAVOR: crun
+          TEST_RUNTIME: io.containerd.runc.v2
         run: |
-          # The following tests are skipped because youki does not yet support
-          # checkpoint/restore functionality.
-          # TODO: https://github.com/youki-dev/youki/issues/142
-          sudo make RUNC_FLAVOR=crun TEST_RUNTIME=io.containerd.runc.v2 TESTFLAGS="-timeout 40m -skip TestCheckpoint" integration
+          # The following tests are skipped because youki does not yet support:
+          #
+          # - TestCheckpoint: Checkpoint/restore functionality is not yet supported in youki. 
+          #   Tracking issue: https://github.com/youki-dev/youki/issues/142
+          # - TestUserNamespaces.*MultipleMap: youki currently does not support passing 
+          #   multiple ID mappings (uid/gid) in user namespaces.
+          # - TestRuntimeInfo: youki currently does not implement the `containerd-shim-* -info` 
+          #   command expected by containerd v2+ for fetching runtime features.
+          sudo -E PATH=$PATH make integration TESTFLAGS="-timeout 40m -skip TestCheckpoint|TestUserNamespaces.*MultipleMap|TestRuntimeInfo"
+
+      - name: Run containerd CRI integration tests
+        env:
+          RUNC_FLAVOR: crun
+          RUNTIME: io.containerd.runc.v2
+        run: |
+          make bin/cri-integration.test
+          sudo -E PATH=$PATH make cri-integration
 
   k8s-tests:
     runs-on: ubuntu-24.04
