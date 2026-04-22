@@ -95,8 +95,8 @@ jobs:
           sudo -E PATH=$PATH make integration TESTFLAGS="-timeout 40m -skip 'TestCheckpoint|TestRuntimeInfo|TestUserNamespaces/.*MultipleMap'"
           # Setup a custom containerd config for CRI tests to properly point to youki
           # instead of letting script/test/cri-integration.sh generate a broken default
-          containerd config default > /tmp/containerd-config-cri.toml
-          sed -i 's/BinaryName = ""/BinaryName = "\/usr\/bin\/youki"/g' /tmp/containerd-config-cri.toml
+          sudo sh -c "containerd config default > /tmp/containerd-config-cri.toml" 
+          sudo sed -i 's/BinaryName = ""/BinaryName = "\/usr\/bin\/youki"/g' /tmp/containerd-config-cri.toml
           
           sudo -E PATH=$PATH CONTAINERD_CONFIG_FILE=/tmp/containerd-config-cri.toml make cri-integration TESTFLAGS="-timeout 40m" 
 
