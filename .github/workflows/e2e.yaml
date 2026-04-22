@@ -96,7 +96,7 @@ jobs:
           #   reads stdout buffers before the process terminates, exposed by very slight
           #   startup timing differences between dynamically linked glibc (gnu) builds
           #   and statically linked musl builds.
-          sudo -E PATH=$PATH make integration TESTFLAGS="-timeout 40m -skip 'TestCheckpoint|TestRuntimeInfo|TestUserNamespaces/.*MultipleMap|TestContainerOutput'"
+          sudo -E PATH=$PATH make integration TESTFLAGS="-timeout 40m -skip 'TestCheckpoint|TestRuntimeInfo|TestUserNamespaces/.*MultipleMap'"
           # NOTE: We do not run 'make cri-integration' here because the dynamically generated
           # configuration in 'script/test/cri-integration.sh' does not properly map the 
           # CRI runtime to youki, causing all CRI tests to fail with "no runtime for 
