@@ -93,10 +93,12 @@ jobs:
           # - TestRuntimeInfo: youki currently does not implement the `containerd-shim-* -info` 
           #   command expected by containerd v2+ for fetching runtime features.
           sudo -E PATH=$PATH make integration TESTFLAGS="-timeout 40m -skip 'TestCheckpoint|TestRuntimeInfo|TestUserNamespaces/.*MultipleMap'"
-          # NOTE: We do not run 'make cri-integration' here because the dynamically generated
-          # configuration in 'script/test/cri-integration.sh' does not properly map the 
-          # CRI runtime to youki, causing all CRI tests to fail with "no runtime for 
-          # io.containerd.runc.v2 is configured".
+          # Setup a custom containerd config for CRI tests to properly point to youki
+          # instead of letting script/test/cri-integration.sh generate a broken default
+          containerd config default > /tmp/containerd-config-cri.toml
+          sed -i 's/BinaryName = ""/BinaryName = "\/usr\/bin\/youki"/g' /tmp/containerd-config-cri.toml
+          
+          sudo -E PATH=$PATH CONTAINERD_CONFIG_FILE=/tmp/containerd-config-cri.toml make cri-integration TESTFLAGS="-timeout 40m" 
 
   k8s-tests:
     runs-on: ubuntu-24.04
