@@ -291,35 +291,49 @@ fn apply_cgroups<
     if let Err(err) = cmanager.add_task(pid) {
         if !init && is_ebusy(&err) {
             // If adding the process to the cgroup fails due to a "Device or resource busy" error,
-            // manager tries to join the cgroup of the init process of the parent container.
+            // manager tries to join the cgroup of the init process of the landlord container.
             tracing::debug!(
-                "failed to add task to cgroup, trying to join parent's init process cgroup"
+                "failed to add task to cgroup, trying to join landlord's init process cgroup"
             );
 
-            if let ContainerType::TenantContainer {
-                exec_notify_fd: _,
-                landlord_init_pid,
-            } = container_type
-                && let Some(landlord_init_pid) = landlord_init_pid
-                && let Some(landlord_init_proc_cgroup) =
-                    ProcessCGroups::from_read(ProcfsHandle::new()?.open(
-                        ProcfsBase::ProcPid(landlord_init_pid.as_raw() as u32),
-                        "cgroup",
-                        OpenFlags::O_RDONLY | OpenFlags::O_CLOEXEC,
-                    )?)?
-                    .into_iter()
-                    .find(|c| c.controllers.is_empty())
-                && let Some(landlord_init_proc_cgroup_path) =
-                    landlord_init_proc_cgroup.pathname.strip_prefix("/")
-            {
-                libcgroups::common::write_cgroup_file(
-                    Path::new(libcgroups::common::DEFAULT_CGROUP_ROOT)
-                        .join(Path::new(landlord_init_proc_cgroup_path))
-                        .join(libcgroups::common::CGROUP_PROCS),
-                    pid,
-                )
-                .map_err(|err| IntermediateProcessError::Cgroup(err.to_string()))?;
-                return Ok(());
+            match (|| -> Result<()> {
+                if let ContainerType::TenantContainer {
+                    exec_notify_fd: _,
+                    landlord_init_pid,
+                } = container_type
+                    && let Some(landlord_init_pid) = landlord_init_pid
+                    && let Some(landlord_init_proc_cgroup) =
+                        ProcessCGroups::from_read(ProcfsHandle::new()?.open(
+                            ProcfsBase::ProcPid(landlord_init_pid.as_raw() as u32),
+                            "cgroup",
+                            OpenFlags::O_RDONLY | OpenFlags::O_CLOEXEC,
+                        )?)?
+                        .into_iter()
+                        .find(|c| c.controllers.is_empty())
+                    && let Some(landlord_init_proc_cgroup_path) =
+                        landlord_init_proc_cgroup.pathname.strip_prefix("/")
+                {
+                    libcgroups::common::write_cgroup_file(
+                        Path::new(libcgroups::common::DEFAULT_CGROUP_ROOT)
+                            .join(Path::new(landlord_init_proc_cgroup_path))
+                            .join(libcgroups::common::CGROUP_PROCS),
+                        pid,
+                    )
+                    .map_err(|err| IntermediateProcessError::Cgroup(err.to_string()))?;
+                    Ok(())
+                } else {
+                    Err(IntermediateProcessError::Cgroup(
+                        "failed to find landlord's init process cgroup".to_string(),
+                    ))
+                }
+            })() {
+                Ok(_) => {
+                    tracing::debug!("successfully joined landlord's init process cgroup");
+                    return Ok(());
+                }
+                Err(err) => {
+                    tracing::debug!(?err, "failed to join landlord's init process cgroup");
+                }
             }
         }
 
