@@ -1,26 +1,21 @@
-use seccomp::{
-    instruction::{*},
-    seccomp::{NotifyFd, Seccomp},
-};
-
 use std::io::{IoSlice, IoSliceMut};
 use std::os::fd::{IntoRawFd, OwnedFd};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::slice;
 
 use anyhow::Result;
-use nix::{libc, sys::{
-    signal::Signal,
-    socket::{
-        self, ControlMessage, ControlMessageOwned, MsgFlags, SockFlag, SockType, UnixAddr,
-    },
-    stat::Mode,
-    wait::{self, WaitStatus},
-}, unistd::{close, mkdir}};
-
+use nix::sys::signal::Signal;
+use nix::sys::socket::{
+    self, ControlMessage, ControlMessageOwned, MsgFlags, SockFlag, SockType, UnixAddr,
+};
+use nix::sys::stat::Mode;
+use nix::sys::wait::{self, WaitStatus};
+use nix::unistd::{close, mkdir};
+use oci_spec::runtime::{
+    Arch as OciSpecArch, LinuxSeccompAction, LinuxSeccompBuilder, LinuxSyscallBuilder,
+};
+use seccomp::seccomp::{NotifyFd, Seccomp, SeccompProgramPlan};
 use syscall_numbers::x86_64;
-use syscalls::syscall_args;
-use seccomp::seccomp::{InstructionData, Rule};
 
 fn send_fd<F: AsRawFd>(sock: OwnedFd, fd: &F) -> nix::Result<()> {
     let fd = fd.as_raw_fd();
@@ -80,7 +75,8 @@ async fn handle_signal(pid: nix::unistd::Pid) -> Result<()> {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+#[test]
+async fn filter() -> Result<()> {
     let (sock_for_child, sock_for_parent) = socket::socketpair(
         socket::AddressFamily::Unix,
         SockType::Stream,
@@ -89,17 +85,31 @@ async fn main() -> Result<()> {
     )?;
 
     let _ = prctl::set_no_new_privileges(true);
-    let inst_data = InstructionData{
-        arc: Arch::X86,
-        def_action: SECCOMP_RET_KILL_PROCESS,
-        rule_arr: vec![
-            Rule::new("getcwd".parse()?, 0,  syscall_args!(),false),
-            Rule::new("write".parse()?,1, syscall_args!(libc::STDERR_FILENO as usize), false),
-            Rule::new("mkdir".parse()?,0, syscall_args!(), true)
-        ]
-    };
-    let seccomp = Seccomp {filters: Vec::from(inst_data)};
 
+    let getcwd = LinuxSyscallBuilder::default()
+        .names(vec!["getcwd".to_string()])
+        .build()?;
+    let write = LinuxSyscallBuilder::default()
+        .names(vec!["write".to_string()])
+        .build()?;
+    let syscall_mkdir = LinuxSyscallBuilder::default()
+        .names(vec!["mkdir".to_string()])
+        .action(LinuxSeccompAction::ScmpActNotify)
+        .build()?;
+
+    let spec_seccomp = LinuxSeccompBuilder::default()
+        .architectures(vec![OciSpecArch::ScmpArchX86_64])
+        .default_action(LinuxSeccompAction::ScmpActErrno)
+        .default_errno_ret(1u32)
+        .syscalls(vec![getcwd, write, syscall_mkdir])
+        .build()?;
+
+    let inst_data = SeccompProgramPlan::try_from(spec_seccomp)?;
+    let mut seccomp = Seccomp::new();
+    if !inst_data.flags.is_empty() {
+        seccomp.set_flags(inst_data.flags.clone());
+    }
+    seccomp.filters = Vec::try_from(inst_data)?;
     tokio::spawn(async move {
         tokio::signal::ctrl_c()
             .await

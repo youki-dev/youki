@@ -259,6 +259,24 @@ pub fn start_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
     Ok(res)
 }
 
+pub fn pause_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
+    let res = runtime_command(dir)
+        .arg("pause")
+        .arg(id)
+        .spawn()
+        .context("could not pause container")?;
+    Ok(res)
+}
+
+pub fn resume_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
+    let res = runtime_command(dir)
+        .arg("resume")
+        .arg(id)
+        .spawn()
+        .context("could not resume container")?;
+    Ok(res)
+}
+
 fn runtime_command<P: AsRef<Path>>(dir: P) -> Command {
     let mut command = Command::new(get_runtime_path());
     command
@@ -576,13 +594,13 @@ pub fn criu_installed() -> bool {
     which::which("criu").is_ok()
 }
 
-pub fn exec_container<P: AsRef<Path>>(
+pub fn build_exec_command<P: AsRef<Path>>(
     id: &str,
     dir: P,
     args: &[impl AsRef<OsStr>],
     process_path: Option<&Path>,
     env: &[(&str, &str)],
-) -> Result<(String, String)> {
+) -> Command {
     let mut command = runtime_command(&dir);
     command.arg("--debug").arg("exec");
 
@@ -594,11 +612,41 @@ pub fn exec_container<P: AsRef<Path>>(
         command.arg("--env").arg(format!("{k}={v}"));
     }
 
-    command.arg(id);
-
     if process_path.is_none() {
-        command.args(args);
+        let mut opts = vec![];
+        let mut cmd = vec![];
+        let mut saw_cmd = false;
+
+        for a in args {
+            let s = a.as_ref();
+            if !s.is_empty() && s.to_string_lossy().starts_with("--") && !saw_cmd {
+                opts.push(s.to_owned());
+            } else {
+                saw_cmd = true;
+                cmd.push(s.to_owned());
+            }
+        }
+
+        command.args(&opts);
+        command.arg(id);
+        if !cmd.is_empty() {
+            command.args(&cmd);
+        }
+    } else {
+        command.arg(id);
     }
+
+    command
+}
+
+pub fn exec_container<P: AsRef<Path>>(
+    id: &str,
+    dir: P,
+    args: &[impl AsRef<OsStr>],
+    process_path: Option<&Path>,
+    env: &[(&str, &str)],
+) -> Result<(String, String)> {
+    let mut command = build_exec_command(id, dir, args, process_path, env);
 
     let output = command.output().context("failed to run exec")?;
 
