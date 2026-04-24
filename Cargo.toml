@@ -16,7 +16,7 @@ fastrand = "^2.3.0"
 fixedbitset = "0.5.7"
 flate2 = "1.1"
 libbpf-sys = "1.6.4"
-libc = "0.2.185"
+libc = "0.2.186"
 liboci-cli = { version = "0.6.0", path = "crates/liboci-cli" } # MARK: Version
 libseccomp = "0.4.0"
 mockall = "0.14.0"
