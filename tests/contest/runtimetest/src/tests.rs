@@ -253,42 +253,6 @@ pub fn validate_mounts_recursive(spec: &Spec) {
                                 eprintln!("error in testing rnodev recursive mounting");
                             }
                         }
-                        "rrelatime" => {
-                            if let Err(e) =
-                                utils::test_mount_releatime_option(subdir_path.to_str().unwrap())
-                            {
-                                eprintln!(
-                                    "path expected to be rrelatime, found not rrelatime, error: {e}"
-                                );
-                            }
-                        }
-                        "rnorelatime" => {
-                            if let Err(e) =
-                                utils::test_mount_norelatime_option(subdir_path.to_str().unwrap())
-                            {
-                                eprintln!(
-                                    "path expected to be rnorelatime, found not rnorelatime, error: {e}"
-                                );
-                            }
-                        }
-                        "rnoatime" => {
-                            if let Err(e) =
-                                utils::test_mount_rnoatime_option(subdir_path.to_str().unwrap())
-                            {
-                                eprintln!(
-                                    "path expected to be rnoatime, found not rnoatime, error: {e}"
-                                );
-                            }
-                        }
-                        "rstrictatime" => {
-                            if let Err(e) =
-                                utils::test_mount_rstrictatime_option(subdir_path.to_str().unwrap())
-                            {
-                                eprintln!(
-                                    "path expected to be rstrictatime, found not rstrictatime, error: {e}"
-                                );
-                            }
-                        }
                         "rnosymfollow" => {
                             if let Err(e) =
                                 utils::test_mount_rnosymfollow_option(subdir_path.to_str().unwrap())
@@ -304,6 +268,61 @@ pub fn validate_mounts_recursive(spec: &Spec) {
                             {
                                 eprintln!(
                                     "path expected to be rsymfollow, found not rsymfollow, error: {e}"
+                                );
+                            }
+                        }
+                        "rrelatime" => {
+                            if let Err(e) =
+                                utils::assert_atime_mode(subdir_path.to_str().unwrap(), "relatime")
+                            {
+                                eprintln!(
+                                    "path expected to be rrelatime, found not rrelatime, error: {e}"
+                                );
+                            }
+                        }
+                        "rnorelatime" => {
+                            if let Err(e) =
+                                utils::assert_atime_mode(subdir_path.to_str().unwrap(), "relatime")
+                            {
+                                eprintln!(
+                                    "path expected to be rnorelatime, found not rnorelatime, error: {e}"
+                                );
+                            }
+                        }
+                        "rnoatime" => {
+                            if let Err(e) =
+                                utils::assert_atime_mode(subdir_path.to_str().unwrap(), "noatime")
+                            {
+                                eprintln!(
+                                    "path expected to be rnoatime, found not rnoatime, error: {e}"
+                                );
+                            }
+                        }
+                        "rstrictatime" => {
+                            if let Err(e) = utils::assert_atime_mode(
+                                subdir_path.to_str().unwrap(),
+                                "strictatime",
+                            ) {
+                                eprintln!(
+                                    "path expected to be rstrictatime, found not rstrictatime, error: {e}"
+                                );
+                            }
+                        }
+                        "ratime" => {
+                            if let Err(e) =
+                                utils::assert_atime_mode(subdir_path.to_str().unwrap(), "relatime")
+                            {
+                                eprintln!(
+                                    "path expected to be ratime, found not ratime, error: {e}"
+                                );
+                            }
+                        }
+                        "rnostrictatime" => {
+                            if let Err(e) =
+                                utils::assert_atime_mode(subdir_path.to_str().unwrap(), "relatime")
+                            {
+                                eprintln!(
+                                    "path expected to be rnostrictatime, found not rnostrictatime, error: {e}"
                                 );
                             }
                         }

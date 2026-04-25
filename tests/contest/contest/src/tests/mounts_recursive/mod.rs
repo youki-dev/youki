@@ -91,12 +91,6 @@ fn setup_mount(mount_dir: &Path, sub_mount_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn setup_remount(mount_dir: &Path, sub_mount_dir: &Path, flag: MsFlags) -> anyhow::Result<()> {
-    mount::<Path, Path, str, str>(None, mount_dir, None, MsFlags::MS_REMOUNT | flag, None)?;
-    mount::<Path, Path, str, str>(None, sub_mount_dir, None, MsFlags::MS_REMOUNT | flag, None)?;
-    Ok(())
-}
-
 fn clean_mount(mount_dir: &Path, sub_mount_dir: &Path) -> anyhow::Result<()> {
     umount(sub_mount_dir)?;
     umount(mount_dir)?;
@@ -462,56 +456,6 @@ fn check_recursive_readwrite() -> TestResult {
     )
 }
 
-// rrelatime_test
-fn check_recursive_rrelatime() -> TestResult {
-    let mount_options = vec!["rbind".to_string(), "rrelatime".to_string()];
-    check_recursive(
-        mount_options,
-        None,
-        |_bundle_path: &Path, dir_path: &Path, subdir_path: &Path| {
-            setup_remount(dir_path, subdir_path, MsFlags::MS_STRICTATIME)
-                .map_err(|e| anyhow!("setup_remount failed: {e:?}"))?;
-            Ok(())
-        },
-    )
-}
-
-// rnorelatime_test
-fn check_recursive_rnorelatime() -> TestResult {
-    let mount_options = vec!["rbind".to_string(), "rnorelatime".to_string()];
-    check_recursive(
-        mount_options,
-        None,
-        |_bundle_path: &Path, dir_path: &Path, subdir_path: &Path| {
-            // The container implementation treats `norelatime` as clearing the `relatime` flag.
-            // In this test, the mount is configured with `strictatime`, so once `relatime` is cleared, the mount ends up using `strictatime`.
-            setup_remount(dir_path, subdir_path, MsFlags::MS_STRICTATIME)
-                .map_err(|e| anyhow!("setup_remount failed: {e:?}"))?;
-            Ok(())
-        },
-    )
-}
-
-// rnoatime_test
-fn check_recursive_rnoatime() -> TestResult {
-    let mount_options = vec!["rbind".to_string(), "rnoatime".to_string()];
-    check_recursive(
-        mount_options,
-        None,
-        |_bundle_path: &Path, _dir_path: &Path, _subdir_path: &Path| Ok(()),
-    )
-}
-
-// rstrictatime_test
-fn check_recursive_rstrictatime() -> TestResult {
-    let mount_options = vec!["rbind".to_string(), "rstrictatime".to_string()];
-    check_recursive(
-        mount_options,
-        None,
-        |_bundle_path: &Path, _dir_path: &Path, _subdir_path: &Path| Ok(()),
-    )
-}
-
 // rnosymfollow_test
 fn check_recursive_rnosymfollow() -> TestResult {
     let mount_options = vec!["rbind".to_string(), "rnosymfollow".to_string()];
@@ -564,6 +508,68 @@ fn check_rbind_ro_is_readonly_but_not_recursively() -> TestResult {
     )
 }
 
+// === atime-related recursive mount options ===
+
+// rrelatime_test
+fn check_recursive_rrelatime() -> TestResult {
+    let mount_options = vec!["rbind".to_string(), "rrelatime".to_string()];
+    check_recursive(
+        mount_options,
+        None,
+        |_bundle_path: &Path, _dir_path: &Path, _subdir_path: &Path| Ok(()),
+    )
+}
+
+// rnorelatime_test
+fn check_recursive_rnorelatime() -> TestResult {
+    let mount_options = vec!["rbind".to_string(), "rnorelatime".to_string()];
+    check_recursive(
+        mount_options,
+        None,
+        |_bundle_path: &Path, _dir_path: &Path, _subdir_path: &Path| Ok(()),
+    )
+}
+
+// rnoatime_test
+fn check_recursive_rnoatime() -> TestResult {
+    let mount_options = vec!["rbind".to_string(), "rnoatime".to_string()];
+    check_recursive(
+        mount_options,
+        None,
+        |_bundle_path: &Path, _dir_path: &Path, _subdir_path: &Path| Ok(()),
+    )
+}
+
+// rstrictatime_test
+fn check_recursive_rstrictatime() -> TestResult {
+    let mount_options = vec!["rbind".to_string(), "rstrictatime".to_string()];
+    check_recursive(
+        mount_options,
+        None,
+        |_bundle_path: &Path, _dir_path: &Path, _subdir_path: &Path| Ok(()),
+    )
+}
+
+// ratime_test
+fn check_recursive_ratime() -> TestResult {
+    let mount_options = vec!["rbind".to_string(), "ratime".to_string()];
+    check_recursive(
+        mount_options,
+        None,
+        |_bundle_path: &Path, _dir_path: &Path, _subdir_path: &Path| Ok(()),
+    )
+}
+
+// rnostrictatime_test
+fn check_recursive_rnostrictatime() -> TestResult {
+    let mount_options = vec!["rbind".to_string(), "rnostrictatime".to_string()];
+    check_recursive(
+        mount_options,
+        None,
+        |_bundle_path: &Path, _dir_path: &Path, _subdir_path: &Path| Ok(()),
+    )
+}
+
 // this mount test how to work?
 // 1. Create mount_options based on the mount properties of the test
 // 2. Create OCI Spec content, container one process is runtimetest,(runtimetest is cargo model, file path `tests/runtimetest/`)
@@ -586,6 +592,11 @@ pub fn get_mounts_recursive_test() -> TestGroup {
     let rstrictatime_test = Test::new("rstrictatime_test", Box::new(check_recursive_rstrictatime));
     let rnosymfollow_test = Test::new("rnosymfollow_test", Box::new(check_recursive_rnosymfollow));
     let rsymfollow_test = Test::new("rsymfollow_test", Box::new(check_recursive_rsymfollow));
+    let ratime_test = Test::new("ratime_test", Box::new(check_recursive_ratime));
+    let rnostrictatime_test = Test::new(
+        "rnostrictatime_test",
+        Box::new(check_recursive_rnostrictatime),
+    );
     let rbind_ro_test = Test::new(
         "rbind_ro_test",
         Box::new(check_rbind_ro_is_readonly_but_not_recursively),
@@ -609,6 +620,8 @@ pub fn get_mounts_recursive_test() -> TestGroup {
         Box::new(rstrictatime_test),
         Box::new(rnosymfollow_test),
         Box::new(rsymfollow_test),
+        Box::new(ratime_test),
+        Box::new(rnostrictatime_test),
         Box::new(rbind_ro_test),
     ]);
 
