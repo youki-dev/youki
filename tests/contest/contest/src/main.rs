@@ -4,7 +4,7 @@ mod utils;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use contest::logger;
 use test_framework::TestManager;
 use tests::cgroups;
@@ -60,17 +60,17 @@ use crate::tests::uid_mappings::get_uid_mappings_test;
 use crate::utils::support::{set_runtime_path, set_runtimetest_path};
 
 #[derive(Parser, Debug)]
-#[clap(version = "0.0.1", author = "youki team")]
+#[command(version = "0.0.1", author = "youki team")]
 struct Opts {
     /// Enables debug output
-    #[clap(short, long)]
+    #[arg(short, long)]
     debug: bool,
 
-    #[clap(subcommand)]
+    #[command(subcommand)]
     command: SubCommand,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Subcommand, Debug)]
 enum SubCommand {
     /// run the integration tests
     Run(Run),
@@ -81,15 +81,15 @@ enum SubCommand {
 #[derive(Parser, Debug)]
 struct Run {
     /// Path for the container runtime to be tested
-    #[clap(long)]
+    #[arg(long)]
     runtime: PathBuf,
     /// Path for the runtimetest binary, which will be used to run tests inside the container
-    #[clap(long)]
+    #[arg(long)]
     runtimetest: PathBuf,
     /// Selected tests to be run, format should be
     /// space separated groups, eg
     /// -t group1::test1,test3 group2 group3::test5
-    #[clap(short, long, num_args(1..), value_delimiter = ' ')]
+    #[arg(short, long, num_args(1..), value_delimiter = ' ')]
     tests: Option<Vec<String>>,
 }
 
