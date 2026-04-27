@@ -509,7 +509,12 @@ pub fn wait_container_running<P: AsRef<Path>>(id: &str, dir: P) -> Result<()> {
 }
 
 /// Checkpoint a running container into `image_dir`.
-/// `global_args` are passed before `--root` (e.g. `&["--debug"]`).
+///
+/// * `global_args` are passed before the `checkpoint` subcommand (e.g., `&["--debug"]`).
+/// * `checkpoint_args` are passed after the standard checkpoint options (e.g., `&["--pre-dump"]`).
+///
+/// This function automatically asserts that the checkpoint command succeeds. For scenarios
+/// where you expect the command to fail, use `try_checkpoint_container` instead.
 pub fn checkpoint_container(
     bundle_path: &Path,
     id: &str,
@@ -573,7 +578,12 @@ pub fn build_checkpoint_command(
     command
 }
 
-// Execute checkpoint command and return the raw output instead of bailing on failure.
+/// Executes the checkpoint command and returns the raw `Output`.
+///
+/// Unlike `checkpoint_container`, this function does NOT automatically fail the test
+/// if the command exits with an error status. It should be used when you explicitly
+/// need to test negative scenarios (e.g., verifying that a checkpoint fails with a
+/// specific stderr message). For happy-path tests, prefer using `checkpoint_container`.
 pub fn try_checkpoint_container(
     bundle_path: &Path,
     id: &str,
