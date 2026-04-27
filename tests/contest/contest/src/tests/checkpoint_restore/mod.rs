@@ -925,8 +925,7 @@ fn checkpoint_and_restore_with_container_specific_criu_config() -> TestResult {
 
     let log_file_path = work_dir.join(custom_log_name);
 
-    if let Err(e) = try_checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[])
-    {
+    if let Err(e) = checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), &[]) {
         return TestResult::Failed(anyhow!("checkpoint failed: {e:?}"));
     }
 
