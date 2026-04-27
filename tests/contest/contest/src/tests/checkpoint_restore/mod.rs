@@ -515,18 +515,12 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
 
     let id = &ctx.id;
     let bundle = &ctx.bundle;
+    let image_dir = &ctx.image_dir;
+    let work_dir = &ctx.work_dir;
 
     let parent_dir = bundle.path().join("parent-dir");
-    let image_dir = bundle.path().join("image-dir");
-    let work_dir = bundle.path().join("work-dir");
     if let Err(e) = std::fs::create_dir_all(&parent_dir) {
         return TestResult::Failed(anyhow!("failed to create parent dir: {e}"));
-    }
-    if let Err(e) = std::fs::create_dir_all(&image_dir) {
-        return TestResult::Failed(anyhow!("failed to create image dir: {e}"));
-    }
-    if let Err(e) = std::fs::create_dir_all(&work_dir) {
-        return TestResult::Failed(anyhow!("failed to create work dir: {e}"));
     }
 
     let output1 =
