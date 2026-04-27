@@ -515,9 +515,17 @@ pub fn checkpoint_container(
     id: &str,
     image_dir: &Path,
     work_dir: Option<&Path>,
+    checkpoint_args: &[&str],
     global_args: &[&str],
 ) -> Result<()> {
-    let output = try_checkpoint_container(bundle_path, id, image_dir, work_dir, &[], global_args)?;
+    let output = try_checkpoint_container(
+        bundle_path,
+        id,
+        image_dir,
+        work_dir,
+        checkpoint_args,
+        global_args,
+    )?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

@@ -210,9 +210,14 @@ fn simple_cr(
     }
 
     for _ in 0..2 {
-        if let Err(e) =
-            checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), global_args)
-        {
+        if let Err(e) = checkpoint_container(
+            bundle.path(),
+            id,
+            image_dir,
+            Some(work_dir),
+            &[],
+            global_args,
+        ) {
             return TestResult::Failed(anyhow!("checkpoint failed: {e}"));
         }
 
@@ -523,13 +528,9 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
         return TestResult::Failed(anyhow!("failed to create parent dir: {e}"));
     }
 
-    let output1 =
-        try_checkpoint_container(bundle.path(), id, &parent_dir, None, &["--pre-dump"], &[])
-            .unwrap();
-
-    if !output1.status.success() {
-        let stderr = String::from_utf8_lossy(&output1.stderr);
-        return TestResult::Failed(anyhow!("pre-dump checkpoint failed: {stderr}"));
+    if let Err(e) = checkpoint_container(bundle.path(), id, &parent_dir, None, &["--pre-dump"], &[])
+    {
+        return TestResult::Failed(anyhow!("pre-dump checkpoint failed: {e}"));
     }
 
     if let Err(e) = wait_for_state(
@@ -546,8 +547,8 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
     let output2 = try_checkpoint_container(
         bundle.path(),
         id,
-        &image_dir,
-        Some(&work_dir),
+        image_dir,
+        Some(work_dir),
         &["--parent-path", relative_parent],
         &[],
     )
@@ -575,7 +576,7 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
         ));
     }
 
-    if let Err(e) = restore_container(bundle.path(), id, &image_dir, Some(&work_dir), &[], &[]) {
+    if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
         return TestResult::Failed(anyhow!("restore failed: {e}"));
     }
 
@@ -925,7 +926,7 @@ fn checkpoint_and_restore_with_container_specific_criu_config() -> TestResult {
 
     let log_file_path = work_dir.join(custom_log_name);
 
-    if let Err(e) = checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), &[]) {
+    if let Err(e) = checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
         return TestResult::Failed(anyhow!("checkpoint failed: {e:?}"));
     }
 
@@ -1016,7 +1017,7 @@ fn checkpoint_and_restore_with_nested_bind_mounts() -> TestResult {
     let work_dir = &ctx.work_dir;
     let bind1 = bind1_path;
 
-    if let Err(e) = checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), &[]) {
+    if let Err(e) = checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
         return TestResult::Failed(anyhow!("checkpoint failed: {e}"));
     }
 
@@ -1243,7 +1244,8 @@ fn checkpoint_and_restore_and_exec() -> TestResult {
     let mut execed_pid: Option<String> = None;
 
     for _ in 0..2 {
-        if let Err(e) = checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), &[]) {
+        if let Err(e) = checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[])
+        {
             return TestResult::Failed(anyhow!("checkpoint failed: {e}"));
         }
 
