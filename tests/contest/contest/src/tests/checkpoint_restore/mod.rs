@@ -395,7 +395,21 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
     let ip = "169.254.169.77/32";
 
     let out = match std::process::Command::new("ip")
-        .args(["link", "set", "mtu", mtu, "dev", &dev_name])
+        .args(["link", "set", &dev_name, "netns", &ns_name])
+        .output()
+    {
+        Ok(out) => out,
+        Err(e) => return TestResult::Failed(anyhow!("ip link set netns execution failed: {e}")),
+    };
+    if !out.status.success() {
+        return TestResult::Failed(anyhow!(
+            "ip link set netns failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+
+    let out = match std::process::Command::new("ip")
+        .args(["-n", &ns_name, "link", "set", "mtu", mtu, "dev", &dev_name])
         .output()
     {
         Ok(out) => out,
@@ -409,7 +423,7 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
     }
 
     let out = match std::process::Command::new("ip")
-        .args(["link", "set", "address", mac, "dev", &dev_name])
+        .args(["-n", &ns_name, "link", "set", "address", mac, "dev", &dev_name])
         .output()
     {
         Ok(out) => out,
@@ -423,7 +437,7 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
     }
 
     let out = match std::process::Command::new("ip")
-        .args(["address", "add", ip, "dev", &dev_name])
+        .args(["-n", &ns_name, "address", "add", ip, "dev", &dev_name])
         .output()
     {
         Ok(out) => out,
