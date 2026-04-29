@@ -423,7 +423,9 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
     }
 
     let out = match std::process::Command::new("ip")
-        .args(["-n", &ns_name, "link", "set", "address", mac, "dev", &dev_name])
+        .args([
+            "-n", &ns_name, "link", "set", "address", mac, "dev", &dev_name,
+        ])
         .output()
     {
         Ok(out) => out,
