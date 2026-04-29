@@ -8,6 +8,7 @@ use std::os::unix::fs::symlink;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::anyhow;
@@ -17,8 +18,8 @@ use test_framework::{ConditionalTest, TestGroup, TestResult};
 
 use crate::utils::{
     LifecycleStatus, WaitTarget, build_checkpoint_command, checkpoint_container, criu_has_feature,
-    criu_installed, delete_container, exec_container, generate_uuid, get_state, is_runtime_youki,
-    kill_container, net, prepare_bundle, restore_container, run_container, set_config,
+    criu_installed, delete_container, exec_container, generate_uuid, get_runtime_path, get_state,
+    is_runtime_youki, kill_container, net, prepare_bundle, restore_container, set_config,
     try_checkpoint_container, wait_container_running, wait_for_state,
 };
 
@@ -38,10 +39,10 @@ fn has_cgroupns() -> bool {
 }
 
 struct CrTestContext {
-    pub id: String,
-    pub bundle: tempfile::TempDir,
-    pub image_dir: std::path::PathBuf,
-    pub work_dir: std::path::PathBuf,
+    id: String,
+    bundle: tempfile::TempDir,
+    image_dir: PathBuf,
+    work_dir: PathBuf,
 }
 
 impl Drop for CrTestContext {
@@ -86,51 +87,96 @@ fn ping_container(bundle: &Path) -> anyhow::Result<()> {
 }
 
 fn setup_cr_test(
-    setup_spec: impl FnOnce(&tempfile::TempDir, &mut oci_spec::runtime::Spec),
+    mut setup: impl FnMut(&tempfile::TempDir, &mut oci_spec::runtime::Spec),
 ) -> Result<CrTestContext, TestResult> {
     let id = generate_uuid().to_string();
-    let bundle = match prepare_bundle() {
-        Ok(b) => b,
-        Err(e) => return Err(TestResult::Failed(anyhow!("prepare bundle: {e}"))),
-    };
+    let bundle = prepare_bundle().unwrap();
 
     let fifo_path = bundle.path().join("fifo");
-    if let Err(e) = nix::unistd::mkfifo(&fifo_path, nix::sys::stat::Mode::S_IRWXU) {
+    if let Err(e) = nix::unistd::mkfifo(&fifo_path, nix::sys::stat::Mode::from_bits_truncate(0o666))
+    {
         return Err(TestResult::Failed(anyhow!("mkfifo failed: {e}")));
     }
 
-    let mut spec = oci_spec::runtime::Spec::default();
-    let mut process = oci_spec::runtime::Process::default();
+    let runtime_path = get_runtime_path();
+    let actual_bundle_path = bundle.path().join("bundle");
+
+    let existing_config = actual_bundle_path.join("config.json");
+    if existing_config.exists() {
+        let _ = std::fs::remove_file(&existing_config);
+    }
+
+    let output = std::process::Command::new(runtime_path)
+        .arg("spec")
+        .current_dir(&actual_bundle_path)
+        .output()
+        .map_err(|e| TestResult::Failed(anyhow!("failed to execute youki spec: {e}")))?;
+
+    if !output.status.success() {
+        return Err(TestResult::Failed(anyhow!(
+            "youki spec failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
+    let config_path = actual_bundle_path.join("config.json");
+    let mut spec = oci_spec::runtime::Spec::load(&config_path)
+        .map_err(|e| TestResult::Failed(anyhow!("failed to load generated config.json: {e}")))?;
+
+    let mut process = spec.process().clone().unwrap_or_default();
     process.set_args(Some(vec![
         "sh".into(),
         "-c".into(),
-        "while true; do read line < /fifo; echo ponG $line > /fifo; done".into(),
+        "while true; do read p < /fifo; if [ \"$p\" = 'Ping' ]; then echo \"ponG $p\" > /fifo; fi; done".into(),
     ]));
     spec.set_process(Some(process));
 
-    let fifo_mount = oci_spec::runtime::MountBuilder::default()
-        .source(fifo_path)
+    let bind_mount = MountBuilder::default()
+        .source(&fifo_path)
         .destination(PathBuf::from("/fifo"))
-        .typ("bind".to_string())
-        .options(vec!["bind".to_string(), "rw".to_string()])
+        .options(vec!["bind".to_string()])
         .build()
         .unwrap();
 
     let mut mounts = spec.mounts().clone().unwrap_or_default();
-    mounts.push(fifo_mount);
+    mounts.push(bind_mount);
     spec.set_mounts(Some(mounts));
 
-    setup_spec(&bundle, &mut spec);
-
+    setup(&bundle, &mut spec);
     if let Err(e) = set_config(&bundle, &spec) {
         return Err(TestResult::Failed(anyhow!("set_config: {e}")));
     }
 
+    let console_socket = bundle.path().join("console.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&console_socket)
+        .map_err(|e| TestResult::Failed(anyhow!("failed to bind console socket: {e}")))?;
+
     let run_result = (|| -> anyhow::Result<()> {
-        let status = run_container(&id, &bundle)?.wait()?;
+        let mut child = std::process::Command::new(runtime_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .arg("--root")
+            .arg(bundle.path().join("runtime"))
+            .arg("run")
+            .arg("-d")
+            .arg("--bundle")
+            .arg(&actual_bundle_path)
+            .arg("--console-socket")
+            .arg(&console_socket)
+            .arg(&id)
+            .current_dir(bundle.path())
+            .spawn()?;
+
+        let (stream, _) = listener.accept()?;
+
+        crate::utils::handle_console_socket(stream);
+
+        let status = child.wait()?;
         if !status.success() {
-            anyhow::bail!("run -d failed ({status})");
+            anyhow::bail!("run -d failed ({})", status);
         }
+
         wait_container_running(&id, &bundle)?;
         ping_container(bundle.path())
     })();

@@ -477,26 +477,6 @@ pub fn check_container_created(data: &ContainerData) -> Result<()> {
     }
 }
 
-/// Run a container with `run -d`.
-/// Uses `Stdio::null()` to avoid the detached child process inheriting
-/// pipe write-ends and blocking `wait()`.
-pub fn run_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
-    let res = Command::new(get_runtime_path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .arg("--root")
-        .arg(dir.as_ref().join("runtime"))
-        .arg("run")
-        .arg("-d")
-        .arg("--bundle")
-        .arg(dir.as_ref().join("bundle"))
-        .arg(id)
-        .spawn()
-        .context("could not run container")?;
-    Ok(res)
-}
-
 /// Wait until a container reaches `Running` state (10 s timeout).
 pub fn wait_container_running<P: AsRef<Path>>(id: &str, dir: P) -> Result<()> {
     wait_for_state(
@@ -506,6 +486,37 @@ pub fn wait_container_running<P: AsRef<Path>>(id: &str, dir: P) -> Result<()> {
         Duration::from_secs(10),
         Duration::from_millis(100),
     )
+}
+
+pub fn handle_console_socket(stream: std::os::unix::net::UnixStream) {
+    std::thread::spawn(move || {
+        use std::io::{IoSliceMut, Read};
+        use std::os::unix::io::AsRawFd;
+
+        use nix::sys::socket::{ControlMessageOwned, MsgFlags, recvmsg};
+
+        let mut buf = [0u8; 4096];
+        let mut iov = [IoSliceMut::new(&mut buf)];
+        let mut cmsg_space = nix::cmsg_space!([std::os::unix::io::RawFd; 1]);
+        let fd = stream.as_raw_fd();
+
+        if let Ok(msg) = recvmsg::<()>(fd, &mut iov, Some(&mut cmsg_space), MsgFlags::empty())
+            && let Ok(cmsgs) = msg.cmsgs()
+        {
+            for cmsg in cmsgs {
+                if let ControlMessageOwned::ScmRights(_) = cmsg {
+                    // Keep the PTY master open by waiting for the stream to close
+                    let mut buf = [0u8; 1024];
+                    let mut stream_mut = &stream;
+                    while let Ok(n) = stream_mut.read(&mut buf) {
+                        if n == 0 {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
 }
 
 /// Checkpoint a running container into `image_dir`.
@@ -630,17 +641,54 @@ pub fn restore_container(
     for arg in restore_args {
         args.push(arg.into());
     }
+
+    let config_path = bundle_path.join("bundle").join("config.json");
+    let config_path = if config_path.exists() {
+        config_path
+    } else {
+        bundle_path.join("config.json")
+    };
+
+    let is_terminal = if config_path.exists() {
+        oci_spec::runtime::Spec::load(&config_path)
+            .ok()
+            .and_then(|spec| {
+                spec.process()
+                    .as_ref()
+                    .map(|p| p.terminal().unwrap_or(false))
+            })
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    let mut listener = None;
+    if is_terminal {
+        let socket_path = bundle_path.join(format!("restore-console-{}.sock", id));
+        if socket_path.exists() {
+            std::fs::remove_file(&socket_path).context("failed to remove exists socket file")?;
+        }
+        let l = std::os::unix::net::UnixListener::bind(&socket_path)?;
+        listener = Some(l);
+        args.extend(["--console-socket".into(), socket_path.into()]);
+    }
+
     args.push(id.into());
 
-    let status = Command::new(get_runtime_path())
+    let mut child = Command::new(get_runtime_path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(stderr_file.reopen().context("failed to reopen temp file")?)
         .args(&args)
         .spawn()
-        .context("failed to spawn restore")?
-        .wait()
-        .context("failed to wait for restore")?;
+        .context("failed to spawn restore")?;
+
+    if let Some(l) = listener {
+        let (stream, _) = l.accept()?;
+        handle_console_socket(stream);
+    }
+
+    let status = child.wait().context("failed to wait for restore")?;
 
     if !status.success() {
         let stderr = std::fs::read_to_string(stderr_file.path()).unwrap_or_default();
