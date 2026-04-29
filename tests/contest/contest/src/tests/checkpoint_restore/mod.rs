@@ -452,7 +452,6 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
         ));
     }
 
-    let dev_name_clone = dev_name.clone();
     let ns_path = format!("/run/netns/{ns_name}");
 
     simple_cr(
@@ -472,17 +471,8 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
                     .unwrap(),
             );
 
-            let mut net_devices = std::collections::HashMap::new();
-            net_devices.insert(
-                dev_name_clone.clone(),
-                oci_spec::runtime::LinuxNetDeviceBuilder::default()
-                    .build()
-                    .unwrap(),
-            );
-
             if let Some(linux) = spec.linux_mut() {
                 linux.set_namespaces(Some(namespaces));
-                linux.set_net_devices(Some(net_devices));
             }
         },
         move |id, bundle_path| {
