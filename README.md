@@ -14,8 +14,7 @@ Your ideas are welcome [here](https://github.com/youki-dev/youki/issues/10).
 
 # 🏷️ About the name
 
-**youki** is pronounced as /joʊki/ or yoh-key. The name youki comes from the 
-Japanese word **容器** (**ようき**), which means 'a container' or 'a vessel', youki can also be written as **陽気** (**ようき**, youki), meaning 'cheerful' or 'merry'.
+**youki** is pronounced as /joʊki/ or yoh-key. The name comes from the Japanese word **ようき**, which can be written with two different sets of kanji: **容器**, meaning 'a container' or 'a vessel', and **陽気**, meaning 'cheerful', 'merry', or 'hilarious'.
 
 # 🚀 Quick Start
 
