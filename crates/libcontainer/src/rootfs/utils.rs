@@ -120,12 +120,12 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
                         mount_attr.attr_clr |= flag;
                     } else {
                         mount_attr.attr_set |= flag;
-                        if flag & linux::MOUNT_ATTR__ATIME == flag {
-                            // https://man7.org/linux/man-pages/man2/mount_setattr.2.html
-                            // cannot simply specify the access-time setting in attr_set, but must
-                            // also include MOUNT_ATTR__ATIME in the attr_clr field.
-                            mount_attr.attr_clr |= linux::MOUNT_ATTR__ATIME;
-                        }
+                    }
+                    if flag & linux::MOUNT_ATTR__ATIME == flag {
+                        // https://man7.org/linux/man-pages/man2/mount_setattr.2.html
+                        // "cannot simply specify the access-time setting in attr_set, but must
+                        // also include MOUNT_ATTR__ATIME in the attr_clr field."
+                        mount_attr.attr_clr |= linux::MOUNT_ATTR__ATIME;
                     }
                 }
                 continue;
@@ -468,6 +468,138 @@ mod tests {
                 rec_attr: Some(MountAttr::all())
             },
             mount_option_config
+        );
+
+        Ok(())
+    }
+
+    // Tests for recursive atime mount options:
+    // Whenever any atime-related flag (flag & MOUNT_ATTR__ATIME == flag) is specified,
+    // attr_clr must include the full MOUNT_ATTR__ATIME mask (0x70). The kernel rejects
+    // partial atime masks with EINVAL because the three atime modes
+    // (relatime/noatime/strictatime) are mutually exclusive and can only be changed
+    // atomically: clear all three bits, then set the desired one.
+    #[test]
+    fn test_parse_mount_ratime_uses_full_atime_mask() -> Result<()> {
+        // "ratime" clears MOUNT_ATTR_NOATIME (is_clear=true, flag=MOUNT_ATTR_NOATIME=0x10).
+        // attr_clr must be MOUNT_ATTR__ATIME (0x70), not MOUNT_ATTR_NOATIME (0x10).
+        let mount_option_config = parse_mount(
+            &MountBuilder::default()
+                .destination(PathBuf::from("/mnt"))
+                .source(PathBuf::from("/tmp/mounts_recursive"))
+                .options(vec!["rbind".to_string(), "ratime".to_string()])
+                .build()?,
+        )?;
+        assert_eq!(
+            mount_option_config.rec_attr,
+            Some(MountAttr {
+                attr_set: 0,
+                attr_clr: linux::MOUNT_ATTR__ATIME,
+                propagation: 0,
+                userns_fd: 0,
+            }),
+            "ratime should set attr_clr to the full MOUNT_ATTR__ATIME mask"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_mount_rnostrictatime_uses_full_atime_mask() -> Result<()> {
+        // "rnostrictatime" clears MOUNT_ATTR_STRICTATIME (is_clear=true, flag=MOUNT_ATTR_STRICTATIME=0x20).
+        // attr_clr must be MOUNT_ATTR__ATIME (0x70), not MOUNT_ATTR_STRICTATIME (0x20).
+        let mount_option_config = parse_mount(
+            &MountBuilder::default()
+                .destination(PathBuf::from("/mnt"))
+                .source(PathBuf::from("/tmp/mounts_recursive"))
+                .options(vec!["rbind".to_string(), "rnostrictatime".to_string()])
+                .build()?,
+        )?;
+        assert_eq!(
+            mount_option_config.rec_attr,
+            Some(MountAttr {
+                attr_set: 0,
+                attr_clr: linux::MOUNT_ATTR__ATIME,
+                propagation: 0,
+                userns_fd: 0,
+            }),
+            "rnostrictatime should set attr_clr to the full MOUNT_ATTR__ATIME mask"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_mount_rnorelatime_uses_full_atime_mask() -> Result<()> {
+        // "rnorelatime" clears MOUNT_ATTR_RELATIME (is_clear=true, flag=MOUNT_ATTR_RELATIME=0x00).
+        // Although relatime has no dedicated bit, it is still an atime mode, so attr_clr
+        // must include the full MOUNT_ATTR__ATIME mask (0x70) — matching runc's behavior.
+        let mount_option_config = parse_mount(
+            &MountBuilder::default()
+                .destination(PathBuf::from("/mnt"))
+                .source(PathBuf::from("/tmp/mounts_recursive"))
+                .options(vec!["rbind".to_string(), "rnorelatime".to_string()])
+                .build()?,
+        )?;
+        assert_eq!(
+            mount_option_config.rec_attr,
+            Some(MountAttr {
+                attr_set: 0,
+                attr_clr: linux::MOUNT_ATTR__ATIME,
+                propagation: 0,
+                userns_fd: 0,
+            }),
+            "rnorelatime should set attr_clr to the full MOUNT_ATTR__ATIME mask"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_mount_rnoatime_uses_full_atime_mask() -> Result<()> {
+        // "rnoatime" sets MOUNT_ATTR_NOATIME (is_clear=false, flag=MOUNT_ATTR_NOATIME=0x10).
+        // attr_set must include MOUNT_ATTR_NOATIME and attr_clr must include MOUNT_ATTR__ATIME (0x70).
+        let mount_option_config = parse_mount(
+            &MountBuilder::default()
+                .destination(PathBuf::from("/mnt"))
+                .source(PathBuf::from("/tmp/mounts_recursive"))
+                .options(vec!["rnoatime".to_string()])
+                .build()?,
+        )?;
+        assert_eq!(
+            mount_option_config.rec_attr,
+            Some(MountAttr {
+                attr_set: linux::MOUNT_ATTR_NOATIME,
+                attr_clr: linux::MOUNT_ATTR__ATIME,
+                propagation: 0,
+                userns_fd: 0,
+            }),
+            "rnoatime should set attr_set=MOUNT_ATTR_NOATIME and attr_clr=MOUNT_ATTR__ATIME"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_mount_rstrictatime_uses_full_atime_mask() -> Result<()> {
+        // "rstrictatime" sets MOUNT_ATTR_STRICTATIME (is_clear=false, flag=MOUNT_ATTR_STRICTATIME=0x20).
+        // attr_set must include MOUNT_ATTR_STRICTATIME and attr_clr must include MOUNT_ATTR__ATIME (0x70).
+        let mount_option_config = parse_mount(
+            &MountBuilder::default()
+                .destination(PathBuf::from("/mnt"))
+                .source(PathBuf::from("/tmp/mounts_recursive"))
+                .options(vec!["rstrictatime".to_string()])
+                .build()?,
+        )?;
+        assert_eq!(
+            mount_option_config.rec_attr,
+            Some(MountAttr {
+                attr_set: linux::MOUNT_ATTR_STRICTATIME,
+                attr_clr: linux::MOUNT_ATTR__ATIME,
+                propagation: 0,
+                userns_fd: 0,
+            }),
+            "rstrictatime should set attr_set=MOUNT_ATTR_STRICTATIME and attr_clr=MOUNT_ATTR__ATIME"
         );
 
         Ok(())
