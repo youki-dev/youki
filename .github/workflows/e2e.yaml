@@ -56,10 +56,18 @@ jobs:
         with:
           go-version: '1.24.3'
           cache: true
-      - name: Add CRIU PPA
-        run: sudo add-apt-repository -y ppa:criu/ppa
       - run: sudo apt-get -y update
-      - run: sudo apt-get install -y pkg-config libsystemd-dev libelf-dev libseccomp-dev btrfs-progs libbtrfs-dev criu gperf
+      - run: sudo apt-get install -y pkg-config libsystemd-dev libelf-dev libseccomp-dev btrfs-progs libbtrfs-dev gperf
+      - name: Install CRIU from source
+        run: |
+          sudo apt-get install -y \
+            libcap-dev libnet1-dev libnl-3-dev uuid-dev \
+            libprotobuf-c-dev libprotobuf-dev protobuf-c-compiler protobuf-compiler
+          git clone --depth 1 --branch criu-dev --single-branch \
+            https://github.com/checkpoint-restore/criu.git ~/criu
+          (cd ~/criu && sudo make -j $(nproc) install-criu)
+          rm -rf ~/criu
+          criu --version
       - name: Setup libseccomp
         run: sudo ./script/setup/install-seccomp
       - name: Build containerd
@@ -161,10 +169,18 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install just
         uses: taiki-e/install-action@just
-      - name: Add CRIU PPA
-        run: sudo add-apt-repository -y ppa:criu/ppa
       - name: Install requirements
         run: sudo env PATH=$PATH just ci-prepare
+      - name: Install CRIU from source
+        run: |
+          sudo apt-get install -y \
+            libcap-dev libnet1-dev libnl-3-dev uuid-dev \
+            libprotobuf-c-dev libprotobuf-dev protobuf-c-compiler protobuf-compiler
+          git clone --depth 1 --branch criu-dev --single-branch \
+            https://github.com/checkpoint-restore/criu.git ~/criu
+          (cd ~/criu && sudo make -j $(nproc) install-criu)
+          rm -rf ~/criu
+          criu --version
       - name: Download youki binary
         uses: actions/download-artifact@v4
         with:
@@ -190,10 +206,18 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install just
         uses: taiki-e/install-action@just
-      - name: Add CRIU PPA
-        run: sudo add-apt-repository -y ppa:criu/ppa
       - name: Install requirements
         run: sudo env PATH=$PATH just ci-prepare
+      - name: Install CRIU from source
+        run: |
+          sudo apt-get install -y \
+            libcap-dev libnet1-dev libnl-3-dev uuid-dev \
+            libprotobuf-c-dev libprotobuf-dev protobuf-c-compiler protobuf-compiler
+          git clone --depth 1 --branch criu-dev --single-branch \
+            https://github.com/checkpoint-restore/criu.git ~/criu
+          (cd ~/criu && sudo make -j $(nproc) install-criu)
+          rm -rf ~/criu
+          criu --version
       - name: Download youki binary
         uses: actions/download-artifact@v4
         with:
