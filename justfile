@@ -171,8 +171,7 @@ ci-prepare:
                 libelf-dev \
                 libseccomp-dev \
                 libclang-dev \
-                libssl-dev \
-                criu
+                libssl-dev
             exit 0
         fi
     fi
