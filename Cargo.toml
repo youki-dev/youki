@@ -3,5 +3,9 @@ resolver = "2"
 members = ["crates/*", "tests/contest/*", "tools/*"]
 exclude = ["experiment/seccomp", "experiment/selinux"]
 
+# NOTE: temp for developing
+[patch.crates-io]
+oci-spec = { git = "https://github.com/youki-dev/oci-spec-rs", branch = "main" }
+
 [profile.release]
 lto = true

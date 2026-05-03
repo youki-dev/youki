@@ -63,6 +63,10 @@ pub enum ParseLineError {
     L3Line,
     #[error("L3 token has wrong number of fields")]
     L3Token,
+    #[error("Generic line doesn't match validation")]
+    GenericLine,
+    #[error("Generic token has wrong number of fields")]
+    GenericToken,
 }
 
 type Result<T> = std::result::Result<T, IntelRdtError>;
@@ -199,7 +203,7 @@ enum LineType {
     L3DataLine,
     L3CodeLine,
     MbLine,
-    Unknown,
+    Generic(String),
 }
 
 #[derive(PartialEq)]
@@ -265,7 +269,48 @@ fn parse_l3_line(line: &str) -> std::result::Result<HashMap<String, String>, Par
     Ok(token_map)
 }
 
-/// Get the resctrl line type. We only support L3{,CODE,DATA} and MB.
+/// Parse tokens from generic resctrl lines.
+/// OCI runtime-spec v1.3.0 introduced the `schemata` list, allowing users to
+/// specify any hardware resource (e.g. `L2`, `SMBA`). To safely verify these
+/// new resources during `is_same_schema`, we must parse them into token maps
+/// so we can perform strict semantic equality checks rather than basic string matching.
+///
+/// Example:
+/// A line like "L2:0=00ff;1=f0" is parsed into a token map:
+/// {"0": "ff", "1": "f0"}
+/// Leading zeros are automatically stripped from the values to ensure
+/// "00ff" correctly matches "ff" during equality comparison.
+fn parse_generic_line(line: &str) -> std::result::Result<HashMap<String, String>, ParseLineError> {
+    let mut token_map = HashMap::new();
+
+    static OTHER_VALIDATE_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"^[A-Za-z0-9]+:(?:\s|;)*(?:\w+\s*=\s*[[:xdigit:]]+)?(?:(?:\s*;+\s*)+\w+\s*=\s*[[:xdigit:]]+)*(?:\s|;)*$").unwrap()
+    });
+
+    static OTHER_CAPTURE_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(\w+)\s*=\s*([[:xdigit:]]+)").unwrap());
+    if !OTHER_VALIDATE_RE.is_match(line) {
+        return Err(ParseLineError::GenericLine);
+    }
+
+    for token in OTHER_CAPTURE_RE.captures_iter(line) {
+        match (token.get(1), token.get(2)) {
+            (Some(key), Some(value)) => {
+                let val_str = value.as_str().trim_start_matches('0');
+                let final_val = if val_str.is_empty() { "0" } else { val_str };
+                token_map.insert(key.as_str().to_string(), final_val.to_string());
+            }
+            _ => return Err(ParseLineError::GenericToken),
+        }
+    }
+
+    Ok(token_map)
+}
+
+/// Get the resctrl line type.
+/// Supports traditional L3{,CODE,DATA} and MB resources.
+/// Also supports generic hardware resources (e.g., L2, SMBA) as introduced
+/// in OCI runtime-spec v1.3.0 via the `schemata` list feature.
 fn get_line_type(line: &str) -> LineType {
     if line.starts_with("L3:") {
         return LineType::L3Line;
@@ -280,20 +325,37 @@ fn get_line_type(line: &str) -> LineType {
         return LineType::MbLine;
     }
 
-    // Empty or unknown line.
-    LineType::Unknown
+    // OCI runtime-spec v1.3.0 generic schemata list support.
+    // If it's not a legacy L3/MB line, we extract the prefix before the colon
+    // (e.g. "L2" from "L2:0=ff") and store it as `LineType::Other(prefix)`.
+    // This allows us to retain the prefix for strict schema verification later,
+    // rather than blindly dropping unknown hardware resources.
+    if let Some(pos) = line.find(':') {
+        let prefix = &line[..pos];
+        if prefix.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            return LineType::Generic(prefix.to_string());
+        }
+    }
+
+    LineType::Generic(String::new())
 }
 
 /// Parse a resctrl line.
 fn parse_line(line: &str) -> Option<std::result::Result<ParsedLine, ParseLineError>> {
     let line_type = get_line_type(line);
 
-    let maybe_tokens = match line_type {
+    let maybe_tokens = match &line_type {
         LineType::L3Line => parse_l3_line(line).map(Some),
         LineType::L3DataLine => parse_l3_line(line).map(Some),
         LineType::L3CodeLine => parse_l3_line(line).map(Some),
         LineType::MbLine => parse_mb_line(line).map(Some),
-        LineType::Unknown => Ok(None),
+        LineType::Generic(prefix) => {
+            if prefix.is_empty() {
+                Ok(None)
+            } else {
+                parse_generic_line(line).map(Some)
+            }
+        }
     };
 
     match maybe_tokens {
@@ -328,6 +390,22 @@ fn is_same_schema(combined_schema: &str, existing_schema: &str) -> Result<bool> 
     Ok(compare_lines(&combined, &existing))
 }
 
+/// Retrieves the schemata data to be written to the resctrl filesystem.
+/// OCI runtime-spec v1.3.0 introduced the generic `schemata` list, which
+/// supersedes `l3_cache_schema` and `mem_bw_schema`. If the list is provided,
+/// we join the array elements with a newline `\n` to format them correctly
+/// for the Linux kernel's `schemata` file requirements. If omitted, we
+/// fall back to combining the legacy fields.
+fn get_schemata_data(intel_rdt: &LinuxIntelRdt) -> Option<String> {
+    if let Some(schemata) = intel_rdt.schemata() {
+        if !schemata.is_empty() {
+            return Some(schemata.join("\n"));
+        }
+    }
+
+    combine_l3_cache_and_mem_bw_schemas(intel_rdt.l3_cache_schema(), intel_rdt.mem_bw_schema())
+}
+
 /// Combines the l3_cache_schema and mem_bw_schema values together with the
 /// rules given in Linux OCI runtime config spec. If clos_id_was_set parameter
 /// is true and the directory wasn't created, the rules say that the schemas
@@ -336,13 +414,12 @@ fn is_same_schema(combined_schema: &str, existing_schema: &str) -> Result<bool> 
 fn write_resctrl_schemata(
     path: &Path,
     id: &str,
-    l3_cache_schema: &Option<String>,
-    mem_bw_schema: &Option<String>,
+    intel_rdt: &LinuxIntelRdt,
     clos_id_was_set: bool,
     created_dir: bool,
 ) -> Result<()> {
     let schemata = path.to_owned().join(id).join("schemata");
-    let maybe_combined_schema = combine_l3_cache_and_mem_bw_schemas(l3_cache_schema, mem_bw_schema);
+    let maybe_combined_schema = get_schemata_data(intel_rdt);
 
     if let Some(combined_schema) = maybe_combined_schema {
         if clos_id_was_set && !created_dir {
@@ -384,8 +461,7 @@ pub fn setup_intel_rdt(
         tracing::error!("failed to find a mounted resctrl file system");
     })?;
     let clos_id_set = intel_rdt.clos_id().is_some();
-    let only_clos_id_set =
-        clos_id_set && intel_rdt.l3_cache_schema().is_none() && intel_rdt.mem_bw_schema().is_none();
+    let only_clos_id_set = clos_id_set && get_schemata_data(intel_rdt).is_none();
     let id = match (intel_rdt.clos_id(), maybe_container_id) {
         (Some(clos_id), _) => clos_id,
         (None, Some(container_id)) => container_id,
@@ -396,15 +472,7 @@ pub fn setup_intel_rdt(
         .inspect_err(|_err| {
             tracing::error!("failed to write container pid to resctrl tasks file");
         })?;
-    write_resctrl_schemata(
-        &path,
-        id,
-        intel_rdt.l3_cache_schema(),
-        intel_rdt.mem_bw_schema(),
-        clos_id_set,
-        created_dir,
-    )
-    .inspect_err(|_err| {
+    write_resctrl_schemata(&path, id, intel_rdt, clos_id_set, created_dir).inspect_err(|_err| {
         tracing::error!("failed to write schemata to resctrl schemata file");
     })?;
 
@@ -466,6 +534,7 @@ mod test {
         assert!(is_same_schema("MB:0=bar;1=f0", "MB:0=bar;1=f0")?);
         assert!(is_same_schema("L3:", "L3:")?);
         assert!(is_same_schema("MB:", "MB:")?);
+        assert!(is_same_schema("L2:0=f;1=f0", "L2:0=f;1=f0")?);
 
         // Different schemas.
         assert!(!is_same_schema("L3:0=f;1=f0", "L3:2=f")?);
@@ -476,6 +545,8 @@ mod test {
         assert!(!is_same_schema("L3:0=f", "L3DATA:0=f")?);
         assert!(!is_same_schema("L3CODE:0=f", "L3:0=f")?);
         assert!(!is_same_schema("MB:0=f", "L3:0=f")?);
+        assert!(!is_same_schema("L2:0=f", "L3:0=f")?);
+        assert!(!is_same_schema("L2:0=f;1=f0", "L2:0=ff;1=f0")?);
 
         // Exact same multi-line schema.
         assert!(is_same_schema(
@@ -483,11 +554,8 @@ mod test {
             "L3:0=f;1=f0\nL3:2=f"
         )?);
 
-        // Unknown line type is ignored.
-        assert!(is_same_schema(
-            "L3:0=f;1=f0\nL3:2=f\nBAR:foo",
-            "L3:0=f;1=f0\nL3:2=f"
-        )?);
+        // Malformed generic line types now cause verification to fail
+        assert!(is_same_schema("L3:0=f;1=f0\nL3:2=f\nBAR:foo", "L3:0=f;1=f0\nL3:2=f").is_err());
 
         // Different multi-line schema.
         assert!(!is_same_schema(
@@ -507,15 +575,18 @@ mod test {
 
         // Same schema, different token order.
         assert!(is_same_schema("L3:1=f0;0=0", "L3:0=0;1=f0")?);
+        assert!(is_same_schema("L2:1=f0;0=f", "L2:0=f;1=f0")?);
 
         // Same schema, different whitespace and semicolons.
         assert!(is_same_schema("L3:;;  0 = f; ;  1=f0", "L3:0=f;1  = f0;;")?);
+        assert!(is_same_schema("L2:;;  0 = f; ;  1=f0", "L2:0=f;1  = f0;;")?);
 
         // Same schema, different leading zeros in masks.
         assert!(is_same_schema("L3:0=000f", "L3:0=0f")?);
         assert!(is_same_schema("L3:0=000f", "L3:0=0f")?);
         assert!(is_same_schema("L3:0=f", "L3:0=0f")?);
         assert!(is_same_schema("L3:0=0", "L3:0=0000")?);
+        assert!(is_same_schema("L2:0=00ff;1=000f0", "L2:0=ff;1=f0")?);
 
         // Invalid schemas.
         assert!(is_same_schema("L3:1=;0=f", "L3:1=;0=f").is_err());
@@ -525,6 +596,19 @@ mod test {
         assert!(is_same_schema("MB:1=;0=f", "MB:1=;0=f").is_err());
         assert!(is_same_schema("MB:=0;0=f", "MB:=0;0=f").is_err());
         assert!(is_same_schema("MB:1=0=3;0=f", "MB:1=0=3;0=f").is_err());
+        assert!(is_same_schema("L2:0=invalid_hex_string", "L2:0=invalid_hex_string").is_err());
+
+        // Generic schema handling leading zeros correctly
+        assert!(is_same_schema("L2:0=00ff;1=000f0", "L2:0=ff;1=f0")?);
+
+        // Zero value edge cases for generic schemas
+        assert!(is_same_schema("L2:0=0;1=00", "L2:0=0;1=0")?);
+
+        // Empty lines are ignored
+        assert!(is_same_schema(
+            "L3:0=f;1=f0\n\nL2:0=f\n",
+            "L3:0=f;1=f0\nL2:0=f"
+        )?);
 
         Ok(())
     }
@@ -560,28 +644,28 @@ mod test {
 
     #[test]
     fn test_write_resctrl_schemata() -> Result<()> {
+        use oci_spec::runtime::LinuxIntelRdtBuilder;
         let tmp = tempfile::tempdir().unwrap();
 
         let res =
             write_container_pid_to_resctrl_tasks(tmp.path(), "foobar", Pid::from_raw(1000), false);
-        assert!(res.unwrap()); // new directory created
+        assert!(res.unwrap());
 
         // No schemes, clos_id was not set, directory created (with container id).
-        let res = write_resctrl_schemata(tmp.path(), "foobar", &None, &None, false, true);
+        let empty_rdt = LinuxIntelRdtBuilder::default().build().unwrap();
+        let res = write_resctrl_schemata(tmp.path(), "foobar", &empty_rdt, false, true);
         assert!(res.is_ok());
         let res = fs::read_to_string(tmp.path().join("foobar").join("schemata"));
         assert!(res.is_err()); // File not found because no schemes.
 
         let l3_1 = "L3:0=f;1=f0\nL3:2=f\nMB:0=20;1=70";
         let bw_1 = "MB:0=70;1=20";
-        let res = write_resctrl_schemata(
-            tmp.path(),
-            "foobar",
-            &Some(l3_1.to_owned()),
-            &Some(bw_1.to_owned()),
-            false,
-            true,
-        );
+        let rdt_combined = LinuxIntelRdtBuilder::default()
+            .l3_cache_schema(l3_1.to_owned())
+            .mem_bw_schema(bw_1.to_owned())
+            .build()
+            .unwrap();
+        let res = write_resctrl_schemata(tmp.path(), "foobar", &rdt_combined, false, true);
         assert!(res.is_ok());
 
         let res = fs::read_to_string(tmp.path().join("foobar").join("schemata"));
@@ -594,28 +678,53 @@ mod test {
         // Try the verification case. If the directory existed (was not created
         // by us) and the clos_id was set, it needs to contain the same data as
         // we are trying to set. This is the same data:
-        let res = write_resctrl_schemata(
-            tmp.path(),
-            "foobar",
-            &Some(l3_1.to_owned()),
-            &Some(bw_1.to_owned()),
-            true,
-            false,
-        );
+        let res = write_resctrl_schemata(tmp.path(), "foobar", &rdt_combined, true, false);
         assert!(res.is_ok());
 
         // And this different data:
         let l3_2 = "L3:0=f;1=f0\nMB:0=20;1=70";
         let bw_2 = "MB:0=70;1=20";
-        let res = write_resctrl_schemata(
+        let rdt_different = LinuxIntelRdtBuilder::default()
+            .l3_cache_schema(l3_2.to_owned())
+            .mem_bw_schema(bw_2.to_owned())
+            .build()
+            .unwrap();
+        let res = write_resctrl_schemata(tmp.path(), "foobar", &rdt_different, true, false);
+        assert!(res.is_err());
+
+        // // Test modern schemata field overriding everything
+        // let rdt_schemata = LinuxIntelRdtBuilder::default()
+        //     .l3_cache_schema(l3_1.to_owned())
+        //     .mem_bw_schema(bw_1.to_owned())
+        //     .schemata(vec!["L2:0=f;1=f0".to_owned()])
+        //     .build()
+        //     .unwrap();
+
+        // let res = write_resctrl_schemata(tmp.path(), "foobar_modern", &rdt_schemata, false, false);
+        // // It should attempt to write L2
+        // // open will fail because foobar_modern doesn't exist, but it got to that point!
+        // assert!(res.is_err());
+
+        // Test modern schemata field overriding everything
+        let rdt_schemata = LinuxIntelRdtBuilder::default()
+            .l3_cache_schema(l3_1.to_owned())
+            .mem_bw_schema(bw_1.to_owned())
+            .schemata(vec!["L2:0=f;1=f0".to_owned()])
+            .build()
+            .unwrap();
+
+        let _ = write_container_pid_to_resctrl_tasks(
             tmp.path(),
-            "foobar",
-            &Some(l3_2.to_owned()),
-            &Some(bw_2.to_owned()),
-            true,
+            "foobar_modern",
+            Pid::from_raw(1001),
             false,
         );
-        assert!(res.is_err());
+        let res = write_resctrl_schemata(tmp.path(), "foobar_modern", &rdt_schemata, false, true);
+
+        assert!(res.is_ok());
+        let written_data =
+            fs::read_to_string(tmp.path().join("foobar_modern").join("schemata")).unwrap();
+        assert_eq!(written_data, "L2:0=f;1=f0\n");
 
         Ok(())
     }
