@@ -20,27 +20,27 @@ systemd = ["v2", "nix/socket", "nix/uio"]
 cgroupsv2_devices = ["rbpf", "libbpf-sys", "errno", "libc", "nix/dir"]
 
 [dependencies]
-nix = { version = "0.29.0", features = ["signal", "user", "fs"] }
-procfs = "0.17.0"
-pathrs = "0.2.4"
+nix = { workspace = true, features = ["signal", "user", "fs"] }
+procfs = { workspace = true }
+pathrs = { workspace = true }
 oci-spec = { version = "~0.9.0", features = ["runtime"] }
-fixedbitset = "0.5.7"
-serde = { version = "1.0", features = ["derive"] }
-rbpf = { version = "0.4.1", optional = true }
-libbpf-sys = { version = "1.6.4", optional = true }
-errno = { version = "0.3.14", optional = true }
-libc = { version = "0.2.184", optional = true }
-thiserror = "2.0.18"
-tracing = { version = "0.1.44", features = ["attributes"] }
+fixedbitset = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+rbpf = { workspace = true, optional = true }
+libbpf-sys = { workspace = true, optional = true }
+errno = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
+thiserror = { workspace = true }
+tracing = { workspace = true, features = ["attributes"] }
 
 [dev-dependencies]
-anyhow = "1.0"
+anyhow = { workspace = true }
 oci-spec = { version = "~0.9.0", features = ["proptests", "runtime"] }
-quickcheck = "1"
-mockall = { version = "0.14.0", features = [] }
-clap = "4.5.13"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-env_logger = "0.11"
-serial_test = "3.4.0"
-tempfile = "3"
+quickcheck = { workspace = true }
+mockall = { workspace = true, features = [] }
+clap = { workspace = true, features = ["std", "color", "help", "usage", "error-context", "suggestions"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+env_logger = { workspace = true }
+serial_test = { workspace = true }
+tempfile = { workspace = true }

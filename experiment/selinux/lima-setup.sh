@@ -137,17 +137,14 @@ cat > "$TEMP_DIR/lima-fedora.yaml" << 'LIMA_YAML'
 
 # Using official Fedora Cloud Base Images.
 # Replace with a specific version if needed, check https://getfedora.org/en/cloud/download/
-# Using Fedora 39 as Fedora 40 URL might not be stable yet
+# Using Fedora 43 URLs
 images:
-- location: https://download.fedoraproject.org/pub/fedora/linux/releases/41/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-41-1.4.x86_64.qcow2
+- location: https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2
   arch: x86_64
-  digest: sha256:6205ae0c524b4d1816dbd3573ce29b5c44ed26c9fbc874fbe48c41c89dd0bac2
-- location: https://download.fedoraproject.org/pub/fedora/linux/releases/41/Cloud/aarch64/images/Fedora-Cloud-Base-Generic-41-1.4.aarch64.qcow2
+  digest: sha256:846574c8a97cd2d8dc1f231062d73107cc85cbbbda56335e264a46e3a6c8ab2f
+- location: https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/aarch64/images/Fedora-Cloud-Base-Generic-43-1.6.aarch64.qcow2
   arch: aarch64
-  digest: sha256:085883b42c7e3b980e366a1fe006cd0ff15877f7e6e984426f3c6c67c7cc2faa
-- location: https://dl.fedoraproject.org/pub/alt/risc-v/release/41/Cloud/riscv64/images/Fedora-Cloud-Base-Generic-41.20250224-1026a2d0e311.riscv64.qcow2
-  arch: riscv64
-  digest: sha256:6a8272a858d7f1498f49ce362b34f0b9b959885f63285158947e045abfeece40
+  digest: sha256:66031aea9ec61e6d0d5bba12b9454e80ca94e8a79c913d37ded4c60311705b8b
 
 cpus: __CPUS__
 memory: "__MEMORY__"
@@ -207,7 +204,7 @@ provision:
              source "$HOME/.cargo/env"
         fi
       fi
-      
+
       echo "Ensuring $HOME/.cargo/env is sourced in .bashrc for future logins..."
       if ! grep -q 'source "$HOME/.cargo/env"' "$HOME/.bashrc"; then
         echo 'source "$HOME/.cargo/env"' >> "$HOME/.bashrc"

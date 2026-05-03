@@ -22,41 +22,37 @@ wasm-wasmer = ["wasmer", "wasmer-wasix"]
 wasm-wasmedge = ["wasmedge-sdk/standalone", "wasmedge-sdk/static"]
 wasm-wasmtime = ["wasmtime", "wasi-common"]
 
-[dependencies.clap]
-version = "4.5.13"
-default-features = false
-features = ["std", "suggestions", "derive", "cargo", "help", "usage", "error-context"]
-
 [dependencies]
-anyhow = "1.0.102"
-chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+clap = { workspace = true, features = ["std", "suggestions", "derive", "cargo", "help", "usage", "error-context"] }
+anyhow = { workspace = true }
+chrono = { workspace = true, features = ["clock", "serde"] }
 libcgroups = { path = "../libcgroups", default-features = false, version = "0.6.0" } # MARK: Version
 libcontainer = { path = "../libcontainer", default-features = false, version = "0.6.0" } # MARK: Version
-liboci-cli = { path = "../liboci-cli", version = "0.6.0" } # MARK: Version
-nix = "0.29.0"
-pentacle = "1.1.0"
-procfs = "0.17.0"
-serde_json = "1.0"
-tabwriter = "1"
-clap_complete = "4.5.13"
-caps = "0.5.6"
-wasmer = { version = "7.0.1", optional = true, features = ["sys","singlepass"] }
-wasmer-wasix = { version = "0.700.1", optional = true }
-wasmedge-sdk = { version = "0.14.0", optional = true }
-wasmtime = { version = "43.0.0", optional = true }
-wasi-common = { version = "43.0.1", optional = true }
-tracing = { version = "0.1.44", features = ["attributes"] }
-tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
-tracing-journald = "0.3.2"
+liboci-cli = { workspace = true }
+nix = { workspace = true }
+pentacle = { workspace = true }
+procfs = { workspace = true }
+serde_json = { workspace = true }
+tabwriter = { workspace = true }
+clap_complete = { workspace = true }
+caps = { workspace = true }
+wasmer = { workspace = true, features = ["sys", "singlepass"], optional = true }
+wasmer-wasix = { workspace = true, optional = true }
+wasmedge-sdk = { workspace = true, optional = true }
+wasmtime = { workspace = true, optional = true }
+wasi-common = { workspace = true, optional = true }
+tracing = { workspace = true, features = ["attributes"] }
+tracing-subscriber = { workspace = true, features = ["json", "env-filter"] }
+tracing-journald = { workspace = true }
 oci-spec = { version = "0.9.0", features = ["runtime"] }
-rust-criu = "0.5.0"
+rust-criu = { workspace = true }
 
 [dev-dependencies]
-serial_test = "3.4.0"
-tempfile = "3"
-scopeguard = "1.2.0"
+serial_test = { workspace = true }
+tempfile = { workspace = true }
+scopeguard = { workspace = true }
 
 [build-dependencies]
-anyhow = "1.0.102"
-vergen-gitcl = { version = "9.1.0", features = ["build", "rustc"] }
-pkg-config = "0.3.32"
+anyhow = { workspace = true }
+vergen-gitcl = { workspace = true, features = ["build", "rustc"] }
+pkg-config = { workspace = true }

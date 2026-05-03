@@ -51,15 +51,25 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: containerd/containerd
-          ref: v1.7.11
+          ref: v2.2.3
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.20.12'
+          go-version: '1.24.3'
           cache: true
-      - name: Add CRIU PPA
-        run: sudo add-apt-repository -y ppa:criu/ppa
       - run: sudo apt-get -y update
-      - run: sudo apt-get install -y pkg-config libsystemd-dev libelf-dev libseccomp-dev btrfs-progs libbtrfs-dev criu
+      - run: sudo apt-get install -y pkg-config libsystemd-dev libelf-dev libseccomp-dev btrfs-progs libbtrfs-dev gperf
+      - name: Install CRIU from source
+        run: |
+          sudo apt-get install -y \
+            libcap-dev libnet1-dev libnl-3-dev uuid-dev \
+            libprotobuf-c-dev libprotobuf-dev protobuf-c-compiler protobuf-compiler
+          git clone --depth 1 --branch criu-dev --single-branch \
+            https://github.com/checkpoint-restore/criu.git ~/criu
+          (cd ~/criu && sudo make -j $(nproc) install-criu)
+          rm -rf ~/criu
+          criu --version
+      - name: Setup libseccomp
+        run: sudo ./script/setup/install-seccomp
       - name: Build containerd
         run: |
           make build
@@ -77,12 +87,20 @@ jobs:
           sudo chmod 755 youki
           sudo cp youki /usr/bin/runc
           runc --version
-      - name: Integration Test
+      - name: Run containerd integration tests
+        env:
+          RUNC_FLAVOR: youki
+          TEST_RUNTIME: io.containerd.runc.v2
         run: |
-          # The following tests are skipped because youki does not yet support
-          # checkpoint/restore functionality.
-          # TODO: https://github.com/youki-dev/youki/issues/142
-          sudo make RUNC_FLAVOR=crun TEST_RUNTIME=io.containerd.runc.v2 TESTFLAGS="-timeout 40m -skip TestCheckpoint" integration
+          # The following tests are skipped because youki does not yet support:
+          #
+          # - TestCheckpoint: Checkpoint/restore functionality is not yet supported in youki. 
+          #   Tracking issue: https://github.com/youki-dev/youki/issues/142
+          # - MultipleMap: youki currently does not support passing 
+          #   multiple ID mappings (uid/gid) in user namespaces.
+          # - TestRuntimeInfo: youki currently does not implement the `containerd-shim-* -info` 
+          #   command expected by containerd v2+ for fetching runtime features.
+          sudo -E PATH=$PATH make integration TESTFLAGS="-timeout 40m -skip 'TestCheckpoint|TestRuntimeInfo|TestUserNamespaces/.*MultipleMap'"
 
   k8s-tests:
     runs-on: ubuntu-24.04
@@ -151,10 +169,18 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install just
         uses: taiki-e/install-action@just
-      - name: Add CRIU PPA
-        run: sudo add-apt-repository -y ppa:criu/ppa
       - name: Install requirements
         run: sudo env PATH=$PATH just ci-prepare
+      - name: Install CRIU from source
+        run: |
+          sudo apt-get install -y \
+            libcap-dev libnet1-dev libnl-3-dev uuid-dev \
+            libprotobuf-c-dev libprotobuf-dev protobuf-c-compiler protobuf-compiler
+          git clone --depth 1 --branch criu-dev --single-branch \
+            https://github.com/checkpoint-restore/criu.git ~/criu
+          (cd ~/criu && sudo make -j $(nproc) install-criu)
+          rm -rf ~/criu
+          criu --version
       - name: Download youki binary
         uses: actions/download-artifact@v4
         with:
@@ -180,10 +206,18 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install just
         uses: taiki-e/install-action@just
-      - name: Add CRIU PPA
-        run: sudo add-apt-repository -y ppa:criu/ppa
       - name: Install requirements
         run: sudo env PATH=$PATH just ci-prepare
+      - name: Install CRIU from source
+        run: |
+          sudo apt-get install -y \
+            libcap-dev libnet1-dev libnl-3-dev uuid-dev \
+            libprotobuf-c-dev libprotobuf-dev protobuf-c-compiler protobuf-compiler
+          git clone --depth 1 --branch criu-dev --single-branch \
+            https://github.com/checkpoint-restore/criu.git ~/criu
+          (cd ~/criu && sudo make -j $(nproc) install-criu)
+          rm -rf ~/criu
+          criu --version
       - name: Download youki binary
         uses: actions/download-artifact@v4
         with:
@@ -196,9 +230,6 @@ jobs:
   docker-in-docker:
     runs-on: ubuntu-24.04
     needs: [youki-build]
-    strategy:
-      matrix:
-        cgroup-version: ["v2"]
     steps:
       - uses: actions/checkout@v4
       - name: Install just
@@ -209,53 +240,5 @@ jobs:
           name: youki-x86_64-musl
       - name: Add the permission to run
         run: chmod +x ./youki
-      # Steps for cgroups-v1 only (using Lima with AlmaLinux 8)
-      - name: Setup Lima
-        if: matrix.cgroup-version == 'v1'
-        uses: lima-vm/lima-actions/setup@v1
-        id: lima-actions-setup
-      - uses: actions/cache@v4
-        if: matrix.cgroup-version == 'v1'
-        with:
-          path: ~/.cache/lima
-          key: lima-${{ steps.lima-actions-setup.outputs.version }}
-      - name: Start the guest VM
-        if: matrix.cgroup-version == 'v1'
-        run: |
-          set -eux
-          # containerd=none is set because the built-in containerd support conflicts with Docker
-          limactl start \
-            --name=default \
-            --cpus=4 \
-            --memory=8 \
-            --containerd=none \
-            --set '.mounts=[{"location":"~/","writable":true}] | .portForwards=[{"guestSocket":"/var/run/docker.sock","hostSocket":"{{.Dir}}/sock/docker.sock"}]' \
-            template://almalinux-8
-      - name: Install dockerd in the guest VM
-        if: matrix.cgroup-version == 'v1'
-        run: |
-          set -eux
-          lima sudo mkdir -p /etc/systemd/system/docker.socket.d
-          cat <<-EOF | lima sudo tee /etc/systemd/system/docker.socket.d/override.conf
-          [Socket]
-          SocketUser=$(whoami)
-          EOF
-          lima sudo dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
-          lima sudo dnf -q -y install docker-ce --nobest
-          lima sudo systemctl enable --now docker
-      - name: Configure the host to use dockerd in the guest VM
-        if: matrix.cgroup-version == 'v1'
-        run: |
-          set -eux
-          sudo systemctl disable --now docker.service docker.socket
-          export DOCKER_HOST="unix://$(limactl ls --format '{{.Dir}}/sock/docker.sock' default)"
-          echo "DOCKER_HOST=${DOCKER_HOST}" >>$GITHUB_ENV
-          docker info
-          docker version
-      # Run tests differently based on cgroup version
       - name: Run tests (cgroups-v2)
-        if: matrix.cgroup-version == 'v2'
-        run: just test-dind
-      - name: Run tests (cgroups-v1)
-        if: matrix.cgroup-version == 'v1'
         run: just test-dind
