@@ -250,6 +250,19 @@ pub fn wait_for_state<P: AsRef<Path>>(
     )
 }
 
+pub fn get_container_pid<P: AsRef<Path>>(id: &str, dir: P) -> Result<i32> {
+    let (stdout, _) = get_state(id, &dir)?;
+    let value = serde_json::from_str::<serde_json::Value>(&stdout)
+        .map_err(|e| anyhow!("Failed to parse state output as JSON: {stdout} - {e}"))?;
+
+    let pid = value
+        .get("pid")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| anyhow!("Failed to extract pid from state output: {stdout}"))?;
+
+    Ok(pid as i32)
+}
+
 pub fn start_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
     let res = runtime_command(dir)
         .arg("start")

@@ -8,19 +8,20 @@ use std::os::unix::fs::symlink;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use anyhow::anyhow;
+use anyhow::{Result, anyhow, bail};
 use nix::fcntl::{FcntlArg, FdFlag, fcntl};
 use oci_spec::runtime::{LinuxNamespaceBuilder, LinuxNamespaceType, MountBuilder};
 use test_framework::{ConditionalTest, TestGroup, TestResult};
 
 use crate::utils::{
     LifecycleStatus, WaitTarget, build_checkpoint_command, checkpoint_container, criu_has_feature,
-    criu_installed, delete_container, exec_container, generate_uuid, get_runtime_path, get_state,
-    is_runtime_youki, kill_container, net, prepare_bundle, restore_container, set_config,
-    try_checkpoint_container, wait_container_running, wait_for_state,
+    criu_installed, delete_container, exec_container, generate_uuid, get_container_pid,
+    get_runtime_path, get_state, handle_console_socket, is_runtime_youki, kill_container, net,
+    prepare_bundle, restore_container, set_config, try_checkpoint_container,
+    wait_container_running, wait_for_state,
 };
 
 /// Used as check_fn for all ConditionalTests in this module:
@@ -57,12 +58,61 @@ impl Drop for CrTestContext {
     }
 }
 
-fn ping_container(bundle: &Path) -> anyhow::Result<()> {
+impl CrTestContext {
+    fn start(&self) -> Result<(), TestResult> {
+        let runtime_path = get_runtime_path();
+        let actual_bundle_path = self.bundle.path().join("bundle");
+        let console_socket = self.bundle.path().join("console.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&console_socket)
+            .map_err(|e| TestResult::Failed(anyhow!("failed to bind console socket: {e}")))?;
+
+        let run_result = (|| -> Result<()> {
+            let mut child = std::process::Command::new(runtime_path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .arg("--root")
+                .arg(self.bundle.path().join("runtime"))
+                .arg("run")
+                .arg("-d")
+                .arg("--bundle")
+                .arg(&actual_bundle_path)
+                .arg("--console-socket")
+                .arg(&console_socket)
+                .arg(&self.id)
+                .current_dir(self.bundle.path())
+                .spawn()?;
+
+            let (stream, _) = listener.accept()?;
+            handle_console_socket(stream);
+
+            let status = child.wait()?;
+            if !status.success() {
+                bail!("run -d failed ({status})");
+            }
+
+            wait_container_running(&self.id, &self.bundle)?;
+            ping_container(self.bundle.path())
+        })();
+
+        if let Err(e) = run_result {
+            return Err(TestResult::Failed(anyhow!(
+                "container did not reach running state: {e}"
+            )));
+        }
+
+        Ok(())
+    }
+}
+
+/// Verifies that the container process is actively running and responsive
+/// by writing a "Ping" message to the FIFO and expecting a "ponG Ping" response.
+fn ping_container(bundle: &Path) -> Result<()> {
     let fifo_path = bundle.join("fifo");
     let (tx, rx) = std::sync::mpsc::channel();
 
     std::thread::spawn(move || {
-        let res = (|| -> anyhow::Result<()> {
+        let res = (|| -> Result<()> {
             let mut f_out = std::fs::OpenOptions::new().write(true).open(&fifo_path)?;
             std::io::Write::write_all(&mut f_out, b"Ping\n")?;
             drop(f_out);
@@ -72,7 +122,7 @@ fn ping_container(bundle: &Path) -> anyhow::Result<()> {
             let mut line = String::new();
             std::io::BufRead::read_line(&mut reader, &mut line)?;
             if line.trim() != "ponG Ping" {
-                anyhow::bail!("Unexpected response from container: {:?}", line);
+                bail!("Unexpected response from container: {:?}", line);
             }
             Ok(())
         })();
@@ -82,31 +132,23 @@ fn ping_container(bundle: &Path) -> anyhow::Result<()> {
     match rx.recv_timeout(Duration::from_secs(5)) {
         Ok(Ok(())) => Ok(()),
         Ok(Err(e)) => Err(e),
-        Err(_) => Err(anyhow::anyhow!("ping_container timed out")),
+        Err(_) => Err(anyhow!("ping_container timed out")),
     }
 }
 
-fn setup_cr_test(
-    mut setup: impl FnMut(&tempfile::TempDir, &mut oci_spec::runtime::Spec),
-) -> Result<CrTestContext, TestResult> {
-    let id = generate_uuid().to_string();
-    let bundle = prepare_bundle().unwrap();
-
-    let fifo_path = bundle.path().join("fifo");
-    if let Err(e) = nix::unistd::mkfifo(&fifo_path, nix::sys::stat::Mode::from_bits_truncate(0o666))
-    {
-        return Err(TestResult::Failed(anyhow!("mkfifo failed: {e}")));
-    }
-
+fn generate_cr_spec(
+    bundle_path: &Path,
+    fifo_path: &Path,
+) -> Result<oci_spec::runtime::Spec, TestResult> {
     let runtime_path = get_runtime_path();
-    let actual_bundle_path = bundle.path().join("bundle");
+    let actual_bundle_path = bundle_path.join("bundle");
 
     let existing_config = actual_bundle_path.join("config.json");
     if existing_config.exists() {
         let _ = std::fs::remove_file(&existing_config);
     }
 
-    let output = std::process::Command::new(runtime_path)
+    let output = Command::new(runtime_path)
         .arg("spec")
         .current_dir(&actual_bundle_path)
         .output()
@@ -129,10 +171,19 @@ fn setup_cr_test(
         "-c".into(),
         "while true; do read p < /fifo; if [ \"$p\" = 'Ping' ]; then echo \"ponG $p\" > /fifo; fi; done".into(),
     ]));
+
+    process.set_terminal(Some(true));
     spec.set_process(Some(process));
 
-    let bind_mount = MountBuilder::default()
-        .source(&fifo_path)
+    // The container will read from /fifo and write "ponG <msg>" back to it.
+    // This is different from runc's e2e tests, which use Bash process substitution to
+    // create anonymous pipes and pass them to runc via standard I/O redirection.
+    // Replicating that persistent file-descriptor inheritance across separate Rust
+    // `Command` invocations (run -> checkpoint -> restore) is complex and fragile.
+    // By using FIFOs on the host filesystem, CRIU automatically dumps and restores
+    // the IPC endpoint purely based on the file path, without any orchestrator I/O magic.
+    let bind_mount = oci_spec::runtime::MountBuilder::default()
+        .source(fifo_path)
         .destination(PathBuf::from("/fifo"))
         .options(vec!["bind".to_string()])
         .build()
@@ -142,71 +193,39 @@ fn setup_cr_test(
     mounts.push(bind_mount);
     spec.set_mounts(Some(mounts));
 
+    Ok(spec)
+}
+
+fn setup_cr_test(
+    mut setup: impl FnMut(&tempfile::TempDir, &mut oci_spec::runtime::Spec),
+) -> Result<CrTestContext, TestResult> {
+    let id = generate_uuid().to_string();
+    let bundle = prepare_bundle().unwrap();
+
+    // Prepare a FIFO path for testing IPC with the container. We use FIFOs instead of pipes
+    // because they are simpler to mount and expose a named endpoint on the host.
+    let fifo_path = bundle.path().join("fifo");
+    if let Err(e) = nix::unistd::mkfifo(&fifo_path, nix::sys::stat::Mode::from_bits_truncate(0o666))
+    {
+        return Err(TestResult::Failed(anyhow!("mkfifo failed: {e}")));
+    }
+
+    let mut spec = generate_cr_spec(bundle.path(), &fifo_path)?;
+
     setup(&bundle, &mut spec);
     if let Err(e) = set_config(&bundle, &spec) {
         return Err(TestResult::Failed(anyhow!("set_config: {e}")));
     }
 
-    let console_socket = bundle.path().join("console.sock");
-    let listener = std::os::unix::net::UnixListener::bind(&console_socket)
-        .map_err(|e| TestResult::Failed(anyhow!("failed to bind console socket: {e}")))?;
-
-    let run_result = (|| -> anyhow::Result<()> {
-        let mut child = std::process::Command::new(runtime_path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .arg("--root")
-            .arg(bundle.path().join("runtime"))
-            .arg("run")
-            .arg("-d")
-            .arg("--bundle")
-            .arg(&actual_bundle_path)
-            .arg("--console-socket")
-            .arg(&console_socket)
-            .arg(&id)
-            .current_dir(bundle.path())
-            .spawn()?;
-
-        let (stream, _) = listener.accept()?;
-
-        crate::utils::handle_console_socket(stream);
-
-        let status = child.wait()?;
-        if !status.success() {
-            anyhow::bail!("run -d failed ({})", status);
-        }
-
-        wait_container_running(&id, &bundle)?;
-        ping_container(bundle.path())
-    })();
-
-    if let Err(e) = run_result {
-        if let Ok(mut child) = kill_container(&id, &bundle) {
-            let _ = child.wait();
-        }
-        std::thread::sleep(Duration::from_millis(100));
-        if let Ok(mut child) = delete_container(&id, &bundle) {
-            let _ = child.wait();
-        }
-        return Err(TestResult::Failed(anyhow!(
-            "container did not reach running state: {e}"
-        )));
+    let image_dir = bundle.path().join("image-dir");
+    if let Err(e) = std::fs::create_dir_all(&image_dir) {
+        return Err(TestResult::Failed(anyhow!("mkdir image-dir: {e}")));
     }
 
-    let (image_dir, work_dir) = match make_cr_dirs(bundle.path()) {
-        Ok(d) => d,
-        Err(r) => {
-            if let Ok(mut child) = kill_container(&id, &bundle) {
-                let _ = child.wait();
-            }
-            std::thread::sleep(Duration::from_millis(100));
-            if let Ok(mut child) = delete_container(&id, &bundle) {
-                let _ = child.wait();
-            }
-            return Err(r);
-        }
-    };
+    let work_dir = bundle.path().join("work-dir");
+    if let Err(e) = std::fs::create_dir_all(&work_dir) {
+        return Err(TestResult::Failed(anyhow!("mkdir work-dir: {e}")));
+    }
 
     Ok(CrTestContext {
         id,
@@ -216,18 +235,7 @@ fn setup_cr_test(
     })
 }
 
-/// Create image-dir and work-dir inside the bundle temp directory.
-fn make_cr_dirs(bundle_path: &Path) -> Result<(PathBuf, PathBuf), TestResult> {
-    let image_dir = bundle_path.join("image-dir");
-    let work_dir = bundle_path.join("work-dir");
-    std::fs::create_dir_all(&image_dir)
-        .map_err(|e| TestResult::Failed(anyhow!("mkdir image-dir: {e}")))?;
-    std::fs::create_dir_all(&work_dir)
-        .map_err(|e| TestResult::Failed(anyhow!("mkdir work-dir: {e}")))?;
-    Ok((image_dir, work_dir))
-}
-
-/// Full checkpoint+restore test: prepares a bundle, calls `setup` to allow the
+/// Full checkpoint+restore test: prepares a bundle, calls `setup_cr_test` to allow the
 /// caller to customise the spec, then runs 2 checkpoint→restore cycles.
 /// The first cycle verifies a normal container can be checkpointed and restored;
 /// the second verifies the restored container can itself be checkpointed and
@@ -240,12 +248,17 @@ fn make_cr_dirs(bundle_path: &Path) -> Result<(PathBuf, PathBuf), TestResult> {
 fn simple_cr(
     global_args: &[&str],
     setup: impl Fn(&tempfile::TempDir, &mut oci_spec::runtime::Spec),
-    verify_state: impl Fn(&str, &Path) -> anyhow::Result<()>,
+    verify_state: impl Fn(&str, &Path) -> Result<()>,
 ) -> TestResult {
     let ctx = match setup_cr_test(setup) {
         Ok(c) => c,
         Err(e) => return e,
     };
+
+    if let Err(e) = ctx.start() {
+        return e;
+    }
+
     let id = &ctx.id;
     let bundle = &ctx.bundle;
     let image_dir = &ctx.image_dir;
@@ -394,7 +407,7 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
     let mac = "00:11:22:33:44:55";
     let ip = "169.254.169.77/32";
 
-    let out = match std::process::Command::new("ip")
+    let out = match Command::new("ip")
         .args(["link", "set", &dev_name, "netns", &ns_name])
         .output()
     {
@@ -408,7 +421,7 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
         ));
     }
 
-    let out = match std::process::Command::new("ip")
+    let out = match Command::new("ip")
         .args(["-n", &ns_name, "link", "set", "mtu", mtu, "dev", &dev_name])
         .output()
     {
@@ -422,7 +435,7 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
         ));
     }
 
-    let out = match std::process::Command::new("ip")
+    let out = match Command::new("ip")
         .args([
             "-n", &ns_name, "link", "set", "address", mac, "dev", &dev_name,
         ])
@@ -438,7 +451,7 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
         ));
     }
 
-    let out = match std::process::Command::new("ip")
+    let out = match Command::new("ip")
         .args(["-n", &ns_name, "address", "add", ip, "dev", &dev_name])
         .output()
     {
@@ -484,13 +497,13 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
                 &[],
             )?;
             if !stdout.contains(ip) {
-                anyhow::bail!("ip address not found in {stdout}");
+                bail!("ip address not found in {stdout}");
             }
             if !stdout.contains(&format!("ether {mac}")) {
-                anyhow::bail!("mac address not found in {stdout}");
+                bail!("mac address not found in {stdout}");
             }
             if !stdout.contains(&format!("mtu {mtu}")) {
-                anyhow::bail!("mtu not found in {stdout}");
+                bail!("mtu not found in {stdout}");
             }
             Ok(())
         },
@@ -504,6 +517,9 @@ fn checkpoint_pre_dump_bad_parent_path() -> TestResult {
         Ok(c) => c,
         Err(e) => return e,
     };
+    if let Err(e) = ctx.start() {
+        return e;
+    }
 
     let id = &ctx.id;
     let bundle = &ctx.bundle;
@@ -521,6 +537,14 @@ fn checkpoint_pre_dump_bad_parent_path() -> TestResult {
     )
     .unwrap();
 
+    // We expect an absolute parent-path to fail. This mimics runc's integration test behavior.
+    // Under the hood, runc maps `--parent-path` to CRIU's `--prev-images-dir` flag.
+    // CRIU links incremental dumps by creating a "parent" symlink between image directories.
+    // If the path is absolute, the symlink hardcodes the host path, which can break when
+    // restoring the container in a different environment or mount space. Thus, CRIU and runc
+    // strictly enforce relative paths to ensure self-contained, portable image directories.
+    // See CRIU source: `criu/image.c` symlinkat logic for CR_PARENT_LINK
+    // https://github.com/checkpoint-restore/criu/blob/criu-dev/criu/image.c#L746
     if output1.status.success() {
         return TestResult::Failed(anyhow!(
             "expected checkpoint to fail with absolute --parent-path"
@@ -569,6 +593,9 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
         Ok(c) => c,
         Err(e) => return e,
     };
+    if let Err(e) = ctx.start() {
+        return e;
+    }
 
     let id = &ctx.id;
     let bundle = &ctx.bundle;
@@ -660,6 +687,9 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
         Ok(c) => c,
         Err(e) => return e,
     };
+    if let Err(e) = ctx.start() {
+        return e;
+    }
 
     let id = &ctx.id;
     let bundle = &ctx.bundle;
@@ -681,7 +711,9 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
     drop(listener);
     let status_fd_str = pipe_w.as_raw_fd().to_string();
 
-    // Spawn checkpoint command in background
+    // Spawn checkpoint command in background.
+    // We use spawn() instead of try_checkpoint_container() (which uses output() and blocks)
+    // because we need to read from the status-fd pipe concurrently to wait for the page server readiness.
     let port_str = format!("0.0.0.0:{}", port);
     let mut checkpoint_cmd = build_checkpoint_command(
         bundle.path(),
@@ -700,7 +732,7 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
     );
 
     checkpoint_cmd.stdout(std::process::Stdio::null());
-    checkpoint_cmd.stderr(std::process::Stdio::null());
+    checkpoint_cmd.stderr(std::process::Stdio::piped());
 
     let pipe_w_raw = pipe_w.as_raw_fd();
 
@@ -738,6 +770,7 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
     // Wait for CRIU to become ready by reading from the pipe
     let mut buf = [0u8; 1];
     let mut ready = false;
+
     // Timeout reading after 2 seconds
     for _ in 0..20 {
         match nix::unistd::read(pipe_r.as_raw_fd(), &mut buf) {
@@ -762,10 +795,15 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
     if !ready {
         let _ = checkpoint_child.kill();
         let _ = checkpoint_child.wait();
-        let mut stderr_msg = String::new();
-        if let Some(mut stderr) = checkpoint_child.stderr.take() {
-            let _ = std::io::Read::read_to_string(&mut stderr, &mut stderr_msg);
-        }
+        let stderr_msg = checkpoint_child
+            .stderr
+            .take()
+            .map(|mut s| {
+                let mut msg = String::new();
+                let _ = std::io::Read::read_to_string(&mut s, &mut msg);
+                msg
+            })
+            .unwrap_or_default();
         return TestResult::Failed(anyhow!(
             "lazy-page server readiness timeout. stderr: {}",
             stderr_msg.trim()
@@ -818,7 +856,11 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
         &[],
     );
 
-    // Terminate criu daemon if it's still running, it might stay alive if restore failed
+    // When the container is successfully restored, the restore process sends a close command
+    // to the CRIU lazy-page daemon, causing it to exit naturally. However, if the restore fails
+    // or hangs, the daemon will remain alive indefinitely waiting for TCP connections.
+    // We unconditionally send a kill signal to ensure cleanup, safely ignoring any errors
+    // if the daemon has already exited.
     let mut criu_daemon = criu_daemon_child;
     let _ = criu_daemon.kill();
     let _ = criu_daemon.wait();
@@ -839,19 +881,12 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
         Duration::from_secs(10),
         Duration::from_millis(100),
     ) {
-        let _ = kill_container(&restore_id, bundle).map(|mut c| c.wait());
-        let _ = delete_container(&restore_id, bundle).map(|mut c| c.wait());
         return TestResult::Failed(anyhow!("not running after restore: {e}"));
     }
 
     if let Err(e) = ping_container(bundle.path()) {
-        let _ = kill_container(&restore_id, bundle).map(|mut c| c.wait());
-        let _ = delete_container(&restore_id, bundle).map(|mut c| c.wait());
         return TestResult::Failed(anyhow!("ping container failed after restore: {e}"));
     }
-
-    let _ = kill_container(&restore_id, bundle).map(|mut c| c.wait());
-    let _ = delete_container(&restore_id, bundle).map(|mut c| c.wait());
 
     TestResult::Passed
 }
@@ -864,13 +899,13 @@ fn checkpoint_and_restore_in_external_netns() -> TestResult {
     }
 
     let ns_name = format!("contest-{}", generate_uuid());
-
-    // Ensure we delete the netns when the test finishes
-    let _netns_guard = net::NetNamespace::create(ns_name.clone()).unwrap();
+    let _netns = match net::NetNamespace::create(ns_name.clone()) {
+        Ok(ns) => ns,
+        Err(e) => return TestResult::Failed(anyhow!("Failed to create netns: {e}")),
+    };
     let ext_netns_path = format!("/run/netns/{ns_name}");
 
     let ctx = match setup_cr_test(|_, spec| {
-        // Modify the spec to point the network namespace to the external path
         if let Some(linux) = spec.linux_mut()
             && let Some(namespaces) = linux.namespaces_mut()
         {
@@ -885,15 +920,17 @@ fn checkpoint_and_restore_in_external_netns() -> TestResult {
         Ok(c) => c,
         Err(e) => return e,
     };
+    if let Err(e) = ctx.start() {
+        return e;
+    }
+
     let id = &ctx.id;
     let bundle = &ctx.bundle;
     let image_dir = &ctx.image_dir;
     let work_dir = &ctx.work_dir;
 
-    let (stdout, _) = get_state(id, bundle.path()).unwrap();
-    let state: crate::utils::State = serde_json::from_str(&stdout).unwrap();
-    let pid = state.pid.unwrap();
-    let original_inode = std::fs::read_link(format!("/proc/{}/ns/net", pid)).unwrap();
+    let pid = get_container_pid(id, bundle.path()).unwrap();
+    let original_inode = std::fs::read_link(format!("/proc/{pid}/ns/net")).unwrap();
 
     for _ in 0..2 {
         let cp_result =
@@ -955,11 +992,9 @@ fn checkpoint_and_restore_in_external_netns() -> TestResult {
 fn checkpoint_and_restore_with_container_specific_criu_config() -> TestResult {
     let custom_log_name = "custom_criu.log";
     let ctx = match setup_cr_test(|bundle, spec| {
-        // Create custom CRIU config inside the bundle
         let custom_config_path = bundle.path().join("custom_criu.conf");
         std::fs::write(&custom_config_path, format!("log-file={custom_log_name}\n")).unwrap();
 
-        // Add annotation for youki to pick up the CRIU config
         let mut annotations = std::collections::HashMap::new();
         annotations.insert(
             "org.criu.config".to_string(),
@@ -970,12 +1005,14 @@ fn checkpoint_and_restore_with_container_specific_criu_config() -> TestResult {
         Ok(c) => c,
         Err(e) => return e,
     };
+    if let Err(e) = ctx.start() {
+        return e;
+    }
 
     let id = &ctx.id;
     let bundle = &ctx.bundle;
     let image_dir = &ctx.image_dir;
     let work_dir = &ctx.work_dir;
-
     let log_file_path = work_dir.join(custom_log_name);
 
     if let Err(e) = checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
@@ -1062,6 +1099,9 @@ fn checkpoint_and_restore_with_nested_bind_mounts() -> TestResult {
         Ok(c) => c,
         Err(e) => return e,
     };
+    if let Err(e) = ctx.start() {
+        return e;
+    }
 
     let id = &ctx.id;
     let bundle = &ctx.bundle;
@@ -1132,6 +1172,9 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
         Ok(c) => c,
         Err(e) => return e,
     };
+    if let Err(e) = ctx.start() {
+        return e;
+    }
 
     let id = &ctx.id;
     let bundle = &ctx.bundle;
@@ -1288,6 +1331,10 @@ fn checkpoint_and_restore_and_exec() -> TestResult {
         Ok(c) => c,
         Err(e) => return e,
     };
+    if let Err(e) = ctx.start() {
+        return e;
+    }
+
     let id = &ctx.id;
     let bundle = &ctx.bundle;
     let image_dir = &ctx.image_dir;
