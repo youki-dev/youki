@@ -4,6 +4,7 @@
 // not yet implemented in youki.  They are also skipped when CRIU is not
 // installed on the host.
 
+use std::cell::RefCell;
 use std::os::unix::fs::symlink;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::process::CommandExt;
@@ -41,6 +42,7 @@ fn has_cgroupns() -> bool {
 
 struct CrTestContext {
     id: String,
+    restore_id: RefCell<Option<String>>,
     bundle: tempfile::TempDir,
     image_dir: PathBuf,
     work_dir: PathBuf,
@@ -48,17 +50,32 @@ struct CrTestContext {
 
 impl Drop for CrTestContext {
     fn drop(&mut self) {
-        if let Ok(mut child) = kill_container(&self.id, &self.bundle) {
-            let _ = child.wait();
-        }
-        std::thread::sleep(Duration::from_millis(100));
-        if let Ok(mut child) = delete_container(&self.id, &self.bundle) {
-            let _ = child.wait();
+        let cleanup = |id: &str, bundle: &Path| {
+            if let Ok(mut child) = kill_container(id, bundle) {
+                let _ = child.wait();
+            }
+
+            std::thread::sleep(Duration::from_millis(100));
+
+            if let Ok(mut child) = delete_container(id, bundle) {
+                let _ = child.wait();
+            }
+        };
+
+        // Clean up primary container
+        cleanup(&self.id, self.bundle.path());
+        // Clean up the dynamically registered restore ID (if any)
+        if let Some(rid) = self.restore_id.borrow().as_ref() {
+            cleanup(rid, self.bundle.path());
         }
     }
 }
 
 impl CrTestContext {
+    fn register_restore_id(&self, rid: String) {
+        *self.restore_id.borrow_mut() = Some(rid);
+    }
+
     fn start(&self) -> Result<(), TestResult> {
         let runtime_path = get_runtime_path();
         let actual_bundle_path = self.bundle.path().join("bundle");
@@ -229,6 +246,7 @@ fn setup_cr_test(
 
     Ok(CrTestContext {
         id,
+        restore_id: std::cell::RefCell::new(None),
         bundle,
         image_dir,
         work_dir,
@@ -839,6 +857,8 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
     };
 
     let restore_id = format!("{id}-restore");
+    ctx.register_restore_id(restore_id.clone());
+
     let new_cgroup = format!("/runtime-test/cgroup-2-{restore_id}");
     let mut spec =
         oci_spec::runtime::Spec::load(bundle.path().join("bundle").join("config.json")).unwrap();
