@@ -37,3 +37,7 @@ Here is why we are writing a new container runtime in Rust.
 
 - The development of [railcar](https://github.com/oracle/railcar) has been suspended. This project was very nice but is no longer being developed. This project is inspired by it.
 - I have fun implementing this. In fact, this may be the most important.
+
+---
+
+Copyright youki a Series of LF Projects, LLC. For website terms of use, trademark policy and other project policies please see [lfprojects.org/policies/](https://lfprojects.org/policies/).
