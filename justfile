@@ -3,6 +3,8 @@ alias youki := youki-dev
 
 KIND_CLUSTER_NAME := 'youki'
 KIND_SYSTEMD_CLUSTER_NAME := 'youki-systemd'
+KIND_DEPLOY_CLUSTER_NAME := 'youki-deploy'
+YOUKI_INSTALLER_IMAGE := 'youki-installer:latest'
 
 cwd := justfile_directory()
 
@@ -99,10 +101,10 @@ kind-cluster: bin-kind
 
 # run youki with kind
 test-kind: kind-cluster
-    kubectl --context=kind-{{ KIND_CLUSTER_NAME }} apply -f tests/k8s/deploy.yaml
+    kubectl --context=kind-{{ KIND_CLUSTER_NAME }} apply -f tests/k8s/runtimeclass.yaml -f tests/k8s/deploy.yaml
     kubectl --context=kind-{{ KIND_CLUSTER_NAME }} wait deployment nginx-deployment --for condition=Available=True --timeout=90s
     kubectl --context=kind-{{ KIND_CLUSTER_NAME }} get pods -o wide
-    kubectl --context=kind-{{ KIND_CLUSTER_NAME }} delete -f tests/k8s/deploy.yaml
+    kubectl --context=kind-{{ KIND_CLUSTER_NAME }} delete -f tests/k8s/runtimeclass.yaml -f tests/k8s/deploy.yaml
 
 [private]
 kind-cluster-systemd-cgroup: bin-kind
@@ -116,10 +118,10 @@ kind-cluster-systemd-cgroup: bin-kind
 
 # run youki with kind and systemd cgroup enabled (regression test for dbus socket path)
 test-kind-systemd-cgroup: kind-cluster-systemd-cgroup
-    kubectl --context=kind-{{ KIND_SYSTEMD_CLUSTER_NAME }} apply -f tests/k8s/deploy.yaml
+    kubectl --context=kind-{{ KIND_SYSTEMD_CLUSTER_NAME }} apply -f tests/k8s/runtimeclass.yaml -f tests/k8s/deploy.yaml
     kubectl --context=kind-{{ KIND_SYSTEMD_CLUSTER_NAME }} wait deployment nginx-deployment --for condition=Available=True --timeout=90s
     kubectl --context=kind-{{ KIND_SYSTEMD_CLUSTER_NAME }} get pods -o wide
-    kubectl --context=kind-{{ KIND_SYSTEMD_CLUSTER_NAME }} delete -f tests/k8s/deploy.yaml
+    kubectl --context=kind-{{ KIND_SYSTEMD_CLUSTER_NAME }} delete -f tests/k8s/runtimeclass.yaml -f tests/k8s/deploy.yaml
 
 # Bin
 
@@ -136,6 +138,44 @@ clean-test-kind:
 # Clean kind test env (systemd cgroup variant)
 clean-test-kind-systemd-cgroup:
 	kind delete cluster --name {{ KIND_SYSTEMD_CLUSTER_NAME }}
+
+[private]
+kind-cluster-multi:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if kind get clusters 2>/dev/null | grep -qx "{{ KIND_DEPLOY_CLUSTER_NAME }}"; then
+        echo "kind cluster '{{ KIND_DEPLOY_CLUSTER_NAME }}' already exists, skipping creation"
+        exit 0
+    fi
+
+    kind create cluster \
+        --name {{ KIND_DEPLOY_CLUSTER_NAME }} \
+        --config tools/youki-deploy/kind-config.yaml
+
+[private]
+youki-installer-image:
+    docker buildx build \
+        -f tools/youki-deploy/Dockerfile \
+        -t {{ YOUKI_INSTALLER_IMAGE }} \
+        --load .
+
+# install youki on every node of a multi-node kind cluster
+kind-deploy: kind-cluster-multi youki-installer-image
+    kind load docker-image {{ YOUKI_INSTALLER_IMAGE }} --name {{ KIND_DEPLOY_CLUSTER_NAME }}
+    kubectl --context=kind-{{ KIND_DEPLOY_CLUSTER_NAME }} apply -f tools/youki-deploy/youki-deploy.yaml
+    kubectl --context=kind-{{ KIND_DEPLOY_CLUSTER_NAME }} -n youki-system rollout status ds/youki-deploy --timeout=180s
+
+# test youki on the deployed multi-node kind cluster
+test-kind-deploy: kind-deploy
+    kubectl --context=kind-{{ KIND_DEPLOY_CLUSTER_NAME }} apply -f tests/k8s/deploy.yaml
+    kubectl --context=kind-{{ KIND_DEPLOY_CLUSTER_NAME }} wait deployment nginx-deployment --for condition=Available=True --timeout=120s
+    kubectl --context=kind-{{ KIND_DEPLOY_CLUSTER_NAME }} get pods -o wide
+    kubectl --context=kind-{{ KIND_DEPLOY_CLUSTER_NAME }} delete -f tests/k8s/deploy.yaml
+
+# Clean kind cluster
+clean-test-kind-deploy:
+	kind delete cluster --name {{ KIND_DEPLOY_CLUSTER_NAME }}
 
 # misc
 

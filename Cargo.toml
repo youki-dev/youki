@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/*", "tests/contest/*", "tools/*"]
-exclude = ["experiment/seccomp", "experiment/selinux"]
+exclude = ["experiment/seccomp", "experiment/selinux", "tools/youki-deploy"]
 
 [workspace.dependencies]
 anyhow = "1.0.102"
