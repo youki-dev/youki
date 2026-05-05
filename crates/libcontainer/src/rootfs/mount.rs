@@ -33,7 +33,7 @@ use super::symlink::Symlink;
 use super::symlink::SymlinkError;
 use super::utils::{MountOptionConfig, parse_mount};
 use crate::process::channel;
-use crate::process::message::{MountIdMap, MountMsg};
+use crate::process::message::{MountIdMap, MountIdMapSource, MountMsg};
 use crate::syscall::syscall::create_syscall;
 use crate::syscall::{Syscall, SyscallError, linux};
 use crate::utils::{PathBufExt, retry};
@@ -176,11 +176,14 @@ impl Mount {
         let source = mount.source().as_ref().ok_or(MountError::NoSource)?;
         let src = self.prepare_bind_source(source, &root, container_dest)?;
 
-        let recursive = mount_option_config.apply_recursive_idmap;
+        let clone_mount_tree_recursively = mount
+            .options()
+            .as_ref()
+            .is_some_and(|options| options.iter().any(|option| option == "rbind"));
         let msg = MountMsg {
             source: src.to_string_lossy().to_string(),
             idmap: Some(idmap),
-            recursive,
+            clone_mount_tree_recursively,
         };
         comm.main.request_mount_fd(msg).map_err(|err| {
             tracing::error!("failed to request mount fd: {}", err);
@@ -209,6 +212,8 @@ impl Mount {
                 linux::MOVE_MOUNT_F_EMPTY_PATH,
             )
             .map_err(map_idmapped_syscall_error)?;
+
+        self.apply_propagation_flags(dest, mount_option_config.flags)?;
 
         if mount_option_config.flags.intersects(
             !(MsFlags::MS_REC
@@ -248,6 +253,33 @@ impl Mount {
         Ok(())
     }
 
+    fn apply_propagation_flags(&self, target: &Path, flags: MsFlags) -> Result<()> {
+        let propagation_flags = flags
+            & (MsFlags::MS_SHARED
+                | MsFlags::MS_SLAVE
+                | MsFlags::MS_PRIVATE
+                | MsFlags::MS_UNBINDABLE
+                | MsFlags::MS_REC);
+        if !propagation_flags.intersects(
+            MsFlags::MS_SHARED | MsFlags::MS_SLAVE | MsFlags::MS_PRIVATE | MsFlags::MS_UNBINDABLE,
+        ) {
+            return Ok(());
+        }
+
+        self.syscall
+            .mount(None, target, None, propagation_flags, None)
+            .map_err(|err| {
+                tracing::error!(
+                    ?target,
+                    ?propagation_flags,
+                    "failed to apply mount propagation flags"
+                );
+                err
+            })?;
+
+        Ok(())
+    }
+
     pub fn setup_mount(
         &self,
         mount: &SpecMount,
@@ -263,13 +295,19 @@ impl Mount {
                 MountError::Custom("idmapped mount requires mount fd channel".to_string())
             })?;
             let idmap = match (uid_mappings, gid_mappings) {
-                (Some(uid_mappings), Some(gid_mappings)) => MountIdMap::Mappings {
-                    uid_mappings: uid_mappings.to_vec(),
-                    gid_mappings: gid_mappings.to_vec(),
+                (Some(uid_mappings), Some(gid_mappings)) => MountIdMap {
+                    source: MountIdMapSource::Mappings {
+                        uid_mappings: uid_mappings.to_vec(),
+                        gid_mappings: gid_mappings.to_vec(),
+                    },
+                    recursive: mount_option_config.apply_recursive_idmap,
                 },
                 // No mount-specific mappings were supplied. In this case the
                 // parent process applies the container user namespace itself.
-                (None, None) => MountIdMap::ContainerUserns,
+                (None, None) => MountIdMap {
+                    source: MountIdMapSource::ContainerUserns,
+                    recursive: mount_option_config.apply_recursive_idmap,
+                },
                 _ => {
                     return Err(MountError::Custom(
                         "mount uid/gid mappings must be specified together".to_string(),
@@ -1964,12 +2002,100 @@ mod tests {
         let req = main_receiver.wait_for_mount_fd_request()?;
         assert!(matches!(
             req.idmap,
-            Some(crate::process::message::MountIdMap::ContainerUserns)
+            Some(crate::process::message::MountIdMap {
+                source: crate::process::message::MountIdMapSource::ContainerUserns,
+                recursive: false,
+            })
         ));
 
         main_sender.close()?;
         init_sender.close()?;
         init_receiver.close()?;
+
+        Ok(())
+    }
+
+    fn mount_fd_request_for_options(options: Vec<String>) -> Result<MountMsg> {
+        let tmp = tempfile::tempdir()?;
+        let rootfs = tmp.path().join("rootfs");
+        let source_dir = tmp.path().join("source");
+        std::fs::create_dir_all(&rootfs)?;
+        std::fs::create_dir_all(&source_dir)?;
+
+        let uid_mapping = LinuxIdMappingBuilder::default()
+            .container_id(0u32)
+            .host_id(0u32)
+            .size(1u32)
+            .build()?;
+        let gid_mapping = LinuxIdMappingBuilder::default()
+            .container_id(0u32)
+            .host_id(0u32)
+            .size(1u32)
+            .build()?;
+        let mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/mnt"))
+            .typ("bind")
+            .source(&source_dir)
+            .options(options)
+            .uid_mappings(vec![uid_mapping])
+            .gid_mappings(vec![gid_mapping])
+            .build()?;
+
+        let mount_options = MountOptions {
+            root: &rootfs,
+            label: None,
+            cgroup_ns: true,
+        };
+
+        let m = Mount::new();
+        let (mut main_sender, mut main_receiver) = channel::main_channel()?;
+        let (mut init_sender, mut init_receiver) = channel::init_channel()?;
+        init_sender.send_mount_fd_error("boom".to_string())?;
+        let mut comm = MountChannels {
+            main: &mut main_sender,
+            init: &mut init_receiver,
+        };
+
+        let res = m.setup_mount(&mount, &mount_options, Some(&mut comm));
+        assert!(matches!(
+            res,
+            Err(MountError::Custom(msg)) if msg == "boom"
+        ));
+        let req = main_receiver.wait_for_mount_fd_request()?;
+
+        main_sender.close()?;
+        init_sender.close()?;
+        init_receiver.close()?;
+
+        Ok(req)
+    }
+
+    #[test]
+    fn setup_mount_idmapped_bind_idmap_clones_top_mount_without_recursive_idmap() -> Result<()> {
+        let req = mount_fd_request_for_options(vec!["bind".to_string(), "idmap".to_string()])?;
+
+        assert!(!req.clone_mount_tree_recursively);
+        assert!(!req.idmap.as_ref().unwrap().recursive);
+
+        Ok(())
+    }
+
+    #[test]
+    fn setup_mount_idmapped_rbind_idmap_clones_tree_without_recursive_idmap() -> Result<()> {
+        let req = mount_fd_request_for_options(vec!["rbind".to_string(), "idmap".to_string()])?;
+
+        assert!(req.clone_mount_tree_recursively);
+        assert!(!req.idmap.as_ref().unwrap().recursive);
+
+        Ok(())
+    }
+
+    #[test]
+    fn setup_mount_idmapped_rbind_ridmap_clones_tree_with_recursive_idmap() -> Result<()> {
+        let req = mount_fd_request_for_options(vec!["rbind".to_string(), "ridmap".to_string()])?;
+
+        assert!(req.clone_mount_tree_recursively);
+        assert!(req.idmap.as_ref().unwrap().recursive);
 
         Ok(())
     }
@@ -1983,14 +2109,14 @@ mod tests {
         std::fs::create_dir_all(&source_dir)?;
 
         let uid_mapping = LinuxIdMappingBuilder::default()
-            .container_id(0)
-            .host_id(0)
-            .size(1)
+            .container_id(0u32)
+            .host_id(0u32)
+            .size(1u32)
             .build()?;
         let gid_mapping = LinuxIdMappingBuilder::default()
-            .container_id(0)
-            .host_id(0)
-            .size(1)
+            .container_id(0u32)
+            .host_id(0u32)
+            .size(1u32)
             .build()?;
 
         let mount = SpecMountBuilder::default()

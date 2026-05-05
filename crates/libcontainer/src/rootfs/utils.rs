@@ -467,7 +467,11 @@ mod tests {
                     | MsFlags::MS_NOATIME
                     | MsFlags::MS_NODIRATIME
                     | MsFlags::MS_BIND
-                    | MsFlags::MS_UNBINDABLE,
+                    | MsFlags::MS_UNBINDABLE
+                    | MsFlags::MS_PRIVATE
+                    | MsFlags::MS_SHARED
+                    | MsFlags::MS_SLAVE
+                    | MsFlags::MS_REC,
                 data: vec![],
                 rec_attr: None,
                 apply_idmap: false,
@@ -522,6 +526,18 @@ mod tests {
 
         let mount_option_config = parse_mount(
             &MountBuilder::default()
+                .options(vec![
+                    "bind".to_string(),
+                    "idmap".to_string(),
+                    "shared".to_string(),
+                ])
+                .build()?,
+        )?;
+        assert!(mount_option_config.apply_idmap);
+        assert!(mount_option_config.flags.contains(MsFlags::MS_SHARED));
+
+        let mount_option_config = parse_mount(
+            &MountBuilder::default()
                 .options(vec!["ridmap".to_string()])
                 .build()?,
         )?;
@@ -529,9 +545,9 @@ mod tests {
         assert!(mount_option_config.apply_recursive_idmap);
 
         let mapping = LinuxIdMappingBuilder::default()
-            .container_id(0)
-            .host_id(0)
-            .size(1)
+            .container_id(0u32)
+            .host_id(0u32)
+            .size(1u32)
             .build()?;
         let mount_option_config = parse_mount(
             &MountBuilder::default()

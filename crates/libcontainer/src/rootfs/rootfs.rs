@@ -7,7 +7,7 @@ use oci_spec::runtime::{Linux, Spec};
 use super::device::Device;
 use super::mount::{Mount, MountChannels, MountOptions};
 use super::symlink::Symlink;
-use super::utils::default_devices;
+use super::utils::{default_devices, parse_mount};
 use super::{Result, RootfsError};
 use crate::error::MissingSpecError;
 use crate::syscall::Syscall;
@@ -144,6 +144,44 @@ impl RootFS {
                         ?err,
                         ?flags,
                         "failed to adjust the mount propagation type of the root"
+                    );
+                    err
+                })?;
+        }
+
+        Ok(())
+    }
+
+    pub fn adjust_mounts_propagation(&self, spec: &Spec) -> Result<()> {
+        let Some(mounts) = spec.mounts() else {
+            return Ok(());
+        };
+
+        for mount in mounts {
+            let config = parse_mount(mount)?;
+            let propagation_flags = config.flags
+                & (MsFlags::MS_SHARED
+                    | MsFlags::MS_SLAVE
+                    | MsFlags::MS_PRIVATE
+                    | MsFlags::MS_UNBINDABLE
+                    | MsFlags::MS_REC);
+            if !propagation_flags.intersects(
+                MsFlags::MS_SHARED
+                    | MsFlags::MS_SLAVE
+                    | MsFlags::MS_PRIVATE
+                    | MsFlags::MS_UNBINDABLE,
+            ) {
+                continue;
+            }
+
+            self.syscall
+                .mount(None, mount.destination(), None, propagation_flags, None)
+                .map_err(|err| {
+                    tracing::error!(
+                        ?err,
+                        destination = ?mount.destination(),
+                        ?propagation_flags,
+                        "failed to adjust mount propagation"
                     );
                     err
                 })?;

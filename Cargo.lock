@@ -579,7 +579,7 @@ dependencies = [
  "libcontainer",
  "nix 0.29.0",
  "num_cpus",
- "oci-spec 0.8.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "oci-spec 0.8.4 (git+https://github.com/youki-dev/oci-spec-rs?rev=d21e23b70876e47b8dacb10844c9a39ff77054cb)",
  "pnet_datalink",
  "procfs",
  "rand 0.9.2",
@@ -3653,7 +3653,7 @@ dependencies = [
  "netlink-packet-route",
  "netlink-sys",
  "nix 0.29.0",
- "oci-spec 0.8.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "oci-spec 0.8.4 (git+https://github.com/youki-dev/oci-spec-rs?rev=d21e23b70876e47b8dacb10844c9a39ff77054cb)",
  "tempfile",
 ]
 

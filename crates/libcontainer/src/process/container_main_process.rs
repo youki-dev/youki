@@ -19,7 +19,7 @@ use crate::network::network_device::dev_change_net_namespace;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::fork::{self, CloneCb};
 use crate::process::intel_rdt::setup_intel_rdt;
-use crate::process::message::{Message, MountIdMap, MountMsg};
+use crate::process::message::{Message, MountIdMapSource, MountMsg};
 use crate::process::{channel, container_intermediate_process};
 #[cfg(feature = "libseccomp")]
 use crate::seccomp;
@@ -471,17 +471,18 @@ fn container_userns_fd(init_pid: Pid) -> Result<OwnedFd> {
 }
 
 fn mount_idmapped_fd(syscall: &dyn Syscall, req: &MountMsg, init_pid: Pid) -> Result<OwnedFd> {
-    let userns_fd = match req.idmap.as_ref().ok_or_else(|| {
+    let idmap = req.idmap.as_ref().ok_or_else(|| {
         ProcessError::MountRequest("idmapped mount request missing mappings".to_string())
-    })? {
-        MountIdMap::Mappings {
+    })?;
+    let userns_fd = match &idmap.source {
+        MountIdMapSource::Mappings {
             uid_mappings,
             gid_mappings,
         } => create_userns_fd(syscall, uid_mappings, gid_mappings)?,
-        MountIdMap::ContainerUserns => container_userns_fd(init_pid)?,
+        MountIdMapSource::ContainerUserns => container_userns_fd(init_pid)?,
     };
     let mut open_flags = linux::OPEN_TREE_CLONE | linux::OPEN_TREE_CLOEXEC | linux::AT_EMPTY_PATH;
-    if req.recursive {
+    if req.clone_mount_tree_recursively {
         open_flags |= linux::AT_RECURSIVE;
     }
     let mount_fd = Syscall::open_tree(
@@ -492,7 +493,7 @@ fn mount_idmapped_fd(syscall: &dyn Syscall, req: &MountMsg, init_pid: Pid) -> Re
     )
     .map_err(ProcessError::SyscallOther)?;
     let mut setattr_flags = linux::AT_EMPTY_PATH;
-    if req.recursive {
+    if idmap.recursive {
         setattr_flags |= linux::AT_RECURSIVE;
     }
     let mount_attr = linux::MountAttr {
@@ -839,11 +840,14 @@ mod tests {
 
         let msg = MountMsg {
             source: src.to_string_lossy().to_string(),
-            idmap: Some(crate::process::message::MountIdMap::Mappings {
-                uid_mappings: vec![uid_mapping],
-                gid_mappings: vec![gid_mapping],
+            idmap: Some(crate::process::message::MountIdMap {
+                source: crate::process::message::MountIdMapSource::Mappings {
+                    uid_mappings: vec![uid_mapping],
+                    gid_mappings: vec![gid_mapping],
+                },
+                recursive: false,
             }),
-            recursive: false,
+            clone_mount_tree_recursively: false,
         };
 
         let syscall = SyscallType::Linux.create_syscall();

@@ -136,6 +136,10 @@ pub fn container_init_process(
                 tracing::error!(?err, "failed to adjust root mount propagation");
                 InitProcessError::RootFS(err)
             })?;
+        rootfs.adjust_mounts_propagation(ctx.spec).map_err(|err| {
+            tracing::error!(?err, "failed to adjust mount propagation");
+            InitProcessError::RootFS(err)
+        })?;
 
         reopen_dev_null().map_err(|err| {
             tracing::error!(?err, "failed to reopen /dev/null");

@@ -52,11 +52,17 @@ impl fmt::Display for Message {
 pub struct MountMsg {
     pub source: String,
     pub idmap: Option<MountIdMap>,
+    pub clone_mount_tree_recursively: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MountIdMap {
+    pub source: MountIdMapSource,
     pub recursive: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum MountIdMap {
+pub enum MountIdMapSource {
     Mappings {
         uid_mappings: Vec<LinuxIdMapping>,
         gid_mappings: Vec<LinuxIdMapping>,

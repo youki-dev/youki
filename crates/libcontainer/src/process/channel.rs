@@ -185,7 +185,7 @@ impl MainReceiver {
                 expected: Message::MountFdPlease(MountMsg {
                     source: String::new(),
                     idmap: None,
-                    recursive: false,
+                    clone_mount_tree_recursively: false,
                 }),
                 received: msg,
             }),

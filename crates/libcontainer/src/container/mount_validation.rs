@@ -10,6 +10,15 @@ fn container_userns_has_mappings(linux: Option<&Linux>) -> bool {
     let Some(linux) = linux else {
         return false;
     };
+    let has_userns_path = linux.namespaces().as_ref().is_some_and(|namespaces| {
+        namespaces
+            .iter()
+            .any(|ns| ns.typ() == LinuxNamespaceType::User && ns.path().is_some())
+    });
+    if has_userns_path {
+        return true;
+    }
+
     let has_userns = linux.namespaces().as_ref().is_some_and(|namespaces| {
         namespaces
             .iter()
@@ -125,6 +134,19 @@ mod tests {
             .namespaces(vec![
                 LinuxNamespaceBuilder::default()
                     .typ(LinuxNamespaceType::User)
+                    .build()
+                    .unwrap(),
+            ])
+            .build()
+            .unwrap()
+    }
+
+    fn linux_with_joined_userns() -> oci_spec::runtime::Linux {
+        LinuxBuilder::default()
+            .namespaces(vec![
+                LinuxNamespaceBuilder::default()
+                    .typ(LinuxNamespaceType::User)
+                    .path(PathBuf::from("/proc/123/ns/user"))
                     .build()
                     .unwrap(),
             ])
@@ -255,6 +277,17 @@ mod tests {
             .build()
             .unwrap();
         let linux = linux_with_new_userns_mappings();
+        let res = validate_idmapped_mounts(&[mount], Some(&linux));
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn validate_idmapped_mounts_allows_implied_idmap_with_joined_userns() {
+        let mount = base_mount()
+            .options(vec!["bind".to_string(), "idmap".to_string()])
+            .build()
+            .unwrap();
+        let linux = linux_with_joined_userns();
         let res = validate_idmapped_mounts(&[mount], Some(&linux));
         assert!(res.is_ok());
     }
