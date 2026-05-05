@@ -76,6 +76,7 @@ impl CrTestContext {
         *self.restore_id.borrow_mut() = Some(rid);
     }
 
+    // TODO: Consider extracting this into test_utils.rs as run_container_with_console (see issue #3529)
     fn start(&self) -> Result<(), TestResult> {
         let runtime_path = get_runtime_path();
         let actual_bundle_path = self.bundle.path().join("bundle");
@@ -882,16 +883,17 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
     // We unconditionally send a kill signal to ensure cleanup, safely ignoring any errors
     // if the daemon has already exited.
     let mut criu_daemon = criu_daemon_child;
-    let _ = criu_daemon.kill();
-    let _ = criu_daemon.wait();
 
     if let Err(e) = restore_result {
+        let _ = criu_daemon.kill();
+        let _ = criu_daemon.wait();
         let _ = checkpoint_child.kill();
         let _ = checkpoint_child.wait();
         return TestResult::Failed(anyhow!("restore --lazy-pages failed: {e}"));
     }
 
     // Wait for background jobs to finish
+    let _ = criu_daemon.wait();
     let _ = checkpoint_child.wait();
 
     if let Err(e) = wait_for_state(
