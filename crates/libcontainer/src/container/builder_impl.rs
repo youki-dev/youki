@@ -95,19 +95,19 @@ impl ContainerBuilderImpl {
         let base_cgroups_path = utils::get_cgroup_path(linux.cgroups_path(), &self.container_id);
         let mut final_cgroups_path = base_cgroups_path;
 
-        if let Some(sub_cgroup_path) = &self.sub_cgroup_path {
-            if sub_cgroup_path != "/" {
-                let potential_path = final_cgroups_path.join(sub_cgroup_path);
-                let normalized = potential_path.normalize();
+        if let Some(sub_cgroup_path) = &self.sub_cgroup_path
+            && sub_cgroup_path != "/"
+        {
+            let potential_path = final_cgroups_path.join(sub_cgroup_path);
+            let normalized = potential_path.normalize();
 
-                if !normalized.starts_with(&final_cgroups_path) {
-                    return Err(LibcontainerError::OtherCgroup(format!(
-                        "{} is not a sub cgroup path",
-                        sub_cgroup_path
-                    )));
-                }
-                final_cgroups_path = normalized;
+            if !normalized.starts_with(&final_cgroups_path) {
+                return Err(LibcontainerError::OtherCgroup(format!(
+                    "{} is not a sub cgroup path",
+                    sub_cgroup_path
+                )));
             }
+            final_cgroups_path = normalized;
         }
 
         let cgroup_config = libcgroups::common::CgroupConfig {
