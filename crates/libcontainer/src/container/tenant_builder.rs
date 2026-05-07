@@ -241,6 +241,8 @@ impl TenantContainerBuilder {
         let container = self.load_container_state(container_dir.clone())?;
         let mut spec = self.load_init_spec(&container)?;
         self.adapt_spec_for_tenant(&mut spec, &container)?;
+        // validate terminal field against console socket presence before any side effects
+        self.base.check_terminal(&spec, self.detached)?;
 
         tracing::debug!("{:#?}", spec);
 

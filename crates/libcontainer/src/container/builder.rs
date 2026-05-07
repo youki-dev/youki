@@ -1,9 +1,11 @@
 use std::os::fd::OwnedFd;
 use std::path::PathBuf;
 
+use oci_spec::runtime::Spec;
+
 use super::init_builder::InitContainerBuilder;
 use super::tenant_builder::TenantContainerBuilder;
-use crate::error::{ErrInvalidID, LibcontainerError};
+use crate::error::{ErrInvalidID, ErrInvalidSpec, LibcontainerError};
 use crate::syscall::syscall::SyscallType;
 use crate::utils::PathBufExt;
 use crate::workload::{self, Executor};
@@ -336,6 +338,28 @@ impl ContainerBuilder {
         self.stderr = Some(stderr.into());
         self
     }
+
+    pub(super) fn check_terminal(
+        &self,
+        spec: &Spec,
+        detached: bool,
+    ) -> Result<(), LibcontainerError> {
+        let terminal = spec
+            .process()
+            .as_ref()
+            .and_then(|p| p.terminal())
+            .unwrap_or(false);
+        let has_console_socket = self.console_socket.is_some();
+        let requires_console_socket = detached && terminal;
+
+        if requires_console_socket && !has_console_socket {
+            Err(ErrInvalidSpec::ConsoleSocketRequired)?;
+        }
+        if !requires_console_socket && has_console_socket {
+            Err(ErrInvalidSpec::InvalidConsoleSocket)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -345,8 +369,10 @@ mod tests {
 
     use anyhow::{Context, Result};
     use nix::unistd::pipe;
+    use oci_spec::runtime::{ProcessBuilder, SpecBuilder};
 
     use crate::container::builder::ContainerBuilder;
+    use crate::error::{ErrInvalidSpec, LibcontainerError};
     use crate::syscall::syscall::SyscallType;
 
     #[test]
@@ -445,5 +471,99 @@ mod tests {
             Some(stderr_raw)
         );
         Ok(())
+    }
+
+    fn make_builder(console_socket: Option<&str>) -> ContainerBuilder {
+        ContainerBuilder::new("test".to_owned(), SyscallType::default())
+            .with_console_socket(console_socket)
+    }
+
+    fn make_spec(terminal: bool) -> oci_spec::runtime::Spec {
+        let process = ProcessBuilder::default()
+            .terminal(terminal)
+            .args(vec!["sh".to_owned()])
+            .build()
+            .expect("failed to build process spec");
+        SpecBuilder::default()
+            .process(process)
+            .build()
+            .expect("failed to build spec")
+    }
+
+    #[test]
+    fn test_check_terminal_ok_terminal_true_with_socket_detached() {
+        assert!(
+            make_builder(Some("/tmp/console.sock"))
+                .check_terminal(&make_spec(true), true)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_check_terminal_ok_terminal_false_no_socket_detached() {
+        assert!(
+            make_builder(None)
+                .check_terminal(&make_spec(false), true)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_check_terminal_ok_terminal_false_no_socket_foreground() {
+        assert!(
+            make_builder(None)
+                .check_terminal(&make_spec(false), false)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_check_terminal_err_terminal_true_no_socket_detached() {
+        let err = make_builder(None)
+            .check_terminal(&make_spec(true), true)
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                LibcontainerError::InvalidSpec(ErrInvalidSpec::ConsoleSocketRequired)
+            ),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_check_terminal_err_terminal_false_with_socket_detached() {
+        let err = make_builder(Some("/tmp/console.sock"))
+            .check_terminal(&make_spec(false), true)
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                LibcontainerError::InvalidSpec(ErrInvalidSpec::InvalidConsoleSocket)
+            ),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_check_terminal_err_terminal_true_with_socket_foreground() {
+        let err = make_builder(Some("/tmp/console.sock"))
+            .check_terminal(&make_spec(true), false)
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                LibcontainerError::InvalidSpec(ErrInvalidSpec::InvalidConsoleSocket)
+            ),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_check_terminal_ok_no_process_in_spec() {
+        let spec = SpecBuilder::default()
+            .build()
+            .expect("failed to build spec");
+        assert!(make_builder(None).check_terminal(&spec, true).is_ok());
     }
 }
