@@ -155,7 +155,7 @@ sudo ./youki delete tutorial_container
 
 The example above shows how to run Youki in a 'rootful' way. To run it without root permissions, that is, in rootless mode, few changes are required.
 
-First, after exporting the rootfs from docker, while generating the config, you will need to pass the rootless flag. This will generate the config withe the options needed for rootless operation of the container.
+First, after exporting the rootfs from docker, while generating the config, you will need to pass the rootless flag. This will generate the config with the options needed for rootless operation of the container.
 
 ```console
 ../youki spec --rootless
