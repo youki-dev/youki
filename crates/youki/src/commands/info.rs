@@ -224,7 +224,7 @@ pub fn print_namespaces() {
             }
         } else {
             println!("{:<18}UNKNOWN", "Namespaces");
-            // we don't return as  we can atleast try and see if anything is enabled
+            // we don't return as  we can at least try and see if anything is enabled
         }
 
         // mount namespace is always enabled if namespaces are enabled

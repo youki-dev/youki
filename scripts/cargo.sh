@@ -19,9 +19,9 @@ set -euo pipefail
 # build scripts, proc macros). The computed value of the target
 # directory can be obtained with `cargo.sh --print-target-dir`.
 #
-# Lastly, when using `cross` this scrips sets some configuration
+# Lastly, when using `cross` this scripts sets some configuration
 # to allow running `youki` tests inside the `cross`` container.
-# Please check the comments in this scrips to learm more about that.
+# Please check the comments in this scripts to learm more about that.
 #
 # Limitations:
 #  * You **must** use the `CARGO_BUILD_TARGET` environment variable

@@ -185,7 +185,7 @@ fn combine_l3_cache_and_mem_bw_schemas(
             Some(output.join("\n"))
         }
         (Some(_), None) => {
-            // Apprarently the "MB:"-lines don't need to be removed in this case?
+            // Apparently the "MB:"-lines don't need to be removed in this case?
             l3_cache_schema.to_owned()
         }
         (None, Some(_)) => mem_bw_schema.to_owned(),
