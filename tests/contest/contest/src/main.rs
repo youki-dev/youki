@@ -11,6 +11,7 @@ use tests::cgroups;
 
 use crate::tests::checkpoint_restore::get_checkpoint_restore_tests;
 use crate::tests::create_runtime::get_create_runtime_tests;
+use crate::tests::create_runtime_fail::get_create_runtime_fail_tests;
 use crate::tests::delete::get_delete_test;
 use crate::tests::devices::get_devices_test;
 use crate::tests::domainname::get_domainname_tests;
@@ -134,6 +135,7 @@ fn main() -> Result<()> {
     let prestart = get_prestart_tests();
     let create_runtime = get_create_runtime_tests();
     let prestart_fail = get_prestart_fail_tests();
+    let create_runtime_fail = get_create_runtime_fail_tests();
     let cgroup_v1_pids = cgroups::pids::get_test_group();
     let cgroup_v1_cpu = cgroups::cpu::v1::get_test_group();
     let cgroup_v2_cpu = cgroups::cpu::v2::get_test_group();
@@ -190,6 +192,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(prestart));
     tm.add_test_group(Box::new(create_runtime));
     tm.add_test_group(Box::new(prestart_fail));
+    tm.add_test_group(Box::new(create_runtime_fail));
     tm.add_test_group(Box::new(cgroup_v1_pids));
     tm.add_test_group(Box::new(cgroup_v1_cpu));
     tm.add_test_group(Box::new(cgroup_v2_cpu));
