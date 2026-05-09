@@ -100,9 +100,9 @@ jobs:
           (cd ~/criu && sudo make -j $(nproc) install-criu)
           rm -rf ~/criu
           criu --version
-      - name: Install runc 1.4.0
+      - name: Install runc 1.4.1
         run: |
-          wget -q https://github.com/opencontainers/runc/releases/download/v1.4.0/runc.amd64
+          wget -q https://github.com/opencontainers/runc/releases/download/v1.4.1/runc.amd64
           sudo mv runc.amd64 /usr/bin/runc
           sudo chmod 755 /usr/bin/runc
       - name: Build
