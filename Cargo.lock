@@ -4243,8 +4243,7 @@ dependencies = [
 [[package]]
 name = "rust-criu"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d92037bbe1317b5b615ce32efd5fb63538e3fd57ba424d6f23fe3eb0554294ed"
+source = "git+https://github.com/checkpoint-restore/rust-criu?branch=main#68fc6c927e3b3a53d62997c8ea69b859bd09a0df"
 dependencies = [
  "anyhow",
  "libc",
