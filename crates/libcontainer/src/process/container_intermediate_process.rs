@@ -269,20 +269,18 @@ fn apply_cgroups<
         IntermediateProcessError::Cgroup(err.to_string())
     })?;
 
-    if let Some(resources) = resources {
-        if init {
-            let controller_opt = libcgroups::common::ControllerOpt {
-                resources,
-                freezer_state: None,
-                oom_score_adj: None,
-                disable_oom_killer: false,
-            };
+    if init && let Some(resources) = resources {
+        let controller_opt = libcgroups::common::ControllerOpt {
+            resources,
+            freezer_state: None,
+            oom_score_adj: None,
+            disable_oom_killer: false,
+        };
 
-            cmanager.apply(&controller_opt).map_err(|err| {
-                tracing::error!(?pid, ?err, ?init, "failed to apply cgroup");
-                IntermediateProcessError::Cgroup(err.to_string())
-            })?;
-        }
+        cmanager.apply(&controller_opt).map_err(|err| {
+            tracing::error!(?pid, ?err, ?init, "failed to apply cgroup");
+            IntermediateProcessError::Cgroup(err.to_string())
+        })?;
     }
 
     Ok(())
