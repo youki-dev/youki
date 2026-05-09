@@ -18,8 +18,18 @@ fi
 
 LOGFILE="${ROOT}/test.log"
 
+# Pick arch-specific bundle when available.
+# Fall back to bundle.tar.gz (x86_64) if there is no
+# arch-specific tarball.
 if [ ! -f ${ROOT}/bundle.tar.gz ]; then
-    cp ${ROOT}/tests/contest/contest/bundle.tar.gz ${ROOT}/bundle.tar.gz
+    ARCH=$(uname -m)
+    ARCH_BUNDLE="${ROOT}/tests/contest/contest/bundle-${ARCH}.tar.gz"
+    DEFAULT_BUNDLE="${ROOT}/tests/contest/contest/bundle.tar.gz"
+    if [ -f "${ARCH_BUNDLE}" ]; then
+        cp "${ARCH_BUNDLE}" "${ROOT}/bundle.tar.gz"
+    else
+        cp "${DEFAULT_BUNDLE}" "${ROOT}/bundle.tar.gz"
+    fi
 fi
 touch ${LOGFILE}
 
