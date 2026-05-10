@@ -71,6 +71,10 @@ pub enum ParseLineError {
 
 type Result<T> = std::result::Result<T, IntelRdtError>;
 
+/// Removes the main resource control group (CLOS) directory for the container.
+/// This function includes a safety check (`parent == dir`) to ensure that only directories
+/// immediately under the resctrl mount point are deleted, preventing accidental deletion
+/// of nested kernel files or other sensitive directories.
 pub fn delete_resctrl_subdirectory(path: &Path) -> Result<()> {
     let dir = find_resctrl_mount_point().map_err(|err| {
         tracing::error!("failed to find resctrl mount point: {err}");
@@ -98,6 +102,11 @@ pub fn delete_resctrl_subdirectory(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Removes the dedicated monitoring group subdirectory (`mon_groups/<container_id>`).
+/// Unlike `delete_resctrl_subdirectory`, this does not enforce the `parent == dir` safety check,
+/// because monitoring groups are intentionally nested deeper in the filesystem tree
+/// (either under a specific CLOS ID or under the root `mon_groups`). The path provided here
+/// is inherently trusted as it was resolved securely during container creation.
 pub fn delete_resctrl_monitoring_subdirectory(path: &Path) -> Result<()> {
     if path.exists() {
         fs::remove_dir(path).map_err(|err| {
