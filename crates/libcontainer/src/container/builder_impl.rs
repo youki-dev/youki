@@ -12,7 +12,9 @@ use super::{Container, ContainerStatus};
 use crate::error::{CreateContainerError, LibcontainerError, MissingSpecError};
 use crate::notify_socket::NotifyListener;
 use crate::process::args::{ContainerArgs, ContainerType};
-use crate::process::intel_rdt::delete_resctrl_subdirectory;
+use crate::process::intel_rdt::{
+    delete_resctrl_monitoring_subdirectory, delete_resctrl_subdirectory,
+};
 use crate::process::{self};
 use crate::syscall::syscall::SyscallType;
 use crate::user_ns::UserNamespaceConfig;
@@ -192,7 +194,7 @@ impl ContainerBuilderImpl {
             pid_file: self.pid_file.to_owned(),
         };
 
-        let (init_pid, need_to_clean_up_intel_rdt_dir) =
+        let (init_pid, intel_rdt_dir, intel_rdt_monitoring_dir) =
             process::container_main_process::container_main_process(&container_args).map_err(
                 |err| {
                     tracing::error!("failed to run container process {}", err);
@@ -206,7 +208,8 @@ impl ContainerBuilderImpl {
                 .set_status(ContainerStatus::Created)
                 .set_creator(nix::unistd::geteuid().as_raw())
                 .set_pid(init_pid.as_raw())
-                .set_clean_up_intel_rdt_directory(need_to_clean_up_intel_rdt_dir)
+                .set_intel_rdt_dir(intel_rdt_dir)
+                .set_intel_rdt_monitoring_dir(intel_rdt_monitoring_dir)
                 .save()?;
         }
 
@@ -231,9 +234,16 @@ impl ContainerBuilderImpl {
         }
 
         if let Some(container) = &self.container {
-            if let Some(true) = container.clean_up_intel_rdt_subdirectory() {
-                if let Err(e) = delete_resctrl_subdirectory(container.id()) {
-                    tracing::error!(id = ?container.id(), error = ?e, "failed to delete resctrl subdirectory");
+            if let Some(path) = container.intel_rdt_monitoring_dir() {
+                if let Err(e) = delete_resctrl_monitoring_subdirectory(path) {
+                    tracing::error!(path = ?path, error = ?e, "failed to delete resctrl monitoring subdirectory");
+                    errors.push(e.to_string());
+                }
+            }
+
+            if let Some(path) = container.intel_rdt_dir() {
+                if let Err(e) = delete_resctrl_subdirectory(path) {
+                    tracing::error!(path = ?path, error = ?e, "failed to delete resctrl subdirectory");
                     errors.push(e.to_string());
                 }
             }

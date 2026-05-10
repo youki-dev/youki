@@ -119,14 +119,14 @@ pub struct State {
     pub creator: Option<u32>,
     // Specifies if systemd should be used to manage cgroups
     pub use_systemd: bool,
-    // Specifies if the Intel RDT subdirectory needs be cleaned up.
-    pub clean_up_intel_rdt_subdirectory: Option<bool>,
-    /// Indicates whether a dedicated monitoring group subdirectory (`mon_groups/<container_id>`)
-    /// was created for this container within the resctrl filesystem.
+    // Specifies the Intel RDT subdirectory path that needs to be cleaned up.
+    pub intel_rdt_dir: Option<PathBuf>,
+    /// Indicates the dedicated monitoring group subdirectory (`mon_groups/<container_id>`)
+    /// within the resctrl filesystem that needs to be cleaned up.
     /// As per OCI runtime-spec v1.3.0, if `enable_monitoring` is true, the runtime MUST
     /// create this group and MUST remove it when the container is deleted.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub clean_up_intel_rdt_monitoring: Option<bool>,
+    pub intel_rdt_monitoring_dir: Option<PathBuf>,
 }
 
 impl State {
@@ -148,8 +148,8 @@ impl State {
             created: None,
             creator: None,
             use_systemd: false,
-            clean_up_intel_rdt_subdirectory: None,
-            clean_up_intel_rdt_monitoring: None,
+            intel_rdt_dir: None,
+            intel_rdt_monitoring_dir: None,
         }
     }
 

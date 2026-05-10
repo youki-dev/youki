@@ -71,13 +71,13 @@ pub enum ParseLineError {
 
 type Result<T> = std::result::Result<T, IntelRdtError>;
 
-pub fn delete_resctrl_subdirectory(id: &str) -> Result<()> {
+pub fn delete_resctrl_subdirectory(path: &Path) -> Result<()> {
     let dir = find_resctrl_mount_point().map_err(|err| {
-        tracing::error!("failed to find resctrl mount point: {}", err);
+        tracing::error!("failed to find resctrl mount point: {err}");
         err
     })?;
-    let container_resctrl_path = dir.join(id).canonicalize().map_err(|err| {
-        tracing::error!(?dir, ?id, "failed to canonicalize path: {}", err);
+    let container_resctrl_path = path.canonicalize().map_err(|err| {
+        tracing::error!(?dir, ?path, "failed to canonicalize path: {err}");
         IntelRdtError::Canonicalize(err)
     })?;
     match container_resctrl_path.parent() {
@@ -86,7 +86,7 @@ pub fn delete_resctrl_subdirectory(id: &str) -> Result<()> {
         Some(parent) => {
             if parent == dir && container_resctrl_path.exists() {
                 fs::remove_dir(&container_resctrl_path).map_err(|err| {
-                    tracing::error!(path = ?container_resctrl_path, "failed to remove resctrl subdirectory: {}", err);
+                    tracing::error!(path = ?container_resctrl_path, "failed to remove resctrl subdirectory: {err}");
                     IntelRdtError::RemoveSubdirectory(err)
                 })?;
             } else {
@@ -95,6 +95,20 @@ pub fn delete_resctrl_subdirectory(id: &str) -> Result<()> {
         }
         None => return Err(IntelRdtError::NoResctrlSubdirectoryParent),
     }
+    Ok(())
+}
+
+pub fn delete_resctrl_monitoring_subdirectory(path: &Path) -> Result<()> {
+    if path.exists() {
+        fs::remove_dir(path).map_err(|err| {
+            tracing::error!(
+                ?path,
+                "failed to remove resctrl monitoring subdirectory: {err}"
+            );
+            IntelRdtError::RemoveSubdirectory(err)
+        })?;
+    }
+
     Ok(())
 }
 
@@ -122,50 +136,85 @@ pub fn find_resctrl_mount_point() -> Result<PathBuf> {
     Err(IntelRdtError::ResctrlMountPointNotFound)
 }
 
-/// Adds container PID to the tasks file in the correct resctrl
-/// pseudo-filesystem subdirectory.  Creates the directory if needed based on
-/// the rules in Linux OCI runtime config spec.
-fn write_container_pid_to_resctrl_tasks(
-    path: &Path,
-    id: &str,
+/// Sets up the main resource control group (CLOS) for the container.
+/// This involves creating the subdirectory within the resctrl filesystem if needed,
+/// and adding the container's PID to the group's `tasks` file.
+///
+/// Returns `true` if the runtime created the directory, or `false` if it already existed.
+fn setup_resctrl_group(
+    resctrl_container_dir: &Path,
     init_pid: Pid,
     only_clos_id_set: bool,
 ) -> Result<bool> {
-    let tasks = path.to_owned().join(id).join("tasks");
-    let dir = tasks.parent();
-    match dir {
-        None => Err(IntelRdtError::InvalidResctrlDirectory),
-        Some(resctrl_container_dir) => {
-            let mut created_dir = false;
-            if !resctrl_container_dir.exists() {
-                if only_clos_id_set {
-                    // Directory doesn't exist and only clos_id is set: error out.
-                    return Err(IntelRdtError::NoClosIDDirectory);
-                }
-                fs::create_dir_all(resctrl_container_dir).map_err(|err| {
-                    tracing::error!("failed to create resctrl subdirectory: {}", err);
-                    IntelRdtError::CreateClosIDDirectory(err)
-                })?;
-                created_dir = true;
-            }
-            // TODO(ipuustin): File doesn't need to be created, but it's easier
-            // to test this way. Fix the tests so that the fake resctrl
-            // filesystem is pre-populated.
-            let mut file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(tasks)
-                .map_err(|err| {
-                    tracing::error!("failed to open resctrl tasks file: {}", err);
-                    IntelRdtError::OpenClosIDDirectory(err)
-                })?;
-            write!(file, "{init_pid}").map_err(|err| {
-                tracing::error!("failed to write to resctrl tasks file: {}", err);
-                IntelRdtError::WriteClosIDDirectory(err)
-            })?;
-            Ok(created_dir)
+    let mut created_dir = false;
+
+    if !resctrl_container_dir.exists() {
+        if only_clos_id_set {
+            return Err(IntelRdtError::NoClosIDDirectory);
         }
+        fs::create_dir_all(resctrl_container_dir).map_err(|err| {
+            tracing::error!("failed to create resctrl subdirectory: {}", err);
+            IntelRdtError::CreateClosIDDirectory(err)
+        })?;
+        created_dir = true;
     }
+
+    let tasks = resctrl_container_dir.join("tasks");
+    // TODO(ipuustin): File doesn't need to be created, but it's easier
+    // to test this way. Fix the tests so that the fake resctrl
+    // filesystem is pre-populated.
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(tasks)
+        .map_err(|err| {
+            tracing::error!("failed to open resctrl tasks file: {}", err);
+            IntelRdtError::OpenClosIDDirectory(err)
+        })?;
+
+    write!(file, "{init_pid}").map_err(|err| {
+        tracing::error!("failed to write to resctrl tasks file: {}", err);
+        IntelRdtError::WriteClosIDDirectory(err)
+    })?;
+
+    Ok(created_dir)
+}
+
+/// Creates a dedicated monitoring group (`mon_groups/<container_id>`) inside the container's
+/// Intel RDT resource control directory and adds the container's PID to its `tasks` file.
+///
+/// As per OCI runtime-spec v1.3.0, if `enable_monitoring` is set to true, the runtime MUST
+/// create this subdirectory. This allows users to track the resource utilization (e.g., L3 cache,
+/// memory bandwidth) of the container independently from the parent allocation group (CLOS).
+///
+/// Returns `true` if the runtime created the directory, or `false` if it already existed.
+fn setup_monitoring_group(mon_dir: &Path, init_pid: Pid) -> Result<bool> {
+    let mut created_dir = false;
+
+    if !mon_dir.exists() {
+        fs::create_dir_all(mon_dir).map_err(|err| {
+            tracing::error!("failed to create resctrl monitoring subdirectory: {}", err);
+            IntelRdtError::CreateClosIDDirectory(err)
+        })?;
+        created_dir = true;
+    }
+
+    let tasks = mon_dir.join("tasks");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(tasks)
+        .map_err(|err| {
+            tracing::error!("failed to open resctrl monitoring tasks file: {}", err);
+            IntelRdtError::OpenClosIDDirectory(err)
+        })?;
+
+    write!(file, "{init_pid}").map_err(|err| {
+        tracing::error!("failed to write to resctrl monitoring tasks file: {}", err);
+        IntelRdtError::WriteClosIDDirectory(err)
+    })?;
+
+    Ok(created_dir)
 }
 
 /// Merges the two schemas together, removing lines starting with "MB:" from
@@ -448,39 +497,53 @@ fn write_resctrl_schemata(
     Ok(())
 }
 
-/// Sets up Intel RDT configuration for the container process based on the
-/// OCI config. The result bool tells whether or not we need to clean up
-/// the created subdirectory.
+/// Sets up Intel RDT configuration for the container process based on the OCI config.
+/// This handles setting up the main resource allocation group (CLOS), applying schemata,
+/// and setting up the dedicated monitoring group if `enable_monitoring` is true.
+///
+/// Returns a tuple of two optional paths: `(intel_rdt_dir, intel_rdt_monitoring_dir)`.
+/// These indicate whether the runtime created the main group directory and/or the
+/// monitoring directory, respectively. The runtime MUST remove these created
+/// directories when the container is deleted.
 pub fn setup_intel_rdt(
     maybe_container_id: Option<&str>,
     init_pid: &Pid,
     intel_rdt: &LinuxIntelRdt,
-) -> Result<bool> {
+) -> Result<(Option<PathBuf>, Option<PathBuf>)> {
     // Find mounted resctrl filesystem, error out if it can't be found.
-    let path = find_resctrl_mount_point().inspect_err(|_err| {
+    let mount_point = find_resctrl_mount_point().inspect_err(|_err| {
         tracing::error!("failed to find a mounted resctrl file system");
     })?;
-    let clos_id_set = intel_rdt.clos_id().is_some();
-    let only_clos_id_set = clos_id_set && get_schemata_data(intel_rdt).is_none();
-    let id = match (intel_rdt.clos_id(), maybe_container_id) {
-        (Some(clos_id), _) => clos_id,
-        (None, Some(container_id)) => container_id,
-        (None, None) => Err(IntelRdtError::ResctrlIdNotFound)?,
-    };
 
-    let created_dir = write_container_pid_to_resctrl_tasks(&path, id, *init_pid, only_clos_id_set)
-        .inspect_err(|_err| {
-            tracing::error!("failed to write container pid to resctrl tasks file");
-        })?;
-    write_resctrl_schemata(&path, id, intel_rdt, clos_id_set, created_dir).inspect_err(|_err| {
-        tracing::error!("failed to write schemata to resctrl schemata file");
-    })?;
+    let container_id = maybe_container_id.ok_or(IntelRdtError::ResctrlIdNotFound)?;
+    let clos_id_set = intel_rdt.clos_id().is_some();
+    let id = intel_rdt.clos_id().as_deref().unwrap_or(container_id);
+    let only_clos_id_set = clos_id_set && get_schemata_data(intel_rdt).is_none();
+    let container_dir = mount_point.join(id);
+    let created_dir = setup_resctrl_group(&container_dir, *init_pid, only_clos_id_set)?;
+
+    write_resctrl_schemata(&mount_point, id, intel_rdt, clos_id_set, created_dir).inspect_err(
+        |_err| {
+            tracing::error!("failed to write schemata to resctrl schemata file");
+        },
+    )?;
+
+    let mut created_monitoring_dir = None;
+    if intel_rdt.enable_monitoring().unwrap_or(false) {
+        let mon_dir = container_dir.join("mon_groups").join(container_id);
+        if setup_monitoring_group(&mon_dir, *init_pid)? {
+            created_monitoring_dir = Some(mon_dir);
+        }
+    }
 
     // If closID is not set and the runtime has created the sub-directory,
     // the runtime MUST remove the sub-directory when the container is deleted.
-    let need_to_delete_directory = !clos_id_set && created_dir;
+    let mut need_to_delete_directory = None;
+    if !clos_id_set && created_dir {
+        need_to_delete_directory = Some(container_dir);
+    }
 
-    Ok(need_to_delete_directory)
+    Ok((need_to_delete_directory, created_monitoring_dir))
 }
 
 #[cfg(test)]
@@ -614,30 +677,48 @@ mod test {
     }
 
     #[test]
-    fn test_write_pid_to_resctrl_tasks() -> Result<()> {
+    fn test_setup_resctrl_group() -> Result<()> {
         let tmp = tempfile::tempdir().unwrap();
 
         // Create the directory for id "foo".
-        let res =
-            write_container_pid_to_resctrl_tasks(tmp.path(), "foo", Pid::from_raw(1000), false);
+        let container_dir = tmp.path().join("foo");
+        let res = setup_resctrl_group(&container_dir, Pid::from_raw(1000), false);
         assert!(res.unwrap()); // new directory created
-        let res = fs::read_to_string(tmp.path().join("foo").join("tasks"));
+        let res = fs::read_to_string(container_dir.join("tasks"));
         assert!(res.unwrap() == "1000");
 
         // Create the same directory the second time.
-        let res =
-            write_container_pid_to_resctrl_tasks(tmp.path(), "foo", Pid::from_raw(1500), false);
+        let res = setup_resctrl_group(&container_dir, Pid::from_raw(1500), false);
         assert!(!res.unwrap()); // no new directory created
 
-        // If just clos_id then throw an error.
-        let res =
-            write_container_pid_to_resctrl_tasks(tmp.path(), "foobar", Pid::from_raw(2000), true);
+        // If just clos_id then throw an error if the directory doesn't exist.
+        let foobar_dir = tmp.path().join("foobar");
+        let res = setup_resctrl_group(&foobar_dir, Pid::from_raw(2000), true);
         assert!(res.is_err());
 
         // If the directory already exists then it's fine to have just clos_id.
-        let res =
-            write_container_pid_to_resctrl_tasks(tmp.path(), "foo", Pid::from_raw(2500), true);
+        let res = setup_resctrl_group(&container_dir, Pid::from_raw(2500), true);
         assert!(!res.unwrap()); // no new directory created
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_setup_monitoring_group() -> Result<()> {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let mon_dir = tmp.path().join("mon_groups").join("container_id");
+        let res = setup_monitoring_group(&mon_dir, Pid::from_raw(1000));
+        assert!(res.unwrap()); // new directory created
+
+        let res = fs::read_to_string(mon_dir.join("tasks"));
+        assert!(res.unwrap() == "1000");
+
+        let res = setup_monitoring_group(&mon_dir, Pid::from_raw(1500));
+        assert!(!res.unwrap()); // no new directory created
+
+        let res = fs::read_to_string(mon_dir.join("tasks"));
+        assert!(res.unwrap() == "10001500");
 
         Ok(())
     }
@@ -646,9 +727,9 @@ mod test {
     fn test_write_resctrl_schemata() -> Result<()> {
         use oci_spec::runtime::LinuxIntelRdtBuilder;
         let tmp = tempfile::tempdir().unwrap();
+        let foobar_dir = tmp.path().join("foobar");
 
-        let res =
-            write_container_pid_to_resctrl_tasks(tmp.path(), "foobar", Pid::from_raw(1000), false);
+        let res = setup_resctrl_group(&foobar_dir, Pid::from_raw(1000), false);
         assert!(res.unwrap());
 
         // No schemes, clos_id was not set, directory created (with container id).
@@ -692,19 +773,6 @@ mod test {
         let res = write_resctrl_schemata(tmp.path(), "foobar", &rdt_different, true, false);
         assert!(res.is_err());
 
-        // // Test modern schemata field overriding everything
-        // let rdt_schemata = LinuxIntelRdtBuilder::default()
-        //     .l3_cache_schema(l3_1.to_owned())
-        //     .mem_bw_schema(bw_1.to_owned())
-        //     .schemata(vec!["L2:0=f;1=f0".to_owned()])
-        //     .build()
-        //     .unwrap();
-
-        // let res = write_resctrl_schemata(tmp.path(), "foobar_modern", &rdt_schemata, false, false);
-        // // It should attempt to write L2
-        // // open will fail because foobar_modern doesn't exist, but it got to that point!
-        // assert!(res.is_err());
-
         // Test modern schemata field overriding everything
         let rdt_schemata = LinuxIntelRdtBuilder::default()
             .l3_cache_schema(l3_1.to_owned())
@@ -713,12 +781,8 @@ mod test {
             .build()
             .unwrap();
 
-        let _ = write_container_pid_to_resctrl_tasks(
-            tmp.path(),
-            "foobar_modern",
-            Pid::from_raw(1001),
-            false,
-        );
+        let foobar_modern_dir = tmp.path().join("foobar_modern");
+        let _ = setup_resctrl_group(&foobar_modern_dir, Pid::from_raw(1001), false);
         let res = write_resctrl_schemata(tmp.path(), "foobar_modern", &rdt_schemata, false, true);
 
         assert!(res.is_ok());

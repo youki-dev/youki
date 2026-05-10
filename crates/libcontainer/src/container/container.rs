@@ -130,22 +130,22 @@ impl Container {
         self
     }
 
-    pub fn set_clean_up_intel_rdt_directory(&mut self, clean_up: bool) -> &mut Self {
-        self.state.clean_up_intel_rdt_subdirectory = Some(clean_up);
+    pub fn set_intel_rdt_dir(&mut self, dir: Option<PathBuf>) -> &mut Self {
+        self.state.intel_rdt_dir = dir;
         self
     }
 
-    pub fn clean_up_intel_rdt_subdirectory(&self) -> Option<bool> {
-        self.state.clean_up_intel_rdt_subdirectory
+    pub fn intel_rdt_dir(&self) -> Option<&PathBuf> {
+        self.state.intel_rdt_dir.as_ref()
     }
 
-    pub fn set_clean_up_intel_rdt_monitoring(&mut self, clean_up: bool) -> &mut Self {
-        self.state.clean_up_intel_rdt_monitoring = Some(clean_up);
+    pub fn set_intel_rdt_monitoring_dir(&mut self, dir: Option<PathBuf>) -> &mut Self {
+        self.state.intel_rdt_monitoring_dir = dir;
         self
     }
 
-    pub fn clean_up_intel_rdt_monitoring(&self) -> Option<bool> {
-        self.state.clean_up_intel_rdt_monitoring
+    pub fn intel_rdt_monitoring_dir(&self) -> Option<&PathBuf> {
+        self.state.intel_rdt_monitoring_dir.as_ref()
     }
 
     pub fn status(&self) -> ContainerStatus {
