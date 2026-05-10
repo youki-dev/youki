@@ -594,6 +594,29 @@ mod test {
         assert!(val.lines().any(|line| line == "L3:2=f"));
         assert!(!val.lines().any(|line| line == "MB:0=20;1=70"));
 
+        // Generic schemata in the legacy L3 field should be passed through
+        let l3_generic = "L3:0=f;1=f0\nL2:0=f\nMB:0=20;1=70";
+        let res = combine_l3_cache_and_mem_bw_schemas(
+            &Some(l3_generic.to_owned()),
+            &Some(bw_1.to_owned()),
+        );
+        assert!(res.is_some());
+        let val = res.unwrap();
+        assert!(val.lines().any(|line| line == "L2:0=f"));
+        assert!(!val.lines().any(|line| line == "MB:0=20;1=70"));
+
+        // Messy whitespace and semicolons around MB in L3 should still be stripped
+        let l3_messy_mb = "L3:0=f\nMB:  0=10; 1=20 ;;";
+        let res = combine_l3_cache_and_mem_bw_schemas(
+            &Some(l3_messy_mb.to_owned()),
+            &Some(bw_1.to_owned()),
+        );
+        assert!(res.is_some());
+        let val = res.unwrap();
+        assert!(val.lines().any(|line| line == "L3:0=f"));
+        assert!(!val.lines().any(|line| line.starts_with("MB:  0=10")));
+        assert!(val.lines().any(|line| line == bw_1));
+
         Ok(())
     }
 
@@ -607,6 +630,7 @@ mod test {
         assert!(is_same_schema("L3:", "L3:")?);
         assert!(is_same_schema("MB:", "MB:")?);
         assert!(is_same_schema("L2:0=f;1=f0", "L2:0=f;1=f0")?);
+        assert!(is_same_schema("SMBA:0=20", "SMBA:0=20")?);
 
         // Different schemas.
         assert!(!is_same_schema("L3:0=f;1=f0", "L3:2=f")?);
@@ -619,6 +643,8 @@ mod test {
         assert!(!is_same_schema("MB:0=f", "L3:0=f")?);
         assert!(!is_same_schema("L2:0=f", "L3:0=f")?);
         assert!(!is_same_schema("L2:0=f;1=f0", "L2:0=ff;1=f0")?);
+        assert!(!is_same_schema("SMBA:0=20", "SMBA:0=30")?);
+        assert!(!is_same_schema("SMBA:0=20", "MBA:0=20")?);
 
         // Exact same multi-line schema.
         assert!(is_same_schema(
@@ -652,6 +678,8 @@ mod test {
         // Same schema, different whitespace and semicolons.
         assert!(is_same_schema("L3:;;  0 = f; ;  1=f0", "L3:0=f;1  = f0;;")?);
         assert!(is_same_schema("L2:;;  0 = f; ;  1=f0", "L2:0=f;1  = f0;;")?);
+        assert!(is_same_schema("L2:0=f;1=f0;", "L2:0=f;1=f0")?);
+        assert!(is_same_schema("L2:  0  =  ff  ", "L2:0=ff")?);
 
         // Same schema, different leading zeros in masks.
         assert!(is_same_schema("L3:0=000f", "L3:0=0f")?);
@@ -669,6 +697,13 @@ mod test {
         assert!(is_same_schema("MB:=0;0=f", "MB:=0;0=f").is_err());
         assert!(is_same_schema("MB:1=0=3;0=f", "MB:1=0=3;0=f").is_err());
         assert!(is_same_schema("L2:0=invalid_hex_string", "L2:0=invalid_hex_string").is_err());
+        assert!(
+            is_same_schema(
+                "L2:0=0123456789abcdef0123456789abcdef0123456789abcdefzz",
+                "L2:0=0123456789abcdef0123456789abcdef0123456789abcdefzz"
+            )
+            .is_err()
+        );
 
         // Generic schema handling leading zeros correctly
         assert!(is_same_schema("L2:0=00ff;1=000f0", "L2:0=ff;1=f0")?);
@@ -683,6 +718,55 @@ mod test {
         )?);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_get_line_type() {
+        assert!(matches!(get_line_type("L3:0=f"), LineType::L3Line));
+        assert!(matches!(get_line_type("L3DATA:0=f"), LineType::L3DataLine));
+        assert!(matches!(get_line_type("L3CODE:0=f"), LineType::L3CodeLine));
+        assert!(matches!(get_line_type("MB:0=70"), LineType::MbLine));
+
+        let generic_l2 = get_line_type("L2:0=f");
+        if let LineType::Generic(prefix) = generic_l2 {
+            assert_eq!(prefix, "L2");
+        } else {
+            panic!("Expected LineType::Generic");
+        }
+
+        let generic_smba = get_line_type("SMBA:0=20");
+        if let LineType::Generic(prefix) = generic_smba {
+            assert_eq!(prefix, "SMBA");
+        } else {
+            panic!("Expected LineType::Generic");
+        }
+    }
+
+    #[test]
+    fn test_parse_generic_line() -> Result<()> {
+        let parsed = parse_generic_line("L2:0=00ff;1=f0")?;
+        assert_eq!(parsed.get("0").unwrap(), "ff");
+        assert_eq!(parsed.get("1").unwrap(), "f0");
+
+        let parsed_zero = parse_generic_line("L2:0=0000;1=00")?;
+        assert_eq!(parsed_zero.get("0").unwrap(), "0");
+        assert_eq!(parsed_zero.get("1").unwrap(), "0");
+
+        assert!(parse_generic_line("L2:0=;1=f0").is_err());
+        assert!(parse_generic_line("L2:0=invalid_hex").is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_schemata_data() {
+        use oci_spec::runtime::LinuxIntelRdtBuilder;
+        let rdt_modern = LinuxIntelRdtBuilder::default()
+            .schemata(vec!["L2:0=f;1=f0".to_owned(), "SMBA:0=20".to_owned()])
+            .build()
+            .unwrap();
+        let combined_modern = get_schemata_data(&rdt_modern).unwrap();
+        assert_eq!(combined_modern, "L2:0=f;1=f0\nSMBA:0=20");
     }
 
     #[test]
