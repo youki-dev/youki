@@ -24,7 +24,7 @@ use crate::utils::{
     wait_for_state,
 };
 
-/// Used as check_fn for all ConditionalTests in this module:
+/// Used as check_fn for all `ConditionalTests` in this module:
 /// run only when the runtime is NOT youki and CRIU is installed.
 fn can_run() -> bool {
     // TODO: remove this skip for youki once checkpoint/restore is supported.
@@ -139,7 +139,7 @@ fn ping_container(bundle: &Path) -> Result<()> {
             let mut line = String::new();
             std::io::BufRead::read_line(&mut reader, &mut line)?;
             if line.trim() != "ponG Ping" {
-                bail!("Unexpected response from container: {:?}", line);
+                bail!("Unexpected response from container: {line:?}");
             }
             Ok(())
         })();
@@ -728,7 +728,7 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
     // Spawn checkpoint command in background.
     // We use spawn() instead of try_checkpoint_container() (which uses output() and blocks)
     // because we need to read from the status-fd pipe concurrently to wait for the page server readiness.
-    let port_str = format!("0.0.0.0:{}", port);
+    let port_str = format!("0.0.0.0:{port}");
     let mut checkpoint_cmd = build_checkpoint_command(
         bundle.path(),
         &id,
@@ -1089,7 +1089,7 @@ fn checkpoint_and_restore_with_nested_bind_mounts() -> TestResult {
         let bind2 = bundle.path().join("bind2");
         std::fs::create_dir_all(&bind1).unwrap();
         std::fs::create_dir_all(&bind2).unwrap();
-        bind1_path = bind1.clone();
+        bind1_path.clone_from(&bind1);
 
         let mnt1 = MountBuilder::default()
             .typ("bind".to_string())
@@ -1264,13 +1264,12 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
     // Verify the original cgroup is gone
     if host_cgroup_path.exists() {
         return TestResult::Failed(anyhow!(
-            "initial cgroup path still exists after checkpoint: {:?}",
-            host_cgroup_path
+            "initial cgroup path still exists after checkpoint: {host_cgroup_path:?}",
         ));
     }
 
     // Update config to a DIFFERENT cgroup
-    let new_cgroup = format!("/runtime-test/cgroup-2-{}", id);
+    let new_cgroup = format!("/runtime-test/cgroup-2-{id}");
     let mut spec =
         oci_spec::runtime::Spec::load(bundle.path().join("bundle").join("config.json")).unwrap();
     spec.linux_mut()
