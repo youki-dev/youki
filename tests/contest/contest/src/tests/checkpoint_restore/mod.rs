@@ -1181,6 +1181,17 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
         // Since id is inside ctx which is built later, we just generate one here
         let initial_cgroup = format!("/runtime-test/cgroup-1-{}", generate_uuid());
         linux.set_cgroups_path(Some(PathBuf::from(&initial_cgroup)));
+        // Set pids.limit to 1234 to verify it gets restored correctly
+        let pid = oci_spec::runtime::LinuxPidsBuilder::default()
+            .limit(1234)
+            .build()
+            .unwrap();
+        let resources = oci_spec::runtime::LinuxResourcesBuilder::default()
+            .pids(pid)
+            .build()
+            .unwrap();
+        linux.set_resources(Some(resources));
+
         spec.set_linux(Some(linux));
     }) {
         Ok(c) => c,
@@ -1335,7 +1346,18 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
         ));
     }
 
-    TestResult::Passed
+    // Verify that the PID limit was properly applied to the new cgroup
+    let pid_max_path = new_host_cgroup_path.join("pids.max");
+    match std::fs::read_to_string(&pid_max_path) {
+        Ok(max_val) if max_val.trim() == "1234" => TestResult::Passed,
+        Ok(max_val) => TestResult::Failed(anyhow!(
+            "restored container has wrong pids.max. Expected 1234, found {}",
+            max_val.trim()
+        )),
+        Err(e) => TestResult::Failed(anyhow!(
+            "failed to read pids.max in restored cgroup {pid_max_path:?}: {e}"
+        )),
+    }
 }
 
 fn checkpoint_and_restore_and_exec() -> TestResult {
