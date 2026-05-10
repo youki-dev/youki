@@ -139,6 +139,15 @@ impl Container {
         self.state.clean_up_intel_rdt_subdirectory
     }
 
+    pub fn set_clean_up_intel_rdt_monitoring(&mut self, clean_up: bool) -> &mut Self {
+        self.state.clean_up_intel_rdt_monitoring = Some(clean_up);
+        self
+    }
+
+    pub fn clean_up_intel_rdt_monitoring(&self) -> Option<bool> {
+        self.state.clean_up_intel_rdt_monitoring
+    }
+
     pub fn status(&self) -> ContainerStatus {
         self.state.status
     }
