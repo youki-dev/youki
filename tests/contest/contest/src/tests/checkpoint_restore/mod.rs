@@ -4,7 +4,6 @@
 // not yet implemented in youki.  They are also skipped when CRIU is not
 // installed on the host.
 
-use std::cell::RefCell;
 use std::os::unix::fs::symlink;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::process::CommandExt;
@@ -42,7 +41,7 @@ fn has_cgroupns() -> bool {
 
 struct CrTestContext {
     id: String,
-    restore_id: RefCell<Option<String>>,
+    restore_id: Option<String>,
     bundle: tempfile::TempDir,
     image_dir: PathBuf,
     work_dir: PathBuf,
@@ -65,15 +64,15 @@ impl Drop for CrTestContext {
         // Clean up primary container
         cleanup(&self.id, self.bundle.path());
         // Clean up the dynamically registered restore ID (if any)
-        if let Some(rid) = self.restore_id.borrow().as_ref() {
+        if let Some(rid) = self.restore_id.as_ref() {
             cleanup(rid, self.bundle.path());
         }
     }
 }
 
 impl CrTestContext {
-    fn register_restore_id(&self, rid: String) {
-        *self.restore_id.borrow_mut() = Some(rid);
+    fn register_restore_id(&mut self, rid: String) {
+        self.restore_id = Some(rid);
     }
 
     // TODO: Consider extracting this into test_utils.rs as run_container_with_console (see issue #3529)
@@ -247,7 +246,7 @@ fn setup_cr_test(
 
     Ok(CrTestContext {
         id,
-        restore_id: std::cell::RefCell::new(None),
+        restore_id: None,
         bundle,
         image_dir,
         work_dir,
@@ -702,7 +701,7 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
         return TestResult::Skipped;
     }
 
-    let ctx = match setup_cr_test(|_, _| {}) {
+    let mut ctx = match setup_cr_test(|_, _| {}) {
         Ok(c) => c,
         Err(e) => return e,
     };
@@ -710,7 +709,9 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
         return e;
     }
 
-    let id = &ctx.id;
+    let id = ctx.id.clone();
+    let restore_id = format!("{id}-restore");
+    ctx.register_restore_id(restore_id.clone());
     let bundle = &ctx.bundle;
     let image_dir = &ctx.image_dir;
     let work_dir = &ctx.work_dir;
@@ -736,7 +737,7 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
     let port_str = format!("0.0.0.0:{}", port);
     let mut checkpoint_cmd = build_checkpoint_command(
         bundle.path(),
-        id,
+        &id,
         image_dir,
         Some(work_dir),
         &[
@@ -857,9 +858,14 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
         }
     };
 
-    let restore_id = format!("{id}-restore");
-    ctx.register_restore_id(restore_id.clone());
-
+    // We must restore the container into a different cgroup because the original
+    // container is still running. If we don't use a different cgroup, the restored
+    // container and the original container will conflict.
+    // This is particularly due to the behavior when systemd is used as the cgroup
+    // manager, as it can cause `systemd` to become confused about the container's
+    // state and potentially send SIGTERM to the process.
+    // See also runc's checkpoint tests:
+    // https://github.com/opencontainers/runc/blob/eb7eaf19b6eec5d1143b257057899e4a7b738c81/tests/integration/checkpoint.bats#L303
     let new_cgroup = format!("/runtime-test/cgroup-2-{restore_id}");
     let mut spec =
         oci_spec::runtime::Spec::load(bundle.path().join("bundle").join("config.json")).unwrap();
@@ -1181,7 +1187,6 @@ fn checkpoint_and_restore_with_nested_bind_mounts() -> TestResult {
 // Test: checkpoint then restore into a different cgroup (via --manage-cgroups-mode ignore)
 // (runc: @test "checkpoint then restore into a different cgroup (via --manage-cgroups-mode ignore)")
 fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
-    let mut initial_cgroup_val = String::new();
     let ctx = match setup_cr_test(|_, spec| {
         // Set initial cgroup path
         let mut linux = oci_spec::runtime::Linux::default();
@@ -1189,7 +1194,6 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
         let initial_cgroup = format!("/runtime-test/cgroup-1-{}", generate_uuid());
         linux.set_cgroups_path(Some(PathBuf::from(&initial_cgroup)));
         spec.set_linux(Some(linux));
-        initial_cgroup_val = initial_cgroup;
     }) {
         Ok(c) => c,
         Err(e) => return e,
