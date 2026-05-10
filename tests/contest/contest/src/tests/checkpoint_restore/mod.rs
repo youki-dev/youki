@@ -19,9 +19,9 @@ use test_framework::{ConditionalTest, TestGroup, TestResult};
 use crate::utils::{
     LifecycleStatus, WaitTarget, build_checkpoint_command, checkpoint_container, criu_has_feature,
     criu_installed, delete_container, exec_container, generate_uuid, get_container_pid,
-    get_runtime_path, get_state, handle_console_socket, is_runtime_youki, kill_container, net,
-    prepare_bundle, restore_container, set_config, try_checkpoint_container,
-    wait_container_running, wait_for_state,
+    get_runtime_path, handle_console_socket, is_runtime_youki, kill_container, net, prepare_bundle,
+    restore_container, set_config, try_checkpoint_container, wait_container_running,
+    wait_for_state,
 };
 
 /// Used as check_fn for all ConditionalTests in this module:
@@ -760,7 +760,7 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
     unsafe {
         checkpoint_cmd.pre_exec(move || {
             let flags = FdFlag::from_bits_truncate(
-                fcntl(pipe_w_raw, FcntlArg::F_GETFD).expect("from_bits_truncate failed"),
+                fcntl(pipe_w_raw, FcntlArg::F_GETFD).expect("fcntl failed"),
             );
             fcntl(pipe_w_raw, FcntlArg::F_SETFD(flags & !FdFlag::FD_CLOEXEC))
                 .expect("fcntl failed");
@@ -774,14 +774,13 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
     };
 
     // Close the write end in the parent immediately so read() will get EOF if CRIU exits
-    let _ = nix::unistd::close(pipe_w.as_raw_fd());
+    drop(pipe_w);
 
     // Set read pipe to non-blocking so the timeout loop isn't blocked forever if no data arrives
     let flags = nix::fcntl::OFlag::from_bits_truncate(
-        nix::fcntl::fcntl(pipe_r.as_raw_fd(), nix::fcntl::FcntlArg::F_GETFL)
-            .expect("F_GETFL failed"),
+        fcntl(pipe_r.as_raw_fd(), nix::fcntl::FcntlArg::F_GETFL).expect("F_GETFL failed"),
     );
-    nix::fcntl::fcntl(
+    fcntl(
         pipe_r.as_raw_fd(),
         nix::fcntl::FcntlArg::F_SETFL(flags | nix::fcntl::OFlag::O_NONBLOCK),
     )
@@ -808,9 +807,6 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
             _ => std::thread::sleep(Duration::from_millis(100)),
         }
     }
-
-    // Cleanup read pipe
-    let _ = nix::unistd::close(pipe_r.as_raw_fd());
 
     if !ready {
         let _ = checkpoint_child.kill();
@@ -1000,9 +996,7 @@ fn checkpoint_and_restore_in_external_netns() -> TestResult {
             return TestResult::Failed(anyhow!("ping container failed after restore: {e}"));
         }
 
-        let (stdout, _) = get_state(id, bundle.path()).unwrap();
-        let state: crate::utils::State = serde_json::from_str(&stdout).unwrap();
-        let new_pid = state.pid.unwrap();
+        let new_pid = get_container_pid(id, bundle.path()).unwrap();
         let new_inode = std::fs::read_link(format!("/proc/{new_pid}/ns/net")).unwrap();
 
         if original_inode != new_inode {
@@ -1208,9 +1202,7 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
     let work_dir = &ctx.work_dir;
 
     // Get the container PID and use it to find the real cgroup path on the host
-    let (stdout, _) = get_state(id, bundle.path()).unwrap();
-    let state: oci_spec::runtime::State = serde_json::from_str(&stdout).unwrap();
-    let pid = state.pid().unwrap();
+    let pid = get_container_pid(id, bundle.path()).unwrap();
     let cgroup_data = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).unwrap();
     // Parse the /proc/<pid>/cgroup file.
     // Format is typically `0::/path/to/cgroup` for v2, or `N:name:/path` for v1.
