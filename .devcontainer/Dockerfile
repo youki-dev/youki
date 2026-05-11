@@ -35,13 +35,33 @@ rustup component add clippy
 sed -i 's/^# events_logger = "journald"/events_logger = "file"/' /usr/share/containers/containers.conf
 EOF
 
-# Install docker with youki
+# Configure Docker to use youki as the default runtime.
+# Docker invokes the wrapper at /usr/local/bin/youki which forwards to /workspaces/youki/youki.
 COPY <<'EOF' /etc/docker/daemon.json
-  {
-    "runtimes": {
-      "youki": {
-        "path": "/workspaces/youki/youki"
-      }
+{
+  "default-runtime": "youki",
+  "runtimes": {
+    "youki": {
+      "path": "/usr/local/bin/youki",
+      "runtimeArgs": ["--debug"]
     }
   }
+}
 EOF
+
+# Wrapper script that forces logs to /var/log/youki.log.
+# containerd-shim-runc-v2 passes `--log` and `--log-format` by default, so this wrapper strips those args and keeps the fixed log path.
+COPY <<'EOF' /usr/local/bin/youki
+#!/bin/bash
+args=("--log=/var/log/youki.log")
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --log=* | --log-format=*) shift ;;
+    --log | --log-format) shift; [ $# -gt 0 ] && shift ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+/workspaces/youki/youki "${args[@]}"
+EOF
+
+RUN chmod +x /usr/local/bin/youki
