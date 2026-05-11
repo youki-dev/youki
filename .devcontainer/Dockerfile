@@ -12,43 +12,36 @@ COPY <<EOF /etc/docker/daemon.json
   }
 EOF
 
-RUN <<EOF
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+
+RUN <<'EOF'
 apt-get update
 
 # For building
-apt-get install -y \
-  build-essential \
-  git \
-  libclang-dev \
-  libelf-dev \
-  libseccomp-dev \
-  libssl-dev \
-  libsystemd-dev \
-  pkg-config
+apt-get install -y --no-install-recommends \
+  build-essential git libclang-dev libelf-dev libseccomp-dev libssl-dev libsystemd-dev pkg-config
 
 # For debugging
-apt-get install -y \
-  podman \
-  bpftrace
+apt-get install -y --no-install-recommends \
+  podman bpftrace
 
-# Since systemd is not running inside the Dev Container,
-# but the default events_logger for podman is set to journald, container startup fails.
-# Therefore, change it to file.
-sudo sed -i 's/^# events_logger = "journald"/events_logger = "file"/' /usr/share/containers/containers.conf
+rm -rf /var/lib/apt/lists/*
 
-curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/bin
+curl --proto '=https' --tlsv1.2 -sSf "https://just.systems/install.sh" | bash -s -- --to /usr/bin
 
-curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-chmod +x kubectl
-mv ./kubectl /usr/bin/kubectl
+curl -L -o /usr/bin/kubectl "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x /usr/bin/kubectl
 
-# nightly build is required for `cargo fmt` as `rustfmt.toml` uses unstable features.
-curl https://sh.rustup.rs -sSf | sh -s -- -y
+VERSION="$(curl -sSfL "https://api.github.com/repos/rust-lang/mdBook/releases/latest" | jq -r .tag_name)"
+curl -sSfL "https://github.com/rust-lang/mdBook/releases/download/$VERSION/mdbook-$VERSION-$(uname -m)-unknown-linux-musl.tar.gz" | tar -xzvC /usr/bin/ mdbook
+
+# Install the Rust nightly toolchain because `cargo fmt` relies on unstable rustfmt settings.
+curl -sSf "https://sh.rustup.rs" | sh -s -- -y
 rustup install nightly
 rustup component add rustfmt
-rustup component add clippy 
+rustup component add clippy
 
-# Install mdbook
-VERSION=$(curl -sSfL https://api.github.com/repos/rust-lang/mdBook/releases/latest | jq -r .tag_name)
-curl -sSfL https://github.com/rust-lang/mdBook/releases/download/$VERSION/mdbook-$VERSION-$(uname -m)-unknown-linux-musl.tar.gz | tar -xzvC /usr/bin/ mdbook
+# Systemd is not available in this Dev Container, but Podman `event_logger` defaults to journald.
+# Switch the logger to file so container startup does not fail.
+sed -i 's/^# events_logger = "journald"/events_logger = "file"/' /usr/share/containers/containers.conf
 EOF
