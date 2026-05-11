@@ -6,7 +6,7 @@ mod delete;
 mod exec;
 mod kill;
 mod start;
-mod state;
+pub(crate) mod state;
 mod util;
 pub use container_create::ContainerCreate;
 pub use container_lifecycle::ContainerLifecycle;

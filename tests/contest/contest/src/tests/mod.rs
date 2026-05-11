@@ -7,6 +7,7 @@ pub mod exec_cpu_affinity;
 pub mod fd_control;
 pub mod hooks;
 pub mod hostname;
+pub mod idmap;
 pub mod intel_rdt;
 pub mod io_priority;
 pub mod kill;

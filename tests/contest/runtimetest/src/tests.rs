@@ -340,6 +340,242 @@ pub fn validate_mounts_recursive_rbind_ro() {
     }
 }
 
+fn stat_ids(path: &str) -> Result<(u32, u32)> {
+    let metadata = fs::metadata(path)?;
+    Ok((metadata.st_uid(), metadata.st_gid()))
+}
+
+fn expect_ids(path: &str, expected_uid: u32, expected_gid: u32) -> Result<()> {
+    let (actual_uid, actual_gid) = stat_ids(path)?;
+    if (actual_uid, actual_gid) != (expected_uid, expected_gid) {
+        bail!(
+            "{path}: expected uid/gid {expected_uid}:{expected_gid}, got {actual_uid}:{actual_gid}"
+        );
+    }
+    Ok(())
+}
+
+fn overflow_ids() -> Result<(u32, u32)> {
+    let uid = fs::read_to_string("/proc/sys/kernel/overflowuid")?
+        .trim()
+        .parse::<u32>()?;
+    let gid = fs::read_to_string("/proc/sys/kernel/overflowgid")?
+        .trim()
+        .parse::<u32>()?;
+    Ok((uid, gid))
+}
+
+fn expect_mount_shared(path: &str) -> Result<()> {
+    let mountinfo = fs::read_to_string("/proc/self/mountinfo")?;
+    for line in mountinfo.lines() {
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        if fields.len() < 7 || fields[4] != path {
+            continue;
+        }
+        let Some(separator) = fields.iter().position(|field| *field == "-") else {
+            continue;
+        };
+        if fields[6..separator]
+            .iter()
+            .any(|field| field.starts_with("shared:"))
+        {
+            return Ok(());
+        }
+    }
+    bail!("{path}: expected shared propagation in mountinfo")
+}
+
+fn expect_multi1(prefix: &str, expected: &[(u32, u32); 3]) -> Result<()> {
+    expect_ids(&format!("{prefix}/foo.txt"), expected[0].0, expected[0].1)?;
+    expect_ids(&format!("{prefix}/bar.txt"), expected[1].0, expected[1].1)?;
+    expect_ids(&format!("{prefix}/baz.txt"), expected[2].0, expected[2].1)
+}
+
+fn expect_tree_top(userns: bool) -> Result<()> {
+    if userns {
+        expect_ids("/tmp/mount-tree/foo.txt", 1000, 1101)?;
+        expect_ids("/tmp/mount-tree/bar.txt", 2000, 2202)?;
+        expect_ids("/tmp/mount-tree/baz.txt", 3000, 3303)
+    } else {
+        expect_ids("/tmp/mount-tree/foo.txt", 101000, 101101)?;
+        expect_ids("/tmp/mount-tree/bar.txt", 102000, 102202)?;
+        expect_ids("/tmp/mount-tree/baz.txt", 103000, 103303)
+    }
+}
+
+fn expect_tree_children_unmapped(userns: bool) -> Result<()> {
+    if userns {
+        let (uid, gid) = overflow_ids()?;
+        for dir in ["multi1", "multi2"] {
+            for file in ["foo.txt", "bar.txt", "baz.txt"] {
+                expect_ids(&format!("/tmp/mount-tree/{dir}/{file}"), uid, gid)?;
+            }
+        }
+        return Ok(());
+    }
+
+    expect_multi1(
+        "/tmp/mount-tree/multi1",
+        &[(100, 211), (101, 222), (102, 233)],
+    )?;
+    expect_multi1(
+        "/tmp/mount-tree/multi2",
+        &[(200, 211), (201, 222), (202, 233)],
+    )
+}
+
+fn expect_tree_children_recursive(userns: bool) -> Result<()> {
+    if userns {
+        expect_multi1(
+            "/tmp/mount-tree/multi1",
+            &[(1000, 1101), (1001, 2202), (1002, 3303)],
+        )?;
+        expect_multi1(
+            "/tmp/mount-tree/multi2",
+            &[(2000, 1101), (2001, 2202), (2002, 3303)],
+        )
+    } else {
+        expect_multi1(
+            "/tmp/mount-tree/multi1",
+            &[(101000, 101101), (101001, 102202), (101002, 103303)],
+        )?;
+        expect_multi1(
+            "/tmp/mount-tree/multi2",
+            &[(102000, 101101), (102001, 102202), (102002, 103303)],
+        )
+    }
+}
+
+fn validate_idmap_case(case: &str) -> Result<()> {
+    match case {
+        "target_userns_sleep" => {
+            std::thread::sleep(std::time::Duration::from_secs(1000));
+            Ok(())
+        }
+        "simple_idmap_mount_userns" | "idmap_mount_with_relative_path_userns" => {
+            expect_ids("/tmp/mount-1/foo.txt", 0, 0)
+        }
+        "simple_idmap_mount_no_userns" => expect_ids("/tmp/mount-1/foo.txt", 100000, 100000),
+        "write_to_an_idmap_mount_userns" => {
+            fs::File::create("/tmp/mount-1/bar")?;
+            expect_ids("/tmp/mount-1/bar", 0, 0)
+        }
+        "write_to_an_idmap_mount_no_userns" => match fs::File::create("/tmp/mount-1/bar") {
+            Ok(_) => bail!("write to idmapped mount without userns unexpectedly succeeded"),
+            Err(err) if err.raw_os_error() == Some(libc::EOVERFLOW) => Ok(()),
+            Err(err) => Err(err.into()),
+        },
+        "idmap_mount_with_propagation_flag_userns" => expect_mount_shared("/tmp/mount-1"),
+        "idmap_mount_with_bind_mount_userns" => {
+            let (overflow_uid, overflow_gid) = overflow_ids()?;
+            expect_ids("/tmp/mount-1/foo.txt", 0, 0)?;
+            expect_ids("/tmp/bind-mount-1/foo.txt", overflow_uid, overflow_gid)
+        }
+        "idmap_mount_with_bind_mount_no_userns" => {
+            expect_ids("/tmp/mount-1/foo.txt", 100000, 100000)?;
+            expect_ids("/tmp/bind-mount-1/foo.txt", 0, 0)
+        }
+        "two_idmap_mounts_same_mapping_with_two_bind_mounts_userns" => {
+            expect_ids("/tmp/mount-1/foo.txt", 0, 0)?;
+            expect_ids("/tmp/mount-2/foo.txt", 1, 1)
+        }
+        "same_idmap_mount_different_mappings_userns" => {
+            expect_multi1("/tmp/mount-multi1", &[(0, 11), (1, 22), (2, 33)])?;
+            expect_multi1(
+                "/tmp/mount-multi1-alt",
+                &[(1000, 2011), (1001, 2022), (1002, 2033)],
+            )?;
+            expect_multi1(
+                "/tmp/mount-multi1-alt-sym",
+                &[(2000, 3011), (2001, 3022), (2002, 3033)],
+            )
+        }
+        "same_idmap_mount_different_mappings_no_userns" => {
+            expect_multi1(
+                "/tmp/mount-multi1",
+                &[(100000, 100011), (100001, 100022), (100002, 100033)],
+            )?;
+            expect_multi1(
+                "/tmp/mount-multi1-alt",
+                &[(101000, 102011), (101001, 102022), (101002, 102033)],
+            )?;
+            expect_multi1(
+                "/tmp/mount-multi1-alt-sym",
+                &[(102000, 103011), (102001, 103022), (102002, 103033)],
+            )
+        }
+        "multiple_idmap_mounts_different_mappings_userns"
+        | "multiple_idmap_mounts_different_mappings_no_userns" => {
+            expect_multi1(
+                "/tmp/mount-multi1",
+                &[(1100, 1911), (1101, 1922), (1102, 1933)],
+            )?;
+            expect_multi1(
+                "/tmp/mount-multi2",
+                &[(2200, 2911), (2201, 2922), (2202, 2933)],
+            )?;
+            expect_multi1(
+                "/tmp/mount-multi3",
+                &[(3528, 3491), (3133, 3337), (3999, 3444)],
+            )
+        }
+        "idmap_mount_complicated_mapping_userns" | "idmap_mount_complicated_mapping_no_userns" => {
+            expect_multi1(
+                "/tmp/mount-multi1",
+                &[(1000, 1101), (2000, 2202), (3000, 3303)],
+            )
+        }
+        "idmap_mount_non_recursive_idmap_userns" | "idmap_mount_idmap_flag_userns" => {
+            expect_tree_top(true)?;
+            expect_tree_children_unmapped(true)
+        }
+        "idmap_mount_non_recursive_idmap_no_userns" | "idmap_mount_idmap_flag_no_userns" => {
+            expect_tree_top(false)?;
+            expect_tree_children_unmapped(false)
+        }
+        "idmap_mount_ridmap_flag_userns" => {
+            expect_tree_top(true)?;
+            expect_tree_children_recursive(true)
+        }
+        "idmap_mount_ridmap_flag_no_userns" => {
+            expect_tree_top(false)?;
+            expect_tree_children_recursive(false)
+        }
+        "idmap_mount_idmap_flag_implied_mapping_userns" => {
+            expect_multi1("/tmp/mount-tree", &[(100, 211), (200, 222), (300, 233)])?;
+            expect_tree_children_unmapped(true)
+        }
+        "idmap_mount_ridmap_flag_implied_mapping_userns" => {
+            expect_multi1("/tmp/mount-tree", &[(100, 211), (200, 222), (300, 233)])?;
+            expect_multi1(
+                "/tmp/mount-tree/multi1",
+                &[(100, 211), (101, 222), (102, 233)],
+            )?;
+            expect_multi1(
+                "/tmp/mount-tree/multi2",
+                &[(200, 211), (201, 222), (202, 233)],
+            )
+        }
+        "idmap_mount_idmap_flag_implied_mapping_userns_join_userns" => {
+            expect_multi1("/tmp/mount-tree", &[(100, 211), (200, 222), (300, 233)])?;
+            expect_tree_children_unmapped(true)
+        }
+        _ => bail!("unknown idmap test case: {case}"),
+    }
+}
+
+pub fn validate_idmap(_spec: &Spec) {
+    let args = env::args().collect::<Vec<_>>();
+    let Some(case) = args.get(2) else {
+        eprintln!("idmap test case argument missing");
+        std::process::exit(1);
+    };
+    if let Err(err) = validate_idmap_case(case) {
+        eprintln!("idmap test case {case} failed: {err:?}");
+        std::process::exit(1);
+    }
+}
+
 pub fn validate_seccomp(spec: &Spec) {
     let linux = spec.linux().as_ref().unwrap();
     if linux.seccomp().is_some() {
