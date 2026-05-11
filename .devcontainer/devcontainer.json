@@ -27,5 +27,6 @@
   "runArgs": ["--name", "youki-devcontainer"],
   "build": {
     "dockerfile": "Dockerfile"
-  }
+  },
+  "postStartCommand": "rustup toolchain install && just youki-dev"
 }
