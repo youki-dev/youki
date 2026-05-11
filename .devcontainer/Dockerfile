@@ -1,17 +1,6 @@
 ARG VARIANT="bullseye"
 FROM mcr.microsoft.com/vscode/devcontainers/rust:1-${VARIANT}
 
-# Install docker with youki
-COPY <<EOF /etc/docker/daemon.json
-  {
-    "runtimes": {
-      "youki": {
-        "path": "/workspaces/youki/youki"
-      }
-    }
-  }
-EOF
-
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 RUN <<'EOF'
@@ -44,4 +33,15 @@ rustup component add clippy
 # Systemd is not available in this Dev Container, but Podman `event_logger` defaults to journald.
 # Switch the logger to file so container startup does not fail.
 sed -i 's/^# events_logger = "journald"/events_logger = "file"/' /usr/share/containers/containers.conf
+EOF
+
+# Install docker with youki
+COPY <<'EOF' /etc/docker/daemon.json
+  {
+    "runtimes": {
+      "youki": {
+        "path": "/workspaces/youki/youki"
+      }
+    }
+  }
 EOF
