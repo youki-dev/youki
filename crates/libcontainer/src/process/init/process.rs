@@ -8,6 +8,7 @@ use nc;
 use nix::mount::{MntFlags, MsFlags};
 use nix::sched::CloneFlags;
 use nix::sys::stat::Mode;
+use nix::sys::statfs::statfs;
 use nix::unistd::{self, Gid, Uid, close, dup2, setsid};
 use oci_spec::runtime::{
     IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxNetDevice, LinuxPersonalityDomain,
@@ -198,12 +199,22 @@ pub fn container_init_process(
 
     if matches!(args.container_type, ContainerType::InitContainer) {
         if ctx.rootfs_ro {
+            let current_flags = statfs("/")
+                .map_err(|err| {
+                    tracing::error!(?err, "failed to statfs root '/' to get current mount flags");
+                    InitProcessError::SyscallOther(SyscallError::Nix(err))
+                })?
+                .flags()
+                .bits();
             ctx.syscall
                 .mount(
                     None,
                     Path::new("/"),
                     None,
-                    MsFlags::MS_RDONLY | MsFlags::MS_REMOUNT | MsFlags::MS_BIND,
+                    MsFlags::MS_RDONLY
+                        | MsFlags::MS_REMOUNT
+                        | MsFlags::MS_BIND
+                        | MsFlags::from_bits_truncate(current_flags),
                     None,
                 )
                 .map_err(|err| {
