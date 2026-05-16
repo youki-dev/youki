@@ -50,7 +50,9 @@ pub enum ProcessError {
 
 type Result<T> = std::result::Result<T, ProcessError>;
 
-pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bool)> {
+pub fn container_main_process(
+    container_args: &ContainerArgs,
+) -> Result<(Pid, Option<PathBuf>, Option<PathBuf>)> {
     // We use a set of channels to communicate between parent and child process.
     // Each channel is uni-directional. Because we will pass these channel to
     // cloned process, we have to be deligent about closing any unused channel.
@@ -132,7 +134,8 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     // The intermediate process will send the init pid once it forks the init
     // process.  The intermediate process should exit after this point.
     let init_pid = main_receiver.wait_for_intermediate_ready()?;
-    let mut need_to_clean_up_intel_rdt_subdirectory = false;
+    let mut intel_rdt_dir = None;
+    let mut intel_rdt_monitoring_dir = None;
 
     if let Some(linux) = container_args.spec.linux() {
         if let Some(intel_rdt) = linux.intel_rdt() {
@@ -140,8 +143,9 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                 .container
                 .as_ref()
                 .map(|container| container.id());
-            need_to_clean_up_intel_rdt_subdirectory =
-                setup_intel_rdt(container_id, &init_pid, intel_rdt)?;
+            let (dir, mon_dir) = setup_intel_rdt(container_id, &init_pid, intel_rdt)?;
+            intel_rdt_dir = dir;
+            intel_rdt_monitoring_dir = mon_dir;
         }
     }
 
@@ -278,7 +282,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
         Err(err) => return Err(ProcessError::WaitIntermediateProcess(err)),
     };
 
-    Ok((init_pid, need_to_clean_up_intel_rdt_subdirectory))
+    Ok((init_pid, intel_rdt_dir, intel_rdt_monitoring_dir))
 }
 
 fn setup_mapping(config: &UserNamespaceConfig, pid: Pid) -> Result<()> {

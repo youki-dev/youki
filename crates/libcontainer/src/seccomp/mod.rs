@@ -48,12 +48,14 @@ pub enum SeccompError {
     SetCtlNnp {
         source: libseccomp::error::SeccompError,
     },
+    #[error("unsupported architecture: {0}")]
+    UnsupportedArch(String),
 }
 
 type Result<T> = std::result::Result<T, SeccompError>;
 
-fn translate_arch(arch: Arch) -> ScmpArch {
-    match arch {
+fn translate_arch(arch: Arch) -> Result<ScmpArch> {
+    Ok(match arch {
         Arch::ScmpArchNative => ScmpArch::Native,
         Arch::ScmpArchX86 => ScmpArch::X86,
         Arch::ScmpArchX86_64 => ScmpArch::X8664,
@@ -72,7 +74,12 @@ fn translate_arch(arch: Arch) -> ScmpArch {
         Arch::ScmpArchS390 => ScmpArch::S390,
         Arch::ScmpArchS390x => ScmpArch::S390X,
         Arch::ScmpArchRiscv64 => ScmpArch::Riscv64,
-    }
+        // The following architectures were added in OCI runtime-spec v1.3.0
+        // (Parisc, Parisc64, Loongarch64, M68k, Sh), but are not yet
+        // supported by the libseccomp rust crate (v0.4.0).
+        // Returning an error for now until libseccomp updates its `ScmpArch` enum.
+        _ => return Err(SeccompError::UnsupportedArch(format!("{arch:?}"))),
+    })
 }
 
 fn translate_action(action: LinuxSeccompAction, errno: Option<u32>) -> Result<ScmpAction> {
@@ -172,7 +179,7 @@ pub fn initialize_seccomp(seccomp: &LinuxSeccomp) -> Result<Option<io::RawFd>> {
     if let Some(architectures) = seccomp.architectures() {
         for &arch in architectures {
             tracing::trace!(?arch, "adding architecture");
-            ctx.add_arch(translate_arch(arch))
+            ctx.add_arch(translate_arch(arch)?)
                 .map_err(|err| SeccompError::AddArch { source: err, arch })?;
         }
     }

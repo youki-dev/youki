@@ -8,7 +8,9 @@ use super::{Container, ContainerStatus};
 use crate::config::YoukiConfig;
 use crate::error::LibcontainerError;
 use crate::hooks;
-use crate::process::intel_rdt::delete_resctrl_subdirectory;
+use crate::process::intel_rdt::{
+    delete_resctrl_monitoring_subdirectory, delete_resctrl_subdirectory,
+};
 
 impl Container {
     /// Deletes the container
@@ -69,41 +71,12 @@ impl Container {
         // Once reached here, the container is verified that it can be deleted.
         debug_assert!(self.status().can_delete());
 
-        if let Some(true) = &self.clean_up_intel_rdt_subdirectory() {
-            if let Err(err) = delete_resctrl_subdirectory(self.id()) {
-                tracing::warn!(
-                    "failed to delete resctrl subdirectory due to: {err:?}, continue to delete"
-                );
-            }
-        }
-
+        let mut config_opt = None;
         if self.root.exists() {
             match YoukiConfig::load(&self.root) {
                 Ok(config) => {
-                    tracing::debug!("config: {:?}", config);
-
-                    // remove the cgroup created for the container
-                    // check https://man7.org/linux/man-pages/man7/cgroups.7.html
-                    // creating and removing cgroups section for more information on cgroups
-                    let cmanager = libcgroups::common::create_cgroup_manager(
-                        libcgroups::common::CgroupConfig {
-                            cgroup_path: config.cgroup_path.to_owned(),
-                            systemd_cgroup: self.systemd(),
-                            container_name: self.id().to_string(),
-                        },
-                    )?;
-                    cmanager.remove().map_err(|err| {
-                        tracing::error!(cgroup_path = ?config.cgroup_path, "failed to remove cgroup due to: {err:?}");
-                        err
-                    })?;
-
-                    if let Some(hooks) = config.hooks.as_ref() {
-                        hooks::run_hooks(hooks.poststop().as_ref(), Some(&self.state), None, None)
-                            .map_err(|err| {
-                                tracing::error!(err = ?err, "failed to run post stop hooks");
-                                err
-                            })?;
-                    }
+                    tracing::debug!("config: {config:?}");
+                    config_opt = Some(config);
                 }
                 Err(err) => {
                     // There is a brief window where the container state is
@@ -115,7 +88,49 @@ impl Container {
                     );
                 }
             }
+        }
 
+        if let Some(path) = self.intel_rdt_monitoring_dir() {
+            if let Err(err) = delete_resctrl_monitoring_subdirectory(path) {
+                tracing::warn!(
+                    "failed to delete resctrl monitoring subdirectory due to: {err:?}, continue to delete"
+                );
+            }
+        }
+
+        if let Some(path) = self.intel_rdt_dir() {
+            if let Err(err) = delete_resctrl_subdirectory(path) {
+                tracing::warn!(
+                    "failed to delete resctrl subdirectory due to: {err:?}, continue to delete"
+                );
+            }
+        }
+
+        if let Some(config) = config_opt {
+            // remove the cgroup created for the container
+            // check https://man7.org/linux/man-pages/man7/cgroups.7.html
+            // creating and removing cgroups section for more information on cgroups
+            let cmanager =
+                libcgroups::common::create_cgroup_manager(libcgroups::common::CgroupConfig {
+                    cgroup_path: config.cgroup_path.to_owned(),
+                    systemd_cgroup: self.systemd(),
+                    container_name: self.id().to_string(),
+                })?;
+            cmanager.remove().map_err(|err| {
+                        tracing::error!(cgroup_path = ?config.cgroup_path, "failed to remove cgroup due to: {err:?}");
+                        err
+                    })?;
+
+            if let Some(hooks) = config.hooks.as_ref() {
+                hooks::run_hooks(hooks.poststop().as_ref(), Some(&self.state), None, None)
+                    .map_err(|err| {
+                        tracing::error!(err = ?err, "failed to run post stop hooks");
+                        err
+                    })?;
+            }
+        }
+
+        if self.root.exists() {
             // remove the directory storing container state
             tracing::debug!("remove dir {:?}", self.root);
             fs::remove_dir_all(&self.root).map_err(|err| {

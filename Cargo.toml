@@ -3,6 +3,10 @@ resolver = "2"
 members = ["crates/*", "tests/contest/*", "tools/*"]
 exclude = ["experiment/seccomp", "experiment/selinux"]
 
+# NOTE: temp for developing
+[patch.crates-io]
+oci-spec = { git = "https://github.com/youki-dev/oci-spec-rs", branch = "main" }
+
 [workspace.dependencies]
 anyhow = "1.0.102"
 caps = "0.5.6"

@@ -63,17 +63,25 @@ pub enum ParseLineError {
     L3Line,
     #[error("L3 token has wrong number of fields")]
     L3Token,
+    #[error("Generic line doesn't match validation")]
+    GenericLine,
+    #[error("Generic token has wrong number of fields")]
+    GenericToken,
 }
 
 type Result<T> = std::result::Result<T, IntelRdtError>;
 
-pub fn delete_resctrl_subdirectory(id: &str) -> Result<()> {
+/// Removes the main resource control group (CLOS) directory for the container.
+/// This function includes a safety check (`parent == dir`) to ensure that only directories
+/// immediately under the resctrl mount point are deleted, preventing accidental deletion
+/// of nested kernel files or other sensitive directories.
+pub fn delete_resctrl_subdirectory(path: &Path) -> Result<()> {
     let dir = find_resctrl_mount_point().map_err(|err| {
-        tracing::error!("failed to find resctrl mount point: {}", err);
+        tracing::error!("failed to find resctrl mount point: {err}");
         err
     })?;
-    let container_resctrl_path = dir.join(id).canonicalize().map_err(|err| {
-        tracing::error!(?dir, ?id, "failed to canonicalize path: {}", err);
+    let container_resctrl_path = path.canonicalize().map_err(|err| {
+        tracing::error!(?dir, ?path, "failed to canonicalize path: {err}");
         IntelRdtError::Canonicalize(err)
     })?;
     match container_resctrl_path.parent() {
@@ -82,7 +90,7 @@ pub fn delete_resctrl_subdirectory(id: &str) -> Result<()> {
         Some(parent) => {
             if parent == dir && container_resctrl_path.exists() {
                 fs::remove_dir(&container_resctrl_path).map_err(|err| {
-                    tracing::error!(path = ?container_resctrl_path, "failed to remove resctrl subdirectory: {}", err);
+                    tracing::error!(path = ?container_resctrl_path, "failed to remove resctrl subdirectory: {err}");
                     IntelRdtError::RemoveSubdirectory(err)
                 })?;
             } else {
@@ -91,6 +99,25 @@ pub fn delete_resctrl_subdirectory(id: &str) -> Result<()> {
         }
         None => return Err(IntelRdtError::NoResctrlSubdirectoryParent),
     }
+    Ok(())
+}
+
+/// Removes the dedicated monitoring group subdirectory (`mon_groups/<container_id>`).
+/// Unlike `delete_resctrl_subdirectory`, this does not enforce the `parent == dir` safety check,
+/// because monitoring groups are intentionally nested deeper in the filesystem tree
+/// (either under a specific CLOS ID or under the root `mon_groups`). The path provided here
+/// is inherently trusted as it was resolved securely during container creation.
+pub fn delete_resctrl_monitoring_subdirectory(path: &Path) -> Result<()> {
+    if path.exists() {
+        fs::remove_dir(path).map_err(|err| {
+            tracing::error!(
+                ?path,
+                "failed to remove resctrl monitoring subdirectory: {err}"
+            );
+            IntelRdtError::RemoveSubdirectory(err)
+        })?;
+    }
+
     Ok(())
 }
 
@@ -118,50 +145,85 @@ pub fn find_resctrl_mount_point() -> Result<PathBuf> {
     Err(IntelRdtError::ResctrlMountPointNotFound)
 }
 
-/// Adds container PID to the tasks file in the correct resctrl
-/// pseudo-filesystem subdirectory.  Creates the directory if needed based on
-/// the rules in Linux OCI runtime config spec.
-fn write_container_pid_to_resctrl_tasks(
-    path: &Path,
-    id: &str,
+/// Sets up the main resource control group (CLOS) for the container.
+/// This involves creating the subdirectory within the resctrl filesystem if needed,
+/// and adding the container's PID to the group's `tasks` file.
+///
+/// Returns `true` if the runtime created the directory, or `false` if it already existed.
+fn setup_resctrl_group(
+    resctrl_container_dir: &Path,
     init_pid: Pid,
     only_clos_id_set: bool,
 ) -> Result<bool> {
-    let tasks = path.to_owned().join(id).join("tasks");
-    let dir = tasks.parent();
-    match dir {
-        None => Err(IntelRdtError::InvalidResctrlDirectory),
-        Some(resctrl_container_dir) => {
-            let mut created_dir = false;
-            if !resctrl_container_dir.exists() {
-                if only_clos_id_set {
-                    // Directory doesn't exist and only clos_id is set: error out.
-                    return Err(IntelRdtError::NoClosIDDirectory);
-                }
-                fs::create_dir_all(resctrl_container_dir).map_err(|err| {
-                    tracing::error!("failed to create resctrl subdirectory: {}", err);
-                    IntelRdtError::CreateClosIDDirectory(err)
-                })?;
-                created_dir = true;
-            }
-            // TODO(ipuustin): File doesn't need to be created, but it's easier
-            // to test this way. Fix the tests so that the fake resctrl
-            // filesystem is pre-populated.
-            let mut file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(tasks)
-                .map_err(|err| {
-                    tracing::error!("failed to open resctrl tasks file: {}", err);
-                    IntelRdtError::OpenClosIDDirectory(err)
-                })?;
-            write!(file, "{init_pid}").map_err(|err| {
-                tracing::error!("failed to write to resctrl tasks file: {}", err);
-                IntelRdtError::WriteClosIDDirectory(err)
-            })?;
-            Ok(created_dir)
+    let mut created_dir = false;
+
+    if !resctrl_container_dir.exists() {
+        if only_clos_id_set {
+            return Err(IntelRdtError::NoClosIDDirectory);
         }
+        fs::create_dir_all(resctrl_container_dir).map_err(|err| {
+            tracing::error!("failed to create resctrl subdirectory: {}", err);
+            IntelRdtError::CreateClosIDDirectory(err)
+        })?;
+        created_dir = true;
     }
+
+    let tasks = resctrl_container_dir.join("tasks");
+    // TODO(ipuustin): File doesn't need to be created, but it's easier
+    // to test this way. Fix the tests so that the fake resctrl
+    // filesystem is pre-populated.
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(tasks)
+        .map_err(|err| {
+            tracing::error!("failed to open resctrl tasks file: {}", err);
+            IntelRdtError::OpenClosIDDirectory(err)
+        })?;
+
+    write!(file, "{init_pid}").map_err(|err| {
+        tracing::error!("failed to write to resctrl tasks file: {}", err);
+        IntelRdtError::WriteClosIDDirectory(err)
+    })?;
+
+    Ok(created_dir)
+}
+
+/// Creates a dedicated monitoring group (`mon_groups/<container_id>`) inside the container's
+/// Intel RDT resource control directory and adds the container's PID to its `tasks` file.
+///
+/// As per OCI runtime-spec v1.3.0, if `enable_monitoring` is set to true, the runtime MUST
+/// create this subdirectory. This allows users to track the resource utilization (e.g., L3 cache,
+/// memory bandwidth) of the container independently from the parent allocation group (CLOS).
+///
+/// Returns `true` if the runtime created the directory, or `false` if it already existed.
+fn setup_monitoring_group(mon_dir: &Path, init_pid: Pid) -> Result<bool> {
+    let mut created_dir = false;
+
+    if !mon_dir.exists() {
+        fs::create_dir_all(mon_dir).map_err(|err| {
+            tracing::error!("failed to create resctrl monitoring subdirectory: {}", err);
+            IntelRdtError::CreateClosIDDirectory(err)
+        })?;
+        created_dir = true;
+    }
+
+    let tasks = mon_dir.join("tasks");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(tasks)
+        .map_err(|err| {
+            tracing::error!("failed to open resctrl monitoring tasks file: {}", err);
+            IntelRdtError::OpenClosIDDirectory(err)
+        })?;
+
+    write!(file, "{init_pid}").map_err(|err| {
+        tracing::error!("failed to write to resctrl monitoring tasks file: {}", err);
+        IntelRdtError::WriteClosIDDirectory(err)
+    })?;
+
+    Ok(created_dir)
 }
 
 /// Merges the two schemas together, removing lines starting with "MB:" from
@@ -199,7 +261,7 @@ enum LineType {
     L3DataLine,
     L3CodeLine,
     MbLine,
-    Unknown,
+    Generic(String),
 }
 
 #[derive(PartialEq)]
@@ -265,7 +327,48 @@ fn parse_l3_line(line: &str) -> std::result::Result<HashMap<String, String>, Par
     Ok(token_map)
 }
 
-/// Get the resctrl line type. We only support L3{,CODE,DATA} and MB.
+/// Parse tokens from generic resctrl lines.
+/// OCI runtime-spec v1.3.0 introduced the `schemata` list, allowing users to
+/// specify any hardware resource (e.g. `L2`, `SMBA`). To safely verify these
+/// new resources during `is_same_schema`, we must parse them into token maps
+/// so we can perform strict semantic equality checks rather than basic string matching.
+///
+/// Example:
+/// A line like "L2:0=00ff;1=f0" is parsed into a token map:
+/// {"0": "ff", "1": "f0"}
+/// Leading zeros are automatically stripped from the values to ensure
+/// "00ff" correctly matches "ff" during equality comparison.
+fn parse_generic_line(line: &str) -> std::result::Result<HashMap<String, String>, ParseLineError> {
+    let mut token_map = HashMap::new();
+
+    static OTHER_VALIDATE_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"^[A-Za-z0-9]+:(?:\s|;)*(?:\w+\s*=\s*[[:xdigit:]]+)?(?:(?:\s*;+\s*)+\w+\s*=\s*[[:xdigit:]]+)*(?:\s|;)*$").unwrap()
+    });
+
+    static OTHER_CAPTURE_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(\w+)\s*=\s*([[:xdigit:]]+)").unwrap());
+    if !OTHER_VALIDATE_RE.is_match(line) {
+        return Err(ParseLineError::GenericLine);
+    }
+
+    for token in OTHER_CAPTURE_RE.captures_iter(line) {
+        match (token.get(1), token.get(2)) {
+            (Some(key), Some(value)) => {
+                let val_str = value.as_str().trim_start_matches('0');
+                let final_val = if val_str.is_empty() { "0" } else { val_str };
+                token_map.insert(key.as_str().to_string(), final_val.to_string());
+            }
+            _ => return Err(ParseLineError::GenericToken),
+        }
+    }
+
+    Ok(token_map)
+}
+
+/// Get the resctrl line type.
+/// Supports traditional L3{,CODE,DATA} and MB resources.
+/// Also supports generic hardware resources (e.g., L2, SMBA) as introduced
+/// in OCI runtime-spec v1.3.0 via the `schemata` list feature.
 fn get_line_type(line: &str) -> LineType {
     if line.starts_with("L3:") {
         return LineType::L3Line;
@@ -280,20 +383,37 @@ fn get_line_type(line: &str) -> LineType {
         return LineType::MbLine;
     }
 
-    // Empty or unknown line.
-    LineType::Unknown
+    // OCI runtime-spec v1.3.0 generic schemata list support.
+    // If it's not a legacy L3/MB line, we extract the prefix before the colon
+    // (e.g. "L2" from "L2:0=ff") and store it as `LineType::Other(prefix)`.
+    // This allows us to retain the prefix for strict schema verification later,
+    // rather than blindly dropping unknown hardware resources.
+    if let Some(pos) = line.find(':') {
+        let prefix = &line[..pos];
+        if prefix.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            return LineType::Generic(prefix.to_string());
+        }
+    }
+
+    LineType::Generic(String::new())
 }
 
 /// Parse a resctrl line.
 fn parse_line(line: &str) -> Option<std::result::Result<ParsedLine, ParseLineError>> {
     let line_type = get_line_type(line);
 
-    let maybe_tokens = match line_type {
+    let maybe_tokens = match &line_type {
         LineType::L3Line => parse_l3_line(line).map(Some),
         LineType::L3DataLine => parse_l3_line(line).map(Some),
         LineType::L3CodeLine => parse_l3_line(line).map(Some),
         LineType::MbLine => parse_mb_line(line).map(Some),
-        LineType::Unknown => Ok(None),
+        LineType::Generic(prefix) => {
+            if prefix.is_empty() {
+                Ok(None)
+            } else {
+                parse_generic_line(line).map(Some)
+            }
+        }
     };
 
     match maybe_tokens {
@@ -328,6 +448,22 @@ fn is_same_schema(combined_schema: &str, existing_schema: &str) -> Result<bool> 
     Ok(compare_lines(&combined, &existing))
 }
 
+/// Retrieves the schemata data to be written to the resctrl filesystem.
+/// OCI runtime-spec v1.3.0 introduced the generic `schemata` list, which
+/// supersedes `l3_cache_schema` and `mem_bw_schema`. If the list is provided,
+/// we join the array elements with a newline `\n` to format them correctly
+/// for the Linux kernel's `schemata` file requirements. If omitted, we
+/// fall back to combining the legacy fields.
+fn get_schemata_data(intel_rdt: &LinuxIntelRdt) -> Option<String> {
+    if let Some(schemata) = intel_rdt.schemata() {
+        if !schemata.is_empty() {
+            return Some(schemata.join("\n"));
+        }
+    }
+
+    combine_l3_cache_and_mem_bw_schemas(intel_rdt.l3_cache_schema(), intel_rdt.mem_bw_schema())
+}
+
 /// Combines the l3_cache_schema and mem_bw_schema values together with the
 /// rules given in Linux OCI runtime config spec. If clos_id_was_set parameter
 /// is true and the directory wasn't created, the rules say that the schemas
@@ -336,13 +472,12 @@ fn is_same_schema(combined_schema: &str, existing_schema: &str) -> Result<bool> 
 fn write_resctrl_schemata(
     path: &Path,
     id: &str,
-    l3_cache_schema: &Option<String>,
-    mem_bw_schema: &Option<String>,
+    intel_rdt: &LinuxIntelRdt,
     clos_id_was_set: bool,
     created_dir: bool,
 ) -> Result<()> {
     let schemata = path.to_owned().join(id).join("schemata");
-    let maybe_combined_schema = combine_l3_cache_and_mem_bw_schemas(l3_cache_schema, mem_bw_schema);
+    let maybe_combined_schema = get_schemata_data(intel_rdt);
 
     if let Some(combined_schema) = maybe_combined_schema {
         if clos_id_was_set && !created_dir {
@@ -371,48 +506,53 @@ fn write_resctrl_schemata(
     Ok(())
 }
 
-/// Sets up Intel RDT configuration for the container process based on the
-/// OCI config. The result bool tells whether or not we need to clean up
-/// the created subdirectory.
+/// Sets up Intel RDT configuration for the container process based on the OCI config.
+/// This handles setting up the main resource allocation group (CLOS), applying schemata,
+/// and setting up the dedicated monitoring group if `enable_monitoring` is true.
+///
+/// Returns a tuple of two optional paths: `(intel_rdt_dir, intel_rdt_monitoring_dir)`.
+/// These indicate whether the runtime created the main group directory and/or the
+/// monitoring directory, respectively. The runtime MUST remove these created
+/// directories when the container is deleted.
 pub fn setup_intel_rdt(
     maybe_container_id: Option<&str>,
     init_pid: &Pid,
     intel_rdt: &LinuxIntelRdt,
-) -> Result<bool> {
+) -> Result<(Option<PathBuf>, Option<PathBuf>)> {
     // Find mounted resctrl filesystem, error out if it can't be found.
-    let path = find_resctrl_mount_point().inspect_err(|_err| {
+    let mount_point = find_resctrl_mount_point().inspect_err(|_err| {
         tracing::error!("failed to find a mounted resctrl file system");
     })?;
-    let clos_id_set = intel_rdt.clos_id().is_some();
-    let only_clos_id_set =
-        clos_id_set && intel_rdt.l3_cache_schema().is_none() && intel_rdt.mem_bw_schema().is_none();
-    let id = match (intel_rdt.clos_id(), maybe_container_id) {
-        (Some(clos_id), _) => clos_id,
-        (None, Some(container_id)) => container_id,
-        (None, None) => Err(IntelRdtError::ResctrlIdNotFound)?,
-    };
 
-    let created_dir = write_container_pid_to_resctrl_tasks(&path, id, *init_pid, only_clos_id_set)
-        .inspect_err(|_err| {
-            tracing::error!("failed to write container pid to resctrl tasks file");
-        })?;
-    write_resctrl_schemata(
-        &path,
-        id,
-        intel_rdt.l3_cache_schema(),
-        intel_rdt.mem_bw_schema(),
-        clos_id_set,
-        created_dir,
-    )
-    .inspect_err(|_err| {
-        tracing::error!("failed to write schemata to resctrl schemata file");
-    })?;
+    let container_id = maybe_container_id.ok_or(IntelRdtError::ResctrlIdNotFound)?;
+    let clos_id_set = intel_rdt.clos_id().is_some();
+    let id = intel_rdt.clos_id().as_deref().unwrap_or(container_id);
+    let only_clos_id_set = clos_id_set && get_schemata_data(intel_rdt).is_none();
+    let container_dir = mount_point.join(id);
+    let created_dir = setup_resctrl_group(&container_dir, *init_pid, only_clos_id_set)?;
+
+    write_resctrl_schemata(&mount_point, id, intel_rdt, clos_id_set, created_dir).inspect_err(
+        |_err| {
+            tracing::error!("failed to write schemata to resctrl schemata file");
+        },
+    )?;
+
+    let mut created_monitoring_dir = None;
+    if intel_rdt.enable_monitoring().unwrap_or(false) {
+        let mon_dir = container_dir.join("mon_groups").join(container_id);
+        if setup_monitoring_group(&mon_dir, *init_pid)? {
+            created_monitoring_dir = Some(mon_dir);
+        }
+    }
 
     // If closID is not set and the runtime has created the sub-directory,
     // the runtime MUST remove the sub-directory when the container is deleted.
-    let need_to_delete_directory = !clos_id_set && created_dir;
+    let mut need_to_delete_directory = None;
+    if !clos_id_set && created_dir {
+        need_to_delete_directory = Some(container_dir);
+    }
 
-    Ok(need_to_delete_directory)
+    Ok((need_to_delete_directory, created_monitoring_dir))
 }
 
 #[cfg(test)]
@@ -454,6 +594,29 @@ mod test {
         assert!(val.lines().any(|line| line == "L3:2=f"));
         assert!(!val.lines().any(|line| line == "MB:0=20;1=70"));
 
+        // Generic schemata in the legacy L3 field should be passed through
+        let l3_generic = "L3:0=f;1=f0\nL2:0=f\nMB:0=20;1=70";
+        let res = combine_l3_cache_and_mem_bw_schemas(
+            &Some(l3_generic.to_owned()),
+            &Some(bw_1.to_owned()),
+        );
+        assert!(res.is_some());
+        let val = res.unwrap();
+        assert!(val.lines().any(|line| line == "L2:0=f"));
+        assert!(!val.lines().any(|line| line == "MB:0=20;1=70"));
+
+        // Messy whitespace and semicolons around MB in L3 should still be stripped
+        let l3_messy_mb = "L3:0=f\nMB:  0=10; 1=20 ;;";
+        let res = combine_l3_cache_and_mem_bw_schemas(
+            &Some(l3_messy_mb.to_owned()),
+            &Some(bw_1.to_owned()),
+        );
+        assert!(res.is_some());
+        let val = res.unwrap();
+        assert!(val.lines().any(|line| line == "L3:0=f"));
+        assert!(!val.lines().any(|line| line.starts_with("MB:  0=10")));
+        assert!(val.lines().any(|line| line == bw_1));
+
         Ok(())
     }
 
@@ -466,6 +629,8 @@ mod test {
         assert!(is_same_schema("MB:0=bar;1=f0", "MB:0=bar;1=f0")?);
         assert!(is_same_schema("L3:", "L3:")?);
         assert!(is_same_schema("MB:", "MB:")?);
+        assert!(is_same_schema("L2:0=f;1=f0", "L2:0=f;1=f0")?);
+        assert!(is_same_schema("SMBA:0=20", "SMBA:0=20")?);
 
         // Different schemas.
         assert!(!is_same_schema("L3:0=f;1=f0", "L3:2=f")?);
@@ -476,6 +641,10 @@ mod test {
         assert!(!is_same_schema("L3:0=f", "L3DATA:0=f")?);
         assert!(!is_same_schema("L3CODE:0=f", "L3:0=f")?);
         assert!(!is_same_schema("MB:0=f", "L3:0=f")?);
+        assert!(!is_same_schema("L2:0=f", "L3:0=f")?);
+        assert!(!is_same_schema("L2:0=f;1=f0", "L2:0=ff;1=f0")?);
+        assert!(!is_same_schema("SMBA:0=20", "SMBA:0=30")?);
+        assert!(!is_same_schema("SMBA:0=20", "MBA:0=20")?);
 
         // Exact same multi-line schema.
         assert!(is_same_schema(
@@ -483,11 +652,8 @@ mod test {
             "L3:0=f;1=f0\nL3:2=f"
         )?);
 
-        // Unknown line type is ignored.
-        assert!(is_same_schema(
-            "L3:0=f;1=f0\nL3:2=f\nBAR:foo",
-            "L3:0=f;1=f0\nL3:2=f"
-        )?);
+        // Malformed generic line types now cause verification to fail
+        assert!(is_same_schema("L3:0=f;1=f0\nL3:2=f\nBAR:foo", "L3:0=f;1=f0\nL3:2=f").is_err());
 
         // Different multi-line schema.
         assert!(!is_same_schema(
@@ -507,15 +673,20 @@ mod test {
 
         // Same schema, different token order.
         assert!(is_same_schema("L3:1=f0;0=0", "L3:0=0;1=f0")?);
+        assert!(is_same_schema("L2:1=f0;0=f", "L2:0=f;1=f0")?);
 
         // Same schema, different whitespace and semicolons.
         assert!(is_same_schema("L3:;;  0 = f; ;  1=f0", "L3:0=f;1  = f0;;")?);
+        assert!(is_same_schema("L2:;;  0 = f; ;  1=f0", "L2:0=f;1  = f0;;")?);
+        assert!(is_same_schema("L2:0=f;1=f0;", "L2:0=f;1=f0")?);
+        assert!(is_same_schema("L2:  0  =  ff  ", "L2:0=ff")?);
 
         // Same schema, different leading zeros in masks.
         assert!(is_same_schema("L3:0=000f", "L3:0=0f")?);
         assert!(is_same_schema("L3:0=000f", "L3:0=0f")?);
         assert!(is_same_schema("L3:0=f", "L3:0=0f")?);
         assert!(is_same_schema("L3:0=0", "L3:0=0000")?);
+        assert!(is_same_schema("L2:0=00ff;1=000f0", "L2:0=ff;1=f0")?);
 
         // Invalid schemas.
         assert!(is_same_schema("L3:1=;0=f", "L3:1=;0=f").is_err());
@@ -525,63 +696,150 @@ mod test {
         assert!(is_same_schema("MB:1=;0=f", "MB:1=;0=f").is_err());
         assert!(is_same_schema("MB:=0;0=f", "MB:=0;0=f").is_err());
         assert!(is_same_schema("MB:1=0=3;0=f", "MB:1=0=3;0=f").is_err());
+        assert!(is_same_schema("L2:0=invalid_hex_string", "L2:0=invalid_hex_string").is_err());
+        assert!(
+            is_same_schema(
+                "L2:0=0123456789abcdef0123456789abcdef0123456789abcdefzz",
+                "L2:0=0123456789abcdef0123456789abcdef0123456789abcdefzz"
+            )
+            .is_err()
+        );
+
+        // Generic schema handling leading zeros correctly
+        assert!(is_same_schema("L2:0=00ff;1=000f0", "L2:0=ff;1=f0")?);
+
+        // Zero value edge cases for generic schemas
+        assert!(is_same_schema("L2:0=0;1=00", "L2:0=0;1=0")?);
+
+        // Empty lines are ignored
+        assert!(is_same_schema(
+            "L3:0=f;1=f0\n\nL2:0=f\n",
+            "L3:0=f;1=f0\nL2:0=f"
+        )?);
 
         Ok(())
     }
 
     #[test]
-    fn test_write_pid_to_resctrl_tasks() -> Result<()> {
+    fn test_get_line_type() {
+        assert!(matches!(get_line_type("L3:0=f"), LineType::L3Line));
+        assert!(matches!(get_line_type("L3DATA:0=f"), LineType::L3DataLine));
+        assert!(matches!(get_line_type("L3CODE:0=f"), LineType::L3CodeLine));
+        assert!(matches!(get_line_type("MB:0=70"), LineType::MbLine));
+
+        let generic_l2 = get_line_type("L2:0=f");
+        if let LineType::Generic(prefix) = generic_l2 {
+            assert_eq!(prefix, "L2");
+        } else {
+            panic!("Expected LineType::Generic");
+        }
+
+        let generic_smba = get_line_type("SMBA:0=20");
+        if let LineType::Generic(prefix) = generic_smba {
+            assert_eq!(prefix, "SMBA");
+        } else {
+            panic!("Expected LineType::Generic");
+        }
+    }
+
+    #[test]
+    fn test_parse_generic_line() -> Result<()> {
+        let parsed = parse_generic_line("L2:0=00ff;1=f0")?;
+        assert_eq!(parsed.get("0").unwrap(), "ff");
+        assert_eq!(parsed.get("1").unwrap(), "f0");
+
+        let parsed_zero = parse_generic_line("L2:0=0000;1=00")?;
+        assert_eq!(parsed_zero.get("0").unwrap(), "0");
+        assert_eq!(parsed_zero.get("1").unwrap(), "0");
+
+        assert!(parse_generic_line("L2:0=;1=f0").is_err());
+        assert!(parse_generic_line("L2:0=invalid_hex").is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_schemata_data() {
+        use oci_spec::runtime::LinuxIntelRdtBuilder;
+        let rdt_modern = LinuxIntelRdtBuilder::default()
+            .schemata(vec!["L2:0=f;1=f0".to_owned(), "SMBA:0=20".to_owned()])
+            .build()
+            .unwrap();
+        let combined_modern = get_schemata_data(&rdt_modern).unwrap();
+        assert_eq!(combined_modern, "L2:0=f;1=f0\nSMBA:0=20");
+    }
+
+    #[test]
+    fn test_setup_resctrl_group() -> Result<()> {
         let tmp = tempfile::tempdir().unwrap();
 
         // Create the directory for id "foo".
-        let res =
-            write_container_pid_to_resctrl_tasks(tmp.path(), "foo", Pid::from_raw(1000), false);
+        let container_dir = tmp.path().join("foo");
+        let res = setup_resctrl_group(&container_dir, Pid::from_raw(1000), false);
         assert!(res.unwrap()); // new directory created
-        let res = fs::read_to_string(tmp.path().join("foo").join("tasks"));
+        let res = fs::read_to_string(container_dir.join("tasks"));
         assert!(res.unwrap() == "1000");
 
         // Create the same directory the second time.
-        let res =
-            write_container_pid_to_resctrl_tasks(tmp.path(), "foo", Pid::from_raw(1500), false);
+        let res = setup_resctrl_group(&container_dir, Pid::from_raw(1500), false);
         assert!(!res.unwrap()); // no new directory created
 
-        // If just clos_id then throw an error.
-        let res =
-            write_container_pid_to_resctrl_tasks(tmp.path(), "foobar", Pid::from_raw(2000), true);
+        // If just clos_id then throw an error if the directory doesn't exist.
+        let foobar_dir = tmp.path().join("foobar");
+        let res = setup_resctrl_group(&foobar_dir, Pid::from_raw(2000), true);
         assert!(res.is_err());
 
         // If the directory already exists then it's fine to have just clos_id.
-        let res =
-            write_container_pid_to_resctrl_tasks(tmp.path(), "foo", Pid::from_raw(2500), true);
+        let res = setup_resctrl_group(&container_dir, Pid::from_raw(2500), true);
         assert!(!res.unwrap()); // no new directory created
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_setup_monitoring_group() -> Result<()> {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let mon_dir = tmp.path().join("mon_groups").join("container_id");
+        let res = setup_monitoring_group(&mon_dir, Pid::from_raw(1000));
+        assert!(res.unwrap()); // new directory created
+
+        let res = fs::read_to_string(mon_dir.join("tasks"));
+        assert!(res.unwrap() == "1000");
+
+        let res = setup_monitoring_group(&mon_dir, Pid::from_raw(1500));
+        assert!(!res.unwrap()); // no new directory created
+
+        let res = fs::read_to_string(mon_dir.join("tasks"));
+        assert!(res.unwrap() == "10001500");
 
         Ok(())
     }
 
     #[test]
     fn test_write_resctrl_schemata() -> Result<()> {
+        use oci_spec::runtime::LinuxIntelRdtBuilder;
         let tmp = tempfile::tempdir().unwrap();
+        let foobar_dir = tmp.path().join("foobar");
 
-        let res =
-            write_container_pid_to_resctrl_tasks(tmp.path(), "foobar", Pid::from_raw(1000), false);
-        assert!(res.unwrap()); // new directory created
+        let res = setup_resctrl_group(&foobar_dir, Pid::from_raw(1000), false);
+        assert!(res.unwrap());
 
         // No schemes, clos_id was not set, directory created (with container id).
-        let res = write_resctrl_schemata(tmp.path(), "foobar", &None, &None, false, true);
+        let empty_rdt = LinuxIntelRdtBuilder::default().build().unwrap();
+        let res = write_resctrl_schemata(tmp.path(), "foobar", &empty_rdt, false, true);
         assert!(res.is_ok());
         let res = fs::read_to_string(tmp.path().join("foobar").join("schemata"));
         assert!(res.is_err()); // File not found because no schemes.
 
         let l3_1 = "L3:0=f;1=f0\nL3:2=f\nMB:0=20;1=70";
         let bw_1 = "MB:0=70;1=20";
-        let res = write_resctrl_schemata(
-            tmp.path(),
-            "foobar",
-            &Some(l3_1.to_owned()),
-            &Some(bw_1.to_owned()),
-            false,
-            true,
-        );
+        let rdt_combined = LinuxIntelRdtBuilder::default()
+            .l3_cache_schema(l3_1.to_owned())
+            .mem_bw_schema(bw_1.to_owned())
+            .build()
+            .unwrap();
+        let res = write_resctrl_schemata(tmp.path(), "foobar", &rdt_combined, false, true);
         assert!(res.is_ok());
 
         let res = fs::read_to_string(tmp.path().join("foobar").join("schemata"));
@@ -594,28 +852,36 @@ mod test {
         // Try the verification case. If the directory existed (was not created
         // by us) and the clos_id was set, it needs to contain the same data as
         // we are trying to set. This is the same data:
-        let res = write_resctrl_schemata(
-            tmp.path(),
-            "foobar",
-            &Some(l3_1.to_owned()),
-            &Some(bw_1.to_owned()),
-            true,
-            false,
-        );
+        let res = write_resctrl_schemata(tmp.path(), "foobar", &rdt_combined, true, false);
         assert!(res.is_ok());
 
         // And this different data:
         let l3_2 = "L3:0=f;1=f0\nMB:0=20;1=70";
         let bw_2 = "MB:0=70;1=20";
-        let res = write_resctrl_schemata(
-            tmp.path(),
-            "foobar",
-            &Some(l3_2.to_owned()),
-            &Some(bw_2.to_owned()),
-            true,
-            false,
-        );
+        let rdt_different = LinuxIntelRdtBuilder::default()
+            .l3_cache_schema(l3_2.to_owned())
+            .mem_bw_schema(bw_2.to_owned())
+            .build()
+            .unwrap();
+        let res = write_resctrl_schemata(tmp.path(), "foobar", &rdt_different, true, false);
         assert!(res.is_err());
+
+        // Test modern schemata field overriding everything
+        let rdt_schemata = LinuxIntelRdtBuilder::default()
+            .l3_cache_schema(l3_1.to_owned())
+            .mem_bw_schema(bw_1.to_owned())
+            .schemata(vec!["L2:0=f;1=f0".to_owned()])
+            .build()
+            .unwrap();
+
+        let foobar_modern_dir = tmp.path().join("foobar_modern");
+        let _ = setup_resctrl_group(&foobar_modern_dir, Pid::from_raw(1001), false);
+        let res = write_resctrl_schemata(tmp.path(), "foobar_modern", &rdt_schemata, false, true);
+
+        assert!(res.is_ok());
+        let written_data =
+            fs::read_to_string(tmp.path().join("foobar_modern").join("schemata")).unwrap();
+        assert_eq!(written_data, "L2:0=f;1=f0\n");
 
         Ok(())
     }
