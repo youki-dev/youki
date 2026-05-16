@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use libcgroups::common::CgroupConfig;
+use nix::unistd::Pid;
 use oci_spec::runtime::Spec;
 
 use crate::container::Container;
@@ -13,7 +14,12 @@ use crate::workload::Executor;
 #[derive(Debug, Copy, Clone)]
 pub enum ContainerType {
     InitContainer,
-    TenantContainer { exec_notify_fd: RawFd },
+    TenantContainer {
+        exec_notify_fd: RawFd,
+        /// PID of the init process in the landlord container
+        /// (the container that tenant containers are attached to)
+        landlord_init_pid: Option<Pid>,
+    },
 }
 
 #[derive(Clone)]
