@@ -31,6 +31,8 @@ pub enum NamespaceError {
     NotSupported(String),
 }
 
+const CLONE_NEWTIME: CloneFlags = CloneFlags::from_bits_retain(libc::CLONE_NEWTIME);
+
 static ORDERED_NAMESPACES: &[CloneFlags] = &[
     CloneFlags::CLONE_NEWUSER,
     CloneFlags::CLONE_NEWPID,
@@ -38,6 +40,7 @@ static ORDERED_NAMESPACES: &[CloneFlags] = &[
     CloneFlags::CLONE_NEWIPC,
     CloneFlags::CLONE_NEWNET,
     CloneFlags::CLONE_NEWCGROUP,
+    CLONE_NEWTIME,
     CloneFlags::CLONE_NEWNS,
 ];
 
@@ -56,7 +59,7 @@ fn get_clone_flag(namespace_type: LinuxNamespaceType) -> Result<CloneFlags> {
         LinuxNamespaceType::Network => CloneFlags::CLONE_NEWNET,
         LinuxNamespaceType::Cgroup => CloneFlags::CLONE_NEWCGROUP,
         LinuxNamespaceType::Mount => CloneFlags::CLONE_NEWNS,
-        LinuxNamespaceType::Time => return Err(NamespaceError::NotSupported("time".to_string())),
+        LinuxNamespaceType::Time => CLONE_NEWTIME,
     };
 
     Ok(flag)
@@ -167,6 +170,10 @@ mod tests {
                 .typ(LinuxNamespaceType::Ipc)
                 .build()
                 .unwrap(),
+            LinuxNamespaceBuilder::default()
+                .typ(LinuxNamespaceType::Time)
+                .build()
+                .unwrap(),
         ]
     }
 
@@ -195,8 +202,26 @@ mod tests {
 
         let mut unshare_args = test_command.get_unshare_args();
         unshare_args.sort();
-        let mut expect = vec![CloneFlags::CLONE_NEWUSER, CloneFlags::CLONE_NEWPID];
+        let mut expect = vec![
+            CloneFlags::CLONE_NEWUSER,
+            CloneFlags::CLONE_NEWPID,
+            CLONE_NEWTIME,
+        ];
         expect.sort();
         assert_eq!(unshare_args, expect)
+    }
+
+    #[test]
+    #[serial]
+    fn test_time_namespace_is_supported() -> Result<()> {
+        let namespaces = vec![
+            LinuxNamespaceBuilder::default()
+                .typ(LinuxNamespaceType::Time)
+                .build()
+                .unwrap(),
+        ];
+
+        assert!(Namespaces::try_from(Some(&namespaces)).is_ok());
+        Ok(())
     }
 }
