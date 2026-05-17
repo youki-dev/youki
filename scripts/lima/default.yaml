@@ -1,0 +1,15 @@
+vmType: qemu
+arch: default
+
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/resolute/release-20260421/ubuntu-26.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+    digest: "sha256:8ed228c9f08a50122fa72307623d9f88d9209ba26e7e849edd584fa675e34863"
+  - location: "https://cloud-images.ubuntu.com/releases/resolute/release-20260421/ubuntu-26.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+    digest: "sha256:9daa955c3d4cafc5a0c1c3fff51672b79a6bb36b5074b21eecddb696c5710dcb"
+  - location: "https://cloud-images.ubuntu.com/releases/resolute/release-20260421/ubuntu-26.04-server-cloudimg-riscv64.img"
+
+mounts:
+  - location: "/home/ganesh/youki"
+    mountPoint: "/src/youki"
