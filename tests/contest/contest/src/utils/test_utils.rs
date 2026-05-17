@@ -250,6 +250,19 @@ pub fn wait_for_state<P: AsRef<Path>>(
     )
 }
 
+pub fn get_container_pid<P: AsRef<Path>>(id: &str, dir: P) -> Result<i32> {
+    let (stdout, _) = get_state(id, &dir)?;
+    let value = serde_json::from_str::<serde_json::Value>(&stdout)
+        .map_err(|e| anyhow!("Failed to parse state output as JSON: {stdout} - {e}"))?;
+
+    let pid = value
+        .get("pid")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| anyhow!("Failed to extract pid from state output: {stdout}"))?;
+
+    Ok(pid as i32)
+}
+
 pub fn start_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
     let res = runtime_command(dir)
         .arg("start")
@@ -477,26 +490,6 @@ pub fn check_container_created(data: &ContainerData) -> Result<()> {
     }
 }
 
-/// Run a container with `run -d`.
-/// Uses `Stdio::null()` to avoid the detached child process inheriting
-/// pipe write-ends and blocking `wait()`.
-pub fn run_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
-    let res = Command::new(get_runtime_path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .arg("--root")
-        .arg(dir.as_ref().join("runtime"))
-        .arg("run")
-        .arg("-d")
-        .arg("--bundle")
-        .arg(dir.as_ref().join("bundle"))
-        .arg(id)
-        .spawn()
-        .context("could not run container")?;
-    Ok(res)
-}
-
 /// Wait until a container reaches `Running` state (10 s timeout).
 pub fn wait_container_running<P: AsRef<Path>>(id: &str, dir: P) -> Result<()> {
     wait_for_state(
@@ -508,31 +501,60 @@ pub fn wait_container_running<P: AsRef<Path>>(id: &str, dir: P) -> Result<()> {
     )
 }
 
+pub fn handle_console_socket(stream: std::os::unix::net::UnixStream) {
+    std::thread::spawn(move || {
+        use std::io::{IoSliceMut, Read};
+        use std::os::unix::io::AsRawFd;
+
+        use nix::sys::socket::{ControlMessageOwned, MsgFlags, recvmsg};
+
+        let mut buf = [0u8; 4096];
+        let mut iov = [IoSliceMut::new(&mut buf)];
+        let mut cmsg_space = nix::cmsg_space!([std::os::unix::io::RawFd; 1]);
+        let fd = stream.as_raw_fd();
+
+        if let Ok(msg) = recvmsg::<()>(fd, &mut iov, Some(&mut cmsg_space), MsgFlags::empty())
+            && let Ok(cmsgs) = msg.cmsgs()
+        {
+            for cmsg in cmsgs {
+                if let ControlMessageOwned::ScmRights(_) = cmsg {
+                    // Keep the PTY master open by waiting for the stream to close
+                    let mut buf = [0u8; 1024];
+                    let mut stream_mut = &stream;
+                    while let Ok(n) = stream_mut.read(&mut buf) {
+                        if n == 0 {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
 /// Checkpoint a running container into `image_dir`.
-/// `global_args` are passed before `--root` (e.g. `&["--debug"]`).
+///
+/// * `global_args` are passed before the `checkpoint` subcommand (e.g., `&["--debug"]`).
+/// * `checkpoint_args` are passed after the standard checkpoint options (e.g., `&["--pre-dump"]`).
+///
+/// This function automatically asserts that the checkpoint command succeeds. For scenarios
+/// where you expect the command to fail, use `try_checkpoint_container` instead.
 pub fn checkpoint_container(
     bundle_path: &Path,
     id: &str,
     image_dir: &Path,
     work_dir: Option<&Path>,
+    checkpoint_args: &[&str],
     global_args: &[&str],
 ) -> Result<()> {
-    let mut args: Vec<std::ffi::OsString> = global_args.iter().map(Into::into).collect();
-    args.extend(["--root".into(), bundle_path.join("runtime").into()]);
-    args.extend(["checkpoint".into(), "--image-path".into(), image_dir.into()]);
-    if let Some(wp) = work_dir {
-        args.extend(["--work-path".into(), wp.into()]);
-    }
-    args.push(id.into());
-
-    let output = Command::new(get_runtime_path())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .args(&args)
-        .spawn()
-        .context("failed to spawn checkpoint")?
-        .wait_with_output()
-        .context("failed to wait for checkpoint")?;
+    let output = try_checkpoint_container(
+        bundle_path,
+        id,
+        image_dir,
+        work_dir,
+        checkpoint_args,
+        global_args,
+    )?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -550,13 +572,73 @@ pub fn checkpoint_container(
     Ok(())
 }
 
+pub fn build_checkpoint_command(
+    bundle_path: &Path,
+    id: &str,
+    image_dir: &Path,
+    work_dir: Option<&Path>,
+    checkpoint_args: &[&str],
+    global_args: &[&str],
+) -> Command {
+    let mut command = Command::new(get_runtime_path());
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    for a in global_args {
+        command.arg(a);
+    }
+
+    command.arg("--root").arg(bundle_path.join("runtime"));
+    command.arg("checkpoint").arg("--image-path").arg(image_dir);
+
+    if let Some(wp) = work_dir {
+        command.arg("--work-path").arg(wp);
+    }
+
+    for a in checkpoint_args {
+        command.arg(a);
+    }
+
+    command.arg(id);
+    command
+}
+
+/// Executes the checkpoint command and returns the raw `Output`.
+///
+/// Unlike `checkpoint_container`, this function does NOT automatically fail the test
+/// if the command exits with an error status. It should be used when you explicitly
+/// need to test negative scenarios (e.g., verifying that a checkpoint fails with a
+/// specific stderr message). For happy-path tests, prefer using `checkpoint_container`.
+pub fn try_checkpoint_container(
+    bundle_path: &Path,
+    id: &str,
+    image_dir: &Path,
+    work_dir: Option<&Path>,
+    checkpoint_args: &[&str],
+    global_args: &[&str],
+) -> Result<std::process::Output> {
+    build_checkpoint_command(
+        bundle_path,
+        id,
+        image_dir,
+        work_dir,
+        checkpoint_args,
+        global_args,
+    )
+    .spawn()
+    .context("failed to spawn checkpoint")?
+    .wait_with_output()
+    .context("failed to wait for checkpoint")
+}
+
 /// Restore a checkpointed container from `image_dir` using `restore -d`.
-/// `global_args` are passed before `--root` (e.g. `&["--debug"]`).
+/// `global_args` are runtime-level arguments passed before the subcommand (e.g., `youki --debug restore`).
+/// `restore_args` are subcommand-level arguments passed after the subcommand (e.g., `youki restore --tcp-established`).
 pub fn restore_container(
     bundle_path: &Path,
     id: &str,
     image_dir: &Path,
     work_dir: Option<&Path>,
+    restore_args: &[&str],
     global_args: &[&str],
 ) -> Result<()> {
     let stderr_file = tempfile::NamedTempFile::new().context("failed to create temp file")?;
@@ -569,17 +651,57 @@ pub fn restore_container(
     if let Some(wp) = work_dir {
         args.extend(["--work-path".into(), wp.into()]);
     }
+    for arg in restore_args {
+        args.push(arg.into());
+    }
+
+    let config_path = bundle_path.join("bundle").join("config.json");
+    let config_path = if config_path.exists() {
+        config_path
+    } else {
+        bundle_path.join("config.json")
+    };
+
+    let is_terminal = if config_path.exists() {
+        oci_spec::runtime::Spec::load(&config_path)
+            .ok()
+            .and_then(|spec| {
+                spec.process()
+                    .as_ref()
+                    .map(|p| p.terminal().unwrap_or(false))
+            })
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    let mut listener = None;
+    if is_terminal {
+        let socket_path = bundle_path.join(format!("restore-console-{}.sock", id));
+        if socket_path.exists() {
+            std::fs::remove_file(&socket_path).context("failed to remove exists socket file")?;
+        }
+        let l = std::os::unix::net::UnixListener::bind(&socket_path)?;
+        listener = Some(l);
+        args.extend(["--console-socket".into(), socket_path.into()]);
+    }
+
     args.push(id.into());
 
-    let status = Command::new(get_runtime_path())
+    let mut child = Command::new(get_runtime_path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(stderr_file.reopen().context("failed to reopen temp file")?)
         .args(&args)
         .spawn()
-        .context("failed to spawn restore")?
-        .wait()
-        .context("failed to wait for restore")?;
+        .context("failed to spawn restore")?;
+
+    if let Some(l) = listener {
+        let (stream, _) = l.accept()?;
+        handle_console_socket(stream);
+    }
+
+    let status = child.wait().context("failed to wait for restore")?;
 
     if !status.success() {
         let stderr = std::fs::read_to_string(stderr_file.path()).unwrap_or_default();
@@ -592,6 +714,20 @@ pub fn restore_container(
 /// Returns true if CRIU is installed on the host.
 pub fn criu_installed() -> bool {
     which::which("criu").is_ok()
+}
+
+/// Returns true if the installed CRIU supports the given feature.
+pub fn criu_has_feature(feature: &str) -> bool {
+    Command::new(which::which("criu").unwrap())
+        .arg("check")
+        .arg("--feature")
+        .arg(feature)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 pub fn build_exec_command<P: AsRef<Path>>(

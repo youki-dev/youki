@@ -8,121 +8,13 @@ use oci_spec::runtime::{
 };
 use test_framework::{Test, TestGroup, TestResult, test_result};
 
+use crate::utils::net::{
+    DummyDevice, NetNamespace, create_dummy_device, create_unique_name, delete_dummy_device,
+};
 use crate::utils::test_utils::{
     CreateOptions, check_container_created, exec_container, start_container,
 };
 use crate::utils::{test_inside_container, test_outside_container};
-
-fn create_unique_name(prefix: &str) -> String {
-    let random_part: u16 = rand::random();
-    format!("{}{}", prefix, random_part)
-}
-
-fn create_netns(name: &str) -> Result<()> {
-    // Ensure /run/netns mount propagation is shared before creating netns
-    // This is needed in case previous tests changed mount propagation to private
-    let _ = std::process::Command::new("mount")
-        .args(vec!["--make-shared", "/"])
-        .output();
-
-    let output = std::process::Command::new("ip")
-        .args(vec!["netns", "add", name])
-        .output()?;
-    if !output.status.success() {
-        return Err(anyhow!(
-            "Failed to create netns: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-
-    Ok(())
-}
-
-fn cleanup_netns(name: &str) -> Result<()> {
-    // Ensure /run/netns mount propagation is shared before deleting netns
-    // This is needed in case previous tests changed mount propagation to private
-    let _ = std::process::Command::new("mount")
-        .args(vec!["--make-shared", "/"])
-        .output();
-
-    let output = std::process::Command::new("ip")
-        .args(vec!["netns", "del", name])
-        .output()?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(anyhow!(
-            "Failed to cleanup netns: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ))
-    }
-}
-
-fn create_dummy_device(name: &str) -> Result<()> {
-    let output = std::process::Command::new("ip")
-        .args(vec!["link", "add", name, "type", "dummy"])
-        .output()?;
-
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(anyhow!(
-            "Failed to create dummy device: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ))
-    }
-}
-
-fn delete_dummy_device(name: &str) -> Result<()> {
-    let output = std::process::Command::new("ip")
-        .args(vec!["link", "del", name])
-        .output()?;
-
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(anyhow!(
-            "Failed to delete dummy device: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ))
-    }
-}
-
-/// RAII guard for dummy network devices that automatically cleans up on drop
-struct DummyDevice {
-    name: String,
-}
-
-impl DummyDevice {
-    fn create(name: String) -> Result<Self> {
-        create_dummy_device(&name)?;
-        Ok(Self { name })
-    }
-}
-
-impl Drop for DummyDevice {
-    fn drop(&mut self) {
-        let _ = delete_dummy_device(&self.name);
-    }
-}
-
-/// RAII guard for network namespaces that automatically cleans up on drop
-struct NetNamespace {
-    name: String,
-}
-
-impl NetNamespace {
-    fn create(name: String) -> Result<Self> {
-        create_netns(&name)?;
-        Ok(Self { name })
-    }
-}
-
-impl Drop for NetNamespace {
-    fn drop(&mut self) {
-        let _ = cleanup_netns(&self.name);
-    }
-}
 
 fn check_device_exists(name: &str) -> Result<bool> {
     let out = std::process::Command::new("ip")
