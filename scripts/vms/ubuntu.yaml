@@ -11,5 +11,5 @@ images:
   - location: "https://cloud-images.ubuntu.com/releases/resolute/release-20260421/ubuntu-26.04-server-cloudimg-riscv64.img"
 
 mounts:
-  - location: "/home/ganesh/youki"
+  - location: "/git/youki"
     mountPoint: "/src/youki"
