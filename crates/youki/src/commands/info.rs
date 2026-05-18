@@ -115,8 +115,8 @@ fn try_read_os_from<P: AsRef<Path>>(path: P) -> Option<String> {
 fn find_parameter<'a>(content: &'a str, param_name: &str) -> Option<&'a str> {
     content
         .lines()
-        .find(|l| l.starts_with(param_name))
-        .and_then(|l| l.split_terminator('=').next_back())
+        .filter_map(|l| l.split_once('='))
+        .find_map(|(key, value)| (key == param_name).then_some(value))
 }
 
 /// Print Hardware information of system
@@ -312,5 +312,24 @@ impl<'a> FeatureDisplay<'a> {
             enabled,
             disabled,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_parameter_matches_exact_key() {
+        let content = "NAME_SUFFIX=wrong\nNAME=right\n";
+
+        assert_eq!(find_parameter(content, "NAME"), Some("right"));
+    }
+
+    #[test]
+    fn find_parameter_keeps_equals_signs_in_value() {
+        let content = "PRETTY_NAME=\"Foo=Bar\"\n";
+
+        assert_eq!(find_parameter(content, "PRETTY_NAME"), Some("\"Foo=Bar\""));
     }
 }
