@@ -604,4 +604,30 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_parse_mount_rrelatime_uses_full_atime_mask() -> Result<()> {
+        // "rrelatime" sets MOUNT_ATTR_RELATIME (is_clear=false, flag=MOUNT_ATTR_RELATIME=0x00).
+        // Although relatime has no dedicated bit, attr_clr must still include the full
+        // MOUNT_ATTR__ATIME mask (0x70) — matching runc's behavior.
+        let mount_option_config = parse_mount(
+            &MountBuilder::default()
+                .destination(PathBuf::from("/mnt"))
+                .source(PathBuf::from("/tmp/mounts_recursive"))
+                .options(vec!["rrelatime".to_string()])
+                .build()?,
+        )?;
+        assert_eq!(
+            mount_option_config.rec_attr,
+            Some(MountAttr {
+                attr_set: linux::MOUNT_ATTR_RELATIME,
+                attr_clr: linux::MOUNT_ATTR__ATIME,
+                propagation: 0,
+                userns_fd: 0,
+            }),
+            "rrelatime should set attr_set=MOUNT_ATTR_RELATIME and attr_clr=MOUNT_ATTR__ATIME"
+        );
+
+        Ok(())
+    }
 }
