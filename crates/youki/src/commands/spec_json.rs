@@ -93,8 +93,11 @@ pub fn spec(args: liboci_cli::Spec, syscall: &dyn Syscall) -> Result<()> {
         get_default()?
     };
 
-    // write data to config.json
-    let file = File::create("config.json")?;
+    let path = match args.bundle {
+        Some(bundle) => bundle.join("config.json"),
+        None => PathBuf::from("config.json"),
+    };
+    let file = File::create(path)?;
     let mut writer = BufWriter::new(file);
     to_writer_pretty(&mut writer, &spec)?;
     writer.flush()?;
@@ -112,14 +115,15 @@ mod tests {
     #[test]
     #[serial]
     fn test_spec_json() -> Result<()> {
-        let syscall = create_syscall();
-        let spec = get_rootless(&*syscall)?;
         let tmpdir = tempfile::tempdir().expect("failed to create temp dir");
-        let path = tmpdir.path().join("config.json");
-        let file = File::create(path)?;
-        let mut writer = BufWriter::new(file);
-        to_writer_pretty(&mut writer, &spec)?;
-        writer.flush()?;
+        let args = liboci_cli::Spec {
+            bundle: Some(tmpdir.path().to_path_buf()),
+            rootless: true,
+        };
+        let syscall = create_syscall();
+        spec(args, syscall.as_ref()).expect("failed to run spec subcommand");
+        let config_path = tmpdir.path().join("config.json");
+        assert!(config_path.is_file());
         Ok(())
     }
 }
