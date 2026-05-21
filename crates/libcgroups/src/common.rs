@@ -415,9 +415,7 @@ fn create_systemd_cgroup_manager(
     use crate::systemd::manager::PROCESS_IN_CGROUP_TIMEOUT_DURATION;
 
     if !systemd::booted() {
-        panic!(
-            "systemd cgroup flag passed, but systemd support for managing cgroups is not available"
-        );
+        return Err(systemd::manager::SystemdManagerError::SystemdNotAvailable);
     }
 
     let use_system = is_true_root().map_err(systemd::manager::SystemdManagerError::WrappedIo)?;
