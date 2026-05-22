@@ -72,7 +72,7 @@ impl MainSender {
     }
 
     pub fn request_mount_fd(&mut self, msg: MountMsg) -> Result<(), ChannelError> {
-        self.sender.send(Message::MountFdPlease(msg))?;
+        self.sender.send(Message::AskMountFd(msg))?;
 
         Ok(())
     }
@@ -174,9 +174,9 @@ impl MainReceiver {
             })?;
 
         match msg {
-            Message::MountFdPlease(req) => Ok(req),
+            Message::AskMountFd(req) => Ok(req),
             msg => Err(ChannelError::UnexpectedMessage {
-                expected: "MountFdPlease",
+                expected: "AskMountFd",
                 received: Box::new(msg),
             }),
         }
