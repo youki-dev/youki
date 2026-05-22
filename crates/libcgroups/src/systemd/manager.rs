@@ -176,6 +176,10 @@ pub enum SystemdManagerError {
     Pids(Infallible),
     #[error("in pids unified controller: {0}")]
     Unified(#[from] super::unified::SystemdUnifiedError),
+    #[error(
+        "systemd cgroup flag passed, but systemd support for managing cgroups is not available"
+    )]
+    SystemdNotAvailable,
 }
 
 impl Manager {
