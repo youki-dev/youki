@@ -42,6 +42,7 @@ use crate::tests::poststop_fail::get_poststop_fail_tests;
 use crate::tests::prestart::get_prestart_tests;
 use crate::tests::prestart_fail::get_prestart_fail_tests;
 use crate::tests::process::get_process_test;
+use crate::tests::process_capabilities_bounding::get_process_capabilities_bounding_test;
 use crate::tests::process_capabilities_fail::get_process_capabilities_fail_test;
 use crate::tests::process_oom_score_adj::get_process_oom_score_adj_test;
 use crate::tests::process_rlimits::get_process_rlimits_test;
@@ -168,6 +169,7 @@ fn main() -> Result<()> {
     let masked_paths = get_linux_masked_paths_tests();
     let rootfs_propagation = get_rootfs_propagation_test();
     let process_capabilities_fail = get_process_capabilities_fail_test();
+    let process_capabilities_bounding = get_process_capabilities_bounding_test();
     let uid_mappings = get_uid_mappings_test();
     let exec_cpu_affinity = get_exec_cpu_affinity_test();
     let exec_env = get_exec_env_test();
@@ -224,6 +226,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(rootfs_propagation));
     tm.add_test_group(Box::new(net_devices));
     tm.add_test_group(Box::new(process_capabilities_fail));
+    tm.add_test_group(Box::new(process_capabilities_bounding));
     tm.add_test_group(Box::new(uid_mappings));
     tm.add_test_group(Box::new(exec_cpu_affinity));
     tm.add_test_group(Box::new(exec_env));

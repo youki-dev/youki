@@ -32,6 +32,7 @@ pub mod poststop_fail;
 pub mod prestart;
 pub mod prestart_fail;
 pub mod process;
+pub mod process_capabilities_bounding;
 pub mod process_capabilities_fail;
 pub mod process_oom_score_adj;
 pub mod process_rlimits;
