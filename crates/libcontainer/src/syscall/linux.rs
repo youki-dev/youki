@@ -1,7 +1,7 @@
 //! Implements Command trait for Linux systems
 use std::any::Any;
 use std::ffi::{CStr, CString, OsStr};
-use std::os::fd::{BorrowedFd, FromRawFd, RawFd};
+use std::os::fd::{AsFd, BorrowedFd, FromRawFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::symlink;
 use std::os::unix::io::{AsRawFd, OwnedFd};
@@ -304,6 +304,36 @@ impl MountAttr {
             userns_fd: 0,
         }
     }
+}
+
+// Open the parent directory of target as an O_PATH fd. Used to pin the
+// destination of an fd-based mount so the target path is not re-resolved as a
+// free-floating string between check and use.
+fn open_target_parent(target: &Path) -> Result<OwnedFd> {
+    let parent = target.parent().ok_or_else(|| {
+        tracing::error!(?target, "target has no parent");
+        SyscallError::Nix(nix::Error::EINVAL)
+    })?;
+    let fd = unsafe {
+        OwnedFd::from_raw_fd(open(
+            parent,
+            OFlag::O_PATH | OFlag::O_CLOEXEC | OFlag::O_DIRECTORY,
+            Mode::empty(),
+        )?)
+    };
+    Ok(fd)
+}
+
+// Return the final path component of target as an owned String.
+fn leaf_name(target: &Path) -> Result<String> {
+    let name = target.file_name().ok_or_else(|| {
+        tracing::error!(?target, "target has no file name");
+        SyscallError::Nix(nix::Error::EINVAL)
+    })?;
+    name.to_str().map(|s| s.to_owned()).ok_or_else(|| {
+        tracing::error!(?target, "target file name is not valid utf-8");
+        SyscallError::Nix(nix::Error::EINVAL)
+    })
 }
 
 /// Empty structure to implement Command trait for
@@ -685,6 +715,119 @@ impl Syscall for LinuxSyscall {
             tracing::error!(?target, ?err, "move_mount failed");
             return Err(SyscallError::Nix(err));
         }
+
+        Ok(())
+    }
+
+    fn readonly_path_fd(&self, target: &Path) -> Result<()> {
+        // Resolve the target exactly once. open_tree(2) with OPEN_TREE_CLONE
+        // clones the mount tree at target into a detached, fd-referenced mount.
+        // Everything after this acts on that fd, so a racing process cannot
+        // swap a path component to redirect the read-only enforcement to a
+        // different target (the TOCTOU window the old bind+remount-by-path had).
+        let target_str = target.to_str().ok_or_else(|| {
+            tracing::error!(?target, "target path is not valid utf-8");
+            SyscallError::Nix(nix::Error::EINVAL)
+        })?;
+
+        let open_tree_flags: u32 = (libc::OPEN_TREE_CLOEXEC as u32)
+            | (libc::OPEN_TREE_CLONE as u32)
+            | (AT_RECURSIVE);
+
+        let mount_fd = match self.open_tree(libc::AT_FDCWD, Some(target_str), open_tree_flags) {
+            Ok(fd) => fd,
+            Err(SyscallError::Nix(nix::Error::ENOENT)) => {
+                // ignore error if path does not exist, matching the previous behavior.
+                return Ok(());
+            }
+            Err(err) => {
+                tracing::error!(?target, ?err, "open_tree for readonly path failed");
+                return Err(err);
+            }
+        };
+        let mount_fd = mount_fd.as_fd();
+
+        // Apply the read-only and hardening attributes to the pinned tree.
+        let mount_attr = MountAttr {
+            attr_set: MOUNT_ATTR_RDONLY
+                | MOUNT_ATTR_NOSUID
+                | MOUNT_ATTR_NODEV
+                | MOUNT_ATTR_NOEXEC,
+            attr_clr: 0,
+            propagation: 0,
+            userns_fd: 0,
+        };
+        self.mount_setattr(
+            mount_fd,
+            Path::new(""),
+            AT_EMPTY_PATH | AT_RECURSIVE,
+            &mount_attr,
+            mem::size_of::<MountAttr>(),
+        )?;
+
+        // Re-attach the pinned, read-only tree over the destination. The
+        // destination is pinned by an O_PATH fd on its parent plus the leaf
+        // name, so the target is not re-resolved as a free-floating path.
+        let dest_dirfd = open_target_parent(target)?;
+        let name = leaf_name(target)?;
+        self.move_mount(
+            mount_fd,
+            None,
+            dest_dirfd.as_fd(),
+            Some(name.as_str()),
+            MOVE_MOUNT_F_EMPTY_PATH,
+        )?;
+
+        Ok(())
+    }
+
+    fn mount_masked_tmpfs(&self, target: &Path, mount_label: Option<&str>) -> Result<()> {
+        // Build a fresh read-only tmpfs through the fd-based mount API and pin
+        // the destination by fd, so the masked target path is never re-resolved
+        // between check and use.
+        let fsfd = self.fsopen(Some("tmpfs"), 0)?;
+        let fsfd = fsfd.as_fd();
+
+        if let Some(label) = mount_label {
+            if !label.is_empty() {
+                self.fsconfig(
+                    fsfd,
+                    FSCONFIG_SET_STRING as u32,
+                    Some("context"),
+                    Some(label),
+                    0,
+                )?;
+            }
+        }
+
+        self.fsconfig(fsfd, FSCONFIG_CMD_CREATE as u32, None, None, 0)?;
+
+        let mount_fd = self.fsmount(fsfd, 0, None)?;
+        let mount_fd = mount_fd.as_fd();
+
+        let mount_attr = MountAttr {
+            attr_set: MOUNT_ATTR_RDONLY,
+            attr_clr: 0,
+            propagation: 0,
+            userns_fd: 0,
+        };
+        self.mount_setattr(
+            mount_fd,
+            Path::new(""),
+            AT_EMPTY_PATH,
+            &mount_attr,
+            mem::size_of::<MountAttr>(),
+        )?;
+
+        let dest_dirfd = open_target_parent(target)?;
+        let name = leaf_name(target)?;
+        self.move_mount(
+            mount_fd,
+            None,
+            dest_dirfd.as_fd(),
+            Some(name.as_str()),
+            MOVE_MOUNT_F_EMPTY_PATH,
+        )?;
 
         Ok(())
     }

@@ -508,45 +508,20 @@ fn sysctl(kernel_params: &HashMap<String, String>) -> Result<()> {
 }
 
 // make a read only path
-// The first time we bind mount, other flags are ignored,
-// so we need to mount it once and then remount it with the necessary flags specified.
-// https://man7.org/linux/man-pages/man2/mount.2.html
+//
+// The OCI readonlyPaths entries are enforced by making the target a read-only
+// recursive bind mount. The path must be resolved exactly once: a path-based
+// bind followed by a path-based remount re-resolves the target on each
+// syscall, which lets a process inside the container win a race and swap a
+// path component (symlink/bind) so the remount lands on a different target,
+// bypassing the read-only enforcement (TOCTOU). To close that window we pin
+// the target to an fd via open_tree(2) and apply the read-only attribute and
+// re-attachment by fd, the same way the masked-file branch uses mount_from_fd.
 fn readonly_path(path: &Path, syscall: &dyn Syscall) -> Result<()> {
-    if let Err(err) = syscall.mount(
-        Some(path),
-        path,
-        None,
-        MsFlags::MS_BIND | MsFlags::MS_REC,
-        None,
-    ) {
-        if let SyscallError::Nix(errno) = err {
-            // ignore error if path is not exist.
-            if matches!(errno, nix::errno::Errno::ENOENT) {
-                return Ok(());
-            }
-        }
-
+    syscall.readonly_path_fd(path).map_err(|err| {
         tracing::error!(?path, ?err, "failed to mount path as readonly");
-        return Err(InitProcessError::MountPathReadonly(err));
-    }
-
-    syscall
-        .mount(
-            Some(path),
-            path,
-            None,
-            MsFlags::MS_NOSUID
-                | MsFlags::MS_NODEV
-                | MsFlags::MS_NOEXEC
-                | MsFlags::MS_BIND
-                | MsFlags::MS_REMOUNT
-                | MsFlags::MS_RDONLY,
-            None,
-        )
-        .map_err(|err| {
-            tracing::error!(?path, ?err, "failed to remount path as readonly");
-            InitProcessError::MountPathReadonly(err)
-        })?;
+        InitProcessError::MountPathReadonly(err)
+    })?;
 
     tracing::debug!("readonly path {:?} mounted", path);
     Ok(())
@@ -574,23 +549,16 @@ fn masked_paths(
         }
 
         if path.is_dir() {
-            // Destination is a directory, mount a read-only tmpfs over the top of it.
-            let label = match mount_label {
-                Some(l) => format!("context=\"{l}\""),
-                None => "".to_string(),
-            };
-            syscall
-                .mount(
-                    Some(Path::new("tmpfs")),
-                    path,
-                    Some("tmpfs"),
-                    MsFlags::MS_RDONLY,
-                    Some(label.as_str()),
-                )
-                .map_err(|err| {
-                    tracing::error!(?path, ?err, "failed to mount path as masked using tempfs");
-                    InitProcessError::MountPathMasked(err)
-                })?;
+            // Destination is a directory, mount a read-only tmpfs over the top
+            // of it. The target is pinned by fd (fsmount + move_mount) instead
+            // of being re-resolved as a path string, so a racing process cannot
+            // swap a path component to redirect the masking tmpfs to a
+            // different target (TOCTOU).
+            let label = mount_label.as_deref();
+            syscall.mount_masked_tmpfs(path, label).map_err(|err| {
+                tracing::error!(?path, ?err, "failed to mount path as masked using tempfs");
+                InitProcessError::MountPathMasked(err)
+            })?;
         } else {
             // Destination is a file, bind mount /dev/null over the top of it.
             syscall.mount_from_fd(&dev_null_fd, path).map_err(|err| {
@@ -1063,42 +1031,36 @@ mod tests {
 
     use super::*;
     use crate::syscall::syscall::create_syscall;
-    use crate::syscall::test::{ArgName, IoPriorityArgs, MountArgs, TestHelperSyscall};
+    use crate::syscall::test::{
+        ArgName, IoPriorityArgs, MaskedTmpfsArgs, ReadonlyPathFdArgs, TestHelperSyscall,
+    };
 
     #[test]
     fn test_readonly_path() -> Result<()> {
         let syscall = create_syscall();
         readonly_path(Path::new("/proc/sys"), syscall.as_ref())?;
 
-        let want = vec![
-            MountArgs {
-                source: Some(PathBuf::from("/proc/sys")),
-                target: PathBuf::from("/proc/sys"),
-                fstype: None,
-                flags: MsFlags::MS_BIND | MsFlags::MS_REC,
-                data: None,
-            },
-            MountArgs {
-                source: Some(PathBuf::from("/proc/sys")),
-                target: PathBuf::from("/proc/sys"),
-                fstype: None,
-                flags: MsFlags::MS_NOSUID
-                    | MsFlags::MS_NODEV
-                    | MsFlags::MS_NOEXEC
-                    | MsFlags::MS_BIND
-                    | MsFlags::MS_REMOUNT
-                    | MsFlags::MS_RDONLY,
-                data: None,
-            },
-        ];
+        // The read-only enforcement now pins the target to an fd via
+        // readonly_path_fd instead of a path-based bind + remount, closing the
+        // TOCTOU re-resolution window.
         let got = syscall
             .as_any()
             .downcast_ref::<TestHelperSyscall>()
             .unwrap()
-            .get_mount_args();
+            .get_readonly_path_fd_args();
 
-        assert_eq!(want, *got);
-        assert_eq!(got.len(), 2);
+        let want = vec![ReadonlyPathFdArgs {
+            target: PathBuf::from("/proc/sys"),
+        }];
+        assert_eq!(want, got);
+
+        // No path-based mount syscalls should be issued for readonly paths.
+        let mount_args = syscall
+            .as_any()
+            .downcast_ref::<TestHelperSyscall>()
+            .unwrap()
+            .get_mount_args();
+        assert_eq!(0, mount_args.len());
         Ok(())
     }
 
@@ -1248,6 +1210,8 @@ mod tests {
         assert_eq!(0, got.len());
         let got = mocks.get_mount_args();
         assert_eq!(0, got.len());
+        let got = mocks.get_masked_tmpfs_args();
+        assert_eq!(0, got.len());
     }
 
     #[test]
@@ -1269,57 +1233,51 @@ mod tests {
     }
 
     #[test]
-    fn test_masked_path_is_file_with_no_label() {
+    fn test_masked_path_is_dir_with_no_label() {
+        // /proc/self resolves to a directory, so it goes through the masking
+        // tmpfs branch, which now pins the target by fd via mount_masked_tmpfs.
         let syscall = create_syscall();
         let mocks = syscall
             .as_any()
             .downcast_ref::<TestHelperSyscall>()
             .unwrap();
-        mocks.set_ret_err(ArgName::MountFromFd, || {
-            Err(SyscallError::Nix(nix::errno::Errno::ENOTDIR))
-        });
 
         let paths = vec!["/proc/self".to_string()];
         assert!(super::masked_paths(&paths, &None, syscall.as_ref()).is_ok());
 
-        let got = mocks.get_mount_args();
-        let want = MountArgs {
-            source: Some(PathBuf::from("tmpfs")),
+        let got = mocks.get_masked_tmpfs_args();
+        let want = MaskedTmpfsArgs {
             target: PathBuf::from("/proc/self"),
-            fstype: Some("tmpfs".to_string()),
-            flags: MsFlags::MS_RDONLY,
-            data: Some("".to_string()),
+            mount_label: None,
         };
         assert_eq!(1, got.len());
         assert_eq!(want, got[0]);
+
+        // No path-based tmpfs mount should be issued.
+        assert_eq!(0, mocks.get_mount_args().len());
     }
 
     #[test]
-    fn test_masked_path_is_file_with_label() {
+    fn test_masked_path_is_dir_with_label() {
         let syscall = create_syscall();
         let mocks = syscall
             .as_any()
             .downcast_ref::<TestHelperSyscall>()
             .unwrap();
-        mocks.set_ret_err(ArgName::MountFromFd, || {
-            Err(SyscallError::Nix(nix::errno::Errno::ENOTDIR))
-        });
 
         let paths = vec!["/proc/self".to_string()];
         assert!(
             super::masked_paths(&paths, &Some("default".to_string()), syscall.as_ref()).is_ok()
         );
 
-        let got = mocks.get_mount_args();
-        let want = MountArgs {
-            source: Some(PathBuf::from("tmpfs")),
+        let got = mocks.get_masked_tmpfs_args();
+        let want = MaskedTmpfsArgs {
             target: PathBuf::from("/proc/self"),
-            fstype: Some("tmpfs".to_string()),
-            flags: MsFlags::MS_RDONLY,
-            data: Some("context=\"default\"".to_string()),
+            mount_label: Some("default".to_string()),
         };
         assert_eq!(1, got.len());
         assert_eq!(want, got[0]);
+        assert_eq!(0, mocks.get_mount_args().len());
     }
 
     #[test]
@@ -1338,7 +1296,7 @@ mod tests {
         let got = mocks.get_mount_args();
         assert_eq!(0, got.len());
 
-        mocks.set_ret_err(ArgName::Mount, || {
+        mocks.set_ret_err(ArgName::MaskedTmpfs, || {
             Err(SyscallError::Nix(nix::errno::Errno::UnknownErrno))
         });
         let paths = vec!["/proc/self".to_string()];

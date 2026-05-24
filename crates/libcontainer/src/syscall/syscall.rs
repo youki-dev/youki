@@ -46,6 +46,15 @@ pub trait Syscall {
     // mount_from_fd mounts a filesystem specified by source_fd to target path.
     // NOTE: mount_from_fd only supports BIND_MOUNT.
     fn mount_from_fd(&self, source_fd: &OwnedFd, target: &Path) -> Result<()>;
+    // readonly_path_fd makes target a recursive read-only bind mount without
+    // ever re-resolving the target path between check and use. The target is
+    // resolved exactly once by open_tree(2); all later steps act on that fd, so
+    // a racing process cannot swap a path component to redirect the mount.
+    fn readonly_path_fd(&self, target: &Path) -> Result<()>;
+    // mount_masked_tmpfs masks target by mounting a fresh read-only tmpfs over
+    // it via the fd-based mount API, pinning the destination by fd so the
+    // target path is not re-resolved between check and use.
+    fn mount_masked_tmpfs(&self, target: &Path, mount_label: Option<&str>) -> Result<()>;
     fn move_mount(
         &self,
         from_dirfd: BorrowedFd<'_>,

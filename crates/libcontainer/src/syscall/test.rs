@@ -33,6 +33,17 @@ pub struct MountFromFdArgs {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ReadonlyPathFdArgs {
+    pub target: PathBuf,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MaskedTmpfsArgs {
+    pub target: PathBuf,
+    pub mount_label: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct MoveMountArgs {
     pub from_dirfd: i32,
     pub from_path: Option<OsString>,
@@ -94,6 +105,8 @@ pub enum ArgName {
     Unshare,
     Mount,
     MountFromFd,
+    ReadonlyPathFd,
+    MaskedTmpfs,
     Symlink,
     Mknod,
     Chown,
@@ -115,6 +128,8 @@ impl ArgName {
             ArgName::Unshare,
             ArgName::Mount,
             ArgName::MountFromFd,
+            ArgName::ReadonlyPathFd,
+            ArgName::MaskedTmpfs,
             ArgName::Symlink,
             ArgName::Mknod,
             ArgName::Chown,
@@ -286,6 +301,25 @@ impl Syscall for TestHelperSyscall {
             Box::new(MountFromFdArgs {
                 fd: source_fd.as_raw_fd(),
                 target: target.to_owned(),
+            }),
+        )
+    }
+
+    fn readonly_path_fd(&self, target: &Path) -> Result<()> {
+        self.mocks.act(
+            ArgName::ReadonlyPathFd,
+            Box::new(ReadonlyPathFdArgs {
+                target: target.to_owned(),
+            }),
+        )
+    }
+
+    fn mount_masked_tmpfs(&self, target: &Path, mount_label: Option<&str>) -> Result<()> {
+        self.mocks.act(
+            ArgName::MaskedTmpfs,
+            Box::new(MaskedTmpfsArgs {
+                target: target.to_owned(),
+                mount_label: mount_label.map(|s| s.to_owned()),
             }),
         )
     }
@@ -481,6 +515,24 @@ impl TestHelperSyscall {
             .iter()
             .map(|x| x.downcast_ref::<MountFromFdArgs>().unwrap().clone())
             .collect::<Vec<MountFromFdArgs>>()
+    }
+
+    pub fn get_readonly_path_fd_args(&self) -> Vec<ReadonlyPathFdArgs> {
+        self.mocks
+            .fetch(ArgName::ReadonlyPathFd)
+            .values
+            .iter()
+            .map(|x| x.downcast_ref::<ReadonlyPathFdArgs>().unwrap().clone())
+            .collect::<Vec<ReadonlyPathFdArgs>>()
+    }
+
+    pub fn get_masked_tmpfs_args(&self) -> Vec<MaskedTmpfsArgs> {
+        self.mocks
+            .fetch(ArgName::MaskedTmpfs)
+            .values
+            .iter()
+            .map(|x| x.downcast_ref::<MaskedTmpfsArgs>().unwrap().clone())
+            .collect::<Vec<MaskedTmpfsArgs>>()
     }
 
     pub fn get_symlink_args(&self) -> Vec<(PathBuf, PathBuf)> {
