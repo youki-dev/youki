@@ -277,6 +277,33 @@ pub fn validate_spec_for_new_user_ns(
     spec: &Spec,
     syscall: &dyn Syscall,
 ) -> Result<(), LibcontainerError> {
+    let has_user_namespace = spec
+        .linux()
+        .as_ref()
+        .and_then(|l| l.namespaces().as_ref())
+        .is_some_and(|namespace| {
+            namespace
+                .iter()
+                .any(|ns| ns.typ() == oci_spec::runtime::LinuxNamespaceType::User)
+        });
+
+    if !has_user_namespace {
+        let has_uid_mappings = spec
+            .linux()
+            .as_ref()
+            .is_some_and(|l| l.uid_mappings().as_ref().is_some_and(|m| !m.is_empty()));
+        let has_gid_mappings = spec
+            .linux()
+            .as_ref()
+            .is_some_and(|l| l.gid_mappings().as_ref().is_some_and(|m| !m.is_empty()));
+
+        if has_uid_mappings || has_gid_mappings {
+            return Err(LibcontainerError::InvalidSpec(
+                ErrInvalidSpec::UserMappingsWithoutNamespace,
+            ));
+        }
+    }
+
     let config = UserNamespaceConfig::new(spec)?;
     let in_user_ns = is_in_new_userns().map_err(LibcontainerError::OtherIO)?;
     let is_rootless_required = rootless_required(syscall).map_err(LibcontainerError::OtherIO)?;
@@ -449,11 +476,13 @@ mod tests {
 
     use anyhow::{Result, bail};
     use nix::unistd::Gid;
-    use oci_spec::runtime::{LinuxBuilder, LinuxNamespaceBuilder, LinuxNetDevice, SpecBuilder};
+    use oci_spec::runtime::{
+        LinuxBuilder, LinuxIdMappingBuilder, LinuxNamespaceBuilder, LinuxNetDevice, SpecBuilder,
+    };
     use serial_test::serial;
 
     use super::*;
-    use crate::syscall::syscall::create_syscall;
+    use crate::syscall::{syscall::create_syscall, test::TestHelperSyscall};
     use crate::test_utils;
 
     #[test]
@@ -685,10 +714,6 @@ mod tests {
 
     #[test]
     fn test_validate_spec_for_uts_namespace() {
-        use oci_spec::runtime::{
-            LinuxBuilder, LinuxNamespaceBuilder, LinuxNamespaceType, SpecBuilder,
-        };
-
         let sepc_no_uts_with_hostname = SpecBuilder::default()
             .hostname("some-host")
             .linux(LinuxBuilder::default().namespaces(vec![]).build().unwrap())
@@ -733,5 +758,31 @@ mod tests {
             .build()
             .unwrap();
         assert!(validate_spec_for_uts_namespace(&spec_no_uts_no_host_domain_names).is_ok());
+    }
+
+    #[test]
+    fn test_validate_user_ns_mappings() {
+        let syscall = TestHelperSyscall::default();
+        let spec_with_mappings_no_ns = SpecBuilder::default()
+            .linux(
+                LinuxBuilder::default()
+                    .namespaces(vec![])
+                    .uid_mappings(vec![
+                        LinuxIdMappingBuilder::default()
+                            .container_id(0_u32)
+                            .host_id(1000_u32)
+                            .size(1_u32)
+                            .build()
+                            .unwrap(),
+                    ])
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(matches!(
+            validate_spec_for_new_user_ns(&spec_with_mappings_no_ns, &syscall).unwrap_err(),
+            LibcontainerError::InvalidSpec(ErrInvalidSpec::UserMappingsWithoutNamespace)
+        ));
     }
 }

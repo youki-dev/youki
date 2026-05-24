@@ -112,6 +112,8 @@ pub enum ErrInvalidSpec {
     HostnameWithoutUTS,
     #[error("unable to set domainname without a private UTS namespace")]
     DomainnameWithoutUTS,
+    #[error("user namespace mappings specified, but user namespace isn't enabled in the config")]
+    UserMappingsWithoutNamespace,
 }
 
 #[derive(Debug, thiserror::Error)]
