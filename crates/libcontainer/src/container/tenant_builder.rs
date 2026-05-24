@@ -28,6 +28,7 @@ use crate::notify_socket::NotifySocket;
 use crate::process::args::ContainerType;
 use crate::syscall::syscall::create_syscall;
 use crate::user_ns::UserNamespaceConfig;
+use crate::validator::Validator;
 use crate::{tty, utils};
 
 const NAMESPACE_TYPES: &[&str] = &["ipc", "uts", "net", "pid", "mnt", "cgroup"];
@@ -355,6 +356,8 @@ impl TenantContainerBuilder {
             Err(ErrInvalidSpec::UnsupportedVersion)?;
         }
 
+        Validator::validate_spec(spec)?;
+
         if let Some(process) = spec.process() {
             if let Some(io_priority) = process.io_priority() {
                 let priority = io_priority.priority();
@@ -443,7 +446,6 @@ impl TenantContainerBuilder {
         }
 
         let syscall = create_syscall();
-        utils::validate_spec_for_uts_namespace(spec)?;
         utils::validate_spec_for_new_user_ns(spec, &*syscall)?;
         utils::validate_spec_for_net_devices(spec, &*syscall)
             .map_err(LibcontainerError::NetDevicesError)?;

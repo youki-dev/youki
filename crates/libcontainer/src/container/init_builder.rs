@@ -13,6 +13,7 @@ use crate::error::{ErrInvalidSpec, LibcontainerError, MissingSpecError};
 use crate::notify_socket::NOTIFY_FILE;
 use crate::process::args::ContainerType;
 use crate::syscall::syscall::create_syscall;
+use crate::validator::Validator;
 use crate::{apparmor, tty, user_ns, utils};
 
 // Builder that can be used to configure the properties of a new container
@@ -184,6 +185,8 @@ impl InitContainerBuilder {
             Err(ErrInvalidSpec::UnsupportedVersion)?;
         }
 
+        Validator::validate_spec(spec)?;
+
         if let Some(process) = spec.process() {
             if let Some(profile) = process.apparmor_profile() {
                 let apparmor_is_enabled = apparmor::is_enabled().map_err(|err| {
@@ -227,7 +230,6 @@ impl InitContainerBuilder {
         }
 
         let syscall = create_syscall();
-        utils::validate_spec_for_uts_namespace(spec)?;
         utils::validate_spec_for_new_user_ns(spec, &*syscall)?;
         utils::validate_spec_for_net_devices(spec, &*syscall)
             .map_err(LibcontainerError::NetDevicesError)?;
