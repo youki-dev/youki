@@ -15,6 +15,11 @@ use crate::systemd::dbus_native::serialize::{DbusSerialize, Structure, Variant};
 
 const REPLY_BUF_SIZE: usize = 128; // seems good enough tradeoff between extra size and repeated calls
 
+// systemd exposes a private socket for direct communication without a dbus daemon.
+// Used as fallback when the standard system bus socket is unavailable, matching runc behavior.
+// See: https://github.com/coreos/go-systemd/blob/main/dbus/dbus.go (NewSystemdConnectionContext)
+const SYSTEMD_PRIVATE_SOCKET: &str = "/run/systemd/private";
+
 /// NOTE that this is meant for a single-threaded use, and concurrent
 /// usage can cause errors, primarily because then the message received over
 /// socket can be out of order and we need to manager buffer and check with message counter
@@ -127,32 +132,38 @@ fn get_actual_uid() -> Result<u32> {
 }
 
 impl DbusConnection {
-    /// Open a new dbus connection to given address
-    /// authenticating as user with given uid
+    /// Open a new dbus connection to the given address, authenticate, and register with the daemon.
     pub fn new(addr: &str, uid: u32, system: bool) -> Result<Self> {
-        // Use ManuallyDrop to keep the socket open.
-        let socket = std::mem::ManuallyDrop::new(socket::socket(
-            socket::AddressFamily::Unix,
-            socket::SockType::Stream,
-            socket::SockFlag::empty(),
-            None,
-        )?);
-
-        let addr = socket::UnixAddr::new(addr)?;
-        socket::connect(socket.as_raw_fd(), &addr)?;
-        let mut dbus = Self {
-            socket: socket.as_raw_fd(),
-            msg_ctr: AtomicU32::new(0),
-            id: None,
-            system,
-        };
-        dbus.authenticate(uid)?;
-        Ok(dbus)
+        let mut conn = Self::open(addr, uid, system)?;
+        conn.register()?;
+        Ok(conn)
     }
 
     pub fn new_system() -> Result<Self> {
-        let addr = get_system_bus_address()?;
-        Self::new(&addr, 0, true)
+        // Try the standard system bus first (DBUS_SYSTEM_BUS_ADDRESS or well-known path).
+        // and_then chains address lookup + connection so either failure falls through.
+        let standard = get_system_bus_address().and_then(|addr| Self::new(&addr, 0, true));
+        if let Ok(conn) = standard {
+            return Ok(conn);
+        }
+
+        // Fallback: connect directly to systemd without a dbus daemon (root only).
+        // /run/systemd/private is created by systemd itself and exists even when
+        // dbus-daemon is not installed, e.g. in kind nodes.
+        // register() must be skipped because systemd does not implement org.freedesktop.DBus.Hello.
+        if nix::unistd::getuid().is_root() && std::path::Path::new(SYSTEMD_PRIVATE_SOCKET).exists()
+        {
+            tracing::debug!(
+                "system bus unavailable, falling back to systemd private socket {}",
+                SYSTEMD_PRIVATE_SOCKET
+            );
+            return Self::new_direct(SYSTEMD_PRIVATE_SOCKET, true);
+        }
+
+        Err(DbusError::BusAddressError(
+            "could not connect to system bus or systemd private socket".into(),
+        )
+        .into())
     }
 
     pub fn new_session() -> Result<Self> {
@@ -161,28 +172,39 @@ impl DbusConnection {
         Self::new(&addr, uid, false)
     }
 
-    /// Authenticates with dbus using given uid via external strategy
-    /// Must be called on any connection before doing any other communication
-    fn authenticate(&mut self, uid: u32) -> Result<()> {
+    /// Open a socket connection and perform the dbus AUTH/BEGIN exchange.
+    /// The resulting connection is authenticated but not yet registered with a daemon.
+    fn open(addr: &str, uid: u32, system: bool) -> Result<Self> {
+        let socket = std::mem::ManuallyDrop::new(socket::socket(
+            socket::AddressFamily::Unix,
+            socket::SockType::Stream,
+            socket::SockFlag::empty(),
+            None,
+        )?);
+
+        let unix_addr = socket::UnixAddr::new(addr)?;
+        socket::connect(socket.as_raw_fd(), &unix_addr)?;
+        let dbus = Self {
+            socket: socket.as_raw_fd(),
+            msg_ctr: AtomicU32::new(0),
+            id: None,
+            system,
+        };
+
         let mut buf = [0; 64];
 
         // dbus connection always start with a 0 byte sent as first thing
-        socket::send(self.socket, &[0], socket::MsgFlags::empty())?;
+        socket::send(dbus.socket, &[0], socket::MsgFlags::empty())?;
 
         let msg = format!("AUTH EXTERNAL {}\r\n", uid_to_hex_str(uid));
+        socket::send(dbus.socket, msg.as_bytes(), socket::MsgFlags::empty())?;
 
-        // then we send our auth with uid
-        socket::send(self.socket, msg.as_bytes(), socket::MsgFlags::empty())?;
-
-        // we get the reply and check if all went well or not
-        socket::recv(self.socket, &mut buf, socket::MsgFlags::empty())?;
+        socket::recv(dbus.socket, &mut buf, socket::MsgFlags::empty())?;
 
         let reply: Vec<u8> = buf.iter().filter(|v| **v != 0).copied().collect();
-
         // we can use _lossy as we know dbus communication is always ascii
         let reply = String::from_utf8_lossy(&reply);
 
-        // successful auth reply starts with 'ok'
         if !reply.starts_with("OK") {
             return Err(DbusError::AuthenticationErr(format!(
                 "Authentication failed, got message : {}",
@@ -195,15 +217,24 @@ impl DbusConnection {
         // we can also send AGREE_UNIX_FD before this if we need to deal with sending/receiving
         // fds over the connection, but because youki doesn't need it, we can skip that
         socket::send(
-            self.socket,
+            dbus.socket,
             "BEGIN\r\n".as_bytes(),
             socket::MsgFlags::empty(),
         )?;
 
+        Ok(dbus)
+    }
+
+    /// Register this connection with the dbus daemon by calling the Hello method.
+    /// Hello allocates a unique name (e.g. ":1.42") for this connection on the bus.
+    /// Must be called after open() when connecting to a dbus daemon.
+    /// Must NOT be called when connecting directly to systemd via /run/systemd/private,
+    /// since systemd does not implement org.freedesktop.DBus.Hello.
+    fn register(&mut self) -> Result<()> {
         // First thing any dbus client must do after authentication
-        // is to do a hello method call, in order to get a name allocated
-        // if we do any other method call, the connection is assumed to be
-        // invalid and auto disconnected
+        // is to do a hello method call, in order to get a name allocated.
+        // If we do any other method call, the connection is assumed to be
+        // invalid and auto disconnected.
         let headers = vec![
             Header {
                 kind: HeaderKind::Path,
@@ -239,6 +270,16 @@ impl DbusConnection {
         self.id = Some(id);
 
         Ok(())
+    }
+
+    /// Connect directly to /run/systemd/private without going through a dbus daemon.
+    /// uid is always root (0) because /run/systemd/private is only accessible by root,
+    /// and callers must verify this before calling.
+    fn new_direct(addr: &str, system: bool) -> Result<Self> {
+        // open() performs AUTH/BEGIN; register() is intentionally skipped here because
+        // systemd does not implement org.freedesktop.DBus.Hello.
+        // self.id remains None; send_message already handles None by omitting the Sender header.
+        Self::open(addr, 0, system)
     }
 
     /// Helper function to get complete message in chunks
