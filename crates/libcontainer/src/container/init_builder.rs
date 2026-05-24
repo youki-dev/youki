@@ -227,6 +227,7 @@ impl InitContainerBuilder {
         }
 
         let syscall = create_syscall();
+        utils::validate_spec_for_uts_namespace(spec)?;
         utils::validate_spec_for_new_user_ns(spec, &*syscall)?;
         utils::validate_spec_for_net_devices(spec, &*syscall)
             .map_err(LibcontainerError::NetDevicesError)?;

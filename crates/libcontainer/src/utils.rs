@@ -14,7 +14,7 @@ use nix::sys::statfs::{Statfs, fstatfs};
 use nix::unistd::{Uid, User};
 use oci_spec::runtime::{LinuxNamespaceType, Spec};
 
-use crate::error::{LibcontainerError, MissingSpecError};
+use crate::error::{ErrInvalidSpec, LibcontainerError, MissingSpecError};
 use crate::syscall::syscall::Syscall;
 use crate::user_ns::UserNamespaceConfig;
 
@@ -419,6 +419,30 @@ fn dev_valid_name(name: &str) -> bool {
     true
 }
 
+pub fn validate_spec_for_uts_namespace(spec: &Spec) -> Result<(), ErrInvalidSpec> {
+    let has_uts_namespace = spec
+        .linux()
+        .as_ref()
+        .and_then(|l| l.namespaces().as_ref())
+        .is_some_and(|namespace| {
+            namespace
+                .iter()
+                .any(|ns| ns.typ() == oci_spec::runtime::LinuxNamespaceType::Uts)
+        });
+
+    if !has_uts_namespace {
+        if spec.hostname().is_some() {
+            return Err(ErrInvalidSpec::HostnameWithoutUTS);
+        }
+
+        if spec.domainname().is_some() {
+            return Err(ErrInvalidSpec::DomainnameWithoutUTS);
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use core::panic;
@@ -657,5 +681,57 @@ mod tests {
         syscall.set_id(Uid::from_raw(0), Gid::from_raw(0)).unwrap();
         let result = validate_spec_for_net_devices(&spec, &*syscall);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_spec_for_uts_namespace() {
+        use oci_spec::runtime::{
+            LinuxBuilder, LinuxNamespaceBuilder, LinuxNamespaceType, SpecBuilder,
+        };
+
+        let sepc_no_uts_with_hostname = SpecBuilder::default()
+            .hostname("some-host")
+            .linux(LinuxBuilder::default().namespaces(vec![]).build().unwrap())
+            .build()
+            .unwrap();
+        assert!(matches!(
+            validate_spec_for_uts_namespace(&sepc_no_uts_with_hostname).unwrap_err(),
+            ErrInvalidSpec::HostnameWithoutUTS
+        ));
+
+        let mut spec_no_uts_with_domainname = SpecBuilder::default()
+            .domainname("some-domain")
+            .linux(LinuxBuilder::default().namespaces(vec![]).build().unwrap())
+            .build()
+            .unwrap();
+        spec_no_uts_with_domainname.set_hostname(None);
+        assert!(matches!(
+            validate_spec_for_uts_namespace(&spec_no_uts_with_domainname).unwrap_err(),
+            ErrInvalidSpec::DomainnameWithoutUTS
+        ));
+
+        let spec_with_uts_and_host_domain_names = SpecBuilder::default()
+            .hostname("my-host")
+            .domainname("my-domain")
+            .linux(
+                LinuxBuilder::default()
+                    .namespaces(vec![
+                        LinuxNamespaceBuilder::default()
+                            .typ(LinuxNamespaceType::Uts)
+                            .build()
+                            .unwrap(),
+                    ])
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(validate_spec_for_uts_namespace(&spec_with_uts_and_host_domain_names).is_ok());
+
+        let spec_no_uts_no_host_domain_names = SpecBuilder::default()
+            .linux(LinuxBuilder::default().build().unwrap())
+            .build()
+            .unwrap();
+        assert!(validate_spec_for_uts_namespace(&spec_no_uts_no_host_domain_names).is_ok());
     }
 }

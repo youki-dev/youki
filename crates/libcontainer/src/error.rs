@@ -32,7 +32,7 @@ pub enum LibcontainerError {
     InvalidID(#[from] ErrInvalidID),
     #[error(transparent)]
     MissingSpec(#[from] MissingSpecError),
-    #[error("invalid runtime spec")]
+    #[error(transparent)]
     InvalidSpec(#[from] ErrInvalidSpec),
 
     // Errors from submodules and other errors
@@ -108,6 +108,10 @@ pub enum ErrInvalidSpec {
     ConsoleSocketRequired,
     #[error("cannot use console socket if youki will not detach or allocate tty")]
     InvalidConsoleSocket,
+    #[error("unable to set hostname without a private UTS namespace")]
+    HostnameWithoutUTS,
+    #[error("unable to set domainname without a private UTS namespace")]
+    DomainnameWithoutUTS,
 }
 
 #[derive(Debug, thiserror::Error)]
