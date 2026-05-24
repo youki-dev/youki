@@ -39,6 +39,7 @@ pub fn run_hooks(
     // TODO: Remove the following parameters. To comply with the OCI State, hooks should only depend on structures defined in oci-spec-rs. Cleaning these up ensures proper functional isolation.
     cwd: Option<&Path>,
     pid: Option<Pid>,
+    inherited_envs: Option<&HashMap<String, String>>,
 ) -> Result<()> {
     let base_state = state.ok_or(HookError::MissingContainerState)?;
 
@@ -78,7 +79,7 @@ pub fn run_hooks(
             let envs: HashMap<String, String> = if let Some(env) = hook.env() {
                 utils::parse_env(env)
             } else {
-                HashMap::new()
+                inherited_envs.cloned().unwrap_or_default()
             };
             tracing::debug!("run_hooks envs: {:?}", envs);
 
@@ -195,7 +196,7 @@ mod test {
     fn test_run_hook() -> Result<()> {
         {
             let default_container: Container = Default::default();
-            run_hooks(None, Some(&default_container.state), None, None)
+            run_hooks(None, Some(&default_container.state), None, None, None)
                 .context("Failed simple test")?;
         }
 
@@ -205,8 +206,14 @@ mod test {
 
             let hook = HookBuilder::default().path("true").build()?;
             let hooks = Some(vec![hook]);
-            run_hooks(hooks.as_ref(), Some(&default_container.state), None, None)
-                .context("Failed true")?;
+            run_hooks(
+                hooks.as_ref(),
+                Some(&default_container.state),
+                None,
+                None,
+                None,
+            )
+            .context("Failed true")?;
         }
 
         {
@@ -226,8 +233,14 @@ mod test {
                 .env(vec![String::from("key=value")])
                 .build()?;
             let hooks = Some(vec![hook]);
-            run_hooks(hooks.as_ref(), Some(&default_container.state), None, None)
-                .context("Failed printenv test")?;
+            run_hooks(
+                hooks.as_ref(),
+                Some(&default_container.state),
+                None,
+                None,
+                None,
+            )
+            .context("Failed printenv test")?;
         }
 
         {
@@ -249,6 +262,7 @@ mod test {
                 hooks.as_ref(),
                 Some(&default_container.state),
                 Some(tmp.path()),
+                None,
                 None,
             )
             .context("Failed pwd test")?;
@@ -272,8 +286,38 @@ mod test {
                 Some(&default_container.state),
                 None,
                 Some(expected_pid),
+                None,
             )
             .context("Failed pid test")?;
+        }
+
+        {
+            assert!(
+                is_command_in_path("printenv"),
+                "The printenv was not found."
+            );
+            let default_container: Container = Default::default();
+            let mut inherited_envs = HashMap::new();
+            inherited_envs.insert("ONE".to_string(), "two".to_string());
+            inherited_envs.insert("HOME".to_string(), "/root".to_string());
+
+            let hook = HookBuilder::default()
+                .path("bash")
+                .args(vec![
+                    String::from("bash"),
+                    String::from("-c"),
+                    String::from("test \"$ONE\" = two && test \"$HOME\" = /root"),
+                ])
+                .build()?;
+            let hooks = Some(vec![hook]);
+            run_hooks(
+                hooks.as_ref(),
+                Some(&default_container.state),
+                None,
+                None,
+                Some(&inherited_envs),
+            )
+            .context("Failed inherited env test")?;
         }
 
         Ok(())
@@ -296,7 +340,13 @@ mod test {
             .timeout(1)
             .build()?;
         let hooks = Some(vec![hook]);
-        match run_hooks(hooks.as_ref(), Some(&default_container.state), None, None) {
+        match run_hooks(
+            hooks.as_ref(),
+            Some(&default_container.state),
+            None,
+            None,
+            None,
+        ) {
             Ok(_) => {
                 bail!(
                     "The test expects the hook to error out with timeout. Should not execute cleanly"

@@ -109,6 +109,7 @@ pub fn container_init_process(
                 ctx.container.map(|c| &c.state),
                 None,
                 None,
+                None,
             )
             .map_err(|err| {
                 tracing::error!(?err, "failed to run create container hooks");
@@ -415,11 +416,12 @@ pub fn container_init_process(
         tracing::warn!("seccomp not available, unable to set seccomp privileges!")
     }
 
-    // add HOME into envs if not exists
+    // start_container hooks inherit the same environment as the container init
+    // process, including a synthesized HOME when the spec omits it.
     set_home_env_if_not_exists(&mut ctx.envs, ctx.process.user().uid().into());
 
     args.executor.validate(ctx.spec)?;
-    args.executor.setup_envs(ctx.envs)?;
+    args.executor.setup_envs(ctx.envs.clone())?;
 
     // Notify main process that the init process is ready to execute the
     // payload.  Note, because we are already inside the pid namespace, the pid
@@ -458,6 +460,7 @@ pub fn container_init_process(
                 ctx.container.map(|c| &c.state),
                 None,
                 None,
+                Some(&ctx.envs),
             )
             .map_err(|err| {
                 tracing::error!(?err, "failed to run start container hooks");
