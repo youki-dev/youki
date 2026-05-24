@@ -114,6 +114,8 @@ pub enum ErrInvalidSpec {
     DomainnameWithoutUTS,
     #[error("user namespace mappings specified, but user namespace isn't enabled in the config")]
     UserMappingsWithoutNamespace,
+    #[error("unable to restrict sys entries without a private MNT namespace")]
+    SysEntriesWithoutMntNamespace,
 }
 
 #[derive(Debug, thiserror::Error)]

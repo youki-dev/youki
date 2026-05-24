@@ -8,6 +8,7 @@ impl Validator {
     pub fn validate_spec(spec: &Spec) -> Result<(), ErrInvalidSpec> {
         Self::validate_spec_for_uts_namespace(spec)?;
         Self::validate_spec_for_new_user_ns(spec)?;
+        Self::validate_spec_for_mnt_namespace(spec)?;
 
         Ok(())
     }
@@ -17,8 +18,8 @@ impl Validator {
             .linux()
             .as_ref()
             .and_then(|l| l.namespaces().as_ref())
-            .is_some_and(|namespace| {
-                namespace
+            .is_some_and(|namespaces| {
+                namespaces
                     .iter()
                     .any(|ns| ns.typ() == LinuxNamespaceType::Uts)
             });
@@ -41,8 +42,8 @@ impl Validator {
             .linux()
             .as_ref()
             .and_then(|l| l.namespaces().as_ref())
-            .is_some_and(|namespace| {
-                namespace
+            .is_some_and(|namespaces| {
+                namespaces
                     .iter()
                     .any(|ns| ns.typ() == LinuxNamespaceType::User)
             });
@@ -59,6 +60,35 @@ impl Validator {
 
             if has_uid_mappings || has_gid_mappings {
                 return Err(ErrInvalidSpec::UserMappingsWithoutNamespace);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_spec_for_mnt_namespace(spec: &Spec) -> Result<(), ErrInvalidSpec> {
+        let has_mnt_namespace = spec
+            .linux()
+            .as_ref()
+            .and_then(|l| l.namespaces().as_ref())
+            .is_some_and(|namespaces| {
+                namespaces
+                    .iter()
+                    .any(|ns| ns.typ() == LinuxNamespaceType::Mount)
+            });
+
+        if !has_mnt_namespace {
+            let has_masked_paths = spec
+                .linux()
+                .as_ref()
+                .is_some_and(|l| l.masked_paths().as_ref().is_some_and(|m| !m.is_empty()));
+            let has_readonly_paths = spec
+                .linux()
+                .as_ref()
+                .is_some_and(|l| l.readonly_paths().as_ref().is_some_and(|m| !m.is_empty()));
+
+            if has_masked_paths || has_readonly_paths {
+                return Err(ErrInvalidSpec::SysEntriesWithoutMntNamespace);
             }
         }
 
@@ -150,5 +180,72 @@ mod tests {
             Validator::validate_spec_for_new_user_ns(&spec_with_mappings_no_ns).unwrap_err(),
             ErrInvalidSpec::UserMappingsWithoutNamespace
         ));
+    }
+
+    #[test]
+    fn test_validate_spec_for_mnt_namespace() {
+        let spec_no_mnt_with_masked = SpecBuilder::default()
+            .linux(
+                LinuxBuilder::default()
+                    .namespaces(vec![])
+                    .masked_paths(vec!["/proc/keys".to_string()])
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(matches!(
+            Validator::validate_spec_for_mnt_namespace(&spec_no_mnt_with_masked).unwrap_err(),
+            ErrInvalidSpec::SysEntriesWithoutMntNamespace
+        ));
+
+        let spec_no_mnt_with_readonly = SpecBuilder::default()
+            .linux(
+                LinuxBuilder::default()
+                    .namespaces(vec![])
+                    .readonly_paths(vec!["/proc/sys".to_string()])
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(matches!(
+            Validator::validate_spec_for_mnt_namespace(&spec_no_mnt_with_readonly).unwrap_err(),
+            ErrInvalidSpec::SysEntriesWithoutMntNamespace
+        ));
+
+        let spec_with_mnt_and_masked = SpecBuilder::default()
+            .linux(
+                LinuxBuilder::default()
+                    .namespaces(vec![
+                        LinuxNamespaceBuilder::default()
+                            .typ(LinuxNamespaceType::Mount)
+                            .build()
+                            .unwrap(),
+                    ])
+                    .masked_paths(vec!["/proc/keys".to_string()])
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(Validator::validate_spec_for_mnt_namespace(&spec_with_mnt_and_masked).is_ok());
+
+        let spec_with_mnt_and_readonly = SpecBuilder::default()
+            .linux(
+                LinuxBuilder::default()
+                    .namespaces(vec![
+                        LinuxNamespaceBuilder::default()
+                            .typ(LinuxNamespaceType::Mount)
+                            .build()
+                            .unwrap(),
+                    ])
+                    .readonly_paths(vec!["/proc/sys".to_string()])
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(Validator::validate_spec_for_mnt_namespace(&spec_with_mnt_and_readonly).is_ok());
     }
 }
