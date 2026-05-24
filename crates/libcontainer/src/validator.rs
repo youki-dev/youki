@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use oci_spec::runtime::{LinuxNamespaceType, Spec};
 
 use crate::error::ErrInvalidSpec;
@@ -9,6 +11,7 @@ impl Validator {
         Self::validate_spec_for_uts_namespace(spec)?;
         Self::validate_spec_for_new_user_ns(spec)?;
         Self::validate_spec_for_mnt_namespace(spec)?;
+        Self::validate_spec_for_sysctl(spec)?;
 
         Ok(())
     }
@@ -89,6 +92,81 @@ impl Validator {
 
             if has_masked_paths || has_readonly_paths {
                 return Err(ErrInvalidSpec::SysEntriesWithoutMntNamespace);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_spec_for_sysctl(spec: &Spec) -> Result<(), ErrInvalidSpec> {
+        if let Some(linux) = spec.linux() {
+            if let Some(sysctls) = linux.sysctl() {
+                let has_ipc = linux
+                    .namespaces()
+                    .as_ref()
+                    .is_some_and(|ns| ns.iter().any(|n| n.typ() == LinuxNamespaceType::Ipc));
+                let has_net = linux
+                    .namespaces()
+                    .as_ref()
+                    .is_some_and(|ns| ns.iter().any(|n| n.typ() == LinuxNamespaceType::Network));
+                let has_uts = linux
+                    .namespaces()
+                    .as_ref()
+                    .is_some_and(|ns| ns.iter().any(|n| n.typ() == LinuxNamespaceType::Uts));
+                let has_user = linux
+                    .namespaces()
+                    .as_ref()
+                    .is_some_and(|ns| ns.iter().any(|n| n.typ() == LinuxNamespaceType::User));
+
+                let mut valid_ipc_sysctls = HashSet::with_capacity(8);
+                valid_ipc_sysctls.insert("kernel.msgmax");
+                valid_ipc_sysctls.insert("kernel.msgmnb");
+                valid_ipc_sysctls.insert("kernel.msgmni");
+                valid_ipc_sysctls.insert("kernel.sem");
+                valid_ipc_sysctls.insert("kernel.shmall");
+                valid_ipc_sysctls.insert("kernel.shmmax");
+                valid_ipc_sysctls.insert("kernel.shmmni");
+                valid_ipc_sysctls.insert("kernel.shm_rmid_forced");
+
+                for key in sysctls.keys() {
+                    let s = key.replace('/', ".");
+                    if valid_ipc_sysctls.contains(&s.as_str()) || s.starts_with("fs.mqueue.") {
+                        if !has_ipc {
+                            return Err(ErrInvalidSpec::SysctlNotAllowedInHostIpc(s));
+                        }
+                        continue;
+                    }
+
+                    if s.starts_with("net.") {
+                        if !has_net {
+                            return Err(ErrInvalidSpec::SysctlNotAllowedInHostNet(s));
+                        }
+                        continue;
+                    }
+
+                    if has_uts {
+                        match s.as_str() {
+                            "kernel.domainname" => continue,
+                            "kernel.hostname" => {
+                                // hostname is supported via an explicit OCI field, so it is denied here
+                                return Err(ErrInvalidSpec::SysctlConflictsWithOci(
+                                    s,
+                                    "hostname".to_string(),
+                                ));
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if s.starts_with("user.") {
+                        if !has_user {
+                            return Err(ErrInvalidSpec::SysctlNotAllowedInHostUser(s));
+                        }
+                        continue;
+                    }
+
+                    return Err(ErrInvalidSpec::SysctlNotInSeparateNamespace(s));
+                }
             }
         }
 
@@ -247,5 +325,72 @@ mod tests {
             .build()
             .unwrap();
         assert!(Validator::validate_spec_for_mnt_namespace(&spec_with_mnt_and_readonly).is_ok());
+    }
+
+    #[test]
+    fn test_validate_spec_for_sysctl() {
+        use std::collections::HashMap;
+
+        let mut sysctl_ipc = HashMap::new();
+        sysctl_ipc.insert("fs.mqueue.msg_max".to_string(), "10".to_string());
+
+        let spec_no_ipc = SpecBuilder::default()
+            .linux(
+                LinuxBuilder::default()
+                    .namespaces(vec![])
+                    .sysctl(sysctl_ipc)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+
+        assert!(matches!(
+            Validator::validate_spec_for_sysctl(&spec_no_ipc).unwrap_err(),
+            ErrInvalidSpec::SysctlNotAllowedInHostIpc(_)
+        ));
+
+        let mut sysctl_net = HashMap::new();
+        sysctl_net.insert("net.ipv4.ip_forward".to_string(), "1".to_string());
+
+        let spec_no_net = SpecBuilder::default()
+            .linux(
+                LinuxBuilder::default()
+                    .namespaces(vec![])
+                    .sysctl(sysctl_net)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+
+        assert!(matches!(
+            Validator::validate_spec_for_sysctl(&spec_no_net).unwrap_err(),
+            ErrInvalidSpec::SysctlNotAllowedInHostNet(_)
+        ));
+
+        let mut sysctl_uts_conflict = HashMap::new();
+        sysctl_uts_conflict.insert("kernel.hostname".to_string(), "bad-host".to_string());
+
+        let spec_uts_conflict = SpecBuilder::default()
+            .linux(
+                LinuxBuilder::default()
+                    .namespaces(vec![
+                        LinuxNamespaceBuilder::default()
+                            .typ(LinuxNamespaceType::Uts)
+                            .build()
+                            .unwrap(),
+                    ])
+                    .sysctl(sysctl_uts_conflict)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+
+        assert!(matches!(
+            Validator::validate_spec_for_sysctl(&spec_uts_conflict).unwrap_err(),
+            ErrInvalidSpec::SysctlConflictsWithOci(_, _)
+        ));
     }
 }

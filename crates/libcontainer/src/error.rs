@@ -116,6 +116,16 @@ pub enum ErrInvalidSpec {
     UserMappingsWithoutNamespace,
     #[error("unable to restrict sys entries without a private MNT namespace")]
     SysEntriesWithoutMntNamespace,
+    #[error("sysctl {0} is not allowed in the hosts ipc namespace")]
+    SysctlNotAllowedInHostIpc(String),
+    #[error("sysctl {0} not allowed in host network namespace")]
+    SysctlNotAllowedInHostNet(String),
+    #[error("sysctl {0} is not allowed as it conflicts with the OCI {1} field")]
+    SysctlConflictsWithOci(String, String),
+    #[error("setting ucounts without a user namespace not allowed: {0}")]
+    SysctlNotAllowedInHostUser(String),
+    #[error("sysctl {0} is not in a separate kernel namespace")]
+    SysctlNotInSeparateNamespace(String),
 }
 
 #[derive(Debug, thiserror::Error)]

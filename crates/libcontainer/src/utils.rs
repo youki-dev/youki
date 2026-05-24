@@ -14,7 +14,7 @@ use nix::sys::statfs::{Statfs, fstatfs};
 use nix::unistd::{Uid, User};
 use oci_spec::runtime::{LinuxNamespaceType, Spec};
 
-use crate::error::{ErrInvalidSpec, LibcontainerError, MissingSpecError};
+use crate::error::{LibcontainerError, MissingSpecError};
 use crate::syscall::syscall::Syscall;
 use crate::user_ns::UserNamespaceConfig;
 
@@ -277,33 +277,6 @@ pub fn validate_spec_for_new_user_ns(
     spec: &Spec,
     syscall: &dyn Syscall,
 ) -> Result<(), LibcontainerError> {
-    let has_user_namespace = spec
-        .linux()
-        .as_ref()
-        .and_then(|l| l.namespaces().as_ref())
-        .is_some_and(|namespace| {
-            namespace
-                .iter()
-                .any(|ns| ns.typ() == oci_spec::runtime::LinuxNamespaceType::User)
-        });
-
-    if !has_user_namespace {
-        let has_uid_mappings = spec
-            .linux()
-            .as_ref()
-            .is_some_and(|l| l.uid_mappings().as_ref().is_some_and(|m| !m.is_empty()));
-        let has_gid_mappings = spec
-            .linux()
-            .as_ref()
-            .is_some_and(|l| l.gid_mappings().as_ref().is_some_and(|m| !m.is_empty()));
-
-        if has_uid_mappings || has_gid_mappings {
-            return Err(LibcontainerError::InvalidSpec(
-                ErrInvalidSpec::UserMappingsWithoutNamespace,
-            ));
-        }
-    }
-
     let config = UserNamespaceConfig::new(spec)?;
     let in_user_ns = is_in_new_userns().map_err(LibcontainerError::OtherIO)?;
     let is_rootless_required = rootless_required(syscall).map_err(LibcontainerError::OtherIO)?;
