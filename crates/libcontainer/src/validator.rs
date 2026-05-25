@@ -1,5 +1,6 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, path::Path};
 
+use nix::sys::stat::stat;
 use oci_spec::runtime::{LinuxNamespaceType, Spec};
 
 use crate::error::ErrInvalidSpec;
@@ -99,16 +100,40 @@ impl Validator {
     }
 
     fn validate_spec_for_sysctl(spec: &Spec) -> Result<(), ErrInvalidSpec> {
+        fn is_host_net_ns(path: &Path) -> Result<bool, nix::Error> {
+            let current_netns = "/proc/self/ns/net";
+
+            let host_stat = stat(current_netns)?;
+            let target_stat = stat(path)?;
+
+            Ok(host_stat.st_dev == target_stat.st_dev && host_stat.st_ino == target_stat.st_ino)
+        }
+
         if let Some(linux) = spec.linux() {
             if let Some(sysctls) = linux.sysctl() {
                 let has_ipc = linux
                     .namespaces()
                     .as_ref()
                     .is_some_and(|ns| ns.iter().any(|n| n.typ() == LinuxNamespaceType::Ipc));
-                let has_net = linux
+                let is_host_net = match linux
                     .namespaces()
                     .as_ref()
-                    .is_some_and(|ns| ns.iter().any(|n| n.typ() == LinuxNamespaceType::Network));
+                    .and_then(|ns| ns.iter().find(|n| n.typ() == LinuxNamespaceType::Network))
+                {
+                    // No NEWNET namespace means it uses the host's
+                    None => true,
+                    Some(ns) => {
+                        match ns.path() {
+                            // No path means a completely fresh, isolated namespace is being created
+                            None => false,
+                            // Empty string is effectively the same as None
+                            Some(path) if path.as_os_str().is_empty() => false,
+                            // A path is provided; we must verify it isn't the host's network namespace
+                            Some(path) => is_host_net_ns(path)
+                                .map_err(|e| ErrInvalidSpec::InvalidNetNsPath(e.to_string()))?,
+                        }
+                    }
+                };
                 let has_uts = linux
                     .namespaces()
                     .as_ref()
@@ -138,7 +163,7 @@ impl Validator {
                     }
 
                     if s.starts_with("net.") {
-                        if !has_net {
+                        if is_host_net {
                             return Err(ErrInvalidSpec::SysctlNotAllowedInHostNet(s));
                         }
                         continue;
