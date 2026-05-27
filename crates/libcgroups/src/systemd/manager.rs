@@ -413,8 +413,11 @@ impl CgroupManager for Manager {
         }
         if self.client.transient_unit_exists(&self.unit_name) {
             tracing::debug!("Transient unit {:?} already exists", self.unit_name);
-            self.client
-                .add_process_to_unit(&self.unit_name, "", pid.as_raw() as u32)?;
+            self.client.add_process_to_unit(
+                &self.unit_name,
+                &self.sub_cgroup,
+                pid.as_raw() as u32,
+            )?;
             return Ok(());
         }
 
