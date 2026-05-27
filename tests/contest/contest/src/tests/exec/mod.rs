@@ -36,6 +36,10 @@ pub fn get_exec_test() -> TestGroup {
         "no_capabilities_test",
         Box::new(cap_test::get_test_no_capabilities),
     );
+    let unset_bounding_capabilities_test = Test::new(
+        "unset_bounding_capabilities_test",
+        Box::new(cap_test::get_test_unset_bounding_capabilities),
+    );
     let new_privileges_test = Test::new(
         "new_privileges_test",
         Box::new(cap_test::get_test_new_privileges),
@@ -59,6 +63,7 @@ pub fn get_exec_test() -> TestGroup {
         Box::new(ignore_paused_test),
         Box::new(cgroup_test),
         Box::new(no_capabilities_test),
+        Box::new(unset_bounding_capabilities_test),
         Box::new(new_privileges_test),
         Box::new(some_capabilities_test),
         Box::new(capabilities_by_flag_test_case1),

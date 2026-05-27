@@ -135,10 +135,10 @@ pub fn drop_privileges<S: Syscall + ?Sized>(
     cs: &LinuxCapabilities,
     syscall: &S,
 ) -> Result<(), SyscallError> {
-    if let Some(bounding) = cs.bounding() {
-        tracing::debug!("dropping bounding capabilities to {:?}", bounding);
-        syscall.set_capability(CapSet::Bounding, &to_set(bounding))?;
-    }
+    let empty_caps = Default::default();
+    let bounding = cs.bounding().as_ref().unwrap_or(&empty_caps);
+    tracing::debug!("dropping bounding capabilities to {:?}", bounding);
+    syscall.set_capability(CapSet::Bounding, &to_set(bounding))?;
 
     if let Some(effective) = cs.effective() {
         tracing::debug!("dropping effective capabilities to {:?}", effective);
@@ -611,8 +611,21 @@ mod tests {
                     (CapSet::Effective, cps.clone()),
                     (CapSet::Permitted, cps.clone()),
                     (CapSet::Inheritable, cps.clone()),
-                    (CapSet::Ambient, cps),
+                    (CapSet::Ambient, cps.clone()),
                 ],
+            },
+            Testcase {
+                name: format!("unset LinuxCapabilities fields with caps: {cps:?}"),
+                input: {
+                    let mut caps = LinuxCapabilities::default();
+                    caps.set_bounding(None)
+                        .set_effective(None)
+                        .set_inheritable(None)
+                        .set_permitted(None)
+                        .set_ambient(None);
+                    caps
+                },
+                want: vec![(CapSet::Bounding, vec![])],
             },
         ];
 
