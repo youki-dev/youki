@@ -44,6 +44,8 @@ pub struct Manager {
     destructured_path: CgroupsPath,
     /// Name of the container e.g. 569d5ce3afe1074769f67
     container_name: String,
+    /// Name of the sub-cgroup
+    sub_cgroup: String,
     /// Name of the systemd unit e.g. youki-569d5ce3afe1074769f67.scope
     unit_name: String,
     /// Client for communicating with systemd
@@ -198,6 +200,7 @@ impl Manager {
             false => DbusConnection::new_session()?,
         };
 
+        let sub_cgroup = Self::extract_sub_cgroup(&mut destructured_path.name);
         let (cgroups_path, delegation_boundary) =
             Self::construct_cgroups_path(&destructured_path, &client)?;
         let full_path = root_path.join_safely(&cgroups_path)?;
@@ -209,6 +212,7 @@ impl Manager {
             full_path,
             container_name,
             unit_name: Self::get_unit_name(&destructured_path),
+            sub_cgroup,
             destructured_path,
             client,
             fs_manager,
