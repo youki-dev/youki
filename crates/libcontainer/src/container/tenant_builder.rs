@@ -16,7 +16,10 @@ use oci_spec::runtime::{
     LinuxCapabilities, LinuxCapabilitiesBuilder, LinuxNamespace, LinuxNamespaceBuilder,
     LinuxNamespaceType, LinuxSchedulerPolicy, Process, ProcessBuilder, Spec, UserBuilder,
 };
+use pathrs::flags::OpenFlags;
+use pathrs::procfs::{ProcfsBase, ProcfsHandle};
 use procfs::process::Namespace;
+use procfs::{FromRead, ProcessCGroups};
 
 use super::Container;
 use super::builder::ContainerBuilder;
@@ -128,6 +131,45 @@ fn get_capabilities(
     caps.set_inheritable(None);
     caps.set_ambient(None);
     Ok(caps)
+}
+
+// Only works for cgroup v2
+fn get_init_proc_sub_cgroup(container: &Container, spec: &Spec) -> Option<String> {
+    let init_pid = container.pid()?.as_raw() as u32;
+
+    let init_proc_cgroups = (|| -> Result<ProcessCGroups, Box<dyn std::error::Error>> {
+        Ok(ProcessCGroups::from_read(ProcfsHandle::new()?.open(
+            ProcfsBase::ProcPid(init_pid),
+            "cgroup",
+            OpenFlags::O_RDONLY | OpenFlags::O_CLOEXEC,
+        )?)?)
+    })()
+    .ok()?;
+
+    infer_sub_cgroup_from_proc_cgroups(&init_proc_cgroups, container.id(), spec)
+}
+
+fn infer_sub_cgroup_from_proc_cgroups(
+    init_proc_cgroups: &ProcessCGroups,
+    container_id: &str,
+    spec: &Spec,
+) -> Option<String> {
+    let init_proc_cgroup = init_proc_cgroups
+        .into_iter()
+        // get_sub_cgroup_of_container_init_proc() is necessary only in cgroup v2,
+        // where there is only a single cgroup with an empty controller name.
+        .find(|c| c.controllers.is_empty())?;
+
+    let original_cgroup =
+        utils::get_cgroup_path(spec.linux().as_ref()?.cgroups_path(), container_id);
+    let container_name = original_cgroup.file_name()?.to_str()?.split(":").last()?;
+
+    // Locate the container's cgroup segment and return the trailing sub-cgroup path.
+    let mut init_proc_cgroup_path_parts = init_proc_cgroup.pathname.split("/");
+    init_proc_cgroup_path_parts
+        .any(|part| part.contains(container_name))
+        .then(|| init_proc_cgroup_path_parts.collect::<Vec<_>>().join("/"))
+        .filter(|s| !s.is_empty())
 }
 
 impl TenantContainerBuilder {
