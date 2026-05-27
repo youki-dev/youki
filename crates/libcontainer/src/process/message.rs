@@ -49,13 +49,13 @@ impl fmt::Display for Message {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct MountMsg {
     pub source: PathBuf,
     pub idmap: Option<MountIdMap>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct MountIdMap {
     pub uid_mappings: Vec<LinuxIdMapping>,
     pub gid_mappings: Vec<LinuxIdMapping>,

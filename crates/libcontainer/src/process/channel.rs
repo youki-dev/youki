@@ -629,12 +629,7 @@ mod tests {
         sender.request_mount_fd(request.clone())?;
         let received = receiver.wait_for_mount_fd_request()?;
 
-        assert_eq!(received.source, request.source);
-        let received_idmap = received.idmap.context("missing idmap in mount request")?;
-        let request_idmap = request.idmap.context("missing idmap in mount request")?;
-        assert_eq!(received_idmap.recursive, request_idmap.recursive);
-        assert_eq!(received_idmap.uid_mappings, request_idmap.uid_mappings);
-        assert_eq!(received_idmap.gid_mappings, request_idmap.gid_mappings);
+        assert_eq!(received, request);
 
         sender.close()?;
         receiver.close()?;
