@@ -1,5 +1,6 @@
 use core::fmt;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use oci_spec::runtime::LinuxIdMapping;
 use serde::{Deserialize, Serialize};
@@ -50,7 +51,7 @@ impl fmt::Display for Message {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MountMsg {
-    pub source: String,
+    pub source: PathBuf,
     pub idmap: Option<MountIdMap>,
 }
 

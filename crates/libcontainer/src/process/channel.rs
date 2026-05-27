@@ -484,6 +484,7 @@ impl InitReceiver {
 mod tests {
     use std::io::{Read, Seek, SeekFrom, Write};
     use std::os::fd::AsRawFd;
+    use std::path::PathBuf;
 
     use anyhow::{Context, Result};
     use nix::sys::wait;
@@ -617,7 +618,7 @@ mod tests {
     fn test_channel_mount_fd_request() -> Result<()> {
         let (sender, receiver) = &mut main_channel()?;
         let request = MountMsg {
-            source: "/proc/self/ns/user".to_string(),
+            source: PathBuf::from("/proc/self/ns/user"),
             idmap: Some(crate::process::message::MountIdMap {
                 uid_mappings: vec![],
                 gid_mappings: vec![],
