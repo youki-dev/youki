@@ -303,6 +303,20 @@ impl TenantContainerBuilder {
         let (read_end, write_end) =
             pipe2(OFlag::O_CLOEXEC).map_err(LibcontainerError::OtherSyscall)?;
 
+        // In cgroup v2, joining a TenantContainer into a nested container's cgroup may fail
+        // with EBUSY due to the "no internal processes constraint".
+        // If no explicit sub-cgroup is provided, infer the sub-cgroup from the init process
+        // of the landlord and use that.
+        // For a normal landlord container, this remains None.
+        // Ref: https://github.com/youki-dev/youki/issues/3342
+        let sub_cgroup_path = match self.sub_cgroup {
+            Some(s) if !s.is_empty() => Some(s),
+            _ => get_init_proc_sub_cgroup(&container, &spec).map(|sub_cgroup| {
+                tracing::debug!("inferred sub-cgroup path from landlord container: {sub_cgroup}");
+                sub_cgroup
+            }),
+        };
+
         let mut builder_impl = ContainerBuilderImpl {
             container_type: ContainerType::TenantContainer {
                 exec_notify_fd: write_end.as_raw_fd(),
@@ -325,7 +339,7 @@ impl TenantContainerBuilder {
             stdout: self.base.stdout,
             stderr: self.base.stderr,
             as_sibling: self.as_sibling,
-            sub_cgroup_path: self.sub_cgroup,
+            sub_cgroup_path,
             process_label: self.process_label,
         };
 
