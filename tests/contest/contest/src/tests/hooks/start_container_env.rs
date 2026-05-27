@@ -34,14 +34,13 @@ fn run_hook_env_test(
 
     let shell_cmd = format!("if {shell_condition}; then exit 0; else exit 1; fi");
     let hook_args = vec!["sh".to_string(), "-c".to_string(), shell_cmd];
-    let hook = if let Some(env) = hook_env {
-        HookBuilder::default()
-            .path("/bin/sh")
-            .args(hook_args)
-            .env(env)
-    } else {
-        HookBuilder::default().path("/bin/sh").args(hook_args)
-    };
+    let mut hook = HookBuilder::default()
+        .path("/bin/sh")
+        .args(hook_args);
+    
+    if let Some(env) = hook_env {
+        hook = hook.env(env);
+    }
 
     let mut process = ProcessBuilder::default()
         .args(vec!["sleep".to_string(), "60".to_string()])
