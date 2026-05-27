@@ -874,6 +874,88 @@ mod tests {
         Ok(())
     }
 
+    // --- infer sub-cgroup tests ---
+
+    fn get_spec_with_cgroup_path(cgroups_path: Option<PathBuf>) -> Spec {
+        let linux = cgroups_path
+            .into_iter()
+            .fold(LinuxBuilder::default(), |builder, cgroups_path| {
+                builder.cgroups_path(cgroups_path)
+            })
+            .build()
+            .unwrap();
+
+        SpecBuilder::default().linux(linux).build().unwrap()
+    }
+
+    #[test]
+    fn test_infer_sub_cgroup_from_proc_cgroups() {
+        const CONTAINER_ID: &str = "569d5ce3afe1074769f67";
+
+        struct Case {
+            name: &'static str,
+            cgroups_path: Option<PathBuf>,
+            proc_path: String,
+            expected: Option<&'static str>,
+        }
+        let cases = [
+            Case {
+                name: "default cgroup path uses container id",
+                cgroups_path: None,
+                proc_path: format!("/youki-{CONTAINER_ID}.scope/init"),
+                expected: Some("init"),
+            },
+            Case {
+                name: "valid sub-cgroup for fs controller",
+                cgroups_path: Some(PathBuf::from(format!("/docker/{CONTAINER_ID}"))),
+                proc_path: format!("/docker/{CONTAINER_ID}/init"),
+                expected: Some("init"),
+            },
+            Case {
+                name: "valid sub-cgroup for domain controller",
+                cgroups_path: Some(PathBuf::from(format!("system.slice:docker:{CONTAINER_ID}"))),
+                proc_path: format!("/system.slice/docker-{CONTAINER_ID}.scope/init"),
+                expected: Some("init"),
+            },
+            Case {
+                name: "valid multi layer sub-cgroup",
+                cgroups_path: Some(PathBuf::from(format!("system.slice:docker:{CONTAINER_ID}"))),
+                proc_path: format!("/system.slice/docker-{CONTAINER_ID}.scope/subgroup/init"),
+                expected: Some("subgroup/init"),
+            },
+            Case {
+                name: "cgroup path doesn't match proc path",
+                cgroups_path: Some(PathBuf::from(format!("/docker/{CONTAINER_ID}"))),
+                proc_path: "/docker/other-container/subgroup".to_string(),
+                expected: None,
+            },
+            Case {
+                name: "no sub-cgroup for fs controller",
+                cgroups_path: Some(PathBuf::from(format!("/docker/{CONTAINER_ID}"))),
+                proc_path: format!("/docker/{CONTAINER_ID}"),
+                expected: None,
+            },
+            Case {
+                name: "no sub-cgroup for domain controller",
+                cgroups_path: Some(PathBuf::from(format!("system.slice:docker:{CONTAINER_ID}"))),
+                proc_path: format!("/system.slice/docker-{CONTAINER_ID}.scope"),
+                expected: None,
+            },
+        ];
+
+        for case in cases {
+            let spec = get_spec_with_cgroup_path(case.cgroups_path);
+            let proc_cgroups = ProcessCGroups(vec![procfs::ProcessCGroup {
+                hierarchy: 0,
+                controllers: Vec::new(),
+                pathname: case.proc_path.to_string(),
+            }]);
+
+            let actual = infer_sub_cgroup_from_proc_cgroups(&proc_cgroups, CONTAINER_ID, &spec);
+            assert_eq!(actual.as_deref(), case.expected, "{}", case.name);
+        }
+    }
+
     // --- environment tests ---
 
     #[test]
