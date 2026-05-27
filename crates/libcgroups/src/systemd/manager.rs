@@ -551,6 +551,48 @@ mod tests {
     }
 
     #[test]
+    fn test_separate_sub_cgroup() {
+        struct Case {
+            name: &'static str,
+            expected_name: &'static str,
+            expected_sub_cgroup: &'static str,
+        }
+        let cases = [
+            Case {
+                name: "youki-569d5ce3afe1074769f67",
+                expected_name: "youki-569d5ce3afe1074769f67",
+                expected_sub_cgroup: "",
+            },
+            Case {
+                name: "youki-569d5ce3afe1074769f67/init",
+                expected_name: "youki-569d5ce3afe1074769f67",
+                expected_sub_cgroup: "/init",
+            },
+            Case {
+                name: "youki-569d5ce3afe1074769f67/sub/init",
+                expected_name: "youki-569d5ce3afe1074769f67",
+                expected_sub_cgroup: "/sub/init",
+            },
+            Case {
+                name: "youki-569d5ce3afe1074769f67/",
+                expected_name: "youki-569d5ce3afe1074769f67",
+                expected_sub_cgroup: "/",
+            },
+        ];
+
+        for case in cases {
+            let mut name = case.name.to_owned();
+            let sub_cgroup = Manager::extract_sub_cgroup(&mut name);
+            assert_eq!(name, case.expected_name, "name mismatch for {}", case.name);
+            assert_eq!(
+                sub_cgroup, case.expected_sub_cgroup,
+                "sub_cgroup mismatch for {}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
     fn expand_slice_works() -> Result<()> {
         assert_eq!(
             Manager::expand_slice("test-a-b.slice")?,
