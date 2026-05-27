@@ -202,7 +202,7 @@ impl Manager {
 
         let sub_cgroup = Self::extract_sub_cgroup(&mut destructured_path.name);
         let (cgroups_path, delegation_boundary) =
-            Self::construct_cgroups_path(&destructured_path, &client)?;
+            Self::construct_cgroups_path(&destructured_path, &client, &sub_cgroup)?;
         let full_path = root_path.join_safely(&cgroups_path)?;
         let fs_manager = FsManager::new(root_path.clone(), cgroups_path.clone())?;
 
@@ -250,6 +250,7 @@ impl Manager {
     fn construct_cgroups_path(
         cgroups_path: &CgroupsPath,
         client: &dyn SystemdClient,
+        sub_cgroup: &str,
     ) -> Result<(PathBuf, PathBuf), SystemdManagerError> {
         // if the user provided a '.slice' (as in a branch of a tree)
         // we need to convert it to a filesystem path.
@@ -258,7 +259,10 @@ impl Manager {
         let systemd_root = client.control_cgroup_root()?;
         let unit_name = Self::get_unit_name(cgroups_path);
 
-        let cgroups_path = systemd_root.join_safely(parent)?.join_safely(unit_name)?;
+        let cgroups_path = systemd_root
+            .join_safely(parent)?
+            .join_safely(unit_name)?
+            .join_safely(sub_cgroup)?;
         Ok((cgroups_path, systemd_root))
     }
 
