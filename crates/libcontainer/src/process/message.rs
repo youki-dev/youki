@@ -40,7 +40,7 @@ impl fmt::Display for Message {
             Message::SeccompNotifyDone => write!(f, "SeccompNotifyDone"),
             Message::HookRequest => write!(f, "HookRequest"),
             Message::HookDone => write!(f, "HookDone"),
-            Message::AskMountFd(_) => write!(f, "AskMountFd"),
+            Message::AskMountFd(msg) => write!(f, "AskMountFd({:?})", msg),
             Message::MountFdReply => write!(f, "MountFdReply"),
             Message::MountFdError(err) => write!(f, "MountFdError({})", err),
             Message::ExecFailed(s) => write!(f, "ExecFailed({})", s),
