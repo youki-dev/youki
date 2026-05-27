@@ -620,7 +620,7 @@ mod tests {
             .context("construct path")?;
 
         assert_eq!(
-            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {})?.0,
+            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {}, "")?.0,
             PathBuf::from("/test.slice/test-a.slice/test-a-b.slice/docker-foo.scope"),
         );
 
@@ -634,8 +634,22 @@ mod tests {
             .context("construct path")?;
 
         assert_eq!(
-            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {})?.0,
+            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {}, "")?.0,
             PathBuf::from("/machine.slice/libpod-foo.scope"),
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn get_cgroups_path_works_with_sub_cgroup() -> Result<()> {
+        let cgroups_path = Path::new("machine.slice:libpod:foo")
+            .try_into()
+            .context("construct path")?;
+
+        assert_eq!(
+            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {}, "/init")?.0,
+            PathBuf::from("/machine.slice/libpod-foo.scope/init"),
         );
 
         Ok(())
@@ -649,7 +663,7 @@ mod tests {
         ensure_parent_unit(&mut cgroups_path, true);
 
         assert_eq!(
-            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {})?.0,
+            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {}, "")?.0,
             PathBuf::from("/system.slice/docker-foo.scope"),
         );
 
