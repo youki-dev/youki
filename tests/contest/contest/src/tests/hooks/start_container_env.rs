@@ -9,20 +9,6 @@ use crate::utils::{
     kill_container, prepare_bundle, set_config, start_container, wait_for_state,
 };
 
-const STATE_WAIT_TIMEOUT_SECS: u64 = 5;
-const STATE_POLL_INTERVAL_MILLIS: u64 = 100;
-
-fn wait_for_target(id: &str, bundle_path: &std::path::Path, target: WaitTarget) {
-    wait_for_state(
-        id,
-        bundle_path,
-        target,
-        Duration::from_secs(STATE_WAIT_TIMEOUT_SECS),
-        Duration::from_millis(STATE_POLL_INTERVAL_MILLIS),
-    )
-    .unwrap();
-}
-
 fn run_hook_env_test(
     shell_condition: &str,
     process_env: Vec<String>,
@@ -66,15 +52,21 @@ fn run_hook_env_test(
         .unwrap();
     set_config(&bundle, &spec).unwrap();
 
+    let timeout = Duration::from_secs(5);
+    let poll = Duration::from_millis(100);
+
     create_container(&id_str, &bundle, &CreateOptions::default())
         .unwrap()
         .wait()
         .unwrap();
-    wait_for_target(
+    wait_for_state(
         &id_str,
         bundle.path(),
         WaitTarget::Status(LifecycleStatus::Created),
-    );
+        timeout,
+        poll,
+    )
+    .unwrap();
     start_container(&id_str, &bundle)
         .and_then(|mut child| child.wait().map_err(Into::into))
         .unwrap();
@@ -82,8 +74,8 @@ fn run_hook_env_test(
         &id_str,
         bundle.path(),
         WaitTarget::Status(LifecycleStatus::Running),
-        Duration::from_secs(STATE_WAIT_TIMEOUT_SECS),
-        Duration::from_millis(STATE_POLL_INTERVAL_MILLIS),
+        timeout,
+        poll,
     )
     .is_ok();
 
@@ -93,8 +85,8 @@ fn run_hook_env_test(
         &id_str,
         bundle.path(),
         WaitTarget::Deleted,
-        Duration::from_secs(STATE_WAIT_TIMEOUT_SECS),
-        Duration::from_millis(STATE_POLL_INTERVAL_MILLIS),
+        timeout,
+        poll,
     );
 
     if test_passed {
