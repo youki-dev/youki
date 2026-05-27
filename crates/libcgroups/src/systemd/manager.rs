@@ -217,6 +217,19 @@ impl Manager {
         })
     }
 
+    // If the provided unit `name` contains a sub-cgroup suffix, split it off and
+    // return that suffix as a separate cgroup path.
+    // The original `name` is mutated in-place to keep only the base unit name.
+    //
+    // Example: "{id}/sub/init" becomes:
+    //   - name: "{id}"
+    //   - returned sub-cgroup: "/sub/init"
+    fn extract_sub_cgroup(name: &mut String) -> String {
+        name.find("/")
+            .map(|separator_index| name.split_off(separator_index))
+            .unwrap_or_default()
+    }
+
     /// get_unit_name returns the unit (scope) name from the path provided by the user
     /// for example: foo:docker:bar returns in '/docker-bar.scope'
     fn get_unit_name(cgroups_path: &CgroupsPath) -> String {
