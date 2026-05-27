@@ -20,10 +20,8 @@ fn run_hook_env_test(
 
     let shell_cmd = format!("if {shell_condition}; then exit 0; else exit 1; fi");
     let hook_args = vec!["sh".to_string(), "-c".to_string(), shell_cmd];
-    let mut hook = HookBuilder::default()
-        .path("/bin/sh")
-        .args(hook_args);
-    
+    let mut hook = HookBuilder::default().path("/bin/sh").args(hook_args);
+
     if let Some(env) = hook_env {
         hook = hook.env(env);
     }
@@ -81,13 +79,7 @@ fn run_hook_env_test(
 
     let _ = kill_container(&id_str, &bundle).and_then(|mut c| c.wait().map_err(Into::into));
     let _ = delete_container(&id_str, &bundle).and_then(|mut c| c.wait().map_err(Into::into));
-    let _ = wait_for_state(
-        &id_str,
-        bundle.path(),
-        WaitTarget::Deleted,
-        timeout,
-        poll,
-    );
+    let _ = wait_for_state(&id_str, bundle.path(), WaitTarget::Deleted, timeout, poll);
 
     if test_passed {
         TestResult::Passed
