@@ -593,10 +593,13 @@ mod tests {
         let request = MountMsg {
             source: PathBuf::from("/proc/self/ns/user"),
             idmap: Some(crate::process::message::MountIdMap {
-                uid_mappings: vec![],
-                gid_mappings: vec![],
-                recursive: true,
+                userns_source: crate::process::message::MountIdMapUsernsSource::Mappings {
+                    uid_mappings: vec![],
+                    gid_mappings: vec![],
+                },
+                apply_idmap_recursively: true,
             }),
+            clone_mount_tree_recursively: true,
         };
 
         sender.request_mount_fd(request.clone())?;

@@ -53,11 +53,20 @@ impl fmt::Display for Message {
 pub struct MountMsg {
     pub source: PathBuf,
     pub idmap: Option<MountIdMap>,
+    pub clone_mount_tree_recursively: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct MountIdMap {
-    pub uid_mappings: Vec<LinuxIdMapping>,
-    pub gid_mappings: Vec<LinuxIdMapping>,
-    pub recursive: bool,
+    pub userns_source: MountIdMapUsernsSource,
+    pub apply_idmap_recursively: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub enum MountIdMapUsernsSource {
+    Mappings {
+        uid_mappings: Vec<LinuxIdMapping>,
+        gid_mappings: Vec<LinuxIdMapping>,
+    },
+    ContainerUserns,
 }
