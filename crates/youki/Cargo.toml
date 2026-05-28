@@ -44,7 +44,7 @@ wasi-common = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["attributes"] }
 tracing-subscriber = { workspace = true, features = ["json", "env-filter"] }
 tracing-journald = { workspace = true }
-oci-spec = { version = "0.9.0", features = ["runtime"] }
+oci-spec = { version = "0.10.0", features = ["runtime"] }
 rust-criu = { workspace = true }
 
 [dev-dependencies]
