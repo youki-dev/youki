@@ -135,6 +135,7 @@ fn get_capabilities(
 
 // Only works for cgroup v2
 fn get_init_proc_sub_cgroup(container: &Container, spec: &Spec) -> Option<String> {
+    let container_id = container.id();
     let init_pid = container.pid()?.as_raw() as u32;
 
     let init_proc_cgroups = (|| -> Result<ProcessCGroups, Box<dyn std::error::Error>> {
@@ -144,9 +145,13 @@ fn get_init_proc_sub_cgroup(container: &Container, spec: &Spec) -> Option<String
             OpenFlags::O_RDONLY | OpenFlags::O_CLOEXEC,
         )?)?)
     })()
+    .map_err(|e| {
+        tracing::debug!("failed to get cgroup for init process of container {container_id}: {e} ");
+        e
+    })
     .ok()?;
 
-    infer_sub_cgroup_from_proc_cgroups(&init_proc_cgroups, container.id(), spec)
+    infer_sub_cgroup_from_proc_cgroups(&init_proc_cgroups, container_id, spec)
 }
 
 fn infer_sub_cgroup_from_proc_cgroups(
