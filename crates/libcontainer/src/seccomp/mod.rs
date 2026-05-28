@@ -72,6 +72,12 @@ fn translate_arch(arch: Arch) -> ScmpArch {
         Arch::ScmpArchS390 => ScmpArch::S390,
         Arch::ScmpArchS390x => ScmpArch::S390X,
         Arch::ScmpArchRiscv64 => ScmpArch::Riscv64,
+        Arch::ScmpArchParisc => ScmpArch::Parisc,
+        Arch::ScmpArchParisc64 => ScmpArch::Parisc64,
+        Arch::ScmpArchLoongarch64 => ScmpArch::Loongarch64,
+        Arch::ScmpArchM68k => ScmpArch::M68k,
+        Arch::ScmpArchSh => ScmpArch::Sh,
+        Arch::ScmpArchSheb => ScmpArch::Sheb,
     }
 }
 

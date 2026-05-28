@@ -26,6 +26,7 @@ netlink-packet-route = "0.26.0"
 netlink-sys = "0.8.8"
 nix = "0.29.0"
 num_cpus = "1.17"
+oci-spec = { version = "0.10.0", features = ["runtime"] }
 pathrs = "0.2.4"
 pentacle = "1.1.0"
 pkg-config = "0.3.33"

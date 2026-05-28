@@ -10,7 +10,7 @@ libcgroups = { path = "../../../crates/libcgroups" }
 libcontainer = { path = "../../../crates/libcontainer" }
 nix = { workspace = true }
 num_cpus = { workspace = true }
-oci-spec = { version = "0.9.0", features = ["runtime"] }
+oci-spec = { workspace = true }
 pnet_datalink = { workspace = true }
 procfs = { workspace = true }
 rand = { workspace = true }
