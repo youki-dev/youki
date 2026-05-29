@@ -1,6 +1,11 @@
 vmType: qemu
 arch: default
 
+# plain: true
+containerd:
+  system: false
+  user: false
+
 images:
   - location: "https://cloud-images.ubuntu.com/releases/resolute/release-20260421/ubuntu-26.04-server-cloudimg-amd64.img"
     arch: "x86_64"
@@ -11,5 +16,8 @@ images:
   - location: "https://cloud-images.ubuntu.com/releases/resolute/release-20260421/ubuntu-26.04-server-cloudimg-riscv64.img"
 
 mounts:
-  - location: "/git/youki"
+  - location: "{{.Param.RepositoryDirectory}}"
     mountPoint: "/src/youki"
+
+param:
+  RepositoryDirectory: ~/youki
