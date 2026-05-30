@@ -108,6 +108,10 @@ pub enum ErrInvalidSpec {
     ConsoleSocketRequired,
     #[error("cannot use console socket if youki will not detach or allocate tty")]
     InvalidConsoleSocket,
+    #[error("idmapped mount requires bind mount")]
+    MountIdmapNonBind,
+    #[error("invalid idmapped mount configuration")]
+    MountIdmapInvalidConfig,
 }
 
 #[derive(Debug, thiserror::Error)]

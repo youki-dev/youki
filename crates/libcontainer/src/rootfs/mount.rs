@@ -136,6 +136,9 @@ impl Mount {
     pub fn setup_mount(&self, mount: &SpecMount, options: &MountOptions) -> Result<()> {
         tracing::debug!("mounting {:?}", mount);
         let mut mount_option_config = parse_mount(mount)?;
+        if mount_option_config.apply_idmap {
+            return Err(MountError::UnsupportedMountOption("idmap".to_string()));
+        }
 
         match mount.typ().as_deref() {
             Some("cgroup") => {
@@ -391,6 +394,8 @@ impl Mount {
             flags: MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
             data: vec![data.into_owned()],
             rec_attr: None,
+            apply_idmap: false,
+            apply_idmap_recursively: false,
         };
 
         self.mount_into_container(
@@ -1573,6 +1578,8 @@ mod tests {
             flags,
             data: vec![],
             rec_attr: None,
+            apply_idmap: false,
+            apply_idmap_recursively: false,
         };
         mounter
             .mount_cgroup_v2(&spec_cgroup_mount, &mount_opts, &mount_option_config)

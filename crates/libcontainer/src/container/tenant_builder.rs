@@ -20,6 +20,7 @@ use procfs::process::Namespace;
 
 use super::Container;
 use super::builder::ContainerBuilder;
+use super::mount_validation::validate_idmapped_mounts;
 use crate::capabilities::CapabilityExt;
 use crate::container::ContainerStatus;
 use crate::container::builder_impl::ContainerBuilderImpl;
@@ -440,6 +441,7 @@ impl TenantContainerBuilder {
 
         if let Some(mounts) = spec.mounts() {
             utils::validate_mount_options(mounts)?;
+            validate_idmapped_mounts(mounts, spec.linux().as_ref())?;
         }
 
         let syscall = create_syscall();
