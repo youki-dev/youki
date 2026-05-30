@@ -44,8 +44,12 @@ impl Executor for WasmedgeExecutor {
                 .map_err(|err| ExecutorError::Other(format!("failed to create store: {}", err)))?,
         );
 
-        let module = Module::from_file(None, cmd).unwrap();
-        vm.register_module(Some("main"), module).unwrap();
+        let module = Module::from_file(None, cmd).map_err(|err| {
+            ExecutorError::Other(format!("failed to load wasm module: {:?}", err))
+        })?;
+        vm.register_module(Some("main"), module).map_err(|err| {
+            ExecutorError::Other(format!("failed to register wasm module: {:?}", err))
+        })?;
 
         vm.run_func(Some("main"), "_start", params!())
             .map_err(|err| match *err {
