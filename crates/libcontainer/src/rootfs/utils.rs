@@ -543,8 +543,8 @@ mod tests {
             .build()?;
         let mount_option_config = parse_mount(
             &MountBuilder::default()
-                .uid_mappings(vec![mapping.clone()])
-                .gid_mappings(vec![mapping.clone()])
+                .uid_mappings(vec![mapping])
+                .gid_mappings(vec![mapping])
                 .build()?,
         )?;
         assert!(mount_option_config.apply_idmap);
