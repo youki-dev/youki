@@ -108,6 +108,8 @@ pub enum ErrInvalidSpec {
     ConsoleSocketRequired,
     #[error("cannot use console socket if youki will not detach or allocate tty")]
     InvalidConsoleSocket,
+    #[error("unable to set hostname without a private UTS namespace")]
+    HostnameRequiresPrivateUtsNamespace,
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -14,7 +14,7 @@ use nix::sys::statfs::{Statfs, fstatfs};
 use nix::unistd::{Uid, User};
 use oci_spec::runtime::{LinuxNamespaceType, Spec};
 
-use crate::error::{LibcontainerError, MissingSpecError};
+use crate::error::{ErrInvalidSpec, LibcontainerError, MissingSpecError};
 use crate::syscall::syscall::Syscall;
 use crate::user_ns::UserNamespaceConfig;
 
@@ -380,6 +380,32 @@ pub fn validate_spec_for_net_devices(
     Ok(())
 }
 
+pub fn validate_spec_for_hostname(spec: &Spec) -> Result<(), ErrInvalidSpec> {
+    let Some(hostname) = spec.hostname() else {
+        return Ok(());
+    };
+
+    if hostname.is_empty() {
+        return Ok(());
+    }
+
+    let has_private_uts_namespace = spec
+        .linux()
+        .as_ref()
+        .and_then(|linux| linux.namespaces().as_deref())
+        .is_some_and(|namespaces| {
+            namespaces
+                .iter()
+                .any(|ns| ns.typ() == LinuxNamespaceType::Uts && ns.path().is_none())
+        });
+
+    if !has_private_uts_namespace {
+        return Err(ErrInvalidSpec::HostnameRequiresPrivateUtsNamespace);
+    }
+
+    Ok(())
+}
+
 /// Validates mount destinations and warns about deprecated relative paths.
 /// Follows the OCI Runtime Spec requirement that mount destinations SHOULD be absolute.
 /// Relative paths are deprecated but still accepted for backward compatibility.
@@ -657,5 +683,90 @@ mod tests {
         syscall.set_id(Uid::from_raw(0), Gid::from_raw(0)).unwrap();
         let result = validate_spec_for_net_devices(&spec, &*syscall);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_hostname_requires_private_uts_namespace_when_linux_is_missing() {
+        let spec = SpecBuilder::default()
+            .hostname("youki".to_string())
+            .build()
+            .unwrap();
+
+        let err = validate_spec_for_hostname(&spec).unwrap_err();
+        assert!(matches!(
+            err,
+            ErrInvalidSpec::HostnameRequiresPrivateUtsNamespace
+        ));
+    }
+
+    #[test]
+    fn test_hostname_requires_private_uts_namespace_when_uts_is_missing() {
+        let linux = LinuxBuilder::default().build().unwrap();
+        let spec = SpecBuilder::default()
+            .hostname("youki".to_string())
+            .linux(linux)
+            .build()
+            .unwrap();
+
+        let err = validate_spec_for_hostname(&spec).unwrap_err();
+        assert!(matches!(
+            err,
+            ErrInvalidSpec::HostnameRequiresPrivateUtsNamespace
+        ));
+    }
+
+    #[test]
+    fn test_hostname_requires_private_uts_namespace_when_joining_existing_uts() {
+        let linux = LinuxBuilder::default()
+            .namespaces(vec![
+                LinuxNamespaceBuilder::default()
+                    .typ(LinuxNamespaceType::Uts)
+                    .path(PathBuf::from("/proc/1/ns/uts"))
+                    .build()
+                    .unwrap(),
+            ])
+            .build()
+            .unwrap();
+        let spec = SpecBuilder::default()
+            .hostname("youki".to_string())
+            .linux(linux)
+            .build()
+            .unwrap();
+
+        let err = validate_spec_for_hostname(&spec).unwrap_err();
+        assert!(matches!(
+            err,
+            ErrInvalidSpec::HostnameRequiresPrivateUtsNamespace
+        ));
+    }
+
+    #[test]
+    fn test_hostname_with_private_uts_namespace_is_valid() {
+        let linux = LinuxBuilder::default()
+            .namespaces(vec![
+                LinuxNamespaceBuilder::default()
+                    .typ(LinuxNamespaceType::Uts)
+                    .build()
+                    .unwrap(),
+            ])
+            .build()
+            .unwrap();
+        let spec = SpecBuilder::default()
+            .hostname("youki".to_string())
+            .linux(linux)
+            .build()
+            .unwrap();
+
+        assert!(validate_spec_for_hostname(&spec).is_ok());
+    }
+
+    #[test]
+    fn test_empty_hostname_without_private_uts_namespace_is_valid() {
+        let spec = SpecBuilder::default()
+            .hostname(String::new())
+            .build()
+            .unwrap();
+
+        assert!(validate_spec_for_hostname(&spec).is_ok());
     }
 }
