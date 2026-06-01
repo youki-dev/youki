@@ -175,6 +175,27 @@ mod tests {
     }
 
     #[test]
+    fn validate_idmapped_mounts_allows_ridmap_with_userns() {
+        let mount = base_mount()
+            .options(vec!["bind".to_string(), "ridmap".to_string()])
+            .build()
+            .unwrap();
+        let linux = LinuxBuilder::default()
+            .namespaces(vec![
+                LinuxNamespaceBuilder::default()
+                    .typ(LinuxNamespaceType::User)
+                    .build()
+                    .unwrap(),
+            ])
+            .uid_mappings(vec![make_mapping()])
+            .gid_mappings(vec![make_mapping()])
+            .build()
+            .unwrap();
+        let res = validate_idmapped_mounts(&[mount], Some(&linux));
+        assert!(res.is_ok());
+    }
+
+    #[test]
     fn validate_idmapped_mounts_accepts_rbind() {
         let mount = MountBuilder::default()
             .destination(PathBuf::from("/mnt"))
@@ -208,6 +229,21 @@ mod tests {
             "source": "/src",
             "options": ["bind", "idmap"],
             "uidMappings": [{"containerID": 0, "hostID": 0, "size": 1}]
+        }))
+        .unwrap();
+        let res = validate_idmapped_mounts(&[mount], None);
+        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapInvalidConfig)));
+    }
+
+    #[test]
+    fn validate_idmapped_mounts_rejects_non_empty_uid_with_empty_gid() {
+        let mount = serde_json::from_value(serde_json::json!({
+            "destination": "/mnt",
+            "type": "bind",
+            "source": "/src",
+            "options": ["bind", "idmap"],
+            "uidMappings": [{"containerID": 0, "hostID": 0, "size": 1}],
+            "gidMappings": []
         }))
         .unwrap();
         let res = validate_idmapped_mounts(&[mount], None);
@@ -306,6 +342,58 @@ mod tests {
             .build()
             .unwrap();
         let res = validate_idmapped_mounts(&[mount], None);
+        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapNonBind)));
+    }
+
+    #[test]
+    fn validate_idmapped_mounts_allows_bind_type_without_bind_option() {
+        // typ="bind" のみで is_bind を満たし、options に "bind"/"rbind" を含まないケース
+        let mount = base_mount()
+            .options(vec!["idmap".to_string()])
+            .uid_mappings(vec![make_mapping()])
+            .gid_mappings(vec![make_mapping()])
+            .build()
+            .unwrap();
+        let res = validate_idmapped_mounts(&[mount], None);
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn validate_idmapped_mounts_allows_multiple_mounts() {
+        let mapped_mount = base_mount()
+            .options(vec!["bind".to_string(), "idmap".to_string()])
+            .uid_mappings(vec![make_mapping()])
+            .gid_mappings(vec![make_mapping()])
+            .build()
+            .unwrap();
+        let regular_mount = MountBuilder::default()
+            .destination(PathBuf::from("/tmpfs"))
+            .typ("tmpfs")
+            .source(PathBuf::from("tmpfs"))
+            .build()
+            .unwrap();
+        let res = validate_idmapped_mounts(&[mapped_mount, regular_mount], None);
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn validate_idmapped_mounts_rejects_invalid_mount_among_multiple_mounts() {
+        let valid_mount = base_mount()
+            .options(vec!["bind".to_string(), "idmap".to_string()])
+            .uid_mappings(vec![make_mapping()])
+            .gid_mappings(vec![make_mapping()])
+            .build()
+            .unwrap();
+        let invalid_mount = MountBuilder::default()
+            .destination(PathBuf::from("/tmpfs"))
+            .typ("tmpfs")
+            .source(PathBuf::from("tmpfs"))
+            .options(vec!["idmap".to_string()])
+            .uid_mappings(vec![make_mapping()])
+            .gid_mappings(vec![make_mapping()])
+            .build()
+            .unwrap();
+        let res = validate_idmapped_mounts(&[valid_mount, invalid_mount], None);
         assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapNonBind)));
     }
 }
