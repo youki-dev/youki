@@ -10,26 +10,15 @@ fn container_userns_has_mappings(linux: Option<&Linux>) -> bool {
     let Some(linux) = linux else {
         return false;
     };
-    let has_userns_path = linux.namespaces().as_ref().is_some_and(|namespaces| {
-        namespaces
-            .iter()
-            .any(|ns| ns.typ() == LinuxNamespaceType::User && ns.path().is_some())
-    });
-    if has_userns_path {
-        return true;
+    let Some(namespaces) = linux.namespaces().as_deref() else { return false };
+    match namespaces.iter().find(|ns| ns.typ() == LinuxNamespaceType::User) {
+        None => false,
+        Some(ns) if ns.path().is_some() => true,
+        Some(_) => {
+          has_non_empty_mappings(linux.uid_mappings().as_deref().unwrap_or(&[]))
+              && has_non_empty_mappings(linux.gid_mappings().as_deref().unwrap_or(&[]))
+        }
     }
-
-    let has_userns = linux.namespaces().as_ref().is_some_and(|namespaces| {
-        namespaces
-            .iter()
-            .any(|ns| ns.typ() == LinuxNamespaceType::User)
-    });
-    if !has_userns {
-        return false;
-    }
-
-    has_non_empty_mappings(linux.uid_mappings().as_deref())
-        && has_non_empty_mappings(linux.gid_mappings().as_deref())
 }
 
 pub(crate) fn validate_idmapped_mounts(
