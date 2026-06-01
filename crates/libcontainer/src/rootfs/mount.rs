@@ -136,7 +136,8 @@ impl Mount {
     pub fn setup_mount(&self, mount: &SpecMount, options: &MountOptions) -> Result<()> {
         tracing::debug!("mounting {:?}", mount);
         let mut mount_option_config = parse_mount(mount)?;
-        if mount_option_config.apply_idmap {
+        // TODO: remove this guard when idmapped mount support is implemented.
+        if requests_idmapped_mount(mount) {
             return Err(MountError::UnsupportedMountOption("idmap".to_string()));
         }
 
@@ -394,8 +395,6 @@ impl Mount {
             flags: MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
             data: vec![data.into_owned()],
             rec_attr: None,
-            apply_idmap: false,
-            apply_idmap_recursively: false,
         };
 
         self.mount_into_container(
@@ -1007,6 +1006,16 @@ impl Mount {
     }
 }
 
+fn requests_idmapped_mount(mount: &SpecMount) -> bool {
+    mount.uid_mappings().is_some()
+        || mount.gid_mappings().is_some()
+        || mount.options().as_deref().is_some_and(|options| {
+            options
+                .iter()
+                .any(|option| option == "idmap" || option == "ridmap")
+        })
+}
+
 /// Find parent mount of rootfs in given mount infos
 pub fn find_parent_mount(
     rootfs: &Path,
@@ -1578,8 +1587,6 @@ mod tests {
             flags,
             data: vec![],
             rec_attr: None,
-            apply_idmap: false,
-            apply_idmap_recursively: false,
         };
         mounter
             .mount_cgroup_v2(&spec_cgroup_mount, &mount_opts, &mount_option_config)

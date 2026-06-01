@@ -21,12 +21,6 @@ pub struct MountOptionConfig {
 
     /// RecAttr represents mount properties to be applied recursively.
     pub rec_attr: Option<linux::MountAttr>,
-
-    /// Indicates whether ID-mapped mount semantics are requested.
-    pub apply_idmap: bool,
-
-    /// Indicates whether ID-mapping should be applied recursively.
-    pub apply_idmap_recursively: bool,
 }
 
 pub fn default_devices() -> Vec<LinuxDevice> {
@@ -95,23 +89,14 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
     let mut flags = MsFlags::empty();
     let mut data = Vec::new();
     let mut mount_attr: Option<linux::MountAttr> = None;
-    let mut apply_idmap = false;
-    let mut apply_idmap_recursively = false;
-
-    if m.uid_mappings().is_some() || m.gid_mappings().is_some() {
-        apply_idmap = true;
-    }
 
     if let Some(options) = &m.options() {
         for option in options {
             match option.as_str() {
                 IDMAP_FLAG => {
-                    apply_idmap = true;
                     continue;
                 }
                 RIDMAP_FLAG => {
-                    apply_idmap = true;
-                    apply_idmap_recursively = true;
                     continue;
                 }
                 _ => {}
@@ -212,15 +197,13 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
         flags,
         data: data.into_iter().map(|s| s.to_string()).collect(),
         rec_attr: mount_attr,
-        apply_idmap,
-        apply_idmap_recursively,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
-    use oci_spec::runtime::{LinuxIdMappingBuilder, MountBuilder};
+    use oci_spec::runtime::MountBuilder;
 
     use super::*;
     use crate::syscall::linux::MountAttr;
@@ -251,8 +234,6 @@ mod tests {
                 flags: MsFlags::empty(),
                 data: vec![],
                 rec_attr: None,
-                apply_idmap: false,
-                apply_idmap_recursively: false,
             },
             mount_option_config
         );
@@ -275,8 +256,6 @@ mod tests {
                 flags: MsFlags::MS_NOSUID | MsFlags::MS_STRICTATIME,
                 data: vec!["mode=755".to_string(), "size=65536k".to_string()],
                 rec_attr: None,
-                apply_idmap: false,
-                apply_idmap_recursively: false,
             },
             mount_option_config
         );
@@ -307,8 +286,6 @@ mod tests {
                     "gid=5".to_string()
                 ],
                 rec_attr: None,
-                apply_idmap: false,
-                apply_idmap_recursively: false,
             },
             mount_option_config
         );
@@ -332,8 +309,6 @@ mod tests {
                 flags: MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC | MsFlags::MS_NODEV,
                 data: vec!["mode=1777".to_string(), "size=65536k".to_string()],
                 rec_attr: None,
-                apply_idmap: false,
-                apply_idmap_recursively: false,
             },
             mount_option_config
         );
@@ -356,8 +331,6 @@ mod tests {
                 flags: MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC | MsFlags::MS_NODEV,
                 data: vec![],
                 rec_attr: None,
-                apply_idmap: false,
-                apply_idmap_recursively: false,
             },
             mount_option_config
         );
@@ -383,8 +356,6 @@ mod tests {
                     | MsFlags::MS_RDONLY,
                 data: vec![],
                 rec_attr: None,
-                apply_idmap: false,
-                apply_idmap_recursively: false,
             },
             mount_option_config
         );
@@ -412,8 +383,6 @@ mod tests {
                     | MsFlags::MS_RELATIME,
                 data: vec![],
                 rec_attr: None,
-                apply_idmap: false,
-                apply_idmap_recursively: false,
             },
             mount_option_config,
         );
@@ -471,8 +440,6 @@ mod tests {
                     | MsFlags::MS_UNBINDABLE,
                 data: vec![],
                 rec_attr: None,
-                apply_idmap: false,
-                apply_idmap_recursively: false,
             },
             mount_option_config
         );
@@ -507,8 +474,6 @@ mod tests {
                 flags: MsFlags::empty(),
                 data: vec![],
                 rec_attr: Some(MountAttr::all()),
-                apply_idmap: false,
-                apply_idmap_recursively: false,
             },
             mount_option_config
         );
@@ -523,8 +488,6 @@ mod tests {
                 .options(vec!["idmap".to_string()])
                 .build()?,
         )?;
-        assert!(mount_option_config.apply_idmap);
-        assert!(!mount_option_config.apply_idmap_recursively);
         assert_eq!(mount_option_config.data, Vec::<String>::new());
 
         let mount_option_config = parse_mount(
@@ -532,23 +495,7 @@ mod tests {
                 .options(vec!["ridmap".to_string()])
                 .build()?,
         )?;
-        assert!(mount_option_config.apply_idmap);
-        assert!(mount_option_config.apply_idmap_recursively);
         assert_eq!(mount_option_config.data, Vec::<String>::new());
-
-        let mapping = LinuxIdMappingBuilder::default()
-            .container_id(0u32)
-            .host_id(0u32)
-            .size(1u32)
-            .build()?;
-        let mount_option_config = parse_mount(
-            &MountBuilder::default()
-                .uid_mappings(vec![mapping])
-                .gid_mappings(vec![mapping])
-                .build()?,
-        )?;
-        assert!(mount_option_config.apply_idmap);
-        assert!(!mount_option_config.apply_idmap_recursively);
 
         Ok(())
     }
