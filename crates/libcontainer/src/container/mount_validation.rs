@@ -26,6 +26,28 @@ fn container_userns_has_mappings(linux: Option<&Linux>) -> bool {
     }
 }
 
+fn validate_mount_mappings(mount: &SpecMount) -> Result<bool, ErrInvalidSpec> {
+    match (
+        mount.uid_mappings().as_deref(),
+        mount.gid_mappings().as_deref(),
+    ) {
+        (Some(uid_mappings), Some(gid_mappings))
+            if has_non_empty_mappings(uid_mappings) && has_non_empty_mappings(gid_mappings) =>
+        {
+            Ok(true)
+        }
+        // idmap/ridmap can use the container user namespace when mount-specific mappings are absent.
+        (None, None) => Ok(false),
+        _ => {
+            tracing::error!(
+                destination = ?mount.destination(),
+                "mount uid/gid mappings must be non-empty and specified together"
+            );
+            Err(ErrInvalidSpec::MountIdmapInvalidConfig)
+        }
+    }
+}
+
 pub(crate) fn validate_idmapped_mounts(
     mounts: &[SpecMount],
     linux: Option<&Linux>,
@@ -33,29 +55,7 @@ pub(crate) fn validate_idmapped_mounts(
     let can_use_container_userns = container_userns_has_mappings(linux);
 
     for mount in mounts {
-        let uid_mappings = mount.uid_mappings().as_deref();
-        let gid_mappings = mount.gid_mappings().as_deref();
-        let has_mount_mappings = match (uid_mappings, gid_mappings) {
-            (Some(uid_mappings), Some(gid_mappings)) => {
-                if !has_non_empty_mappings(uid_mappings) || !has_non_empty_mappings(gid_mappings) {
-                    tracing::error!(
-                        destination = ?mount.destination(),
-                        "mount uid/gid mappings must be non-empty and specified together"
-                    );
-                    return Err(ErrInvalidSpec::MountIdmapInvalidConfig);
-                }
-                true
-            }
-            // idmap/ridmap can use the container user namespace when mount-specific mappings are absent.
-            (None, None) => false,
-            _ => {
-                tracing::error!(
-                    destination = ?mount.destination(),
-                    "mount uid/gid mappings must be non-empty and specified together"
-                );
-                return Err(ErrInvalidSpec::MountIdmapInvalidConfig);
-            }
-        };
+        let has_mount_mappings = validate_mount_mappings(mount)?;
         let options = mount.options().as_deref().unwrap_or(&[]);
         let has_idmap_option = options.iter().any(|o| o == "idmap" || o == "ridmap");
         let is_bind = mount.typ().as_deref() == Some("bind")
