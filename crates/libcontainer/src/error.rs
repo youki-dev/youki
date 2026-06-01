@@ -102,8 +102,8 @@ pub enum ErrInvalidSpec {
     AppArmorNotEnabled,
     #[error("invalid io priority or class.")]
     IoPriority,
-    #[error("invalid scheduler config for process")]
-    Scheduler,
+    #[error("invalid scheduler config for process: {0}")]
+    Scheduler(String),
     #[error("cannot allocate tty if youki will detach without setting console socket")]
     ConsoleSocketRequired,
     #[error("cannot use console socket if youki will not detach or allocate tty")]

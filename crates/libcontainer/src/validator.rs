@@ -1,7 +1,8 @@
-use std::{collections::HashSet, path::Path};
+use std::collections::HashSet;
+use std::path::Path;
 
 use nix::sys::stat::stat;
-use oci_spec::runtime::{LinuxNamespaceType, Spec};
+use oci_spec::runtime::{LinuxNamespaceType, LinuxSchedulerPolicy, Spec};
 
 use crate::error::ErrInvalidSpec;
 
@@ -13,6 +14,7 @@ impl Validator {
         Self::validate_spec_for_new_user_ns(spec)?;
         Self::validate_spec_for_mnt_namespace(spec)?;
         Self::validate_spec_for_sysctl(spec)?;
+        Self::validate_spec_for_scheduler(spec)?;
 
         Ok(())
     }
@@ -197,12 +199,61 @@ impl Validator {
 
         Ok(())
     }
+
+    fn validate_spec_for_scheduler(spec: &Spec) -> Result<(), ErrInvalidSpec> {
+        // https://man7.org/linux/man-pages/man2/sched_setattr.2.html#top_of_page
+        if let Some(process) = spec.process() {
+            if let Some(scheduler) = process.scheduler() {
+                let policy = scheduler.policy();
+
+                if *policy == LinuxSchedulerPolicy::SchedOther
+                    || *policy == LinuxSchedulerPolicy::SchedBatch
+                {
+                    if let Some(nice) = scheduler.nice() {
+                        if !(-20..=19).contains(nice) {
+                            return Err(ErrInvalidSpec::Scheduler(format!(
+                                "invalid scheduler.nice: '{}', must be within -20 to 19",
+                                nice
+                            )));
+                        }
+                    }
+                }
+
+                if let Some(priority) = scheduler.priority() {
+                    if *priority != 0
+                        && *policy != LinuxSchedulerPolicy::SchedFifo
+                        && *policy != LinuxSchedulerPolicy::SchedRr
+                    {
+                        return Err(ErrInvalidSpec::Scheduler(
+                                "scheduler.priority can only be specified for SchedFIFO or SchedRR policy".to_string(),
+                            ));
+                    }
+                }
+
+                if *policy != LinuxSchedulerPolicy::SchedDeadline
+                    && (scheduler.runtime().is_some_and(|r| r != 0)
+                        || scheduler.deadline().is_some_and(|d| d != 0)
+                        || scheduler.period().is_some_and(|p| p != 0))
+                {
+                    {
+                        return Err(ErrInvalidSpec::Scheduler(
+                            "scheduler runtime/deadline/period can only be specified for SchedDeadline policy"
+                                .to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use oci_spec::runtime::{
-        LinuxBuilder, LinuxIdMappingBuilder, LinuxNamespaceBuilder, SpecBuilder,
+        LinuxBuilder, LinuxIdMappingBuilder, LinuxNamespaceBuilder, ProcessBuilder,
+        SchedulerBuilder, SpecBuilder,
     };
 
     use super::*;
@@ -417,5 +468,152 @@ mod tests {
             Validator::validate_spec_for_sysctl(&spec_uts_conflict).unwrap_err(),
             ErrInvalidSpec::SysctlConflictsWithOci(_, _)
         ));
+    }
+
+    #[test]
+    fn test_validate_spec_for_scheduler() {
+        let build_spec = |scheduler| {
+            SpecBuilder::default()
+                .process(
+                    ProcessBuilder::default()
+                        .scheduler(scheduler)
+                        .build()
+                        .unwrap(),
+                )
+                .build()
+                .unwrap()
+        };
+
+        // Valid: SchedOther with Nice 0
+        let spec = build_spec(
+            SchedulerBuilder::default()
+                .policy(LinuxSchedulerPolicy::SchedOther)
+                .nice(0)
+                .build()
+                .unwrap(),
+        );
+        assert!(Validator::validate_spec_for_scheduler(&spec).is_ok());
+
+        // Valid: SchedBatch with Nice 19
+        let spec = build_spec(
+            SchedulerBuilder::default()
+                .policy(LinuxSchedulerPolicy::SchedBatch)
+                .nice(19)
+                .build()
+                .unwrap(),
+        );
+        assert!(Validator::validate_spec_for_scheduler(&spec).is_ok());
+
+        // Invalid: SchedOther with Nice 20 (out of bounds)
+        let spec = build_spec(
+            SchedulerBuilder::default()
+                .policy(LinuxSchedulerPolicy::SchedOther)
+                .nice(20)
+                .build()
+                .unwrap(),
+        );
+        assert!(Validator::validate_spec_for_scheduler(&spec).is_err());
+
+        // Invalid: SchedBatch with Nice -21 (out of bounds)
+        let spec = build_spec(
+            SchedulerBuilder::default()
+                .policy(LinuxSchedulerPolicy::SchedBatch)
+                .nice(-21)
+                .build()
+                .unwrap(),
+        );
+        assert!(Validator::validate_spec_for_scheduler(&spec).is_err());
+
+        // Valid: SchedFifo with Priority 99
+        let spec = build_spec(
+            SchedulerBuilder::default()
+                .policy(LinuxSchedulerPolicy::SchedFifo)
+                .priority(99)
+                .build()
+                .unwrap(),
+        );
+        assert!(Validator::validate_spec_for_scheduler(&spec).is_ok());
+
+        // Valid: SchedRr with Priority 1
+        let spec = build_spec(
+            SchedulerBuilder::default()
+                .policy(LinuxSchedulerPolicy::SchedRr)
+                .priority(1)
+                .build()
+                .unwrap(),
+        );
+        assert!(Validator::validate_spec_for_scheduler(&spec).is_ok());
+
+        // Valid: SchedOther with Priority 0 (0 is allowed for anything)
+        let spec = build_spec(
+            SchedulerBuilder::default()
+                .policy(LinuxSchedulerPolicy::SchedOther)
+                .priority(0)
+                .build()
+                .unwrap(),
+        );
+        assert!(Validator::validate_spec_for_scheduler(&spec).is_ok());
+
+        // Invalid: SchedOther with Priority 1
+        let spec = build_spec(
+            SchedulerBuilder::default()
+                .policy(LinuxSchedulerPolicy::SchedOther)
+                .priority(1)
+                .build()
+                .unwrap(),
+        );
+        assert!(Validator::validate_spec_for_scheduler(&spec).is_err());
+
+        // Invalid: SchedIso with Priority 10
+        let spec = build_spec(
+            SchedulerBuilder::default()
+                .policy(LinuxSchedulerPolicy::SchedIso)
+                .priority(10)
+                .build()
+                .unwrap(),
+        );
+        assert!(Validator::validate_spec_for_scheduler(&spec).is_err());
+
+        // Valid: SchedDeadline with runtime/deadline/period
+        let spec = build_spec(
+            SchedulerBuilder::default()
+                .policy(LinuxSchedulerPolicy::SchedDeadline)
+                .runtime(100_u64)
+                .deadline(200_u64)
+                .period(300_u64)
+                .build()
+                .unwrap(),
+        );
+        assert!(Validator::validate_spec_for_scheduler(&spec).is_ok());
+
+        // Valid: SchedOther with runtime 0 (0 is allowed for anything)
+        let spec = build_spec(
+            SchedulerBuilder::default()
+                .policy(LinuxSchedulerPolicy::SchedOther)
+                .runtime(0_u64)
+                .build()
+                .unwrap(),
+        );
+        assert!(Validator::validate_spec_for_scheduler(&spec).is_ok());
+
+        // Invalid: SchedFifo with runtime 100
+        let spec = build_spec(
+            SchedulerBuilder::default()
+                .policy(LinuxSchedulerPolicy::SchedFifo)
+                .runtime(100_u64)
+                .build()
+                .unwrap(),
+        );
+        assert!(Validator::validate_spec_for_scheduler(&spec).is_err());
+
+        // Invalid: SchedOther with deadline 200
+        let spec = build_spec(
+            SchedulerBuilder::default()
+                .policy(LinuxSchedulerPolicy::SchedOther)
+                .deadline(200_u64)
+                .build()
+                .unwrap(),
+        );
+        assert!(Validator::validate_spec_for_scheduler(&spec).is_err());
     }
 }

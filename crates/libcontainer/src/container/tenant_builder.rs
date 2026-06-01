@@ -14,7 +14,7 @@ use nix::unistd::{Pid, pipe2, read};
 use oci_spec::runtime::{
     Capabilities as SpecCapabilities, Capability as SpecCapability, LinuxBuilder,
     LinuxCapabilities, LinuxCapabilitiesBuilder, LinuxNamespace, LinuxNamespaceBuilder,
-    LinuxNamespaceType, LinuxSchedulerPolicy, Process, ProcessBuilder, Spec, UserBuilder,
+    LinuxNamespaceType, Process, ProcessBuilder, Spec, UserBuilder,
 };
 use procfs::process::Namespace;
 
@@ -377,65 +377,6 @@ impl TenantContainerBuilder {
                     Err(e) => {
                         tracing::error!(?priority, ?e, "failed to parse io priority class");
                         Err(ErrInvalidSpec::IoPriority)?;
-                    }
-                }
-            }
-
-            if let Some(sc) = process.scheduler() {
-                let policy = sc.policy();
-                if let Some(nice) = sc.nice() {
-                    // https://man7.org/linux/man-pages/man2/sched_setattr.2.html#top_of_page
-                    if (*policy == LinuxSchedulerPolicy::SchedBatch
-                        || *policy == LinuxSchedulerPolicy::SchedOther)
-                        && (*nice < -20 || *nice > 19)
-                    {
-                        tracing::error!(
-                            ?nice,
-                            "invalid scheduler.nice: '{}', must be within -20 to 19",
-                            nice
-                        );
-                        Err(ErrInvalidSpec::Scheduler)?;
-                    }
-                }
-                if let Some(priority) = sc.priority() {
-                    if *priority != 0
-                        && (*policy != LinuxSchedulerPolicy::SchedFifo
-                            && *policy != LinuxSchedulerPolicy::SchedRr)
-                    {
-                        tracing::error!(
-                            ?policy,
-                            "scheduler.priority can only be specified for SchedFIFO or SchedRR policy"
-                        );
-                        Err(ErrInvalidSpec::Scheduler)?;
-                    }
-                }
-                if *policy != LinuxSchedulerPolicy::SchedDeadline {
-                    if let Some(runtime) = sc.runtime() {
-                        if *runtime != 0 {
-                            tracing::error!(
-                                ?runtime,
-                                "scheduler runtime can only be specified for SchedDeadline policy"
-                            );
-                            Err(ErrInvalidSpec::Scheduler)?;
-                        }
-                    }
-                    if let Some(deadline) = sc.deadline() {
-                        if *deadline != 0 {
-                            tracing::error!(
-                                ?deadline,
-                                "scheduler deadline can only be specified for SchedDeadline policy"
-                            );
-                            Err(ErrInvalidSpec::Scheduler)?;
-                        }
-                    }
-                    if let Some(period) = sc.period() {
-                        if *period != 0 {
-                            tracing::error!(
-                                ?period,
-                                "scheduler period can only be specified for SchedDeadline policy"
-                            );
-                            Err(ErrInvalidSpec::Scheduler)?;
-                        }
                     }
                 }
             }
