@@ -2,21 +2,26 @@ use oci_spec::runtime::{Linux, LinuxIdMapping, LinuxNamespaceType, Mount as Spec
 
 use crate::error::ErrInvalidSpec;
 
-fn has_non_empty_mappings(mappings: Option<&[LinuxIdMapping]>) -> bool {
-    mappings.is_some_and(|mappings| !mappings.is_empty())
+fn has_non_empty_mappings(mappings: &[LinuxIdMapping]) -> bool {
+    !mappings.is_empty()
 }
 
 fn container_userns_has_mappings(linux: Option<&Linux>) -> bool {
     let Some(linux) = linux else {
         return false;
     };
-    let Some(namespaces) = linux.namespaces().as_deref() else { return false };
-    match namespaces.iter().find(|ns| ns.typ() == LinuxNamespaceType::User) {
+    let Some(namespaces) = linux.namespaces().as_deref() else {
+        return false;
+    };
+    match namespaces
+        .iter()
+        .find(|ns| ns.typ() == LinuxNamespaceType::User)
+    {
         None => false,
         Some(ns) if ns.path().is_some() => true,
         Some(_) => {
-          has_non_empty_mappings(linux.uid_mappings().as_deref().unwrap_or(&[]))
-              && has_non_empty_mappings(linux.gid_mappings().as_deref().unwrap_or(&[]))
+            has_non_empty_mappings(linux.uid_mappings().as_deref().unwrap_or(&[]))
+                && has_non_empty_mappings(linux.gid_mappings().as_deref().unwrap_or(&[]))
         }
     }
 }
@@ -31,7 +36,7 @@ pub(crate) fn validate_idmapped_mounts(
         let uid_mappings = mount.uid_mappings().as_deref();
         let gid_mappings = mount.gid_mappings().as_deref();
         let has_mount_mappings = match (uid_mappings, gid_mappings) {
-            (Some(_), Some(_)) => {
+            (Some(uid_mappings), Some(gid_mappings)) => {
                 if !has_non_empty_mappings(uid_mappings) || !has_non_empty_mappings(gid_mappings) {
                     tracing::error!(
                         destination = ?mount.destination(),
