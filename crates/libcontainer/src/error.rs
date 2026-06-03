@@ -112,6 +112,8 @@ pub enum ErrInvalidSpec {
     MountIdmapNonBind,
     #[error("invalid idmapped mount configuration")]
     MountIdmapInvalidConfig,
+    #[error("idmapped mount is not supported")]
+    MountIdmapUnsupported,
 }
 
 #[derive(Debug, thiserror::Error)]

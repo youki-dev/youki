@@ -76,6 +76,15 @@ pub(crate) fn validate_idmapped_mounts(
             );
             return Err(ErrInvalidSpec::MountIdmapNonBind);
         }
+
+        // TODO: remove this guard when idmapped mount support is implemented.
+        if has_idmap_option || has_mount_mappings {
+            tracing::error!(
+                destination = ?mount.destination(),
+                "idmapped mounts are not supported"
+            );
+            return Err(ErrInvalidSpec::MountIdmapUnsupported);
+        }
     }
 
     Ok(())
@@ -110,7 +119,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_idmapped_mounts_allows_idmap_with_mappings_bind() {
+    fn validate_idmapped_mounts_rejects_idmap_with_mappings_bind_as_unsupported() {
         let mount = base_mount()
             .options(vec!["bind".to_string(), "idmap".to_string()])
             .uid_mappings(vec![make_mapping()])
@@ -118,11 +127,11 @@ mod tests {
             .build()
             .unwrap();
         let res = validate_idmapped_mounts(&[mount], None);
-        assert!(res.is_ok());
+        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
     }
 
     #[test]
-    fn validate_idmapped_mounts_allows_mappings_without_idmap_flag() {
+    fn validate_idmapped_mounts_rejects_mappings_without_idmap_flag_as_unsupported() {
         let mount = base_mount()
             .options(vec!["bind".to_string()])
             .uid_mappings(vec![make_mapping()])
@@ -130,11 +139,11 @@ mod tests {
             .build()
             .unwrap();
         let res = validate_idmapped_mounts(&[mount], None);
-        assert!(res.is_ok());
+        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
     }
 
     #[test]
-    fn validate_idmapped_mounts_allows_implied_idmap_with_userns() {
+    fn validate_idmapped_mounts_rejects_implied_idmap_with_userns_as_unsupported() {
         let mount = base_mount()
             .options(vec!["bind".to_string(), "idmap".to_string()])
             .build()
@@ -151,11 +160,11 @@ mod tests {
             .build()
             .unwrap();
         let res = validate_idmapped_mounts(&[mount], Some(&linux));
-        assert!(res.is_ok());
+        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
     }
 
     #[test]
-    fn validate_idmapped_mounts_allows_implied_idmap_with_joined_userns() {
+    fn validate_idmapped_mounts_rejects_implied_idmap_with_joined_userns_as_unsupported() {
         let mount = base_mount()
             .options(vec!["bind".to_string(), "idmap".to_string()])
             .build()
@@ -171,11 +180,11 @@ mod tests {
             .build()
             .unwrap();
         let res = validate_idmapped_mounts(&[mount], Some(&linux));
-        assert!(res.is_ok());
+        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
     }
 
     #[test]
-    fn validate_idmapped_mounts_allows_ridmap_with_userns() {
+    fn validate_idmapped_mounts_rejects_ridmap_with_userns_as_unsupported() {
         let mount = base_mount()
             .options(vec!["bind".to_string(), "ridmap".to_string()])
             .build()
@@ -192,11 +201,11 @@ mod tests {
             .build()
             .unwrap();
         let res = validate_idmapped_mounts(&[mount], Some(&linux));
-        assert!(res.is_ok());
+        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
     }
 
     #[test]
-    fn validate_idmapped_mounts_accepts_rbind() {
+    fn validate_idmapped_mounts_rejects_rbind_idmap_as_unsupported() {
         let mount = MountBuilder::default()
             .destination(PathBuf::from("/mnt"))
             .source(PathBuf::from("/src"))
@@ -206,7 +215,7 @@ mod tests {
             .build()
             .unwrap();
         let res = validate_idmapped_mounts(&[mount], None);
-        assert!(res.is_ok());
+        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
     }
 
     #[test]
@@ -346,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_idmapped_mounts_allows_bind_type_without_bind_option() {
+    fn validate_idmapped_mounts_rejects_bind_type_without_bind_option_as_unsupported() {
         // typ="bind" のみで is_bind を満たし、options に "bind"/"rbind" を含まないケース
         let mount = base_mount()
             .options(vec!["idmap".to_string()])
@@ -355,11 +364,11 @@ mod tests {
             .build()
             .unwrap();
         let res = validate_idmapped_mounts(&[mount], None);
-        assert!(res.is_ok());
+        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
     }
 
     #[test]
-    fn validate_idmapped_mounts_allows_multiple_mounts() {
+    fn validate_idmapped_mounts_rejects_unsupported_idmap_among_multiple_mounts() {
         let mapped_mount = base_mount()
             .options(vec!["bind".to_string(), "idmap".to_string()])
             .uid_mappings(vec![make_mapping()])
@@ -373,7 +382,7 @@ mod tests {
             .build()
             .unwrap();
         let res = validate_idmapped_mounts(&[mapped_mount, regular_mount], None);
-        assert!(res.is_ok());
+        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
     }
 
     #[test]
@@ -394,6 +403,6 @@ mod tests {
             .build()
             .unwrap();
         let res = validate_idmapped_mounts(&[valid_mount, invalid_mount], None);
-        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapNonBind)));
+        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
     }
 }

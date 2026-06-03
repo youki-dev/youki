@@ -136,10 +136,6 @@ impl Mount {
     pub fn setup_mount(&self, mount: &SpecMount, options: &MountOptions) -> Result<()> {
         tracing::debug!("mounting {:?}", mount);
         let mut mount_option_config = parse_mount(mount)?;
-        // TODO: remove this guard when idmapped mount support is implemented.
-        if requests_idmapped_mount(mount) {
-            return Err(MountError::UnsupportedMountOption("idmap".to_string()));
-        }
 
         match mount.typ().as_deref() {
             Some("cgroup") => {
@@ -1004,16 +1000,6 @@ impl Mount {
             }
         }
     }
-}
-
-fn requests_idmapped_mount(mount: &SpecMount) -> bool {
-    mount.uid_mappings().is_some()
-        || mount.gid_mappings().is_some()
-        || mount.options().as_deref().is_some_and(|options| {
-            options
-                .iter()
-                .any(|option| option == "idmap" || option == "ridmap")
-        })
 }
 
 /// Find parent mount of rootfs in given mount infos
