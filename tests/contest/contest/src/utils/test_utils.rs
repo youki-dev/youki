@@ -281,6 +281,16 @@ pub fn pause_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
     Ok(res)
 }
 
+pub fn update_container<P: AsRef<Path>>(id: &str, dir: P, args: &[&str]) -> Result<Child> {
+    let res = runtime_command(dir)
+        .arg("update")
+        .args(args)
+        .arg(id)
+        .spawn()
+        .context("could not update container")?;
+    Ok(res)
+}
+
 pub fn resume_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
     let res = runtime_command(dir)
         .arg("resume")

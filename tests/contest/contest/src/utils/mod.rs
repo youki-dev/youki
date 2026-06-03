@@ -11,5 +11,5 @@ pub use test_utils::{
     checkpoint_container, create_container, criu_has_feature, criu_installed, delete_container,
     exec_container, get_container_pid, get_state, handle_console_socket, kill_container,
     restore_container, start_container, test_inside_container, test_outside_container,
-    try_checkpoint_container, wait_container_running, wait_for_state,
+    try_checkpoint_container, update_container, wait_container_running, wait_for_state,
 };
