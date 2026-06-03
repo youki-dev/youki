@@ -439,12 +439,13 @@ impl TenantContainerBuilder {
             }
         }
 
+        let syscall = create_syscall();
+
         if let Some(mounts) = spec.mounts() {
             utils::validate_mount_options(mounts)?;
-            validate_idmapped_mounts(mounts, spec.linux().as_ref())?;
+            validate_idmapped_mounts(mounts, spec.linux().as_ref(), &*syscall)?;
         }
 
-        let syscall = create_syscall();
         utils::validate_spec_for_new_user_ns(spec, &*syscall)?;
         utils::validate_spec_for_net_devices(spec, &*syscall)
             .map_err(LibcontainerError::NetDevicesError)?;

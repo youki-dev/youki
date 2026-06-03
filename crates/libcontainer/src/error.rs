@@ -110,10 +110,12 @@ pub enum ErrInvalidSpec {
     InvalidConsoleSocket,
     #[error("idmapped mount requires bind mount")]
     MountIdmapNonBind,
-    #[error("invalid idmapped mount configuration")]
-    MountIdmapInvalidConfig,
+    #[error("idmapped mount requires uid/gid mappings or a usable user namespace")]
+    MountIdmapMissingMappings,
     #[error("idmapped mount is not supported")]
     MountIdmapUnsupported,
+    #[error("idmapped mounts are not supported in rootless containers")]
+    MountIdmapRootless,
 }
 
 #[derive(Debug, thiserror::Error)]
