@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::PathBuf;
 
 use nix::sys::wait::{WaitStatus, waitpid};
 use nix::unistd::Pid;
-use oci_spec::runtime::{Linux, LinuxNamespaceType};
+use oci_spec::runtime::{Linux, LinuxNamespaceType, Spec};
 #[cfg(feature = "libseccomp")]
 use oci_spec::runtime::{SECCOMP_FD_NAME, VERSION as OCI_VERSION};
 
@@ -15,6 +15,7 @@ use crate::network::network_device::dev_change_net_namespace;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::fork::{self, CloneCb};
 use crate::process::intel_rdt::setup_intel_rdt;
+use crate::process::message::Message;
 use crate::process::{channel, container_intermediate_process};
 use crate::syscall::SyscallError;
 use crate::user_ns::UserNamespaceConfig;
@@ -40,6 +41,8 @@ pub enum ProcessError {
     SeccompListener(#[from] crate::process::seccomp_listener::SeccompListenerError),
     #[error("failed setup network device")]
     Network(#[from] crate::network::NetworkError),
+    #[error("network device setup requested but {0}")]
+    NetworkDeviceSetup(&'static str),
     #[error("failed syscall")]
     SyscallOther(#[source] SyscallError),
     #[error("failed hooks {0}")]
@@ -158,84 +161,65 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
         }
     }
 
-    if matches!(container_args.container_type, ContainerType::InitContainer) {
-        if let Some(hooks) = container_args.spec.hooks() {
-            init_main_receiver.wait_for_hook_request()?;
-            if let Some(container_for_hooks) = &container_args.container {
-                hooks::run_hooks(
-                    hooks.prestart().as_ref(),
-                    Some(&container_for_hooks.state),
-                    None,
-                    Some(init_pid),
-                    None,
-                )
-                .map_err(|err| {
-                    tracing::error!("failed to run prestart hooks: {}", err);
-                    err
-                })?;
+    let mut pending = PendingInitRequests::new(container_args.container_type, &container_args.spec);
 
-                hooks::run_hooks(
-                    hooks.create_runtime().as_ref(),
-                    Some(&container_for_hooks.state),
-                    None,
-                    Some(init_pid),
-                    None,
-                )
-                .map_err(|err| {
-                    tracing::error!("failed to run create runtime hooks: {}", err);
-                    err
-                })?;
+    loop {
+        let (msg, fds) = init_main_receiver.recv_message_with_fds()?;
+        #[cfg_attr(not(feature = "libseccomp"), allow(unused_variables))]
+        let received_fd: Option<OwnedFd> = fds.map(|fds| unsafe { OwnedFd::from_raw_fd(fds[0]) });
+        match msg {
+            Message::InitReady => {
+                if pending.has_pending() {
+                    return Err(unexpected_init_message(
+                        "pending init setup request",
+                        Message::InitReady,
+                    ));
+                }
+                break;
             }
-            init_sender.hook_done()?;
-        }
-    }
-
-    if let Some(linux) = container_args.spec.linux() {
-        move_network_devices_to_container(
-            linux,
-            init_pid,
-            &mut init_main_receiver,
-            &mut init_sender,
-        )?;
-
-        #[cfg(feature = "libseccomp")]
-        if let Some(seccomp) = linux.seccomp() {
-            let container = container_args
-                .container
-                .as_ref()
-                .ok_or(ProcessError::ContainerStateRequired)?;
-
-            // Determine OCI status based on container type (matching runc behavior)
-            let oci_status = match container_args.container_type {
-                ContainerType::InitContainer => oci_spec::runtime::ContainerState::Creating,
-                ContainerType::TenantContainer { .. } => oci_spec::runtime::ContainerState::Running,
-            };
-
-            // Build OCI-compliant ContainerProcessState using builder pattern
-            let oci_state = oci_spec::runtime::StateBuilder::default()
-                .version(OCI_VERSION)
-                .id(container.state.id.clone())
-                .status(oci_status)
-                .pid(init_pid.as_raw())
-                .bundle(container.state.bundle.clone())
-                .annotations(container.state.annotations.clone().unwrap_or_default())
-                .build()
-                .map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
-
-            let state = oci_spec::runtime::ContainerProcessStateBuilder::default()
-                .version(OCI_VERSION)
-                .fds(vec![SECCOMP_FD_NAME.to_string()])
-                .pid(init_pid.as_raw())
-                .metadata(seccomp.listener_metadata().clone().unwrap_or_default())
-                .state(oci_state)
-                .build()
-                .map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
-            crate::process::seccomp_listener::sync_seccomp(
-                seccomp,
-                &state,
-                &mut init_sender,
-                &mut init_main_receiver,
-            )?;
+            Message::HookRequest => {
+                let hooks = pending.hooks.take().ok_or_else(|| {
+                    unexpected_init_message(EXPECTED_INIT_MESSAGE, Message::HookRequest)
+                })?;
+                handle_hook_request(hooks, container_args, init_pid, &mut init_sender)?;
+            }
+            Message::SetupNetworkDeviceReady => {
+                let linux = pending.net_linux.take().ok_or_else(|| {
+                    unexpected_init_message(EXPECTED_INIT_MESSAGE, Message::SetupNetworkDeviceReady)
+                })?;
+                move_network_devices_to_container(linux, init_pid, &mut init_sender)?;
+            }
+            Message::SeccompNotify => {
+                let seccomp = pending.seccomp.take().ok_or_else(|| {
+                    unexpected_init_message(EXPECTED_INIT_MESSAGE, Message::SeccompNotify)
+                })?;
+                #[cfg(feature = "libseccomp")]
+                {
+                    let seccomp_fd = received_fd.ok_or(ProcessError::Channel(
+                        channel::ChannelError::MissingSeccompFds,
+                    ))?;
+                    handle_seccomp_notify(
+                        container_args,
+                        init_pid,
+                        seccomp,
+                        seccomp_fd,
+                        &mut init_sender,
+                    )?;
+                }
+                // Without libseccomp, `pending.seccomp` is always `None`, so
+                // the take above has already returned an error.
+                #[cfg(not(feature = "libseccomp"))]
+                let _ = seccomp;
+            }
+            Message::ExecFailed(err) => {
+                return Err(ProcessError::Channel(channel::ChannelError::ExecError(err)));
+            }
+            Message::OtherError(err) => {
+                return Err(ProcessError::Channel(channel::ChannelError::OtherError(
+                    err,
+                )));
+            }
+            other => return Err(unexpected_init_message(EXPECTED_INIT_MESSAGE, other)),
         }
     }
 
@@ -243,11 +227,6 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     // close the sender.
     init_sender.close().map_err(|err| {
         tracing::error!("failed to close unused init sender: {}", err);
-        err
-    })?;
-
-    init_main_receiver.wait_for_init_ready().map_err(|err| {
-        tracing::error!("failed to wait for init ready: {}", err);
         err
     })?;
 
@@ -299,6 +278,165 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     Ok((init_pid, need_to_clean_up_intel_rdt_subdirectory))
 }
 
+// What the main process is prepared to receive from the init process at any
+// point of the event loop.
+const EXPECTED_INIT_MESSAGE: &str = "InitReady or a pending init setup request";
+
+/// Init requests the main process must serve before accepting InitReady. Each
+/// entry is `Some` while the request is still outstanding and carries the
+/// config the handler needs; receiving the request takes it, so a duplicate
+/// request is reported as unexpected.
+///
+/// Each entry mirrors the condition under which the init process sends the
+/// corresponding request, so an entry left pending at InitReady means the
+/// protocol was violated.
+struct PendingInitRequests<'a> {
+    hooks: Option<&'a oci_spec::runtime::Hooks>,
+    net_linux: Option<&'a Linux>,
+    seccomp: Option<&'a oci_spec::runtime::LinuxSeccomp>,
+}
+
+impl<'a> PendingInitRequests<'a> {
+    fn new(container_type: ContainerType, spec: &'a Spec) -> Self {
+        // The init process requests hooks only for init containers with hooks
+        // configured.
+        let hooks = match container_type {
+            ContainerType::InitContainer => spec.hooks().as_ref(),
+            ContainerType::TenantContainer { .. } => None,
+        };
+        // The init process requests network device setup only when devices are
+        // configured, for both init and tenant containers.
+        let net_linux = spec.linux().as_ref().filter(|linux| {
+            linux
+                .net_devices()
+                .as_ref()
+                .is_some_and(|devices| !devices.is_empty())
+        });
+        // The init process sends the seccomp notify fd only when the filter
+        // contains a notify action (`initialize_seccomp` returns a fd iff
+        // `is_notify`), for both init and tenant containers.
+        #[cfg(feature = "libseccomp")]
+        let seccomp = spec
+            .linux()
+            .as_ref()
+            .and_then(|linux| linux.seccomp().as_ref())
+            .filter(|seccomp| crate::seccomp::is_notify(seccomp));
+        #[cfg(not(feature = "libseccomp"))]
+        let seccomp = None;
+
+        Self {
+            hooks,
+            net_linux,
+            seccomp,
+        }
+    }
+
+    fn has_pending(&self) -> bool {
+        self.hooks.is_some() || self.net_linux.is_some() || self.seccomp.is_some()
+    }
+}
+
+fn unexpected_init_message(expected: &'static str, received: Message) -> ProcessError {
+    ProcessError::Channel(channel::ChannelError::UnexpectedMessage {
+        expected,
+        received: Box::new(received),
+    })
+}
+
+fn handle_hook_request(
+    hooks: &oci_spec::runtime::Hooks,
+    container_args: &ContainerArgs,
+    init_pid: Pid,
+    init_sender: &mut channel::InitSender,
+) -> Result<()> {
+    if let Some(container) = container_args.container.as_ref() {
+        hooks::run_hooks(
+            hooks.prestart().as_ref(),
+            Some(&container.state),
+            None,
+            Some(init_pid),
+            None,
+        )
+        .map_err(|err| {
+            tracing::error!("failed to run prestart hooks: {}", err);
+            err
+        })?;
+
+        hooks::run_hooks(
+            hooks.create_runtime().as_ref(),
+            Some(&container.state),
+            None,
+            Some(init_pid),
+            None,
+        )
+        .map_err(|err| {
+            tracing::error!("failed to run create runtime hooks: {}", err);
+            err
+        })?;
+    }
+
+    init_sender.hook_done()?;
+    Ok(())
+}
+
+#[cfg(feature = "libseccomp")]
+fn handle_seccomp_notify(
+    container_args: &ContainerArgs,
+    init_pid: Pid,
+    seccomp: &oci_spec::runtime::LinuxSeccomp,
+    seccomp_fd: OwnedFd,
+    init_sender: &mut channel::InitSender,
+) -> Result<()> {
+    // The caller owns the received seccomp notify fd. It is closed when the
+    // OwnedFd is dropped, including if forwarding to the listener fails partway.
+    let container = container_args
+        .container
+        .as_ref()
+        .ok_or(ProcessError::ContainerStateRequired)?;
+
+    // Determine OCI status based on container type (matching runc behavior)
+    let oci_status = match container_args.container_type {
+        ContainerType::InitContainer => oci_spec::runtime::ContainerState::Creating,
+        ContainerType::TenantContainer { .. } => oci_spec::runtime::ContainerState::Running,
+    };
+
+    // Build OCI-compliant ContainerProcessState using builder pattern
+    let oci_state = oci_spec::runtime::StateBuilder::default()
+        .version(OCI_VERSION)
+        .id(container.state.id.clone())
+        .status(oci_status)
+        .pid(init_pid.as_raw())
+        .bundle(container.state.bundle.clone())
+        .annotations(container.state.annotations.clone().unwrap_or_default())
+        .build()
+        .map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
+
+    let state = oci_spec::runtime::ContainerProcessStateBuilder::default()
+        .version(OCI_VERSION)
+        .fds(vec![SECCOMP_FD_NAME.to_string()])
+        .pid(init_pid.as_raw())
+        .metadata(seccomp.listener_metadata().clone().unwrap_or_default())
+        .state(oci_state)
+        .build()
+        .map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
+
+    let listener_path = seccomp
+        .listener_path()
+        .as_ref()
+        .ok_or(crate::process::seccomp_listener::SeccompListenerError::MissingListenerPath)?;
+    let encoded_state = serde_json::to_vec(&state)
+        .map_err(crate::process::seccomp_listener::SeccompListenerError::EncodeState)?;
+    crate::process::seccomp_listener::sync_seccomp_send_msg(
+        listener_path,
+        &encoded_state,
+        seccomp_fd.as_raw_fd(),
+    )?;
+    init_sender.seccomp_notify_done()?;
+    // `seccomp_fd` is dropped here, closing the duplicated fd. The SCM_RIGHTS
+    // msg already duplicated the fd to the process behind the listener.
+    Ok(())
+}
+
 fn setup_mapping(config: &UserNamespaceConfig, pid: Pid) -> Result<()> {
     tracing::debug!("write mapping for pid {:?}", pid);
     if !config.privileged {
@@ -319,68 +457,70 @@ fn setup_mapping(config: &UserNamespaceConfig, pid: Pid) -> Result<()> {
     Ok(())
 }
 
-/// Moves configured network devices from the host to the container's network namespace.
-/// This function waits for the init process to join its namespace, then transfers each
-/// configured device while preserving network addresses. Returns early if the container
-/// runs in the host network namespace.
+/// Moves configured network devices from the host to the container's network
+/// namespace, then reports the preserved network addresses back to the init
+/// process.
 fn move_network_devices_to_container(
     linux: &Linux,
     init_pid: Pid,
-    main_receiver: &mut channel::MainReceiver,
     init_sender: &mut channel::InitSender,
 ) -> Result<()> {
-    // Early return if there are no network devices to move
+    // Spec validation (`validate_spec_for_net_devices`) guarantees that net
+    // devices come with a network namespace, and the caller only dispatches
+    // here when devices are configured. Fail loudly if either is missing:
+    // returning without replying would leave the init process blocked on
+    // `wait_for_move_network_device`.
     let devices = match linux.net_devices() {
         Some(devs) if !devs.is_empty() => devs,
-        _ => return Ok(()),
+        _ => {
+            return Err(ProcessError::NetworkDeviceSetup(
+                "no network devices are configured",
+            ));
+        }
     };
+    let net_ns = linux
+        .namespaces()
+        .as_ref()
+        .and_then(|namespaces| {
+            namespaces
+                .iter()
+                .find(|ns| ns.typ() == LinuxNamespaceType::Network)
+        })
+        .ok_or(ProcessError::NetworkDeviceSetup(
+            "the network namespace is not configured",
+        ))?;
 
-    if let Some(namespaces) = linux.namespaces() {
-        // network devices are not moved for containers running in the host network.
-        let net_ns = match namespaces
-            .iter()
-            .find(|ns| ns.typ() == LinuxNamespaceType::Network)
-        {
-            Some(ns) => ns,
-            None => return Ok(()),
-        };
+    // the container init process has already joined the provided net namespace,
+    // so we can use the process's net ns path directly.
+    let default_ns_path = PathBuf::from(format!("/proc/{}/ns/net", init_pid.as_raw()));
+    let ns_path = net_ns.path().as_deref().unwrap_or(&default_ns_path);
 
-        // Wait for the init process to signal that it has joined the network namespace
-        // and is ready for network device setup
-        main_receiver.wait_for_network_setup_ready()?;
+    // Open the network namespace file and validate it exists before moving devices
+    let netns_file = File::open(ns_path).map_err(|err| {
+        tracing::error!(
+            "failed to open network namespace at {}: {}",
+            ns_path.display(),
+            err
+        );
+        ProcessError::Network(err.into())
+    })?;
+    let netns_fd = netns_file.as_raw_fd();
 
-        // the container init process has already joined the provided net namespace,
-        // so we can use the process's net ns path directly.
-        let default_ns_path = PathBuf::from(format!("/proc/{}/ns/net", init_pid.as_raw()));
-        let ns_path = net_ns.path().as_deref().unwrap_or(&default_ns_path);
-
-        // Open the network namespace file and validate it exists before moving devices
-        let netns_file = File::open(ns_path).map_err(|err| {
-            tracing::error!(
-                "failed to open network namespace at {}: {}",
-                ns_path.display(),
+    // If moving any of the network devices fails, we return an error immediately.
+    // The runtime spec requires that the kernel handles moving back any devices
+    // that were successfully moved before the failure occurred.
+    // See: https://github.com/opencontainers/runtime-spec/blob/27cb0027fd92ef81eda1ea3a8153b8337f56d94a/config-linux.md#namespace-lifecycle-and-container-termination
+    let addrs_map = devices
+        .iter()
+        .map(|(name, net_dev)| {
+            let addrs = dev_change_net_namespace(name, netns_fd, net_dev).map_err(|err| {
+                tracing::error!("failed to dev_change_net_namespace: {}", err);
                 err
-            );
-            ProcessError::Network(err.into())
-        })?;
-        let netns_fd = netns_file.as_raw_fd();
-
-        // If moving any of the network devices fails, we return an error immediately.
-        // The runtime spec requires that the kernel handles moving back any devices
-        // that were successfully moved before the failure occurred.
-        // See: https://github.com/opencontainers/runtime-spec/blob/27cb0027fd92ef81eda1ea3a8153b8337f56d94a/config-linux.md#namespace-lifecycle-and-container-termination
-        let addrs_map = devices
-            .iter()
-            .map(|(name, net_dev)| {
-                let addrs = dev_change_net_namespace(name, netns_fd, net_dev).map_err(|err| {
-                    tracing::error!("failed to dev_change_net_namespace: {}", err);
-                    err
-                })?;
-                Ok((name.clone(), addrs))
-            })
-            .collect::<Result<HashMap<String, Vec<crate::network::cidr::CidrAddress>>>>()?;
-        init_sender.move_network_device(addrs_map)?;
-    }
+            })?;
+            Ok((name.clone(), addrs))
+        })
+        .collect::<Result<HashMap<String, Vec<crate::network::cidr::CidrAddress>>>>()?;
+    init_sender.move_network_device(addrs_map)?;
 
     Ok(())
 }
@@ -392,12 +532,109 @@ mod tests {
     use anyhow::Result;
     use nix::sched::{CloneFlags, unshare};
     use nix::unistd::{self, getgid, getuid};
-    use oci_spec::runtime::LinuxIdMappingBuilder;
+    use oci_spec::runtime::{
+        HooksBuilder, LinuxBuilder, LinuxIdMappingBuilder, LinuxNetDevice, SpecBuilder,
+    };
     use serial_test::serial;
 
     use super::*;
     use crate::process::channel::{intermediate_channel, main_channel};
     use crate::user_ns::UserNamespaceIDMapper;
+
+    #[test]
+    fn pending_hooks_only_for_init_container_with_hooks() -> Result<()> {
+        let spec = SpecBuilder::default()
+            .hooks(HooksBuilder::default().build()?)
+            .build()?;
+
+        let pending = PendingInitRequests::new(ContainerType::InitContainer, &spec);
+        assert!(pending.hooks.is_some());
+        assert!(pending.has_pending());
+
+        let pending =
+            PendingInitRequests::new(ContainerType::TenantContainer { exec_notify_fd: -1 }, &spec);
+        assert!(pending.hooks.is_none());
+        assert!(!pending.has_pending());
+
+        let spec = SpecBuilder::default().build()?;
+        let pending = PendingInitRequests::new(ContainerType::InitContainer, &spec);
+        assert!(pending.hooks.is_none());
+        assert!(!pending.has_pending());
+        Ok(())
+    }
+
+    #[test]
+    fn pending_network_setup_requires_configured_devices() -> Result<()> {
+        let devices = HashMap::from([("eth0".to_string(), LinuxNetDevice::default())]);
+        let spec = SpecBuilder::default()
+            .linux(LinuxBuilder::default().net_devices(devices).build()?)
+            .build()?;
+        let pending = PendingInitRequests::new(ContainerType::InitContainer, &spec);
+        assert!(pending.net_linux.is_some());
+        assert!(pending.has_pending());
+
+        let spec = SpecBuilder::default()
+            .linux(
+                LinuxBuilder::default()
+                    .net_devices(HashMap::new())
+                    .build()?,
+            )
+            .build()?;
+        let pending = PendingInitRequests::new(ContainerType::InitContainer, &spec);
+        assert!(pending.net_linux.is_none());
+        assert!(!pending.has_pending());
+        Ok(())
+    }
+
+    #[cfg(feature = "libseccomp")]
+    #[test]
+    fn pending_seccomp_requires_notify_action() -> Result<()> {
+        use oci_spec::runtime::{LinuxSeccompAction, LinuxSeccompBuilder, LinuxSyscallBuilder};
+
+        let notify = LinuxSeccompBuilder::default()
+            .syscalls(vec![
+                LinuxSyscallBuilder::default()
+                    .action(LinuxSeccompAction::ScmpActNotify)
+                    .build()?,
+            ])
+            .build()?;
+        let spec = SpecBuilder::default()
+            .linux(LinuxBuilder::default().seccomp(notify).build()?)
+            .build()?;
+        let pending = PendingInitRequests::new(ContainerType::InitContainer, &spec);
+        assert!(pending.seccomp.is_some());
+        assert!(pending.has_pending());
+
+        let non_notify = LinuxSeccompBuilder::default()
+            .syscalls(vec![
+                LinuxSyscallBuilder::default()
+                    .action(LinuxSeccompAction::ScmpActErrno)
+                    .build()?,
+            ])
+            .build()?;
+        let spec = SpecBuilder::default()
+            .linux(LinuxBuilder::default().seccomp(non_notify).build()?)
+            .build()?;
+        let pending = PendingInitRequests::new(ContainerType::InitContainer, &spec);
+        assert!(pending.seccomp.is_none());
+        assert!(!pending.has_pending());
+        Ok(())
+    }
+
+    #[test]
+    fn pending_request_can_only_be_taken_once() -> Result<()> {
+        let spec = SpecBuilder::default()
+            .hooks(HooksBuilder::default().build()?)
+            .build()?;
+        let mut pending = PendingInitRequests::new(ContainerType::InitContainer, &spec);
+
+        assert!(pending.hooks.take().is_some());
+        assert!(!pending.has_pending());
+        // A second take models a duplicate request from the init process,
+        // which the event loop reports as an unexpected message.
+        assert!(pending.hooks.take().is_none());
+        Ok(())
+    }
 
     #[test]
     #[serial]

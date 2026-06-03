@@ -3,11 +3,6 @@ use std::os::fd::AsRawFd;
 use std::path::Path;
 
 use nix::sys::socket::{self, UnixAddr};
-use nix::unistd;
-use oci_spec::runtime;
-
-use super::channel;
-use crate::seccomp;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SeccompListenerError {
@@ -15,43 +10,13 @@ pub enum SeccompListenerError {
     MissingListenerPath,
     #[error("failed to encode container process state")]
     EncodeState(#[source] serde_json::Error),
-    #[error(transparent)]
-    ChannelError(#[from] channel::ChannelError),
     #[error("unix syscall fails")]
     UnixOther(#[source] nix::Error),
 }
 
 type Result<T> = std::result::Result<T, SeccompListenerError>;
 
-pub fn sync_seccomp(
-    seccomp: &runtime::LinuxSeccomp,
-    state: &runtime::ContainerProcessState,
-    init_sender: &mut channel::InitSender,
-    main_receiver: &mut channel::MainReceiver,
-) -> Result<()> {
-    if seccomp::is_notify(seccomp) {
-        tracing::debug!("main process waiting for sync seccomp");
-        let seccomp_fd = main_receiver.wait_for_seccomp_request()?;
-        let listener_path = seccomp
-            .listener_path()
-            .as_ref()
-            .ok_or(SeccompListenerError::MissingListenerPath)?;
-        let encoded_state = serde_json::to_vec(state).map_err(SeccompListenerError::EncodeState)?;
-        sync_seccomp_send_msg(listener_path, &encoded_state, seccomp_fd).map_err(|err| {
-            tracing::error!("failed to send msg to seccomp listener: {}", err);
-            err
-        })?;
-        init_sender.seccomp_notify_done()?;
-        // Once we sent the seccomp notify fd to the seccomp listener, we can
-        // safely close the fd. The SCM_RIGHTS msg will duplicate the fd to the
-        // process on the other end of the listener.
-        let _ = unistd::close(seccomp_fd);
-    }
-
-    Ok(())
-}
-
-fn sync_seccomp_send_msg(listener_path: &Path, msg: &[u8], fd: i32) -> Result<()> {
+pub(crate) fn sync_seccomp_send_msg(listener_path: &Path, msg: &[u8], fd: i32) -> Result<()> {
     // The seccomp listener has specific instructions on how to transmit the
     // information through seccomp listener.  Therefore, we have to use
     // libc/nix APIs instead of Rust std lib APIs to maintain flexibility.
@@ -109,87 +74,42 @@ fn sync_seccomp_send_msg(listener_path: &Path, msg: &[u8], fd: i32) -> Result<()
 
 #[cfg(test)]
 mod tests {
+    use std::io::Read;
+    use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+    use std::os::unix::net::UnixListener;
+    use std::thread;
+
     use anyhow::Result;
-    use oci_spec::runtime::{LinuxSeccompAction, LinuxSeccompBuilder, LinuxSyscallBuilder};
     use serial_test::serial;
 
     use super::*;
-    use crate::process::channel;
 
+    // Verifies that the encoded container process state is delivered to the
+    // listener (alongside the seccomp notify fd via SCM_RIGHTS). The main
+    // process event loop now owns the channel handshake, so this exercises the
+    // socket transmission in isolation.
     #[test]
     #[serial]
-    fn test_sync_seccomp() -> Result<()> {
-        use std::io::Read;
-        use std::os::unix::io::IntoRawFd;
-        use std::os::unix::net::UnixListener;
-        use std::thread;
-
+    fn test_sync_seccomp_send_msg() -> Result<()> {
         let tmp_dir = tempfile::tempdir()?;
         let scmp_file = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .open(tmp_dir.path().join("scmp_file"))?;
-
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(tmp_dir.path().join("socket_file.sock"))?;
-
-        let (mut main_sender, mut main_receiver) = channel::main_channel()?;
-        let (mut init_sender, mut init_receiver) = channel::init_channel()?;
         let socket_path = tmp_dir.path().join("socket_file.sock");
-        let socket_path_seccomp_th = socket_path.clone();
 
-        let state = runtime::ContainerProcessStateBuilder::default()
-            .version("1.0.0".to_string())
-            .fds(vec!["seccompFd".to_string()])
-            .pid(1234)
-            .metadata("test".to_string())
-            .state(
-                runtime::StateBuilder::default()
-                    .version("1.0.0".to_string())
-                    .id("test-container".to_string())
-                    .status(runtime::ContainerState::Creating)
-                    .pid(1234)
-                    .bundle(std::path::PathBuf::from("/tmp/bundle"))
-                    .annotations(std::collections::HashMap::new())
-                    .build()
-                    .unwrap(),
-            )
-            .build()
-            .unwrap();
-        let want = serde_json::to_string(&state)?;
+        let listener = UnixListener::bind(&socket_path)?;
+        let want = "container-process-state";
+        let send_path = socket_path.clone();
+        let fd = unsafe { OwnedFd::from_raw_fd(scmp_file.into_raw_fd()) };
         let th = thread::spawn(move || {
-            sync_seccomp(
-                &LinuxSeccompBuilder::default()
-                    .listener_path(socket_path_seccomp_th)
-                    .syscalls(vec![
-                        LinuxSyscallBuilder::default()
-                            .action(LinuxSeccompAction::ScmpActNotify)
-                            .build()
-                            .unwrap(),
-                    ])
-                    .build()
-                    .unwrap(),
-                &state,
-                &mut init_sender,
-                &mut main_receiver,
-            )
-            .unwrap();
+            sync_seccomp_send_msg(&send_path, want.as_bytes(), fd.as_raw_fd()).unwrap();
         });
 
-        let fd = scmp_file.into_raw_fd();
-        assert!(main_sender.seccomp_notify_request(fd).is_ok());
-
-        std::fs::remove_file(socket_path.clone())?;
-        let lis = UnixListener::bind(socket_path)?;
-        let (mut socket, _) = lis.accept()?;
+        let (mut socket, _) = listener.accept()?;
         let mut got = String::new();
         socket.read_to_string(&mut got)?;
-        assert!(init_receiver.wait_for_seccomp_request_done().is_ok());
-
         assert_eq!(want, got);
         assert!(th.join().is_ok());
         Ok(())
