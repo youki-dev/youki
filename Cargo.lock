@@ -3012,9 +3012,9 @@ dependencies = [
 
 [[package]]
 name = "nc"
-version = "0.9.7"
+version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44a4f56a68f96b49bca0ea29a91caa983bb5f37e064183436a45b80dc441cd55"
+checksum = "e743792d2d212a4fb55b910332dc3805458093f6e35b1d4ff74af2e5d5fe6106"
 dependencies = [
  "cc",
 ]
