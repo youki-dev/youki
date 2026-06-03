@@ -72,8 +72,6 @@ provision:
       fi
 
 mounts:
-  - location: "{{.Param.RepositoryDirectory}}"
-    mountPoint: "{{.Param.RepositoryDirectory}}"
   - location: "~"
     writable: true
   - location: "{{.Param.ScriptDirectory}}" # Mount the directory containing the script
@@ -81,7 +79,6 @@ mounts:
     writable: false
 
 param:
-  RepositoryDirectory: ~/youki
-  ScriptDirectory: ~/youki/scripts
+  ScriptDirectory: ~/youki/experiment/selinux
 
   

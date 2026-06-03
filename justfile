@@ -12,13 +12,12 @@ destroy_vm:
 create_vm:
   #!/bin/bash
 
-  export CWD=$(pwd) 
-  export SD=$(pwd)/scripts
-  LIMA_FILE=$(yq '.param.RepositoryDirectory = strenv(CWD),.param.ScriptDirectory = strenv(SD)' ./scripts/vms/fedora.yaml)
+  export SD=$(pwd)/experiment/selinux
+  LIMA_FILE=$(yq '.param.ScriptDirectory = strenv(SD)' ./scripts/vms/fedora.yaml)
   echo "Starting a VM using following lima configuration: "
   echo "$LIMA_FILE"
 
-  echo "$LIMA_FILE" | limactl start --name={{ DEV_VM_NAME }} -
+  echo "$LIMA_FILE" | limactl start --name={{ DEV_VM_NAME }} --progress -
 
 # build
 
