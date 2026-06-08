@@ -128,6 +128,8 @@ pub enum ErrInvalidSpec {
     SysctlNotAllowedInHostUser(String),
     #[error("sysctl {0} is not in a separate kernel namespace")]
     SysctlNotInSeparateNamespace(String),
+    #[error("invalid intelRdt.closID (must not contain '.', '..', or '/')")]
+    InvalidIntelRdtClosId,
 }
 
 #[derive(Debug, thiserror::Error)]

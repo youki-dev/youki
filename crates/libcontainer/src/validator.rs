@@ -16,6 +16,7 @@ impl Validator {
         Self::validate_spec_for_sysctl(spec)?;
         Self::validate_spec_for_scheduler(spec)?;
         Self::validate_spec_for_io_priority(spec)?;
+        Self::validate_spec_for_intel_rdt(spec)?;
 
         Ok(())
     }
@@ -262,13 +263,30 @@ impl Validator {
 
         Ok(())
     }
+
+    fn validate_spec_for_intel_rdt(spec: &Spec) -> Result<(), ErrInvalidSpec> {
+        if let Some(linux) = spec.linux() {
+            if let Some(intel_rdt) = linux.intel_rdt() {
+                if let Some(clos_id) = intel_rdt.clos_id() {
+                    if clos_id == "."
+                        || clos_id == ".."
+                        || (clos_id.len() > 1 && clos_id.contains('/'))
+                    {
+                        return Err(ErrInvalidSpec::InvalidIntelRdtClosId);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use oci_spec::runtime::{
         IOPriorityClass, LinuxBuilder, LinuxIOPriorityBuilder, LinuxIdMappingBuilder,
-        LinuxNamespaceBuilder, ProcessBuilder, SchedulerBuilder, SpecBuilder,
+        LinuxIntelRdtBuilder, LinuxNamespaceBuilder, ProcessBuilder, SchedulerBuilder, SpecBuilder,
     };
 
     use super::*;
@@ -700,5 +718,113 @@ mod tests {
             .build()
             .unwrap();
         assert!(Validator::validate_spec_for_io_priority(&valid_spec_edge).is_ok());
+    }
+
+    #[test]
+    fn test_validate_spec_for_intel_rdt() {
+        let intel_rdt_traversal_dotdot = LinuxIntelRdtBuilder::default()
+            .clos_id("../escape")
+            .build()
+            .unwrap();
+        let spec_traversal_dotdot = SpecBuilder::default()
+            .linux(
+                LinuxBuilder::default()
+                    .intel_rdt(intel_rdt_traversal_dotdot)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(matches!(
+            Validator::validate_spec_for_intel_rdt(&spec_traversal_dotdot).unwrap_err(),
+            ErrInvalidSpec::InvalidIntelRdtClosId
+        ));
+
+        let intel_rdt_traversal_slash = LinuxIntelRdtBuilder::default()
+            .clos_id("/absolute/path")
+            .build()
+            .unwrap();
+        let spec_traversal_slash = SpecBuilder::default()
+            .linux(
+                LinuxBuilder::default()
+                    .intel_rdt(intel_rdt_traversal_slash)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(matches!(
+            Validator::validate_spec_for_intel_rdt(&spec_traversal_slash).unwrap_err(),
+            ErrInvalidSpec::InvalidIntelRdtClosId
+        ));
+
+        let intel_rdt_valid_id = LinuxIntelRdtBuilder::default()
+            .clos_id("valid-clos-id-123")
+            .build()
+            .unwrap();
+        let spec_valid_id = SpecBuilder::default()
+            .linux(
+                LinuxBuilder::default()
+                    .intel_rdt(intel_rdt_valid_id)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(Validator::validate_spec_for_intel_rdt(&spec_valid_id).is_ok());
+
+        let intel_rdt_traversal_dot = LinuxIntelRdtBuilder::default()
+            .clos_id(".")
+            .build()
+            .unwrap();
+        let spec_traversal_dot = SpecBuilder::default()
+            .linux(
+                LinuxBuilder::default()
+                    .intel_rdt(intel_rdt_traversal_dot)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(matches!(
+            Validator::validate_spec_for_intel_rdt(&spec_traversal_dot).unwrap_err(),
+            ErrInvalidSpec::InvalidIntelRdtClosId
+        ));
+
+        let intel_rdt_traversal_nested = LinuxIntelRdtBuilder::default()
+            .clos_id("some/path")
+            .build()
+            .unwrap();
+        let spec_traversal_nested = SpecBuilder::default()
+            .linux(
+                LinuxBuilder::default()
+                    .intel_rdt(intel_rdt_traversal_nested)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(matches!(
+            Validator::validate_spec_for_intel_rdt(&spec_traversal_nested).unwrap_err(),
+            ErrInvalidSpec::InvalidIntelRdtClosId
+        ));
+
+        let intel_rdt_traversal_trailing = LinuxIntelRdtBuilder::default()
+            .clos_id("clos_id/")
+            .build()
+            .unwrap();
+        let spec_traversal_trailing = SpecBuilder::default()
+            .linux(
+                LinuxBuilder::default()
+                    .intel_rdt(intel_rdt_traversal_trailing)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(matches!(
+            Validator::validate_spec_for_intel_rdt(&spec_traversal_trailing).unwrap_err(),
+            ErrInvalidSpec::InvalidIntelRdtClosId
+        ));
     }
 }
