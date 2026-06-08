@@ -708,7 +708,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "which 8.0.2",
+ "which 8.0.3",
 ]
 
 [[package]]
@@ -6129,7 +6129,7 @@ dependencies = [
  "wasmer-types",
  "wasmer-vm",
  "wasmparser 0.244.0",
- "which 8.0.2",
+ "which 8.0.3",
  "windows-sys 0.61.2",
 ]
 
@@ -6863,9 +6863,9 @@ dependencies = [
 
 [[package]]
 name = "which"
-version = "8.0.2"
+version = "8.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81995fafaaaf6ae47a7d0cc83c67caf92aeb7e5331650ae6ff856f7c0c60c459"
+checksum = "c789537cf2f7f55be8e6192f92e464174ee55f91af622777f7f1ceb0dbccd03e"
 dependencies = [
  "libc",
 ]
