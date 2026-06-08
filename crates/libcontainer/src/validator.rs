@@ -15,6 +15,7 @@ impl Validator {
         Self::validate_spec_for_mnt_namespace(spec)?;
         Self::validate_spec_for_sysctl(spec)?;
         Self::validate_spec_for_scheduler(spec)?;
+        Self::validate_spec_for_io_priority(spec)?;
 
         Ok(())
     }
@@ -247,13 +248,27 @@ impl Validator {
 
         Ok(())
     }
+
+    fn validate_spec_for_io_priority(spec: &Spec) -> Result<(), ErrInvalidSpec> {
+        if let Some(process) = spec.process() {
+            if let Some(io_priority) = process.io_priority() {
+                let priority = io_priority.priority();
+
+                if !(0..=7).contains(&priority) {
+                    return Err(ErrInvalidSpec::IoPriority);
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use oci_spec::runtime::{
-        LinuxBuilder, LinuxIdMappingBuilder, LinuxNamespaceBuilder, ProcessBuilder,
-        SchedulerBuilder, SpecBuilder,
+        IOPriorityClass, LinuxBuilder, LinuxIOPriorityBuilder, LinuxIdMappingBuilder,
+        LinuxNamespaceBuilder, ProcessBuilder, SchedulerBuilder, SpecBuilder,
     };
 
     use super::*;
@@ -615,5 +630,75 @@ mod tests {
                 .unwrap(),
         );
         assert!(Validator::validate_spec_for_scheduler(&spec).is_err());
+    }
+
+    #[test]
+    fn test_validate_spec_for_io_priority() {
+        let valid_io = LinuxIOPriorityBuilder::default()
+            .class(IOPriorityClass::IoprioClassBe)
+            .priority(4)
+            .build()
+            .unwrap();
+        let valid_spec = SpecBuilder::default()
+            .process(
+                ProcessBuilder::default()
+                    .io_priority(valid_io)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(Validator::validate_spec_for_io_priority(&valid_spec).is_ok());
+
+        let invalid_io_high = LinuxIOPriorityBuilder::default()
+            .class(IOPriorityClass::IoprioClassRt)
+            .priority(8)
+            .build()
+            .unwrap();
+        let invalid_spec_high = SpecBuilder::default()
+            .process(
+                ProcessBuilder::default()
+                    .io_priority(invalid_io_high)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(matches!(
+            Validator::validate_spec_for_io_priority(&invalid_spec_high).unwrap_err(),
+            ErrInvalidSpec::IoPriority
+        ));
+
+        let valid_io_low = LinuxIOPriorityBuilder::default()
+            .class(IOPriorityClass::IoprioClassIdle)
+            .priority(0)
+            .build()
+            .unwrap();
+        let valid_spec_low = SpecBuilder::default()
+            .process(
+                ProcessBuilder::default()
+                    .io_priority(valid_io_low)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(Validator::validate_spec_for_io_priority(&valid_spec_low).is_ok());
+
+        let valid_io_edge = LinuxIOPriorityBuilder::default()
+            .class(IOPriorityClass::IoprioClassRt)
+            .priority(7)
+            .build()
+            .unwrap();
+        let valid_spec_edge = SpecBuilder::default()
+            .process(
+                ProcessBuilder::default()
+                    .io_priority(valid_io_edge)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(Validator::validate_spec_for_io_priority(&valid_spec_edge).is_ok());
     }
 }

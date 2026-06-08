@@ -358,30 +358,6 @@ impl TenantContainerBuilder {
 
         Validator::validate_spec(spec)?;
 
-        if let Some(process) = spec.process() {
-            if let Some(io_priority) = process.io_priority() {
-                let priority = io_priority.priority();
-                let iop_class_res = serde_json::to_string(&io_priority.class());
-                match iop_class_res {
-                    Ok(iop_class) => {
-                        if !(0..=7).contains(&priority) {
-                            tracing::error!(
-                                ?priority,
-                                "io priority '{}' not between 0 and 7 (inclusive), class '{}' not in (IO_PRIO_CLASS_RT,IO_PRIO_CLASS_BE,IO_PRIO_CLASS_IDLE)",
-                                priority,
-                                iop_class
-                            );
-                            Err(ErrInvalidSpec::IoPriority)?;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!(?priority, ?e, "failed to parse io priority class");
-                        Err(ErrInvalidSpec::IoPriority)?;
-                    }
-                }
-            }
-        }
-
         if let Some(mounts) = spec.mounts() {
             utils::validate_mount_options(mounts)?;
         }
