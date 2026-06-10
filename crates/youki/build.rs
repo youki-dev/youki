@@ -8,18 +8,17 @@ pub fn main() -> Result<()> {
     // so we only match for error of git, and bubble up all other errors
     // via ? do error out the build
     // also see https://github.com/rustyhorde/vergen/issues/174#issuecomment-3631861105
-    match Emitter::default()
+    if Emitter::default()
         .add_instructions(&Rustc::all_rustc())?
         .add_instructions(&Gitcl::all_git())
+        .and_then(|emitter| emitter.emit())
+        .is_err()
     {
-        Ok(emitter) => emitter.emit()?,
-        Err(_) => {
-            // currently we only inject git sha, so just this
-            // else we will need to think of more elegant way to check
-            // what failed, and what needs to be added
-            println!("cargo:rustc-env=VERGEN_GIT_SHA=unknown");
-            println!("cargo:rustc-env=VERGEN_RUSTC_SEMVER=unknown");
-        }
+        // currently we only inject git sha, so just this
+        // else we will need to think of more elegant way to check
+        // what failed, and what needs to be added
+        println!("cargo:rustc-env=VERGEN_GIT_SHA=unknown");
+        println!("cargo:rustc-env=VERGEN_RUSTC_SEMVER=unknown");
     }
 
     // Embed libseccomp version at build time (only when seccomp feature is enabled)
