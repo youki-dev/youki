@@ -36,7 +36,7 @@ procfs = "0.18.0"
 quickcheck = "1"
 rand = "0.10.1"
 rbpf = "0.4.1"
-regex = { version = "1.12.3", default-features = false }
+regex = { version = "1.12.4", default-features = false }
 rust-criu = "0.5.0"
 safe-path = "0.1.0"
 scopeguard = "1.2.0"
