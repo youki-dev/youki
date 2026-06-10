@@ -387,7 +387,7 @@ fn checkpoint_and_restore_with_debug() -> TestResult {
 fn checkpoint_and_restore_cgroupns() -> TestResult {
     // cgroupv2 already enables cgroupns, so only run on cgroups v1 with cgroupns
     if !is_cgroups_v1() || !has_cgroupns() {
-        return TestResult::Skipped;
+        return TestResult::Skipped("requires cgroups v1 with cgroupns enabled".to_string());
     }
     simple_cr(
         &[],
@@ -598,7 +598,9 @@ fn checkpoint_pre_dump_bad_parent_path() -> TestResult {
 // (runc: @test "checkpoint --pre-dump and restore")
 fn checkpoint_pre_dump_and_restore() -> TestResult {
     if !criu_has_feature("mem_dirty_track") {
-        return TestResult::Skipped;
+        return TestResult::Skipped(
+            "CRIU does not support the mem_dirty_track feature".to_string(),
+        );
     }
 
     let ctx = match setup_cr_test(|_, _| {}) {
@@ -692,7 +694,7 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
 // (runc: @test "checkpoint --lazy-pages and restore")
 fn checkpoint_lazy_pages_and_restore() -> TestResult {
     if !criu_has_feature("uffd-noncoop") {
-        return TestResult::Skipped;
+        return TestResult::Skipped("CRIU does not support the uffd-noncoop feature".to_string());
     }
 
     let mut ctx = match setup_cr_test(|_, _| {}) {
@@ -913,7 +915,9 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
 // (runc: @test "checkpoint and restore in external network namespace")
 fn checkpoint_and_restore_in_external_netns() -> TestResult {
     if !criu_has_feature("external_net_ns") {
-        return TestResult::Skipped;
+        return TestResult::Skipped(
+            "CRIU does not support the external_net_ns feature".to_string(),
+        );
     }
 
     let ns_name = format!("contest-{}", generate_uuid());
