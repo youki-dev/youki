@@ -1,10 +1,10 @@
 use anyhow::Result;
-use vergen_gitcl::{Emitter, GitclBuilder, RustcBuilder};
+use vergen_gitcl::{Emitter, Gitcl, Rustc};
 
 pub fn main() -> Result<()> {
     if Emitter::default()
-        .add_instructions(&GitclBuilder::all_git()?)?
-        .add_instructions(&RustcBuilder::all_rustc()?)?
+        .add_instructions(&Gitcl::all_git())?
+        .add_instructions(&Rustc::all_rustc())?
         .emit()
         .is_err()
     {
