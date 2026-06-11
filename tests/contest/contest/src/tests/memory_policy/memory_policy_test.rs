@@ -114,7 +114,7 @@ fn invalid_mode_string() -> TestResult {
         TestResult::Passed => TestResult::Failed(anyhow!(
             "expected error for invalid memory policy mode, found none"
         )),
-        TestResult::Skipped => TestResult::Skipped,
+        TestResult::Skipped(reason) => TestResult::Skipped(reason),
     }
 }
 
@@ -142,7 +142,7 @@ fn invalid_flag_string() -> TestResult {
         TestResult::Passed => TestResult::Failed(anyhow!(
             "expected error for invalid memory policy flag, found none"
         )),
-        TestResult::Skipped => TestResult::Skipped,
+        TestResult::Skipped(reason) => TestResult::Skipped(reason),
     }
 }
 
@@ -166,7 +166,7 @@ fn missing_mode_but_nodes_present() -> TestResult {
         TestResult::Passed => {
             TestResult::Failed(anyhow!("expected error for missing mode, found none"))
         }
-        TestResult::Skipped => TestResult::Skipped,
+        TestResult::Skipped(reason) => TestResult::Skipped(reason),
     }
 }
 
@@ -194,7 +194,7 @@ fn syscall_invalid_arguments() -> TestResult {
         TestResult::Passed => TestResult::Failed(anyhow!(
             "expected error for invalid set_mempolicy args, found none"
         )),
-        TestResult::Skipped => TestResult::Skipped,
+        TestResult::Skipped(reason) => TestResult::Skipped(reason),
     }
 }
 
@@ -222,7 +222,7 @@ fn bind_way_too_large_node_number() -> TestResult {
         TestResult::Passed => TestResult::Failed(anyhow!(
             "expected error for invalid memory policy node, found none"
         )),
-        TestResult::Skipped => TestResult::Skipped,
+        TestResult::Skipped(reason) => TestResult::Skipped(reason),
     }
 }
 

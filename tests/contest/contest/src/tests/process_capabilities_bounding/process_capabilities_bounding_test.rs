@@ -83,7 +83,7 @@ fn bounding_unset_with_other_caps_fails_test() -> TestResult {
             }
         }
         TestResult::Passed => TestResult::Failed(anyhow!("container start unexpectedly succeeded")),
-        TestResult::Skipped => TestResult::Failed(anyhow!("test was skipped unexpectedly")),
+        TestResult::Skipped(_) => TestResult::Failed(anyhow!("test was skipped unexpectedly")),
     }
 }
 

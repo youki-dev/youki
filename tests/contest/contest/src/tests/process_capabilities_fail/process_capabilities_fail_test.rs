@@ -76,7 +76,7 @@ fn process_capabilities_fail_test() -> TestResult {
                 TestResult::Failed(anyhow!("unexpected error: {e:?}"))
             }
         }
-        TestResult::Skipped => TestResult::Failed(anyhow!("test was skipped unexpectedly.")),
+        TestResult::Skipped(_) => TestResult::Failed(anyhow!("test was skipped unexpectedly.")),
         TestResult::Passed => {
             TestResult::Failed(anyhow!("container creation succeeded unexpectedly."))
         }
