@@ -138,6 +138,12 @@ pub enum ErrInvalidSpec {
     SysctlNotInSeparateNamespace(String),
     #[error("invalid intelRdt.closID (must not contain '.', '..', or '/')")]
     InvalidIntelRdtClosId,
+    #[error("time namespace offsets specified, but time namespace isn't enabled in the config")]
+    TimeNamespace,
+    #[error(
+        "time namespace enabled, but both namespace path and time offsets specified -- you may only provide one"
+    )]
+    TimeOffsetsWithPath,
 }
 
 #[derive(Debug, thiserror::Error)]
