@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::fd::AsRawFd;
+#[cfg(feature = "libseccomp")]
+use std::os::fd::{FromRawFd, OwnedFd};
 use std::path::PathBuf;
 
 use nix::sys::wait::{WaitStatus, waitpid};
@@ -165,8 +167,6 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
 
     loop {
         let (msg, fds) = init_main_receiver.recv_message_with_fds()?;
-        #[cfg_attr(not(feature = "libseccomp"), allow(unused_variables))]
-        let received_fd: Option<OwnedFd> = fds.map(|fds| unsafe { OwnedFd::from_raw_fd(fds[0]) });
         match msg {
             Message::InitReady => {
                 if pending.has_pending() {
@@ -187,7 +187,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                 let linux = pending.net_linux.take().ok_or_else(|| {
                     unexpected_init_message(EXPECTED_INIT_MESSAGE, Message::SetupNetworkDeviceReady)
                 })?;
-                move_network_devices_to_container(linux, init_pid, &mut init_sender)?;
+                handle_setup_network_device(linux, init_pid, &mut init_sender)?;
             }
             Message::SeccompNotify => {
                 let seccomp = pending.seccomp.take().ok_or_else(|| {
@@ -195,9 +195,11 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                 })?;
                 #[cfg(feature = "libseccomp")]
                 {
-                    let seccomp_fd = received_fd.ok_or(ProcessError::Channel(
-                        channel::ChannelError::MissingSeccompFds,
-                    ))?;
+                    // Wrap the SCM_RIGHTS fd in OwnedFd so it is closed even if
+                    // forwarding to the listener fails partway through.
+                    let seccomp_fd = fds
+                        .map(|fds| unsafe { OwnedFd::from_raw_fd(fds[0]) })
+                        .ok_or(ProcessError::Channel(channel::ChannelError::MissingSeccompFds))?;
                     handle_seccomp_notify(
                         container_args,
                         init_pid,
@@ -206,10 +208,11 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                         &mut init_sender,
                     )?;
                 }
-                // Without libseccomp, `pending.seccomp` is always `None`, so
-                // the take above has already returned an error.
+                // Without libseccomp, `pending.seccomp` is always `None`, so the
+                // take above has already returned an error; this arm is
+                // effectively unreachable.
                 #[cfg(not(feature = "libseccomp"))]
-                let _ = seccomp;
+                let _ = (seccomp, fds);
             }
             Message::ExecFailed(err) => {
                 return Err(ProcessError::Channel(channel::ChannelError::ExecError(err)));
@@ -219,7 +222,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                     err,
                 )));
             }
-            other => return Err(unexpected_init_message(EXPECTED_INIT_MESSAGE, other)),
+            unexpected => return Err(unexpected_init_message(EXPECTED_INIT_MESSAGE, unexpected)),
         }
     }
 
@@ -379,16 +382,14 @@ fn handle_hook_request(
     Ok(())
 }
 
+/// Builds the OCI `ContainerProcessState` sent to the seccomp listener
+/// alongside the notify fd.
 #[cfg(feature = "libseccomp")]
-fn handle_seccomp_notify(
+fn build_container_process_state(
     container_args: &ContainerArgs,
     init_pid: Pid,
     seccomp: &oci_spec::runtime::LinuxSeccomp,
-    seccomp_fd: OwnedFd,
-    init_sender: &mut channel::InitSender,
-) -> Result<()> {
-    // The caller owns the received seccomp notify fd. It is closed when the
-    // OwnedFd is dropped, including if forwarding to the listener fails partway.
+) -> Result<oci_spec::runtime::ContainerProcessState> {
     let container = container_args
         .container
         .as_ref()
@@ -400,7 +401,6 @@ fn handle_seccomp_notify(
         ContainerType::TenantContainer { .. } => oci_spec::runtime::ContainerState::Running,
     };
 
-    // Build OCI-compliant ContainerProcessState using builder pattern
     let oci_state = oci_spec::runtime::StateBuilder::default()
         .version(OCI_VERSION)
         .id(container.state.id.clone())
@@ -411,14 +411,25 @@ fn handle_seccomp_notify(
         .build()
         .map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
 
-    let state = oci_spec::runtime::ContainerProcessStateBuilder::default()
+    oci_spec::runtime::ContainerProcessStateBuilder::default()
         .version(OCI_VERSION)
         .fds(vec![SECCOMP_FD_NAME.to_string()])
         .pid(init_pid.as_raw())
         .metadata(seccomp.listener_metadata().clone().unwrap_or_default())
         .state(oci_state)
         .build()
-        .map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
+        .map_err(|e| ProcessError::OciStateBuild(e.to_string()))
+}
+
+#[cfg(feature = "libseccomp")]
+fn handle_seccomp_notify(
+    container_args: &ContainerArgs,
+    init_pid: Pid,
+    seccomp: &oci_spec::runtime::LinuxSeccomp,
+    seccomp_fd: OwnedFd,
+    init_sender: &mut channel::InitSender,
+) -> Result<()> {
+    let state = build_container_process_state(container_args, init_pid, seccomp)?;
 
     let listener_path = seccomp
         .listener_path()
@@ -457,10 +468,10 @@ fn setup_mapping(config: &UserNamespaceConfig, pid: Pid) -> Result<()> {
     Ok(())
 }
 
-/// Moves configured network devices from the host to the container's network
-/// namespace, then reports the preserved network addresses back to the init
-/// process.
-fn move_network_devices_to_container(
+/// Handles a `SetupNetworkDeviceReady` request: moves configured network
+/// devices from the host into the container's network namespace, then reports
+/// the preserved network addresses back to the init process.
+fn handle_setup_network_device(
     linux: &Linux,
     init_pid: Pid,
     init_sender: &mut channel::InitSender,
