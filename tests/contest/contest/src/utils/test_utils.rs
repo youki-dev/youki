@@ -2,6 +2,7 @@
 //! Similar to https://github.com/opencontainers/runtime-tools/blob/master/validation/util/test.go
 use std::collections::HashMap;
 use std::ffi::OsStr;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread::sleep;
@@ -279,6 +280,38 @@ pub fn pause_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
         .spawn()
         .context("could not pause container")?;
     Ok(res)
+}
+
+pub fn update_container<P: AsRef<Path>>(id: &str, dir: P, args: &[&str]) -> Result<Child> {
+    let res = runtime_command(dir)
+        .arg("update")
+        .args(args)
+        .arg(id)
+        .spawn()
+        .context("could not update container")?;
+    Ok(res)
+}
+
+pub fn update_container_with_stdin<P: AsRef<Path>>(
+    id: &str,
+    dir: P,
+    args: &[&str],
+    stdin_data: &str,
+) -> Result<Child> {
+    let mut child = runtime_command(dir)
+        .arg("update")
+        .args(args)
+        .arg(id)
+        .stdin(Stdio::piped())
+        .spawn()
+        .context("could not update container")?;
+    child
+        .stdin
+        .take()
+        .expect("stdin was piped")
+        .write_all(stdin_data.as_bytes())
+        .context("failed to write to stdin")?;
+    Ok(child)
 }
 
 pub fn resume_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
