@@ -300,13 +300,13 @@ mod tests {
 
     #[test]
     fn test_validate_spec_for_uts_namespace() {
-        let sepc_no_uts_with_hostname = SpecBuilder::default()
+        let spec_no_uts_with_hostname = SpecBuilder::default()
             .hostname("some-host")
             .linux(LinuxBuilder::default().namespaces(vec![]).build().unwrap())
             .build()
             .unwrap();
         assert!(matches!(
-            Validator::validate_spec_for_uts_namespace(&sepc_no_uts_with_hostname).unwrap_err(),
+            Validator::validate_spec_for_uts_namespace(&spec_no_uts_with_hostname).unwrap_err(),
             ErrInvalidSpec::HostnameWithoutUTS
         ));
 
