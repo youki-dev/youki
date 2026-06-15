@@ -271,18 +271,12 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     Ok((init_pid, need_to_clean_up_intel_rdt_subdirectory))
 }
 
-// What the main process is prepared to receive from the init process at any
-// point of the event loop.
 const EXPECTED_INIT_MESSAGE: &str = "InitReady or a pending init setup request";
 
-/// Init requests the main process must serve before accepting InitReady. Each
-/// entry is `Some` while the request is still outstanding and carries the
-/// config the handler needs; receiving the request takes it, so a duplicate
-/// request is reported as unexpected.
+/// Init-side setup requests that must be handled before accepting `InitReady`.
 ///
-/// Each entry mirrors the condition under which the init process sends the
-/// corresponding request, so an entry left pending at InitReady means the
-/// protocol was violated.
+/// Each request is consumed when its message is received, so duplicates are
+/// rejected as unexpected messages.
 struct PendingInitRequests<'a> {
     hooks: Option<&'a oci_spec::runtime::Hooks>,
     net_linux: Option<&'a Linux>,
@@ -291,23 +285,16 @@ struct PendingInitRequests<'a> {
 
 impl<'a> PendingInitRequests<'a> {
     fn new(container_type: ContainerType, spec: &'a Spec) -> Self {
-        // The init process requests hooks only for init containers with hooks
-        // configured.
         let hooks = match container_type {
             ContainerType::InitContainer => spec.hooks().as_ref(),
             ContainerType::TenantContainer { .. } => None,
         };
-        // The init process requests network device setup only when devices are
-        // configured, for both init and tenant containers.
         let net_linux = spec.linux().as_ref().filter(|linux| {
             linux
                 .net_devices()
                 .as_ref()
                 .is_some_and(|devices| !devices.is_empty())
         });
-        // The init process sends the seccomp notify fd only when the filter
-        // contains a notify action (`initialize_seccomp` returns a fd iff
-        // `is_notify`), for both init and tenant containers.
         #[cfg(feature = "libseccomp")]
         let seccomp = spec
             .linux()
@@ -458,19 +445,16 @@ fn setup_mapping(config: &UserNamespaceConfig, pid: Pid) -> Result<()> {
     Ok(())
 }
 
-/// Handles a `SetupNetworkDeviceReady` request: moves configured network
-/// devices from the host into the container's network namespace, then reports
-/// the preserved network addresses back to the init process.
+/// Moves configured network devices from the host to the container's network namespace.
+/// This runs after the init process has joined its namespace, then transfers each
+/// configured device while preserving network addresses.
 fn handle_setup_network_device(
     linux: &Linux,
     init_pid: Pid,
     init_sender: &mut channel::InitSender,
 ) -> Result<()> {
-    // Spec validation (`validate_spec_for_net_devices`) guarantees that net
-    // devices come with a network namespace, and the caller only dispatches
-    // here when devices are configured. Fail loudly if either is missing:
-    // returning without replying would leave the init process blocked on
-    // `wait_for_move_network_device`.
+    // Builder validation should make these cases unreachable. Return an error
+    // instead of silently skipping the reply init is waiting for.
     let devices = match linux.net_devices() {
         Some(devs) if !devs.is_empty() => devs,
         _ => {

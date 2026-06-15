@@ -84,10 +84,7 @@ mod tests {
 
     use super::*;
 
-    // Verifies that the encoded container process state is delivered to the
-    // listener (alongside the seccomp notify fd via SCM_RIGHTS). The main
-    // process event loop now owns the channel handshake, so this exercises the
-    // socket transmission in isolation.
+    // Verifies that the encoded state is delivered with the seccomp notify fd via SCM_RIGHTS.
     #[test]
     #[serial]
     fn test_sync_seccomp_send_msg() -> Result<()> {
