@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
-use std::os::fd::AsRawFd;
 #[cfg(feature = "libseccomp")]
 use std::os::fd::OwnedFd;
+use std::os::fd::{AsRawFd, RawFd};
+#[cfg(feature = "libseccomp")]
+use std::path::Path;
 use std::path::PathBuf;
 
 use nix::sys::wait::{WaitStatus, waitpid};
@@ -329,27 +331,35 @@ fn handle_hook_request(
     init_pid: Pid,
     init_sender: &mut channel::InitSender,
 ) -> Result<()> {
+    handle_hook_request_with(
+        hooks,
+        container_args,
+        init_pid,
+        init_sender,
+        |hooks, state, pid| {
+            hooks::run_hooks(hooks, Some(state), None, Some(pid), None).map_err(Into::into)
+        },
+    )
+}
+
+fn handle_hook_request_with(
+    hooks: &oci_spec::runtime::Hooks,
+    container_args: &ContainerArgs,
+    init_pid: Pid,
+    init_sender: &mut channel::InitSender,
+    mut run_hooks: impl FnMut(
+        Option<&Vec<oci_spec::runtime::Hook>>,
+        &crate::container::State,
+        Pid,
+    ) -> Result<()>,
+) -> Result<()> {
     if let Some(container) = container_args.container.as_ref() {
-        hooks::run_hooks(
-            hooks.prestart().as_ref(),
-            Some(&container.state),
-            None,
-            Some(init_pid),
-            None,
-        )
-        .map_err(|err| {
+        run_hooks(hooks.prestart().as_ref(), &container.state, init_pid).map_err(|err| {
             tracing::error!("failed to run prestart hooks: {}", err);
             err
         })?;
 
-        hooks::run_hooks(
-            hooks.create_runtime().as_ref(),
-            Some(&container.state),
-            None,
-            Some(init_pid),
-            None,
-        )
-        .map_err(|err| {
+        run_hooks(hooks.create_runtime().as_ref(), &container.state, init_pid).map_err(|err| {
             tracing::error!("failed to run create runtime hooks: {}", err);
             err
         })?;
@@ -406,6 +416,32 @@ fn handle_seccomp_notify(
     seccomp_fd: OwnedFd,
     init_sender: &mut channel::InitSender,
 ) -> Result<()> {
+    handle_seccomp_notify_with(
+        container_args,
+        init_pid,
+        seccomp,
+        seccomp_fd,
+        init_sender,
+        |listener_path, encoded_state, fd| {
+            crate::process::seccomp_listener::sync_seccomp_send_msg(
+                listener_path,
+                encoded_state,
+                fd,
+            )
+            .map_err(Into::into)
+        },
+    )
+}
+
+#[cfg(feature = "libseccomp")]
+fn handle_seccomp_notify_with(
+    container_args: &ContainerArgs,
+    init_pid: Pid,
+    seccomp: &oci_spec::runtime::LinuxSeccomp,
+    seccomp_fd: OwnedFd,
+    init_sender: &mut channel::InitSender,
+    send_msg: impl FnOnce(&Path, &[u8], RawFd) -> Result<()>,
+) -> Result<()> {
     let state = build_container_process_state(container_args, init_pid, seccomp)?;
 
     let listener_path = seccomp
@@ -414,11 +450,7 @@ fn handle_seccomp_notify(
         .ok_or(crate::process::seccomp_listener::SeccompListenerError::MissingListenerPath)?;
     let encoded_state = serde_json::to_vec(&state)
         .map_err(crate::process::seccomp_listener::SeccompListenerError::EncodeState)?;
-    crate::process::seccomp_listener::sync_seccomp_send_msg(
-        listener_path,
-        &encoded_state,
-        seccomp_fd.as_raw_fd(),
-    )?;
+    send_msg(listener_path, &encoded_state, seccomp_fd.as_raw_fd())?;
     init_sender.seccomp_notify_done()?;
     // `seccomp_fd` is dropped here, closing the duplicated fd. The SCM_RIGHTS
     // msg already duplicated the fd to the process behind the listener.
@@ -453,8 +485,22 @@ fn handle_setup_network_device(
     init_pid: Pid,
     init_sender: &mut channel::InitSender,
 ) -> Result<()> {
-    // Builder validation should make these cases unreachable. Return an error
-    // instead of silently skipping the reply init is waiting for.
+    handle_setup_network_device_with(linux, init_pid, init_sender, |name, fd, net_dev| {
+        dev_change_net_namespace(name, fd, net_dev).map_err(Into::into)
+    })
+}
+
+fn handle_setup_network_device_with(
+    linux: &Linux,
+    init_pid: Pid,
+    init_sender: &mut channel::InitSender,
+    mut move_device: impl FnMut(
+        &str,
+        RawFd,
+        &oci_spec::runtime::LinuxNetDevice,
+    ) -> Result<Vec<crate::network::cidr::CidrAddress>>,
+) -> Result<()> {
+    // Missing config after `SetupNetworkDeviceReady` would leave init waiting for a reply.
     let devices = match linux.net_devices() {
         Some(devs) if !devs.is_empty() => devs,
         _ => {
@@ -498,7 +544,7 @@ fn handle_setup_network_device(
     let addrs_map = devices
         .iter()
         .map(|(name, net_dev)| {
-            let addrs = dev_change_net_namespace(name, netns_fd, net_dev).map_err(|err| {
+            let addrs = move_device(name, netns_fd, net_dev).map_err(|err| {
                 tracing::error!("failed to dev_change_net_namespace: {}", err);
                 err
             })?;
@@ -513,18 +559,61 @@ fn handle_setup_network_device(
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::rc::Rc;
 
     use anyhow::Result;
+    use libcgroups::common::CgroupConfig;
     use nix::sched::{CloneFlags, unshare};
     use nix::unistd::{self, getgid, getuid};
     use oci_spec::runtime::{
-        HooksBuilder, LinuxBuilder, LinuxIdMappingBuilder, LinuxNetDevice, SpecBuilder,
+        HooksBuilder, LinuxBuilder, LinuxIdMappingBuilder, LinuxNamespaceBuilder, LinuxNetDevice,
+        SpecBuilder,
     };
     use serial_test::serial;
 
     use super::*;
-    use crate::process::channel::{intermediate_channel, main_channel};
+    use crate::container::Container;
+    use crate::network::cidr::CidrAddress;
+    use crate::notify_socket::NotifyListener;
+    use crate::process::channel::{init_channel, intermediate_channel, main_channel};
+    use crate::syscall::syscall::SyscallType;
     use crate::user_ns::UserNamespaceIDMapper;
+    use crate::workload;
+
+    fn test_container_args(
+        container: Option<Container>,
+    ) -> Result<(tempfile::TempDir, ContainerArgs)> {
+        let tmp = tempfile::tempdir()?;
+        let notify_listener = NotifyListener::new(&tmp.path().join("notify.sock"))?;
+        let container_id = "test-container".to_string();
+        let args = ContainerArgs {
+            container_type: ContainerType::InitContainer,
+            syscall: SyscallType::default(),
+            spec: Rc::new(SpecBuilder::default().build()?),
+            rootfs: tmp.path().join("rootfs"),
+            console_socket: None,
+            notify_listener,
+            preserve_fds: 0,
+            container,
+            user_ns_config: None,
+            cgroup_config: CgroupConfig {
+                cgroup_path: tmp.path().join("cgroup"),
+                systemd_cgroup: false,
+                container_name: container_id,
+            },
+            detached: false,
+            executor: workload::default::get_executor(),
+            no_pivot: false,
+            stdin: None,
+            stdout: None,
+            stderr: None,
+            as_sibling: false,
+            pid_file: None,
+        };
+
+        Ok((tmp, args))
+    }
 
     #[test]
     fn pending_hooks_only_for_init_container_with_hooks() -> Result<()> {
@@ -618,6 +707,309 @@ mod tests {
         // A second take models a duplicate request from the init process,
         // which the event loop reports as an unexpected message.
         assert!(pending.hooks.take().is_none());
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn handle_hook_request_sends_hook_done() -> Result<()> {
+        let (_tmp, container_args) = test_container_args(Some(Container::default()))?;
+        let hooks = HooksBuilder::default().build()?;
+        let (mut init_sender, mut init_receiver) = init_channel()?;
+
+        handle_hook_request_with(
+            &hooks,
+            &container_args,
+            Pid::from_raw(1),
+            &mut init_sender,
+            |_, _, _| Ok(()),
+        )?;
+
+        init_receiver.wait_for_hook_request_done()?;
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn handle_hook_request_propagates_run_hooks_error() -> Result<()> {
+        let (_tmp, container_args) = test_container_args(Some(Container::default()))?;
+        let hooks = HooksBuilder::default().build()?;
+        let (mut init_sender, mut init_receiver) = init_channel()?;
+
+        let err = handle_hook_request_with(
+            &hooks,
+            &container_args,
+            Pid::from_raw(1),
+            &mut init_sender,
+            |_, _, _| {
+                Err(ProcessError::Hooks(
+                    crate::hooks::HookError::NonZeroExitCode(1),
+                ))
+            },
+        )
+        .expect_err("run_hooks failure should propagate");
+        assert!(matches!(
+            err,
+            ProcessError::Hooks(crate::hooks::HookError::NonZeroExitCode(1))
+        ));
+
+        // A failed hook must not report HookDone to the init process. Closing
+        // the sender lets the receiver observe that nothing was sent instead of
+        // blocking forever.
+        init_sender.close()?;
+        assert!(init_receiver.wait_for_hook_request_done().is_err());
+        Ok(())
+    }
+
+    #[cfg(feature = "libseccomp")]
+    #[test]
+    #[serial]
+    fn handle_seccomp_notify_sends_notify_done() -> Result<()> {
+        use oci_spec::runtime::LinuxSeccompBuilder;
+
+        let (_tmp, container_args) = test_container_args(Some(Container::default()))?;
+        let seccomp = LinuxSeccompBuilder::default()
+            .listener_path("/tmp/seccomp-listener.sock")
+            .build()?;
+        let seccomp_fd: std::os::fd::OwnedFd = std::fs::File::open("/dev/null")?.into();
+        let (mut init_sender, mut init_receiver) = init_channel()?;
+
+        handle_seccomp_notify_with(
+            &container_args,
+            Pid::from_raw(1),
+            &seccomp,
+            seccomp_fd,
+            &mut init_sender,
+            |_, _, _| Ok(()),
+        )?;
+
+        init_receiver.wait_for_seccomp_request_done()?;
+        Ok(())
+    }
+
+    #[cfg(feature = "libseccomp")]
+    #[test]
+    #[serial]
+    fn handle_seccomp_notify_requires_container_state() -> Result<()> {
+        use oci_spec::runtime::LinuxSeccompBuilder;
+
+        let (_tmp, container_args) = test_container_args(None)?;
+        let seccomp = LinuxSeccompBuilder::default()
+            .listener_path("/tmp/seccomp-listener.sock")
+            .build()?;
+        let seccomp_fd: std::os::fd::OwnedFd = std::fs::File::open("/dev/null")?.into();
+        let (mut init_sender, mut init_receiver) = init_channel()?;
+
+        let err = handle_seccomp_notify_with(
+            &container_args,
+            Pid::from_raw(1),
+            &seccomp,
+            seccomp_fd,
+            &mut init_sender,
+            |_, _, _| panic!("send_msg must not run when the container state is missing"),
+        )
+        .expect_err("missing container state should be rejected");
+        assert!(matches!(err, ProcessError::ContainerStateRequired));
+
+        init_sender.close()?;
+        assert!(init_receiver.wait_for_seccomp_request_done().is_err());
+        Ok(())
+    }
+
+    #[cfg(feature = "libseccomp")]
+    #[test]
+    #[serial]
+    fn handle_seccomp_notify_requires_listener_path() -> Result<()> {
+        use oci_spec::runtime::LinuxSeccompBuilder;
+
+        let (_tmp, container_args) = test_container_args(Some(Container::default()))?;
+        // No listener_path configured.
+        let seccomp = LinuxSeccompBuilder::default().build()?;
+        let seccomp_fd: std::os::fd::OwnedFd = std::fs::File::open("/dev/null")?.into();
+        let (mut init_sender, mut init_receiver) = init_channel()?;
+
+        let err = handle_seccomp_notify_with(
+            &container_args,
+            Pid::from_raw(1),
+            &seccomp,
+            seccomp_fd,
+            &mut init_sender,
+            |_, _, _| panic!("send_msg must not run when the listener path is missing"),
+        )
+        .expect_err("missing listener path should be rejected");
+        assert!(matches!(
+            err,
+            ProcessError::SeccompListener(
+                crate::process::seccomp_listener::SeccompListenerError::MissingListenerPath
+            )
+        ));
+
+        init_sender.close()?;
+        assert!(init_receiver.wait_for_seccomp_request_done().is_err());
+        Ok(())
+    }
+
+    #[cfg(feature = "libseccomp")]
+    #[test]
+    #[serial]
+    fn handle_seccomp_notify_propagates_send_error() -> Result<()> {
+        use oci_spec::runtime::LinuxSeccompBuilder;
+
+        let (_tmp, container_args) = test_container_args(Some(Container::default()))?;
+        let seccomp = LinuxSeccompBuilder::default()
+            .listener_path("/tmp/seccomp-listener.sock")
+            .build()?;
+        let seccomp_fd: std::os::fd::OwnedFd = std::fs::File::open("/dev/null")?.into();
+        let (mut init_sender, mut init_receiver) = init_channel()?;
+
+        let err = handle_seccomp_notify_with(
+            &container_args,
+            Pid::from_raw(1),
+            &seccomp,
+            seccomp_fd,
+            &mut init_sender,
+            |_, _, _| {
+                Err(ProcessError::SeccompListener(
+                    crate::process::seccomp_listener::SeccompListenerError::UnixOther(
+                        nix::errno::Errno::EIO,
+                    ),
+                ))
+            },
+        )
+        .expect_err("listener send failure should propagate");
+        assert!(matches!(
+            err,
+            ProcessError::SeccompListener(
+                crate::process::seccomp_listener::SeccompListenerError::UnixOther(_)
+            )
+        ));
+
+        // The send to the listener failed, so the init process must not be told
+        // the notify succeeded.
+        init_sender.close()?;
+        assert!(init_receiver.wait_for_seccomp_request_done().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn handle_setup_network_device_requires_devices() -> Result<()> {
+        let linux = LinuxBuilder::default().build()?;
+        let (mut init_sender, _) = init_channel()?;
+
+        let err = handle_setup_network_device(&linux, Pid::from_raw(1), &mut init_sender)
+            .expect_err("missing network devices should be rejected");
+
+        assert!(matches!(
+            err,
+            ProcessError::NetworkDeviceSetup("no network devices are configured")
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn handle_setup_network_device_requires_network_namespace() -> Result<()> {
+        let devices = HashMap::from([("eth0".to_string(), LinuxNetDevice::default())]);
+        let namespace = LinuxNamespaceBuilder::default()
+            .typ(LinuxNamespaceType::Mount)
+            .build()?;
+        let linux = LinuxBuilder::default()
+            .net_devices(devices)
+            .namespaces(vec![namespace])
+            .build()?;
+        let (mut init_sender, _) = init_channel()?;
+
+        let err = handle_setup_network_device(&linux, Pid::from_raw(1), &mut init_sender)
+            .expect_err("missing network namespace should be rejected");
+
+        assert!(matches!(
+            err,
+            ProcessError::NetworkDeviceSetup("the network namespace is not configured")
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn handle_setup_network_device_reports_missing_namespace_path() -> Result<()> {
+        let devices = HashMap::from([("eth0".to_string(), LinuxNetDevice::default())]);
+        let namespace = LinuxNamespaceBuilder::default()
+            .typ(LinuxNamespaceType::Network)
+            .path("/proc/0/ns/net")
+            .build()?;
+        let linux = LinuxBuilder::default()
+            .net_devices(devices)
+            .namespaces(vec![namespace])
+            .build()?;
+        let (mut init_sender, _) = init_channel()?;
+
+        let err = handle_setup_network_device(&linux, Pid::from_raw(1), &mut init_sender)
+            .expect_err("missing network namespace path should be rejected");
+
+        assert!(matches!(err, ProcessError::Network(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn handle_setup_network_device_sends_moved_addresses() -> Result<()> {
+        let netns = tempfile::NamedTempFile::new()?;
+        let devices = HashMap::from([("eth0".to_string(), LinuxNetDevice::default())]);
+        let namespace = LinuxNamespaceBuilder::default()
+            .typ(LinuxNamespaceType::Network)
+            .path(netns.path())
+            .build()?;
+        let linux = LinuxBuilder::default()
+            .net_devices(devices)
+            .namespaces(vec![namespace])
+            .build()?;
+        let (mut init_sender, mut init_receiver) = init_channel()?;
+        let moved_addr = CidrAddress {
+            prefix_len: 24,
+            address: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10)),
+        };
+
+        handle_setup_network_device_with(&linux, Pid::from_raw(1), &mut init_sender, |_, _, _| {
+            Ok(vec![moved_addr.clone()])
+        })?;
+
+        let moved = init_receiver.wait_for_move_network_device()?;
+        let eth0 = moved.get("eth0").expect("eth0 addresses should be sent");
+        assert_eq!(eth0.len(), 1);
+        assert_eq!(eth0[0].prefix_len, moved_addr.prefix_len);
+        assert_eq!(eth0[0].address, moved_addr.address);
+        Ok(())
+    }
+
+    #[test]
+    fn handle_setup_network_device_propagates_move_error() -> Result<()> {
+        let netns = tempfile::NamedTempFile::new()?;
+        let devices = HashMap::from([("eth0".to_string(), LinuxNetDevice::default())]);
+        let namespace = LinuxNamespaceBuilder::default()
+            .typ(LinuxNamespaceType::Network)
+            .path(netns.path())
+            .build()?;
+        let linux = LinuxBuilder::default()
+            .net_devices(devices)
+            .namespaces(vec![namespace])
+            .build()?;
+        let (mut init_sender, mut init_receiver) = init_channel()?;
+
+        let err = handle_setup_network_device_with(
+            &linux,
+            Pid::from_raw(1),
+            &mut init_sender,
+            |_, _, _| {
+                Err(ProcessError::Network(
+                    crate::network::NetworkError::ClientInitializeError,
+                ))
+            },
+        )
+        .expect_err("a failed device move should propagate");
+        assert!(matches!(err, ProcessError::Network(_)));
+
+        // The move failed, so the init process must not receive a (partial)
+        // address map. Closing the sender lets the receiver observe that nothing
+        // was sent instead of blocking.
+        init_sender.close()?;
+        assert!(init_receiver.wait_for_move_network_device().is_err());
         Ok(())
     }
 
