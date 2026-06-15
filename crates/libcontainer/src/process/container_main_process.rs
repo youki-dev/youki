@@ -3,7 +3,7 @@ use std::fs;
 use std::fs::File;
 use std::os::fd::AsRawFd;
 #[cfg(feature = "libseccomp")]
-use std::os::fd::{FromRawFd, OwnedFd};
+use std::os::fd::OwnedFd;
 use std::path::PathBuf;
 
 use nix::sys::wait::{WaitStatus, waitpid};
@@ -166,7 +166,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     let mut pending = PendingInitRequests::new(container_args.container_type, &container_args.spec);
 
     loop {
-        let (msg, fds) = init_main_receiver.recv_message_with_fds()?;
+        let (msg, fd) = init_main_receiver.recv_init_message()?;
         match msg {
             Message::InitReady => {
                 if pending.has_pending() {
@@ -195,11 +195,9 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                 })?;
                 #[cfg(feature = "libseccomp")]
                 {
-                    // Wrap the SCM_RIGHTS fd in OwnedFd so it is closed even if
-                    // forwarding to the listener fails partway through.
-                    let seccomp_fd = fds
-                        .map(|fds| unsafe { OwnedFd::from_raw_fd(fds[0]) })
-                        .ok_or(ProcessError::Channel(channel::ChannelError::MissingSeccompFds))?;
+                    let seccomp_fd = fd.ok_or(ProcessError::Channel(
+                        channel::ChannelError::MissingSeccompFds,
+                    ))?;
                     handle_seccomp_notify(
                         container_args,
                         init_pid,
@@ -212,15 +210,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                 // take above has already returned an error; this arm is
                 // effectively unreachable.
                 #[cfg(not(feature = "libseccomp"))]
-                let _ = (seccomp, fds);
-            }
-            Message::ExecFailed(err) => {
-                return Err(ProcessError::Channel(channel::ChannelError::ExecError(err)));
-            }
-            Message::OtherError(err) => {
-                return Err(ProcessError::Channel(channel::ChannelError::OtherError(
-                    err,
-                )));
+                let _ = (seccomp, fd);
             }
             unexpected => return Err(unexpected_init_message(EXPECTED_INIT_MESSAGE, unexpected)),
         }
