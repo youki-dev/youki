@@ -119,25 +119,6 @@ impl Validator {
                     .namespaces()
                     .as_ref()
                     .is_some_and(|ns| ns.iter().any(|n| n.typ() == LinuxNamespaceType::Ipc));
-                let is_host_net = match linux
-                    .namespaces()
-                    .as_ref()
-                    .and_then(|ns| ns.iter().find(|n| n.typ() == LinuxNamespaceType::Network))
-                {
-                    // No NEWNET namespace means it uses the host's
-                    None => true,
-                    Some(ns) => {
-                        match ns.path() {
-                            // No path means a completely fresh, isolated namespace is being created
-                            None => false,
-                            // Empty string is effectively the same as None
-                            Some(path) if path.as_os_str().is_empty() => false,
-                            // A path is provided; we must verify it isn't the host's network namespace
-                            Some(path) => is_host_net_ns(path)
-                                .map_err(|e| ErrInvalidSpec::InvalidNetNsPath(e.to_string()))?,
-                        }
-                    }
-                };
                 let has_uts = linux
                     .namespaces()
                     .as_ref()
@@ -157,6 +138,9 @@ impl Validator {
                 valid_ipc_sysctls.insert("kernel.shmmni");
                 valid_ipc_sysctls.insert("kernel.shm_rmid_forced");
 
+                let mut is_host_net_cache: Option<bool> = None;
+                let namespaces = linux.namespaces().as_ref();
+
                 for key in sysctls.keys() {
                     let s = key.replace('/', ".");
                     if valid_ipc_sysctls.contains(&s.as_str()) || s.starts_with("fs.mqueue.") {
@@ -167,6 +151,29 @@ impl Validator {
                     }
 
                     if s.starts_with("net.") {
+                        let is_host_net = if let Some(cached_result) = is_host_net_cache {
+                            cached_result
+                        } else {
+                            let computed_result = match namespaces.and_then(|ns| {
+                                ns.iter().find(|n| n.typ() == LinuxNamespaceType::Network)
+                            }) {
+                                // No NEWNET namespace means it uses the host's
+                                None => true,
+                                Some(ns) => match ns.path() {
+                                    // No path means a completely fresh, isolated namespace is being created
+                                    None => false,
+                                    // Empty string is effectively the same as None
+                                    Some(path) if path.as_os_str().is_empty() => false,
+                                    // A path is provided; we must verify it isn't the host's network namespace
+                                    Some(path) => is_host_net_ns(path).map_err(|e| {
+                                        ErrInvalidSpec::InvalidNetNsPath(e.to_string())
+                                    })?,
+                                },
+                            };
+                            is_host_net_cache = Some(computed_result);
+                            computed_result
+                        };
+
                         if is_host_net {
                             return Err(ErrInvalidSpec::SysctlNotAllowedInHostNet(s));
                         }
