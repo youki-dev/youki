@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -98,20 +98,26 @@ pub fn delete_resctrl_subdirectory(path: &Path) -> Result<()> {
 }
 
 fn delete_resctrl_subdirectory_with_dir(dir: &Path, path: &Path) -> Result<()> {
-    let container_resctrl_path = path.canonicalize().map_err(|err| {
-        tracing::error!(?dir, ?path, "failed to canonicalize path: {err}");
-        IntelRdtError::Canonicalize(err)
-    })?;
+    let container_resctrl_path = match path.canonicalize() {
+        Ok(p) => p,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            tracing::error!(?dir, ?path, "failed to canonicalize path: {err}");
+            return Err(IntelRdtError::Canonicalize(err));
+        }
+    };
 
     match container_resctrl_path.parent() {
         // Make sure the container_id really exists and the directory
         // is inside the resctrl fs.
         Some(parent) => {
             if parent == dir && container_resctrl_path.exists() {
-                fs::remove_dir(&container_resctrl_path).map_err(|err| {
-                      tracing::error!(path = ?container_resctrl_path, "failed to remove resctrl subdirectory: {err}");
-                      IntelRdtError::RemoveSubdirectory(err)
-                  })?;
+                if let Err(err) = fs::remove_dir(&container_resctrl_path) {
+                    if err.kind() != ErrorKind::NotFound {
+                        tracing::error!(path = ?container_resctrl_path, "failed to remove resctrl subdirectory: {err}");
+                        return Err(IntelRdtError::RemoveSubdirectory(err));
+                    }
+                }
             } else {
                 return Err(IntelRdtError::NoResctrlSubdirectory);
             }
@@ -129,13 +135,15 @@ fn delete_resctrl_subdirectory_with_dir(dir: &Path, path: &Path) -> Result<()> {
 /// is inherently trusted as it was resolved securely during container creation.
 pub fn delete_resctrl_monitoring_subdirectory(path: &Path) -> Result<()> {
     if path.exists() {
-        fs::remove_dir(path).map_err(|err| {
-            tracing::error!(
-                ?path,
-                "failed to remove resctrl monitoring subdirectory: {err}"
-            );
-            IntelRdtError::RemoveSubdirectory(err)
-        })?;
+        if let Err(err) = fs::remove_dir(path) {
+            if err.kind() != ErrorKind::NotFound {
+                tracing::error!(
+                    ?path,
+                    "failed to remove resctrl monitoring subdirectory: {err}"
+                );
+                return Err(IntelRdtError::RemoveSubdirectory(err));
+            }
+        }
     }
 
     Ok(())
