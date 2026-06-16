@@ -14,6 +14,7 @@ use crate::notify_socket::NotifyListener;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::intel_rdt::{
     delete_resctrl_monitoring_subdirectory, delete_resctrl_subdirectory,
+    delete_resctrl_subdirectory_by_id,
 };
 use crate::process::{self};
 use crate::syscall::syscall::SyscallType;
@@ -204,12 +205,17 @@ impl ContainerBuilderImpl {
 
         if let Some(container) = &mut self.container {
             // update status and pid of the container process
+            let needs_cleanup = intel_rdt_dir.is_some();
             container
                 .set_status(ContainerStatus::Created)
                 .set_creator(nix::unistd::geteuid().as_raw())
                 .set_pid(init_pid.as_raw())
                 .set_intel_rdt_dir(intel_rdt_dir)
                 .set_intel_rdt_monitoring_dir(intel_rdt_monitoring_dir)
+                // DEPRECATED: We populate the legacy boolean field here so that if a user creates
+                // a container with this version of youki and then downgrades their binary to an
+                // older version, the older binary will still know to clean up the resctrl directory.
+                .set_clean_up_intel_rdt_directory(needs_cleanup)
                 .save()?;
         }
 
@@ -244,6 +250,11 @@ impl ContainerBuilderImpl {
             if let Some(path) = container.intel_rdt_dir() {
                 if let Err(e) = delete_resctrl_subdirectory(path) {
                     tracing::error!(path = ?path, error = ?e, "failed to delete resctrl subdirectory");
+                    errors.push(e.to_string());
+                }
+            } else if let Some(true) = container.clean_up_intel_rdt_subdirectory() {
+                if let Err(e) = delete_resctrl_subdirectory_by_id(container.id()) {
+                    tracing::error!(id = ?container.id(), error = ?e, "failed to delete resctrl subdirectory by id");
                     errors.push(e.to_string());
                 }
             }

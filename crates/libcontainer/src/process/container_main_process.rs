@@ -139,7 +139,7 @@ pub fn container_main_process(
 
     // The intermediate process will send the init pid once it forks the init
     // process.  The intermediate process should exit after this point.
-    let init_pid = main_receiver.wait_for_intermediate_ready()?;
+    let init_pid = intermediate_main_receiver.wait_for_intermediate_ready()?;
     let mut intel_rdt_dir = None;
     let mut intel_rdt_monitoring_dir = None;
 

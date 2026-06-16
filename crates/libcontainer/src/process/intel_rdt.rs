@@ -71,6 +71,19 @@ pub enum ParseLineError {
 
 type Result<T> = std::result::Result<T, IntelRdtError>;
 
+/// Removes the main resource control group (CLOS) directory for the container using its ID.
+/// This is kept for backwards compatibility with older state.json files where only
+/// `clean_up_intel_rdt_subdirectory` was stored instead of the explicit path.
+pub fn delete_resctrl_subdirectory_by_id(id: &str) -> Result<()> {
+    let dir = find_resctrl_mount_point().map_err(|err| {
+        tracing::error!("failed to find resctrl mount point: {err}");
+        err
+    })?;
+
+    let path = dir.join(id);
+    delete_resctrl_subdirectory_with_dir(&dir, &path)
+}
+
 /// Removes the main resource control group (CLOS) directory for the container.
 /// This function includes a safety check (`parent == dir`) to ensure that only directories
 /// immediately under the resctrl mount point are deleted, preventing accidental deletion
@@ -80,25 +93,32 @@ pub fn delete_resctrl_subdirectory(path: &Path) -> Result<()> {
         tracing::error!("failed to find resctrl mount point: {err}");
         err
     })?;
+
+    delete_resctrl_subdirectory_with_dir(&dir, path)
+}
+
+fn delete_resctrl_subdirectory_with_dir(dir: &Path, path: &Path) -> Result<()> {
     let container_resctrl_path = path.canonicalize().map_err(|err| {
         tracing::error!(?dir, ?path, "failed to canonicalize path: {err}");
         IntelRdtError::Canonicalize(err)
     })?;
+
     match container_resctrl_path.parent() {
         // Make sure the container_id really exists and the directory
         // is inside the resctrl fs.
         Some(parent) => {
             if parent == dir && container_resctrl_path.exists() {
                 fs::remove_dir(&container_resctrl_path).map_err(|err| {
-                    tracing::error!(path = ?container_resctrl_path, "failed to remove resctrl subdirectory: {err}");
-                    IntelRdtError::RemoveSubdirectory(err)
-                })?;
+                      tracing::error!(path = ?container_resctrl_path, "failed to remove resctrl subdirectory: {err}");
+                      IntelRdtError::RemoveSubdirectory(err)
+                  })?;
             } else {
                 return Err(IntelRdtError::NoResctrlSubdirectory);
             }
         }
         None => return Err(IntelRdtError::NoResctrlSubdirectoryParent),
     }
+
     Ok(())
 }
 
@@ -451,17 +471,27 @@ fn is_same_schema(combined_schema: &str, existing_schema: &str) -> Result<bool> 
 /// Retrieves the schemata data to be written to the resctrl filesystem.
 /// OCI runtime-spec v1.3.0 introduced the generic `schemata` list, which
 /// supersedes `l3_cache_schema` and `mem_bw_schema`. If the list is provided,
-/// we join the array elements with a newline `\n` to format them correctly
-/// for the Linux kernel's `schemata` file requirements. If omitted, we
-/// fall back to combining the legacy fields.
+/// we append it to the legacy fields (l3_cache_schema and mem_bw_schema) and
+/// join the array elements with a newline `\n` to format them correctly
+/// for the Linux kernel's `schemata` file requirements.
 fn get_schemata_data(intel_rdt: &LinuxIntelRdt) -> Option<String> {
+    let legacy_schemata =
+        combine_l3_cache_and_mem_bw_schemas(intel_rdt.l3_cache_schema(), intel_rdt.mem_bw_schema());
+
     if let Some(schemata) = intel_rdt.schemata() {
         if !schemata.is_empty() {
-            return Some(schemata.join("\n"));
+            let modern_schemata = schemata.join("\n");
+
+            // If there's legacy schemata, prepend it (L3 first, then MB, then generic list)
+            if let Some(legacy) = legacy_schemata {
+                return Some(format!("{}\n{}", legacy, modern_schemata));
+            }
+
+            return Some(modern_schemata);
         }
     }
 
-    combine_l3_cache_and_mem_bw_schemas(intel_rdt.l3_cache_schema(), intel_rdt.mem_bw_schema())
+    legacy_schemata
 }
 
 /// Combines the l3_cache_schema and mem_bw_schema values together with the
@@ -762,11 +792,16 @@ mod test {
     fn test_get_schemata_data() {
         use oci_spec::runtime::LinuxIntelRdtBuilder;
         let rdt_modern = LinuxIntelRdtBuilder::default()
+            .l3_cache_schema("L3:0=f;1=f0".to_owned())
+            .mem_bw_schema("MB:0=70;1=20".to_owned())
             .schemata(vec!["L2:0=f;1=f0".to_owned(), "SMBA:0=20".to_owned()])
             .build()
             .unwrap();
         let combined_modern = get_schemata_data(&rdt_modern).unwrap();
-        assert_eq!(combined_modern, "L2:0=f;1=f0\nSMBA:0=20");
+        assert_eq!(
+            combined_modern,
+            "L3:0=f;1=f0\nMB:0=70;1=20\nL2:0=f;1=f0\nSMBA:0=20",
+        );
     }
 
     #[test]
@@ -866,7 +901,7 @@ mod test {
         let res = write_resctrl_schemata(tmp.path(), "foobar", &rdt_different, true, false);
         assert!(res.is_err());
 
-        // Test modern schemata field overriding everything
+        // Test modern schemata field merging
         let rdt_schemata = LinuxIntelRdtBuilder::default()
             .l3_cache_schema(l3_1.to_owned())
             .mem_bw_schema(bw_1.to_owned())
@@ -881,7 +916,10 @@ mod test {
         assert!(res.is_ok());
         let written_data =
             fs::read_to_string(tmp.path().join("foobar_modern").join("schemata")).unwrap();
-        assert_eq!(written_data, "L2:0=f;1=f0\n");
+        assert_eq!(
+            written_data,
+            "L3:0=f;1=f0\nL3:2=f\nMB:0=70;1=20\nL2:0=f;1=f0\n"
+        );
 
         Ok(())
     }

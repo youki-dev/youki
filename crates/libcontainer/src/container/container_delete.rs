@@ -10,6 +10,7 @@ use crate::error::LibcontainerError;
 use crate::hooks;
 use crate::process::intel_rdt::{
     delete_resctrl_monitoring_subdirectory, delete_resctrl_subdirectory,
+    delete_resctrl_subdirectory_by_id,
 };
 
 impl Container {
@@ -104,6 +105,12 @@ impl Container {
                     "failed to delete resctrl subdirectory due to: {err:?}, continue to delete"
                 );
             }
+        } else if let Some(true) = self.clean_up_intel_rdt_subdirectory() {
+            if let Err(err) = delete_resctrl_subdirectory_by_id(self.id()) {
+                tracing::warn!(
+                    "failed to delete resctrl subdirectory by id due to: {err:?}, continue to delete"
+                );
+            }
         }
 
         if let Some(config) = config_opt {
@@ -122,11 +129,17 @@ impl Container {
                     })?;
 
             if let Some(hooks) = config.hooks.as_ref() {
-                hooks::run_hooks(hooks.poststop().as_ref(), Some(&self.state), None, None)
-                    .map_err(|err| {
-                        tracing::error!(err = ?err, "failed to run post stop hooks");
-                        err
-                    })?;
+                hooks::run_hooks(
+                    hooks.poststop().as_ref(),
+                    Some(&self.state),
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(|err| {
+                    tracing::error!(err = ?err, "failed to run post stop hooks");
+                    err
+                })?;
             }
         }
 
