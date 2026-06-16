@@ -48,6 +48,9 @@ fn main() {
         "memory_policy" => tests::validate_memory_policy(&spec),
         "devices" => tests::validate_devices(&spec),
         "root_readonly" => tests::test_validate_root_readonly(&spec),
+        "process_capabilities_bounding_unset" => {
+            tests::validate_process_capabilities_bounding_unset(&spec)
+        }
         "process" => tests::validate_process(&spec),
         "process_user" => tests::validate_process_user(&spec),
         "process_rlimits" => tests::validate_process_rlimits(&spec),

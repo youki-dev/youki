@@ -61,7 +61,13 @@ impl TestableGroup for TestGroup {
                         if t.can_run() {
                             (t.get_name(), t.run())
                         } else {
-                            (t.get_name(), TestResult::Skipped)
+                            (
+                                t.get_name(),
+                                TestResult::Skipped(
+                                    "test cannot run in the current environment (run_all, parallel)"
+                                        .to_string(),
+                                ),
+                            )
                         }
                     });
                     collector.push(_t);
@@ -76,7 +82,13 @@ impl TestableGroup for TestGroup {
                 ret.push(if t.can_run() {
                     (t.get_name(), t.run())
                 } else {
-                    (t.get_name(), TestResult::Skipped)
+                    (
+                        t.get_name(),
+                        TestResult::Skipped(
+                            "test cannot run in the current environment (run_all, sequential)"
+                                .to_string(),
+                        ),
+                    )
                 });
             }
         }
@@ -98,7 +110,13 @@ impl TestableGroup for TestGroup {
                         if t.can_run() {
                             (t.get_name(), t.run())
                         } else {
-                            (t.get_name(), TestResult::Skipped)
+                            (
+                                t.get_name(),
+                                TestResult::Skipped(
+                                    "test cannot run in the current environment (run_selected, parallel)"
+                                        .to_string(),
+                                ),
+                            )
                         }
                     });
                     collector.push(_t);
@@ -113,7 +131,13 @@ impl TestableGroup for TestGroup {
                 ret.push(if t.can_run() {
                     (t.get_name(), t.run())
                 } else {
-                    (t.get_name(), TestResult::Skipped)
+                    (
+                        t.get_name(),
+                        TestResult::Skipped(
+                            "test cannot run in the current environment (run_selected, sequential)"
+                                .to_string(),
+                        ),
+                    )
                 });
             }
         }

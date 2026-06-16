@@ -104,6 +104,10 @@ pub enum ErrInvalidSpec {
     IoPriority,
     #[error("invalid scheduler config for process")]
     Scheduler,
+    #[error("cannot allocate tty if youki will detach without setting console socket")]
+    ConsoleSocketRequired,
+    #[error("cannot use console socket if youki will not detach or allocate tty")]
+    InvalidConsoleSocket,
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -74,12 +74,13 @@ fn translate_arch(arch: Arch) -> Result<ScmpArch> {
         Arch::ScmpArchS390 => ScmpArch::S390,
         Arch::ScmpArchS390x => ScmpArch::S390X,
         Arch::ScmpArchRiscv64 => ScmpArch::Riscv64,
-        // The following architectures were added in OCI runtime-spec v1.3.0
-        // (Parisc, Parisc64, Loongarch64, M68k, Sh), but are not yet
-        // supported by the libseccomp rust crate (v0.4.0).
-        // Returning an error for now until libseccomp updates its `ScmpArch` enum.
-        _ => return Err(SeccompError::UnsupportedArch(format!("{arch:?}"))),
-    })
+        Arch::ScmpArchParisc => ScmpArch::Parisc,
+        Arch::ScmpArchParisc64 => ScmpArch::Parisc64,
+        Arch::ScmpArchLoongarch64 => ScmpArch::Loongarch64,
+        Arch::ScmpArchM68k => ScmpArch::M68k,
+        Arch::ScmpArchSh => ScmpArch::Sh,
+        Arch::ScmpArchSheb => ScmpArch::Sheb,
+    }
 }
 
 fn translate_action(action: LinuxSeccompAction, errno: Option<u32>) -> Result<ScmpAction> {

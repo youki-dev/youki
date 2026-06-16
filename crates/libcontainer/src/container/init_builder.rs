@@ -73,6 +73,10 @@ impl InitContainerBuilder {
     /// Creates a new container
     pub fn build(self) -> Result<Container, LibcontainerError> {
         let spec = self.load_spec()?;
+        // validate terminal field against console socket presence before any side effects
+        // (mirrors runc's checkTerminal called at the top of runner.run())
+        self.base.check_terminal(&spec, self.detached)?;
+
         let container_dir = self.create_container_dir()?;
 
         let mut container = self.create_container_state(&container_dir)?;

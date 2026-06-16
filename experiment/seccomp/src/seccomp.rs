@@ -26,9 +26,9 @@ pub enum SeccompError {
     Apply(String),
     #[error("valid indices are 0–5")]
     InvalidArgumentSize,
-    #[error("Cant ScmpActNotify to default action")]
+    #[error("Can't ScmpActNotify to default action")]
     InvalidDefaultAction,
-    #[error("Cant filter to write system call")]
+    #[error("Can't filter to write system call")]
     InvalidSystemCall,
 }
 

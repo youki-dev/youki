@@ -91,7 +91,7 @@ Install the build dependencies and then run:
 just youki-dev # or youki-release
 ```
 
-Install the build dependencies using your distribution's package manger
+Install the build dependencies using your distribution's package manager
 
 #### Debian, Ubuntu and related distributions
 ```console

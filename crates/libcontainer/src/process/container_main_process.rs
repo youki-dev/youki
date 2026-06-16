@@ -58,7 +58,8 @@ pub fn container_main_process(
     // cloned process, we have to be deligent about closing any unused channel.
     // At minimum, we have to close down any unused senders. The corresponding
     // receivers will be cleaned up once the senders are closed down.
-    let (mut main_sender, mut main_receiver) = channel::main_channel()?;
+    let (mut intermediate_main_sender, mut intermediate_main_receiver) = channel::main_channel()?;
+    let (mut init_main_sender, mut init_main_receiver) = channel::main_channel()?;
     let mut inter_chan = channel::intermediate_channel()?;
     let mut init_chan = channel::init_channel()?;
 
@@ -73,12 +74,13 @@ pub fn container_main_process(
                 container_args,
                 &mut inter_chan,
                 &mut init_chan,
-                &mut main_sender,
+                &mut intermediate_main_sender,
+                &mut init_main_sender,
             ) {
                 Ok(_) => 0,
                 Err(err) => {
                     tracing::error!("failed to run intermediate process {}", err);
-                    match main_sender.send_error(err.to_string()) {
+                    match intermediate_main_sender.send_error(err.to_string()) {
                         Ok(_) => {}
                         Err(e) => {
                             tracing::error!(
@@ -107,7 +109,11 @@ pub fn container_main_process(
 
     // Close down unused fds. The corresponding fds are duplicated to the
     // child process during clone.
-    main_sender.close().map_err(|err| {
+    intermediate_main_sender.close().map_err(|err| {
+        tracing::error!("failed to close unused sender: {}", err);
+        err
+    })?;
+    init_main_sender.close().map_err(|err| {
         tracing::error!("failed to close unused sender: {}", err);
         err
     })?;
@@ -119,7 +125,7 @@ pub fn container_main_process(
     // the main process to set up uid and gid mapping, once the intermediate
     // process enters into a new user namespace.
     if let Some(config) = &container_args.user_ns_config {
-        main_receiver.wait_for_mapping_request()?;
+        intermediate_main_receiver.wait_for_mapping_request()?;
         setup_mapping(config, intermediate_pid)?;
         inter_sender.mapping_written()?;
     }
@@ -158,13 +164,14 @@ pub fn container_main_process(
 
     if matches!(container_args.container_type, ContainerType::InitContainer) {
         if let Some(hooks) = container_args.spec.hooks() {
-            main_receiver.wait_for_hook_request()?;
+            init_main_receiver.wait_for_hook_request()?;
             if let Some(container_for_hooks) = &container_args.container {
                 hooks::run_hooks(
                     hooks.prestart().as_ref(),
                     Some(&container_for_hooks.state),
                     None,
                     Some(init_pid),
+                    None,
                 )
                 .map_err(|err| {
                     tracing::error!("failed to run prestart hooks: {}", err);
@@ -176,6 +183,7 @@ pub fn container_main_process(
                     Some(&container_for_hooks.state),
                     None,
                     Some(init_pid),
+                    None,
                 )
                 .map_err(|err| {
                     tracing::error!("failed to run create runtime hooks: {}", err);
@@ -187,7 +195,12 @@ pub fn container_main_process(
     }
 
     if let Some(linux) = container_args.spec.linux() {
-        move_network_devices_to_container(linux, init_pid, &mut main_receiver, &mut init_sender)?;
+        move_network_devices_to_container(
+            linux,
+            init_pid,
+            &mut init_main_receiver,
+            &mut init_sender,
+        )?;
 
         #[cfg(feature = "libseccomp")]
         if let Some(seccomp) = linux.seccomp() {
@@ -225,7 +238,7 @@ pub fn container_main_process(
                 seccomp,
                 &state,
                 &mut init_sender,
-                &mut main_receiver,
+                &mut init_main_receiver,
             )?;
         }
     }
@@ -237,7 +250,7 @@ pub fn container_main_process(
         err
     })?;
 
-    main_receiver.wait_for_init_ready().map_err(|err| {
+    init_main_receiver.wait_for_init_ready().map_err(|err| {
         tracing::error!("failed to wait for init ready: {}", err);
         err
     })?;
@@ -256,8 +269,13 @@ pub fn container_main_process(
         err
     })?;
 
-    main_receiver.close().map_err(|err| {
-        tracing::error!("failed to close main process receiver: {}", err);
+    intermediate_main_receiver.close().map_err(|err| {
+        tracing::error!("failed to close intermediate main receiver: {}", err);
+        err
+    })?;
+
+    init_main_receiver.close().map_err(|err| {
+        tracing::error!("failed to close init main receiver: {}", err);
         err
     })?;
 

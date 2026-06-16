@@ -49,8 +49,8 @@ impl TestManager {
                 TestResult::Passed => {
                     println!("ok");
                 }
-                TestResult::Skipped => {
-                    println!("skipped");
+                TestResult::Skipped(reason) => {
+                    println!("skipped\n\t{reason}");
                 }
                 TestResult::Failed(e) => {
                     println!("not ok\n\t{e}");

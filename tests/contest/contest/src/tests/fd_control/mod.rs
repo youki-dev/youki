@@ -34,7 +34,7 @@ fn open_devnull_no_cloexec() -> Result<(fs::File, RawFd)> {
     Ok((devnull, devnull_fd))
 }
 
-// If not opening any other FDs, verify youki itself doesnt open anything that gets
+// If not opening any other FDs, verify youki itself doesn't open anything that gets
 // leaked in if passing --preserve-fds with a large number
 // NOTE: this will also fail if the test harness itself starts leaking FDs
 fn only_stdio_test() -> TestResult {

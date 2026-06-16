@@ -57,6 +57,45 @@ pub(crate) fn get_test_no_capabilities() -> TestResult {
     })
 }
 
+pub(crate) fn get_test_unset_bounding_capabilities() -> TestResult {
+    let mut unset_caps = LinuxCapabilitiesBuilder::default()
+        .effective(HashSet::new())
+        .inheritable(HashSet::new())
+        .permitted(HashSet::new())
+        .ambient(HashSet::new())
+        .build()
+        .expect("build unset_caps failed");
+    unset_caps.set_bounding(None);
+
+    let spec = test_result!(super::create_spec(Some(
+        ProcessBuilder::default()
+            .no_new_privileges(true)
+            .capabilities(unset_caps)
+    )));
+
+    test_outside_container(&spec, &|data| {
+        test_result!(check_container_created(&data));
+
+        let id = &data.id;
+        let dir = &data.bundle;
+
+        let start_result = start_container(id, dir).unwrap().wait().unwrap();
+        if !start_result.success() {
+            return TestResult::Failed(anyhow!("container start failed"));
+        }
+
+        let (stdout, _) =
+            exec_container(id, dir, &["cat", "/proc/self/status"], None, &[]).expect("exec failed");
+
+        // CapBnd is the set of bounding capabilities.
+        if !stdout.contains("CapBnd:\t0000000000000000") {
+            return TestResult::Failed(anyhow!("CapBnd unexpected output: {}", stdout));
+        }
+
+        TestResult::Passed
+    })
+}
+
 pub(crate) fn get_test_new_privileges() -> TestResult {
     let no_caps = LinuxCapabilitiesBuilder::default()
         .bounding(HashSet::new())

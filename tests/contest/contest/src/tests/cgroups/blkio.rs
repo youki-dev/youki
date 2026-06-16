@@ -16,7 +16,7 @@ use crate::utils::test_utils::{CGROUP_ROOT, check_container_created};
 // for some reason, Ubuntu and other distributions might come with a kernel compiled with mq-deadline
 // schedular, which does not expose/support options such as blkio.weight, blkio.weight_device
 // for these we can skip all the tests, or skip the corresponding tests
-// the current implementation skips corresponding tests, so one can test atleast bps and iops
+// the current implementation skips corresponding tests, so one can test at least bps and iops
 // device on such systems
 // check https://superuser.com/questions/1449688/a-couple-of-blkio-cgroup-files-are-not-present-in-linux-kernel-5
 // and https://github.com/opencontainers/runc/issues/140

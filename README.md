@@ -295,6 +295,8 @@ Thanks to all the people who already contributed!
 
 The Linux Foundation® (TLF) has registered trademarks and uses trademarks. For a list of TLF trademarks, see [Trademark Usage](https://www.linuxfoundation.org/legal/trademark-usage).
 
+Copyright Contributors to youki, established as youki a Series of LF Projects, LLC.
+
 
 ## License
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fyouki-dev%2Fyouki.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fyouki-dev%2Fyouki?ref=badge_large)

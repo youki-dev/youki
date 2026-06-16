@@ -8,6 +8,7 @@ use nc;
 use nix::mount::{MntFlags, MsFlags};
 use nix::sched::CloneFlags;
 use nix::sys::stat::Mode;
+use nix::sys::statfs::statfs;
 use nix::unistd::{self, Gid, Uid, close, dup2, setsid};
 use oci_spec::runtime::{
     IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxNetDevice, LinuxPersonalityDomain,
@@ -108,6 +109,7 @@ pub fn container_init_process(
                 ctx.container.map(|c| &c.state),
                 None,
                 None,
+                None,
             )
             .map_err(|err| {
                 tracing::error!(?err, "failed to run create container hooks");
@@ -198,12 +200,22 @@ pub fn container_init_process(
 
     if matches!(args.container_type, ContainerType::InitContainer) {
         if ctx.rootfs_ro {
+            let current_flags = statfs("/")
+                .map_err(|err| {
+                    tracing::error!(?err, "failed to statfs root '/' to get current mount flags");
+                    InitProcessError::SyscallOther(SyscallError::Nix(err))
+                })?
+                .flags()
+                .bits();
             ctx.syscall
                 .mount(
                     None,
                     Path::new("/"),
                     None,
-                    MsFlags::MS_RDONLY | MsFlags::MS_REMOUNT | MsFlags::MS_BIND,
+                    MsFlags::MS_RDONLY
+                        | MsFlags::MS_REMOUNT
+                        | MsFlags::MS_BIND
+                        | MsFlags::from_bits_truncate(current_flags),
                     None,
                 )
                 .map_err(|err| {
@@ -407,6 +419,12 @@ pub fn container_init_process(
     // add HOME into envs if not exists
     set_home_env_if_not_exists(&mut ctx.envs, ctx.process.user().uid().into());
 
+    // Save a copy of the process environment for StartContainer hooks before
+    // setup_envs consumes ctx.envs. This matches runc's behavior where
+    // StartContainer hooks without explicit env use the container init
+    // process's environment.
+    let start_container_env = ctx.envs.clone();
+
     args.executor.validate(ctx.spec)?;
     args.executor.setup_envs(ctx.envs)?;
 
@@ -447,6 +465,7 @@ pub fn container_init_process(
                 ctx.container.map(|c| &c.state),
                 None,
                 None,
+                Some(&start_container_env),
             )
             .map_err(|err| {
                 tracing::error!(?err, "failed to run start container hooks");
