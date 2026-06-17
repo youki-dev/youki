@@ -4,7 +4,6 @@ use std::path::Component::RootDir;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use nix::errno::Errno;
 use nix::unistd::Pid;
 
 use super::controller::Controller;
@@ -100,7 +99,7 @@ impl Manager {
             .map(|c| format!("+{c}"))
             .collect();
 
-        Self::enable_controllers(&self.root_path, &controllers)?;
+        Self::enable_controllers(&self.root_path, &controllers);
 
         let mut current_path = self.root_path.clone();
         let mut components = self
@@ -121,20 +120,11 @@ impl Manager {
             // last component cannot have subtree_control enabled due to internal process constraint
             // if this were set, writing to the cgroups.procs file will fail with Erno 16 (device or resource busy)
             if components.peek().is_some() {
-                Self::enable_controllers(&current_path, &controllers)?;
+                Self::enable_controllers(&current_path, &controllers);
             }
         }
 
         common::write_cgroup_file(self.full_path.join(CGROUP_PROCS), pid)?;
-        Ok(())
-    }
-
-    /// Writes a list of controllers to the `{path}/cgroup.subtree_control` file
-    fn write_controllers(path: &Path, controllers: &[String]) -> Result<(), WrappedIoError> {
-        for controller in controllers {
-            common::write_cgroup_file_str(path.join(CGROUP_SUBTREE_CONTROL), controller)?;
-        }
-
         Ok(())
     }
 
@@ -158,34 +148,31 @@ impl Manager {
             .collect())
     }
 
-    /// Enables `controllers` in `{path}/cgroup.subtree_control`.
+    /// Best-effort enabling of `controllers` in `{path}/cgroup.subtree_control`.
     ///
-    /// Under cgroup v2 delegation an unprivileged process owns only its own
-    /// sub-hierarchy; the mount root and the intermediate ancestors leading to
-    /// it are owned upstream, have the controllers already enabled, and are
-    /// read-only to us. Write only the missing controllers, and tolerate
-    /// EROFS/EACCES when they are already enabled at `path`.
-    fn enable_controllers(path: &Path, controllers: &[String]) -> Result<(), V2ManagerError> {
-        let missing = Self::missing_controllers(path, controllers)?;
-        if missing.is_empty() {
-            return Ok(());
-        }
-
-        match Self::write_controllers(path, &missing) {
-            Ok(()) => Ok(()),
+    /// Controllers that are already enabled are skipped. A write that fails is
+    /// logged but not treated as fatal: under cgroup v2 delegation the mount
+    /// root and the ancestors above our delegation boundary are owned upstream
+    /// and read-only to us, yet already have the controllers enabled. If a
+    /// controller is genuinely needed, applying its limit later fails with a
+    /// clear error. This mirrors runc's fs2 create behavior.
+    fn enable_controllers(path: &Path, controllers: &[String]) {
+        let to_enable = match Self::missing_controllers(path, controllers) {
+            Ok(missing) => missing,
             Err(err) => {
-                let delegated = matches!(
-                    err.inner().raw_os_error().map(Errno::from_raw),
-                    Some(Errno::EROFS) | Some(Errno::EACCES)
-                );
-                if delegated && Self::missing_controllers(path, &missing)?.is_empty() {
-                    tracing::debug!(
-                        "controllers {missing:?} already enabled in {path:?}, ignoring read-only subtree_control"
-                    );
-                    return Ok(());
-                }
+                tracing::debug!("could not read {path:?}/{CGROUP_SUBTREE_CONTROL}: {err}; attempting to enable all controllers");
+                controllers.to_vec()
+            }
+        };
 
-                Err(err.into())
+        for controller in &to_enable {
+            if let Err(err) =
+                common::write_cgroup_file_str(path.join(CGROUP_SUBTREE_CONTROL), controller)
+            {
+                tracing::debug!(
+                    "could not enable {controller} in {path:?}/{CGROUP_SUBTREE_CONTROL}: {err}; \
+                     a limit requiring it will fail when applied"
+                );
             }
         }
     }
