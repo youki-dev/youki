@@ -100,7 +100,7 @@ impl Manager {
             .map(|c| format!("+{c}"))
             .collect();
 
-        Self::write_root_controllers(&self.root_path, &controllers)?;
+        Self::enable_controllers(&self.root_path, &controllers)?;
 
         let mut current_path = self.root_path.clone();
         let mut components = self
@@ -121,7 +121,7 @@ impl Manager {
             // last component cannot have subtree_control enabled due to internal process constraint
             // if this were set, writing to the cgroups.procs file will fail with Erno 16 (device or resource busy)
             if components.peek().is_some() {
-                Self::write_controllers(&current_path, &controllers)?;
+                Self::enable_controllers(&current_path, &controllers)?;
             }
         }
 
@@ -158,13 +158,14 @@ impl Manager {
             .collect())
     }
 
-    /// Enables `controllers` in the cgroup root's subtree_control file.
+    /// Enables `controllers` in `{path}/cgroup.subtree_control`.
     ///
     /// Under cgroup v2 delegation an unprivileged process owns only its own
-    /// sub-hierarchy, not the mount root, where the controllers are already
-    /// enabled and the file is read-only to us. Write only the missing
-    /// controllers, and tolerate EROFS/EACCES when they are already present.
-    fn write_root_controllers(path: &Path, controllers: &[String]) -> Result<(), V2ManagerError> {
+    /// sub-hierarchy; the mount root and the intermediate ancestors leading to
+    /// it are owned upstream, have the controllers already enabled, and are
+    /// read-only to us. Write only the missing controllers, and tolerate
+    /// EROFS/EACCES when they are already enabled at `path`.
+    fn enable_controllers(path: &Path, controllers: &[String]) -> Result<(), V2ManagerError> {
         let missing = Self::missing_controllers(path, controllers)?;
         if missing.is_empty() {
             return Ok(());
@@ -179,7 +180,7 @@ impl Manager {
                 );
                 if delegated && Self::missing_controllers(path, &missing)?.is_empty() {
                     tracing::debug!(
-                        "controllers {missing:?} already enabled in {path:?}, ignoring read-only root"
+                        "controllers {missing:?} already enabled in {path:?}, ignoring read-only subtree_control"
                     );
                     return Ok(());
                 }
