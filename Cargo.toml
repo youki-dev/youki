@@ -37,7 +37,7 @@ quickcheck = "1"
 rand = "0.10.1"
 rbpf = "0.4.1"
 regex = { version = "1.12.4", default-features = false }
-rust-criu = "0.5.0"
+rust-criu = "0.6.0"
 safe-path = "0.1.0"
 scopeguard = "1.2.0"
 serde = "1.0"
@@ -59,6 +59,9 @@ wasmer = "7.0.1"
 wasmer-wasix = "0.700.1"
 wasmtime = "45.0.1"
 which = "8.0.3"
+
+[patch.crates-io]
+rust-criu = { git = "https://github.com/checkpoint-restore/rust-criu", rev = "d37684db5b28d01f5bbbcd1ec2e47d9e1ae66a2a" }
 
 [profile.release]
 lto = true
