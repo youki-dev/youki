@@ -4,6 +4,7 @@ use std::path::Component::RootDir;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use nix::errno::Errno;
 use nix::unistd::Pid;
 
 use super::controller::Controller;
@@ -99,7 +100,7 @@ impl Manager {
             .map(|c| format!("+{c}"))
             .collect();
 
-        Self::write_controllers(&self.root_path, &controllers)?;
+        Self::write_root_controllers(&self.root_path, &controllers)?;
 
         let mut current_path = self.root_path.clone();
         let mut components = self
@@ -135,6 +136,57 @@ impl Manager {
         }
 
         Ok(())
+    }
+
+    /// Reads the controllers already enabled in `{path}/cgroup.subtree_control`
+    fn get_enabled_controllers(path: &Path) -> Result<Vec<String>, WrappedIoError> {
+        let content = common::read_cgroup_file(path.join(CGROUP_SUBTREE_CONTROL))?;
+        Ok(content.split_whitespace().map(str::to_owned).collect())
+    }
+
+    /// Returns the subset of `controllers` (formatted as `+name`) not yet
+    /// enabled in `{path}/cgroup.subtree_control`
+    fn missing_controllers(
+        path: &Path,
+        controllers: &[String],
+    ) -> Result<Vec<String>, WrappedIoError> {
+        let enabled = Self::get_enabled_controllers(path)?;
+        Ok(controllers
+            .iter()
+            .filter(|c| !enabled.iter().any(|e| e == c.trim_start_matches('+')))
+            .cloned()
+            .collect())
+    }
+
+    /// Enables `controllers` in the cgroup root's subtree_control file.
+    ///
+    /// Under cgroup v2 delegation an unprivileged process owns only its own
+    /// sub-hierarchy, not the mount root, where the controllers are already
+    /// enabled and the file is read-only to us. Write only the missing
+    /// controllers, and tolerate EROFS/EACCES when they are already present.
+    fn write_root_controllers(path: &Path, controllers: &[String]) -> Result<(), V2ManagerError> {
+        let missing = Self::missing_controllers(path, controllers)?;
+        if missing.is_empty() {
+            return Ok(());
+        }
+
+        match Self::write_controllers(path, &missing) {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                let delegated = matches!(
+                    err.inner().raw_os_error().map(Errno::from_raw),
+                    Some(Errno::EROFS) | Some(Errno::EACCES)
+                );
+                if delegated && Self::missing_controllers(path, &missing)?.is_empty() {
+                    tracing::debug!(
+                        "controllers {missing:?} already enabled in {path:?}, ignoring read-only root"
+                    );
+                    return Ok(());
+                }
+
+                Err(err.into())
+            }
+        }
     }
 
     pub fn any(self) -> AnyCgroupManager {
