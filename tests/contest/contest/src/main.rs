@@ -19,7 +19,7 @@ use crate::tests::exec::get_exec_test;
 use crate::tests::exec_cpu_affinity::get_exec_cpu_affinity_test;
 use crate::tests::exec_env::get_exec_env_test;
 use crate::tests::fd_control::get_fd_control_test;
-use crate::tests::hooks::get_hooks_tests;
+use crate::tests::hooks::{get_hooks_tests, get_start_container_env_tests};
 use crate::tests::hostname::get_hostname_test;
 use crate::tests::intel_rdt::get_intel_rdt_test;
 use crate::tests::io_priority::get_io_priority_test;
@@ -42,6 +42,7 @@ use crate::tests::poststop_fail::get_poststop_fail_tests;
 use crate::tests::prestart::get_prestart_tests;
 use crate::tests::prestart_fail::get_prestart_fail_tests;
 use crate::tests::process::get_process_test;
+use crate::tests::process_capabilities_bounding::get_process_capabilities_bounding_test;
 use crate::tests::process_capabilities_fail::get_process_capabilities_fail_test;
 use crate::tests::process_oom_score_adj::get_process_oom_score_adj_test;
 use crate::tests::process_rlimits::get_process_rlimits_test;
@@ -57,6 +58,7 @@ use crate::tests::seccomp_notify::get_seccomp_notify_test;
 use crate::tests::sysctl::get_sysctl_test;
 use crate::tests::tlb::get_tlb_test;
 use crate::tests::uid_mappings::get_uid_mappings_test;
+use crate::tests::update::get_update_test;
 use crate::utils::support::{set_runtime_path, set_runtimetest_path};
 
 #[derive(Parser, Debug)]
@@ -127,6 +129,7 @@ fn main() -> Result<()> {
     let pidfile = get_pidfile_test();
     let ns_itype = get_ns_itype_tests();
     let hooks = get_hooks_tests();
+    let start_container_env = get_start_container_env_tests();
     let poststart = get_poststart_tests();
     let poststop = get_poststop_tests();
     let poststart_fail = get_poststart_fail_tests();
@@ -168,6 +171,7 @@ fn main() -> Result<()> {
     let masked_paths = get_linux_masked_paths_tests();
     let rootfs_propagation = get_rootfs_propagation_test();
     let process_capabilities_fail = get_process_capabilities_fail_test();
+    let process_capabilities_bounding = get_process_capabilities_bounding_test();
     let uid_mappings = get_uid_mappings_test();
     let exec_cpu_affinity = get_exec_cpu_affinity_test();
     let exec_env = get_exec_env_test();
@@ -176,6 +180,7 @@ fn main() -> Result<()> {
     let prohibit_symlink = get_prohibit_symlink_test();
     let net_devices = get_net_devices_test();
     let checkpoint_restore = get_checkpoint_restore_tests();
+    let update = get_update_test();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -183,6 +188,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(pidfile));
     tm.add_test_group(Box::new(ns_itype));
     tm.add_test_group(Box::new(hooks));
+    tm.add_test_group(Box::new(start_container_env));
     tm.add_test_group(Box::new(poststart));
     tm.add_test_group(Box::new(poststart_fail));
     tm.add_test_group(Box::new(poststop));
@@ -224,6 +230,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(rootfs_propagation));
     tm.add_test_group(Box::new(net_devices));
     tm.add_test_group(Box::new(process_capabilities_fail));
+    tm.add_test_group(Box::new(process_capabilities_bounding));
     tm.add_test_group(Box::new(uid_mappings));
     tm.add_test_group(Box::new(exec_cpu_affinity));
     tm.add_test_group(Box::new(exec_env));
@@ -232,6 +239,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(prohibit_symlink));
     tm.add_test_group(Box::new(io_priority_test));
     tm.add_test_group(Box::new(checkpoint_restore));
+    tm.add_test_group(Box::new(update));
     tm.add_cleanup(Box::new(cgroups::cleanup_v1));
     tm.add_cleanup(Box::new(cgroups::cleanup_v2));
 

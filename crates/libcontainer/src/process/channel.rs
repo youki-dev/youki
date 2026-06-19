@@ -1,18 +1,18 @@
 use std::collections::HashMap;
-use std::os::unix::prelude::{AsRawFd, RawFd};
+use std::os::unix::prelude::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
 use nix::unistd::Pid;
 
 use crate::channel::{Receiver, Sender, channel};
 use crate::network::cidr::CidrAddress;
-use crate::process::message::Message;
+use crate::process::message::{Message, MountMsg};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ChannelError {
-    #[error("received unexpected message: {received:?}, expected: {expected:?}")]
+    #[error("received unexpected message: {received:?}, expected: {expected}")]
     UnexpectedMessage {
-        expected: Message,
-        received: Message,
+        expected: &'static str,
+        received: Box<Message>,
     },
     #[error("failed to receive. {msg:?}. {source:?}")]
     ReceiveError {
@@ -28,6 +28,19 @@ pub enum ChannelError {
     ExecError(String),
     #[error("intermediate process error {0}")]
     OtherError(String),
+    #[error("missing fd from mount request")]
+    MissingMountFds,
+    #[error("mount request failed: {0}")]
+    MountFdError(String),
+}
+
+impl ChannelError {
+    fn unexpected(expected: &'static str, received: Message) -> Self {
+        Self::UnexpectedMessage {
+            expected,
+            received: Box::new(received),
+        }
+    }
 }
 
 // Channel Design
@@ -63,6 +76,12 @@ impl MainSender {
     pub fn seccomp_notify_request(&mut self, fd: RawFd) -> Result<(), ChannelError> {
         self.sender
             .send_fds(Message::SeccompNotify, &[fd.as_raw_fd()])?;
+
+        Ok(())
+    }
+
+    pub fn request_mount_fd(&mut self, msg: MountMsg) -> Result<(), ChannelError> {
+        self.sender.send(Message::AskMountFd(msg))?;
 
         Ok(())
     }
@@ -130,10 +149,7 @@ impl MainReceiver {
             Message::IntermediateReady(pid) => Ok(Pid::from_raw(pid)),
             Message::ExecFailed(err) => Err(ChannelError::ExecError(err)),
             Message::OtherError(err) => Err(ChannelError::OtherError(err)),
-            msg => Err(ChannelError::UnexpectedMessage {
-                expected: Message::IntermediateReady(0),
-                received: msg,
-            }),
+            msg => Err(ChannelError::unexpected("IntermediateReady", msg)),
         }
     }
 
@@ -147,11 +163,32 @@ impl MainReceiver {
             })?;
         match msg {
             Message::WriteMapping => Ok(()),
-            msg => Err(ChannelError::UnexpectedMessage {
-                expected: Message::WriteMapping,
-                received: msg,
-            }),
+            msg => Err(ChannelError::unexpected("WriteMapping", msg)),
         }
+    }
+
+    pub fn wait_for_mount_fd_request(&mut self) -> Result<MountMsg, ChannelError> {
+        let msg = self
+            .receiver
+            .recv()
+            .map_err(|err| ChannelError::ReceiveError {
+                msg: "waiting for mount fd request".to_string(),
+                source: err,
+            })?;
+
+        match msg {
+            Message::AskMountFd(req) => Ok(req),
+            msg => Err(ChannelError::unexpected("AskMountFd", msg)),
+        }
+    }
+
+    pub fn recv_message_with_fds(&mut self) -> Result<(Message, Option<[RawFd; 1]>), ChannelError> {
+        self.receiver
+            .recv_with_fds::<[RawFd; 1]>()
+            .map_err(|err| ChannelError::ReceiveError {
+                msg: "waiting for message".to_string(),
+                source: err,
+            })
     }
 
     pub fn wait_for_seccomp_request(&mut self) -> Result<i32, ChannelError> {
@@ -176,10 +213,7 @@ impl MainReceiver {
                 }?;
                 Ok(fd)
             }
-            msg => Err(ChannelError::UnexpectedMessage {
-                expected: Message::SeccompNotify,
-                received: msg,
-            }),
+            msg => Err(ChannelError::unexpected("SeccompNotify", msg)),
         }
     }
 
@@ -193,10 +227,7 @@ impl MainReceiver {
             })?;
         match msg {
             Message::SetupNetworkDeviceReady => Ok(()),
-            msg => Err(ChannelError::UnexpectedMessage {
-                expected: Message::SetupNetworkDeviceReady,
-                received: msg,
-            }),
+            msg => Err(ChannelError::unexpected("SetupNetworkDeviceReady", msg)),
         }
     }
 
@@ -216,10 +247,7 @@ impl MainReceiver {
             Message::ExecFailed(err) => Err(ChannelError::ExecError(format!(
                 "error in executing process : {err}"
             ))),
-            msg => Err(ChannelError::UnexpectedMessage {
-                expected: Message::InitReady,
-                received: msg,
-            }),
+            msg => Err(ChannelError::unexpected("InitReady", msg)),
         }
     }
 
@@ -233,10 +261,7 @@ impl MainReceiver {
             })?;
         match msg {
             Message::HookRequest => Ok(()),
-            msg => Err(ChannelError::UnexpectedMessage {
-                expected: Message::HookRequest,
-                received: msg,
-            }),
+            msg => Err(ChannelError::unexpected("HookRequest", msg)),
         }
     }
 
@@ -291,10 +316,7 @@ impl IntermediateReceiver {
             })?;
         match msg {
             Message::MappingWritten => Ok(()),
-            msg => Err(ChannelError::UnexpectedMessage {
-                expected: Message::MappingWritten,
-                received: msg,
-            }),
+            msg => Err(ChannelError::unexpected("MappingWritten", msg)),
         }
     }
 
@@ -340,6 +362,17 @@ impl InitSender {
 
         Ok(())
     }
+
+    pub fn send_mount_fd_reply(&mut self, fd: RawFd) -> Result<(), ChannelError> {
+        self.sender.send_fds(Message::MountFdReply, &[fd])?;
+
+        Ok(())
+    }
+
+    pub fn send_mount_fd_error(&mut self, err: String) -> Result<(), ChannelError> {
+        self.sender.send(Message::MountFdError(err))?;
+        Ok(())
+    }
 }
 
 pub struct InitReceiver {
@@ -358,10 +391,7 @@ impl InitReceiver {
 
         match msg {
             Message::SeccompNotifyDone => Ok(()),
-            msg => Err(ChannelError::UnexpectedMessage {
-                expected: Message::SeccompNotifyDone,
-                received: msg,
-            }),
+            msg => Err(ChannelError::unexpected("SeccompNotifyDone", msg)),
         }
     }
 
@@ -377,10 +407,7 @@ impl InitReceiver {
             })?;
         match msg {
             Message::MoveNetworkDevice(addr) => Ok(addr),
-            msg => Err(ChannelError::UnexpectedMessage {
-                expected: Message::WriteMapping,
-                received: msg,
-            }),
+            msg => Err(ChannelError::unexpected("MoveNetworkDevice", msg)),
         }
     }
 
@@ -394,10 +421,7 @@ impl InitReceiver {
             })?;
         match msg {
             Message::HookDone => Ok(()),
-            msg => Err(ChannelError::UnexpectedMessage {
-                expected: Message::HookDone,
-                received: msg,
-            }),
+            msg => Err(ChannelError::unexpected("HookDone", msg)),
         }
     }
 
@@ -406,10 +430,35 @@ impl InitReceiver {
 
         Ok(())
     }
+
+    pub fn wait_for_mount_fd_reply(&mut self) -> Result<OwnedFd, ChannelError> {
+        let (msg, fds) = self.receiver.recv_with_fds::<[RawFd; 1]>().map_err(|err| {
+            ChannelError::ReceiveError {
+                msg: "waiting for mount fd reply".to_string(),
+                source: err,
+            }
+        })?;
+
+        match msg {
+            Message::MountFdReply => {
+                let fd = match fds {
+                    Some([fd]) => fd,
+                    _ => return Err(ChannelError::MissingMountFds),
+                };
+                Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+            }
+            Message::MountFdError(err) => Err(ChannelError::MountFdError(err)),
+            msg => Err(ChannelError::unexpected("MountFdReply", msg)),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    use std::os::fd::AsRawFd;
+    use std::path::PathBuf;
+
     use anyhow::{Context, Result};
     use nix::sys::wait;
     use nix::unistd;
@@ -487,6 +536,79 @@ mod tests {
             }
         };
 
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_channel_mount_fd_error() -> Result<()> {
+        let (sender, receiver) = &mut init_channel()?;
+        sender.send_mount_fd_error("boom".to_string())?;
+        let err = receiver.wait_for_mount_fd_reply().unwrap_err();
+        assert!(matches!(err, ChannelError::MountFdError(msg) if msg == "boom"));
+        sender.close()?;
+        receiver.close()?;
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_channel_mount_fd_reply_success() -> Result<()> {
+        let (sender, receiver) = &mut init_channel()?;
+        let mut file = tempfile::tempfile()?;
+        file.write_all(b"ok")?;
+
+        sender.send_mount_fd_reply(file.as_raw_fd())?;
+        let fd = receiver.wait_for_mount_fd_reply()?;
+        let mut received = std::fs::File::from(fd);
+        received.seek(SeekFrom::Start(0))?;
+        let mut buf = String::new();
+        received.read_to_string(&mut buf)?;
+        assert_eq!(buf, "ok");
+
+        sender.close()?;
+        receiver.close()?;
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_channel_mount_fd_reply_missing_fds() -> Result<()> {
+        let (mut sender, receiver) = channel::<Message>()?;
+        let mut receiver = InitReceiver { receiver };
+
+        sender.send(Message::MountFdReply)?;
+        let err = receiver.wait_for_mount_fd_reply().unwrap_err();
+        assert!(matches!(err, ChannelError::MissingMountFds));
+
+        sender.close()?;
+        receiver.close()?;
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_channel_mount_fd_request() -> Result<()> {
+        let (sender, receiver) = &mut main_channel()?;
+        let request = MountMsg {
+            source: PathBuf::from("/proc/self/ns/user"),
+            idmap: Some(crate::process::message::MountIdMap {
+                userns_source: crate::process::message::MountIdMapUsernsSource::Mappings {
+                    uid_mappings: vec![],
+                    gid_mappings: vec![],
+                },
+                apply_idmap_recursively: true,
+            }),
+            clone_mount_tree_recursively: true,
+        };
+
+        sender.request_mount_fd(request.clone())?;
+        let received = receiver.wait_for_mount_fd_request()?;
+
+        assert_eq!(received, request);
+
+        sender.close()?;
+        receiver.close()?;
         Ok(())
     }
 

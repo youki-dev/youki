@@ -88,7 +88,7 @@ impl ContainerLifecycle {
 
     pub fn checkpoint_leave_running(&self) -> TestResult {
         if !criu_installed() {
-            return TestResult::Skipped;
+            return TestResult::Skipped("CRIU is not installed".to_string());
         }
 
         checkpoint::checkpoint_leave_running(self.project_path.path(), &self.container_id)
@@ -96,7 +96,7 @@ impl ContainerLifecycle {
 
     pub fn checkpoint_leave_running_work_path_tmp(&self) -> TestResult {
         if !criu_installed() {
-            return TestResult::Skipped;
+            return TestResult::Skipped("CRIU is not installed".to_string());
         }
 
         checkpoint::checkpoint_leave_running_work_path_tmp(
@@ -109,7 +109,7 @@ impl ContainerLifecycle {
     // primarily differs between ignore and other modes.
     pub fn checkpoint_manage_cgroups_mode_ignore(&self) -> TestResult {
         if !criu_installed() {
-            return TestResult::Skipped;
+            return TestResult::Skipped("CRIU is not installed".to_string());
         }
 
         checkpoint::checkpoint_manage_cgroups_mode_ignore(
@@ -120,7 +120,7 @@ impl ContainerLifecycle {
 
     pub fn checkpoint_manage_cgroups_mode_soft(&self) -> TestResult {
         if !criu_installed() {
-            return TestResult::Skipped;
+            return TestResult::Skipped("CRIU is not installed".to_string());
         }
 
         checkpoint::checkpoint_manage_cgroups_mode_soft(

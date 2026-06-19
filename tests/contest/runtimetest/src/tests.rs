@@ -862,6 +862,26 @@ pub fn validate_memory_policy(spec: &Spec) {
     }
 }
 
+pub fn validate_process_capabilities_bounding_unset(_spec: &Spec) {
+    let status = match fs::read_to_string("/proc/self/status") {
+        Ok(s) => s,
+        Err(e) => return eprintln!("failed to read /proc/self/status: {e}"),
+    };
+
+    for label in ["CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"] {
+        let expected = format!("{label}:\t0000000000000000");
+        if !status.contains(&expected) {
+            let actual = status
+                .lines()
+                .find(|l| l.starts_with(label))
+                .unwrap_or("<missing>");
+            eprintln!(
+                "expected {label} to be all zeros when bounding is unset and other caps are empty, got: {actual}"
+            );
+        }
+    }
+}
+
 pub fn test_validate_root_readonly(spec: &Spec) {
     let root = spec.root().as_ref().unwrap();
     if root.readonly().unwrap() {

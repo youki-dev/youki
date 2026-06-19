@@ -4,7 +4,7 @@ version = "0.0.1"
 edition = "2024"
 
 [dependencies]
-oci-spec = { version = "0.9.0", features = ["runtime"] }
+oci-spec = { workspace = true }
 nix = { workspace = true }
 anyhow = { workspace = true }
 libc = { workspace = true } # TODO (YJDoc2) upgrade to latest

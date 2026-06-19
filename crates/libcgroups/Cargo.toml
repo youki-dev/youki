@@ -23,7 +23,7 @@ cgroupsv2_devices = ["rbpf", "libbpf-sys", "errno", "libc", "nix/dir"]
 nix = { workspace = true, features = ["signal", "user", "fs"] }
 procfs = { workspace = true }
 pathrs = { workspace = true }
-oci-spec = { version = "~0.9.0", features = ["runtime"] }
+oci-spec = { workspace = true }
 fixedbitset = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 rbpf = { workspace = true, optional = true }
@@ -35,7 +35,7 @@ tracing = { workspace = true, features = ["attributes"] }
 
 [dev-dependencies]
 anyhow = { workspace = true }
-oci-spec = { version = "~0.9.0", features = ["proptests", "runtime"] }
+oci-spec = { workspace = true, features = ["proptests"] }
 quickcheck = { workspace = true }
 mockall = { workspace = true, features = [] }
 clap = { workspace = true, features = ["std", "color", "help", "usage", "error-context", "suggestions"] }

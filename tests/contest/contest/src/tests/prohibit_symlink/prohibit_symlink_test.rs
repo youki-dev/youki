@@ -56,7 +56,7 @@ fn prohibit_symlink_test(path: String) -> TestResult {
                 ))
             }
         }
-        TestResult::Skipped => TestResult::Failed(anyhow!("test was skipped unexpectedly.")),
+        TestResult::Skipped(_) => TestResult::Failed(anyhow!("test was skipped unexpectedly.")),
         TestResult::Passed => {
             TestResult::Failed(anyhow!("container creation succeeded unexpectedly."))
         }

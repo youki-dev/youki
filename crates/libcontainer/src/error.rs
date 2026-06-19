@@ -32,7 +32,7 @@ pub enum LibcontainerError {
     InvalidID(#[from] ErrInvalidID),
     #[error(transparent)]
     MissingSpec(#[from] MissingSpecError),
-    #[error("invalid runtime spec")]
+    #[error(transparent)]
     InvalidSpec(#[from] ErrInvalidSpec),
 
     // Errors from submodules and other errors
@@ -102,8 +102,8 @@ pub enum ErrInvalidSpec {
     AppArmorNotEnabled,
     #[error("invalid io priority or class.")]
     IoPriority,
-    #[error("invalid scheduler config for process")]
-    Scheduler,
+    #[error("invalid scheduler config for process: {0}")]
+    Scheduler(String),
     #[error("cannot allocate tty if youki will detach without setting console socket")]
     ConsoleSocketRequired,
     #[error("cannot use console socket if youki will not detach or allocate tty")]
@@ -116,6 +116,28 @@ pub enum ErrInvalidSpec {
     MountIdmapUnsupported,
     #[error("idmapped mounts are not supported in rootless containers")]
     MountIdmapRootless,
+    #[error("invalid netns path: {0}")]
+    InvalidNetNsPath(String),
+    #[error("unable to set hostname without a private UTS namespace")]
+    HostnameWithoutUTS,
+    #[error("unable to set domainname without a private UTS namespace")]
+    DomainnameWithoutUTS,
+    #[error("user namespace mappings specified, but user namespace isn't enabled in the config")]
+    UserMappingsWithoutNamespace,
+    #[error("unable to restrict sys entries without a private MNT namespace")]
+    SysEntriesWithoutMntNamespace,
+    #[error("sysctl {0} is not allowed in the hosts ipc namespace")]
+    SysctlNotAllowedInHostIpc(String),
+    #[error("sysctl {0} not allowed in host network namespace")]
+    SysctlNotAllowedInHostNet(String),
+    #[error("sysctl {0} is not allowed as it conflicts with the OCI {1} field")]
+    SysctlConflictsWithOci(String, String),
+    #[error("setting ucounts without a user namespace not allowed: {0}")]
+    SysctlNotAllowedInHostUser(String),
+    #[error("sysctl {0} is not in a separate kernel namespace")]
+    SysctlNotInSeparateNamespace(String),
+    #[error("invalid intelRdt.closID (must not contain '.', '..', or '/')")]
+    InvalidIntelRdtClosId,
 }
 
 #[derive(Debug, thiserror::Error)]

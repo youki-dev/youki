@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -14,7 +14,7 @@ use nix::unistd::{Pid, pipe2, read};
 use oci_spec::runtime::{
     Capabilities as SpecCapabilities, Capability as SpecCapability, LinuxBuilder,
     LinuxCapabilities, LinuxCapabilitiesBuilder, LinuxNamespace, LinuxNamespaceBuilder,
-    LinuxNamespaceType, LinuxSchedulerPolicy, Process, ProcessBuilder, Spec, UserBuilder,
+    LinuxNamespaceType, Process, ProcessBuilder, Spec, UserBuilder,
 };
 use procfs::process::Namespace;
 
@@ -29,6 +29,7 @@ use crate::notify_socket::NotifySocket;
 use crate::process::args::ContainerType;
 use crate::syscall::syscall::create_syscall;
 use crate::user_ns::UserNamespaceConfig;
+use crate::validator::Validator;
 use crate::{tty, utils};
 
 const NAMESPACE_TYPES: &[&str] = &["ipc", "uts", "net", "pid", "mnt", "cgroup"];
@@ -356,88 +357,7 @@ impl TenantContainerBuilder {
             Err(ErrInvalidSpec::UnsupportedVersion)?;
         }
 
-        if let Some(process) = spec.process() {
-            if let Some(io_priority) = process.io_priority() {
-                let priority = io_priority.priority();
-                let iop_class_res = serde_json::to_string(&io_priority.class());
-                match iop_class_res {
-                    Ok(iop_class) => {
-                        if !(0..=7).contains(&priority) {
-                            tracing::error!(
-                                ?priority,
-                                "io priority '{}' not between 0 and 7 (inclusive), class '{}' not in (IO_PRIO_CLASS_RT,IO_PRIO_CLASS_BE,IO_PRIO_CLASS_IDLE)",
-                                priority,
-                                iop_class
-                            );
-                            Err(ErrInvalidSpec::IoPriority)?;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!(?priority, ?e, "failed to parse io priority class");
-                        Err(ErrInvalidSpec::IoPriority)?;
-                    }
-                }
-            }
-
-            if let Some(sc) = process.scheduler() {
-                let policy = sc.policy();
-                if let Some(nice) = sc.nice() {
-                    // https://man7.org/linux/man-pages/man2/sched_setattr.2.html#top_of_page
-                    if (*policy == LinuxSchedulerPolicy::SchedBatch
-                        || *policy == LinuxSchedulerPolicy::SchedOther)
-                        && (*nice < -20 || *nice > 19)
-                    {
-                        tracing::error!(
-                            ?nice,
-                            "invalid scheduler.nice: '{}', must be within -20 to 19",
-                            nice
-                        );
-                        Err(ErrInvalidSpec::Scheduler)?;
-                    }
-                }
-                if let Some(priority) = sc.priority() {
-                    if *priority != 0
-                        && (*policy != LinuxSchedulerPolicy::SchedFifo
-                            && *policy != LinuxSchedulerPolicy::SchedRr)
-                    {
-                        tracing::error!(
-                            ?policy,
-                            "scheduler.priority can only be specified for SchedFIFO or SchedRR policy"
-                        );
-                        Err(ErrInvalidSpec::Scheduler)?;
-                    }
-                }
-                if *policy != LinuxSchedulerPolicy::SchedDeadline {
-                    if let Some(runtime) = sc.runtime() {
-                        if *runtime != 0 {
-                            tracing::error!(
-                                ?runtime,
-                                "scheduler runtime can only be specified for SchedDeadline policy"
-                            );
-                            Err(ErrInvalidSpec::Scheduler)?;
-                        }
-                    }
-                    if let Some(deadline) = sc.deadline() {
-                        if *deadline != 0 {
-                            tracing::error!(
-                                ?deadline,
-                                "scheduler deadline can only be specified for SchedDeadline policy"
-                            );
-                            Err(ErrInvalidSpec::Scheduler)?;
-                        }
-                    }
-                    if let Some(period) = sc.period() {
-                        if *period != 0 {
-                            tracing::error!(
-                                ?period,
-                                "scheduler period can only be specified for SchedDeadline policy"
-                            );
-                            Err(ErrInvalidSpec::Scheduler)?;
-                        }
-                    }
-                }
-            }
-        }
+        Validator::validate_spec(spec)?;
 
         let syscall = create_syscall();
 
@@ -528,7 +448,11 @@ impl TenantContainerBuilder {
         ))?;
 
         let init_process = procfs::process::Process::new(container_pid.as_raw())?;
-        let ns = self.get_namespaces(init_process.namespaces()?.0)?;
+        let spec_namespaces = spec
+            .linux()
+            .as_ref()
+            .and_then(|l| l.namespaces().as_deref());
+        let ns = self.get_namespaces(init_process.namespaces()?.0, spec_namespaces)?;
 
         // it should never be the case that linux is not present in spec
         let spec_linux = spec.linux().as_ref().unwrap();
@@ -616,12 +540,20 @@ impl TenantContainerBuilder {
     fn get_namespaces(
         &self,
         init_namespaces: HashMap<OsString, Namespace>,
+        spec_namespaces: Option<&[LinuxNamespace]>,
     ) -> Result<Vec<LinuxNamespace>, LibcontainerError> {
+        let landlord_ns_types: HashSet<LinuxNamespaceType> = spec_namespaces
+            .map(|nss| nss.iter().map(|ns| ns.typ()).collect())
+            .unwrap_or_default();
         let mut tenant_namespaces = Vec::with_capacity(init_namespaces.len());
 
         for &ns_type in NAMESPACE_TYPES {
+            let tenant_ns = LinuxNamespaceType::try_from(ns_type)?;
+            // Skip namespaces that are not specified for the init process.
+            if !landlord_ns_types.contains(&tenant_ns) {
+                continue;
+            }
             if let Some(init_ns) = init_namespaces.get(OsStr::new(ns_type)) {
-                let tenant_ns = LinuxNamespaceType::try_from(ns_type)?;
                 tenant_namespaces.push(
                     LinuxNamespaceBuilder::default()
                         .typ(tenant_ns)
@@ -877,5 +809,102 @@ mod tests {
         let b = builder_with_env(&[]);
         let result = b.get_environment(Vec::new());
         assert!(result.is_empty());
+    }
+
+    // --- namespaces tests ---
+    fn ns_entry(ns_type: &str, path: &str) -> (OsString, Namespace) {
+        (
+            OsString::from(ns_type),
+            Namespace {
+                ns_type: OsString::from(ns_type),
+                path: PathBuf::from(path),
+                identifier: 0,
+                device_id: 0,
+            },
+        )
+    }
+
+    fn init_ns() -> HashMap<OsString, Namespace> {
+        HashMap::from([
+            ns_entry("ipc", "/proc/1/ns/ipc"),
+            ns_entry("uts", "/proc/1/ns/uts"),
+            ns_entry("net", "/proc/1/ns/net"),
+            ns_entry("pid", "/proc/1/ns/pid"),
+            ns_entry("mnt", "/proc/1/ns/mnt"),
+            ns_entry("cgroup", "/proc/1/ns/cgroup"),
+        ])
+    }
+
+    fn spec_ns(typ: LinuxNamespaceType) -> LinuxNamespace {
+        LinuxNamespaceBuilder::default().typ(typ).build().unwrap()
+    }
+
+    fn want_ns(typ: LinuxNamespaceType, path: &str) -> LinuxNamespace {
+        LinuxNamespaceBuilder::default()
+            .typ(typ)
+            .path(PathBuf::from(path))
+            .build()
+            .unwrap()
+    }
+
+    fn tenant_builder() -> TenantContainerBuilder {
+        TenantContainerBuilder::new(ContainerBuilder::new(
+            "test".to_string(),
+            SyscallType::default(),
+        ))
+    }
+
+    #[test]
+    fn ns_all_declared_returned() -> Result<(), LibcontainerError> {
+        use LinuxNamespaceType::*;
+        let got = tenant_builder().get_namespaces(
+            init_ns(),
+            Some(&[
+                spec_ns(Ipc),
+                spec_ns(Uts),
+                spec_ns(Network),
+                spec_ns(Pid),
+                spec_ns(Mount),
+                spec_ns(Cgroup),
+            ]),
+        )?;
+        assert_eq!(
+            got,
+            vec![
+                want_ns(Ipc, "/proc/1/ns/ipc"),
+                want_ns(Uts, "/proc/1/ns/uts"),
+                want_ns(Network, "/proc/1/ns/net"),
+                want_ns(Pid, "/proc/1/ns/pid"),
+                want_ns(Mount, "/proc/1/ns/mnt"),
+                want_ns(Cgroup, "/proc/1/ns/cgroup"),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ns_spec_subset_filters_init() -> Result<(), LibcontainerError> {
+        use LinuxNamespaceType::*;
+        let got =
+            tenant_builder().get_namespaces(init_ns(), Some(&[spec_ns(Ipc), spec_ns(Network)]))?;
+        assert_eq!(
+            got,
+            vec![
+                want_ns(Ipc, "/proc/1/ns/ipc"),
+                want_ns(Network, "/proc/1/ns/net"),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ns_spec_entry_missing_from_init_is_skipped() -> Result<(), LibcontainerError> {
+        use LinuxNamespaceType::*;
+        let got = tenant_builder().get_namespaces(
+            HashMap::from([ns_entry("ipc", "/proc/1/ns/ipc")]),
+            Some(&[spec_ns(Ipc), spec_ns(Pid)]),
+        )?;
+        assert_eq!(got, vec![want_ns(Ipc, "/proc/1/ns/ipc")]);
+        Ok(())
     }
 }
