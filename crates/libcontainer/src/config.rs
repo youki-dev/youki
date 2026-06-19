@@ -132,4 +132,26 @@ mod tests {
         assert_eq!(act, config);
         Ok(())
     }
+
+    #[test]
+    fn test_config_save_failed_to_create_config_file() -> Result<()> {
+        let container_id = "sample";
+        let spec = Spec::default();
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let config = YoukiConfig::from_spec(&spec, container_id)?;
+
+        let invalid_dir = tmp.path().join("invalid");
+        let result = config.save(&invalid_dir);
+        assert!(matches!(result, Err(ConfigError::SaveIO { .. })));
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_load_failed_to_open() -> Result<()> {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let invalid_dir = tmp.path().join("invalid");
+        let result = YoukiConfig::load(&invalid_dir);
+        assert!(matches!(result, Err(ConfigError::LoadIO { .. })));
+        Ok(())
+    }
 }
