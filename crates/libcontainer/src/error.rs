@@ -108,6 +108,14 @@ pub enum ErrInvalidSpec {
     ConsoleSocketRequired,
     #[error("cannot use console socket if youki will not detach or allocate tty")]
     InvalidConsoleSocket,
+    #[error("idmapped mount requires bind mount")]
+    MountIdmapNonBind,
+    #[error("idmapped mount requires uid/gid mappings or a usable user namespace")]
+    MountIdmapMissingMappings,
+    #[error("idmapped mount is not supported")]
+    MountIdmapUnsupported,
+    #[error("idmapped mounts are not supported in rootless containers")]
+    MountIdmapRootless,
     #[error("invalid netns path: {0}")]
     InvalidNetNsPath(String),
     #[error("unable to set hostname without a private UTS namespace")]
