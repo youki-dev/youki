@@ -182,10 +182,8 @@ impl MainReceiver {
         }
     }
 
-    /// Receives the next init-to-main message.
-    ///
-    /// Error messages are normalized into `ChannelError`, and any attached fd is
-    /// owned immediately so it is closed on all error and unexpected-message paths.
+    /// Receives an init message, normalizing error messages and taking ownership of
+    /// any attached fd.
     pub fn recv_init_message(&mut self) -> Result<(Message, Option<OwnedFd>), ChannelError> {
         let (msg, fds) = self.receiver.recv_with_fds::<[RawFd; 1]>().map_err(|err| {
             ChannelError::ReceiveError {

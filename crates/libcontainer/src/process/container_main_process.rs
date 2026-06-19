@@ -275,10 +275,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
 
 const EXPECTED_INIT_MESSAGE: &str = "InitReady or a pending init setup request";
 
-/// Init-side setup requests that must be handled before accepting `InitReady`.
-///
-/// Each request is consumed when its message is received, so duplicates are
-/// rejected as unexpected messages.
+/// Init-side setup requests that must complete before `InitReady`.
 struct PendingInitRequests<'a> {
     hooks: Option<&'a oci_spec::runtime::Hooks>,
     net_linux: Option<&'a Linux>,
