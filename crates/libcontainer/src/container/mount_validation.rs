@@ -59,22 +59,18 @@ pub(crate) fn validate_idmapped_mounts(
     let is_rootless = rootless_required(syscall).unwrap_or(false);
 
     for mount in mounts {
-        let has_mount_mappings = validate_mount_mappings(mount)?;
+        let has_any_mount_mappings =
+            mount.uid_mappings().is_some() || mount.gid_mappings().is_some();
         let options = mount.options().as_deref().unwrap_or(&[]);
         let has_idmap_option = options.iter().any(|o| o == "idmap" || o == "ridmap");
-        let requests_idmapped_mount = has_idmap_option || has_mount_mappings;
+        if !has_idmap_option && !has_any_mount_mappings {
+            continue;
+        }
+
         let is_bind = mount.typ().as_deref() == Some("bind")
             || options.iter().any(|o| o == "bind" || o == "rbind");
 
-        if has_idmap_option && !has_mount_mappings && !can_use_container_userns {
-            tracing::error!(
-                destination = ?mount.destination(),
-                "idmap/ridmap without mount uid/gid mappings requires a usable container user namespace"
-            );
-            return Err(ErrInvalidSpec::MountIdmapMissingMappings);
-        }
-
-        if requests_idmapped_mount && !is_bind {
+        if !is_bind {
             tracing::error!(
                 destination = ?mount.destination(),
                 "mount specifies idmap option for non-bind mount"
@@ -82,7 +78,7 @@ pub(crate) fn validate_idmapped_mounts(
             return Err(ErrInvalidSpec::MountIdmapNonBind);
         }
 
-        if requests_idmapped_mount && is_rootless {
+        if is_rootless {
             tracing::error!(
                 destination = ?mount.destination(),
                 "idmapped mounts are not supported in rootless containers"
@@ -90,14 +86,22 @@ pub(crate) fn validate_idmapped_mounts(
             return Err(ErrInvalidSpec::MountIdmapRootless);
         }
 
-        // TODO: remove this guard when idmapped mount support is implemented.
-        if requests_idmapped_mount {
+        let has_mount_mappings = validate_mount_mappings(mount)?;
+
+        if !has_mount_mappings && !can_use_container_userns {
             tracing::error!(
                 destination = ?mount.destination(),
-                "idmapped mounts are not supported"
+                "idmap/ridmap without mount uid/gid mappings requires a usable container user namespace"
             );
-            return Err(ErrInvalidSpec::MountIdmapUnsupported);
+            return Err(ErrInvalidSpec::MountIdmapMissingMappings);
         }
+
+        // TODO: remove this guard when idmapped mount support is implemented.
+        tracing::error!(
+            destination = ?mount.destination(),
+            "idmapped mounts are not supported"
+        );
+        return Err(ErrInvalidSpec::MountIdmapUnsupported);
     }
 
     Ok(())
