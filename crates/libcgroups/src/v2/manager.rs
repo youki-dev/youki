@@ -4,8 +4,7 @@ use std::path::Component::RootDir;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use nix::errno::Errno;
-use nix::unistd::Pid;
+use nix::{errno::Errno, unistd::Pid};
 
 use super::controller::Controller;
 use super::controller_type::{
@@ -84,8 +83,8 @@ pub struct Manager {
 impl Manager {
     /// Constructs a new cgroup manager with root path being the mount point
     /// of a cgroup v2 fs and cgroup path being a relative path from the root.
-    /// Ownership defaults to [`CgroupOwnership::Full`]; use
-    /// [`Self::with_ownership`] for delegated/rootless environments.
+    /// Sets ownership model to [CgroupOwnership::Full]. For rootless
+    /// environments call `.with_ownership(CgroupOwnership::Delegated)`.
     pub fn new(root_path: PathBuf, cgroup_path: PathBuf) -> Result<Self, V2ManagerError> {
         let full_path = root_path.join_safely(&cgroup_path)?;
 
@@ -97,17 +96,22 @@ impl Manager {
         })
     }
 
+    /// Sets the cgroup ownership model.
+    ///
+    /// By default, [libcontainer] assumes full ownership of cgroups.
+    /// However, in container-in-container environments, ownership
+    /// is delegated.
     pub fn with_ownership(mut self, ownership: CgroupOwnership) -> Self {
         self.ownership = ownership;
         self
     }
 
+    // utility to check for delegated ownership
     fn is_delegated(&self) -> bool {
         self.ownership == CgroupOwnership::Delegated
     }
 
-    /// Whether `err` is a read-only-filesystem or permission error, i.e. the
-    /// expected failure when operating on a cgroup we do not own under delegation.
+    // Utility to check for expected errors in delegated cgroup environments
     fn is_permission_error(err: &WrappedIoError) -> bool {
         matches!(
             err.inner().raw_os_error().map(Errno::from_raw),
@@ -140,9 +144,9 @@ impl Manager {
                             .permissions()
                             .set_mode(0o755);
                     }
-                    // Under delegation the cgroup fs may be read-only to us; if we
-                    // cannot create the cgroup, run without one (the process stays
-                    // in its parent cgroup) rather than failing.
+
+                    // in container-in-container environments these paths are often read-only
+                    // we do not error here—rather we continue in a best effort
                     Err(err) if self.is_delegated() && Self::is_permission_error(&err) => {
                         tracing::debug!(
                             "delegated cgroup: cannot create {current_path:?}: {err}; \
@@ -164,10 +168,9 @@ impl Manager {
         self.attach_pid(pid)
     }
 
-    /// Writes `pid` to the cgroup's `cgroup.procs`. Under delegated ownership a
-    /// read-only / permission failure is logged and ignored: the process simply
-    /// stays in its parent cgroup, mirroring runc's rootless_cgroups behavior.
     fn attach_pid(&self, pid: Pid) -> Result<(), V2ManagerError> {
+        // when we encounter an expected write error in delegated cgroups
+        // we log and continue rather than error out hard
         match common::write_cgroup_file(self.full_path.join(CGROUP_PROCS), pid) {
             Ok(()) => Ok(()),
             Err(err) if self.is_delegated() && Self::is_permission_error(&err) => {
@@ -202,14 +205,8 @@ impl Manager {
             .collect())
     }
 
-    /// Best-effort enabling of `controllers` in `{path}/cgroup.subtree_control`.
-    ///
-    /// Controllers that are already enabled are skipped. A write that fails is
-    /// logged but not treated as fatal: under cgroup v2 delegation the mount
-    /// root and the ancestors above our delegation boundary are owned upstream
-    /// and read-only to us, yet already have the controllers enabled. If a
-    /// controller is genuinely needed, applying its limit later fails with a
-    /// clear error. This mirrors runc's fs2 create behavior.
+    // best-effort enabling of `controllers` in `{path}/cgroup.subtree_control`
+    // See https://github.com/youki-dev/youki/issues/3597#issuecomment-4749947856
     fn enable_controllers(path: &Path, controllers: &[String]) {
         let to_enable = match Self::missing_controllers(path, controllers) {
             Ok(missing) => missing,
