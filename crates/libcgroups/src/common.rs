@@ -440,8 +440,10 @@ fn create_v2_cgroup_manager(
     ownership: CgroupOwnership,
 ) -> Result<v2::manager::Manager, v2::manager::V2ManagerError> {
     tracing::info!("cgroup manager V2 will be used");
-    Ok(v2::manager::Manager::new(root_path.to_path_buf(), cgroup_path.to_owned())?
-        .with_ownership(ownership))
+    Ok(
+        v2::manager::Manager::new(root_path.to_path_buf(), cgroup_path.to_owned())?
+            .with_ownership(ownership),
+    )
 }
 
 #[cfg(not(feature = "v2"))]

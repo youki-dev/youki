@@ -214,7 +214,9 @@ impl Manager {
         let to_enable = match Self::missing_controllers(path, controllers) {
             Ok(missing) => missing,
             Err(err) => {
-                tracing::debug!("could not read {path:?}/{CGROUP_SUBTREE_CONTROL}: {err}; attempting to enable all controllers");
+                tracing::debug!(
+                    "could not read {path:?}/{CGROUP_SUBTREE_CONTROL}: {err}; attempting to enable all controllers"
+                );
                 controllers.to_vec()
             }
         };
