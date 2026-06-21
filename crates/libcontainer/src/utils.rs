@@ -403,7 +403,7 @@ pub fn validate_mount_options(
 
 // https://elixir.bootlin.com/linux/v6.12/source/net/core/dev.c#L1066
 fn dev_valid_name(name: &str) -> bool {
-    if name.is_empty() || name.len() > IFNAMSIZ {
+    if name.is_empty() || name.len() >= IFNAMSIZ {
         return false;
     }
     if name.eq(".") || name.eq("..") {
@@ -576,7 +576,13 @@ mod tests {
         let long_name = "a".repeat(IFNAMSIZ + 1);
         assert!(!dev_valid_name(&long_name));
 
-        let valid_name = "a".repeat(IFNAMSIZ);
+        // The kernel rejects interface names whose length is >= IFNAMSIZ (16 bytes),
+        // therefore valid names must be at most IFNAMSIZ - 1 (15 bytes).
+        // https://elixir.bootlin.com/linux/v6.12/source/net/core/dev.c#L1066
+        let over_length_name = "a".repeat(IFNAMSIZ);
+        assert!(!dev_valid_name(&over_length_name));
+
+        let valid_name = "a".repeat(IFNAMSIZ - 1);
         assert!(dev_valid_name(&valid_name));
 
         assert!(!dev_valid_name("."));
