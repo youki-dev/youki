@@ -4,7 +4,8 @@ use std::path::Component::RootDir;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use nix::{errno::Errno, unistd::Pid};
+use nix::errno::Errno;
+use nix::unistd::Pid;
 
 use super::controller::Controller;
 use super::controller_type::{
