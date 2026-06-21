@@ -326,23 +326,16 @@ pub enum CreateCgroupSetupError {
     Systemd(#[from] systemd::manager::SystemdManagerError),
 }
 
-/// Describes how much of the cgroup hierarchy the process owns.
+/// Whether cgroups are delegated or owned by the process
 ///
-/// Under cgroup v2 delegation (e.g. a rootless container, or a read-only
-/// `/sys/fs/cgroup` mount) the process owns at most its own subtree; the mount
-/// root and the ancestors above its delegation boundary are owned upstream and
-/// read-only. `Delegated` makes cgroup creation best-effort so the container
-/// can still run without its own cgroup, mirroring runc's `rootless_cgroups`.
+/// In delegated environments such as container-in-container,
+/// the cgroup hierarchy is likely read-only. When using
+/// [CgroupOwnership::Delegated], errors become non-fatal.
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CgroupOwnership {
-    /// The process fully owns the cgroup hierarchy (privileged / root). Failures
-    /// to create or join a cgroup are fatal.
     #[default]
     Full,
-    /// The cgroup hierarchy is delegated and may be partly read-only. Failures
-    /// to create or join a cgroup are non-fatal; the process stays in its parent
-    /// cgroup. A requested limit that cannot be applied still errors later.
     Delegated,
 }
 
