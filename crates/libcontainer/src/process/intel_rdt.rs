@@ -584,10 +584,7 @@ pub fn setup_intel_rdt(
 
     // If closID is not set and the runtime has created the sub-directory,
     // the runtime MUST remove the sub-directory when the container is deleted.
-    let mut need_to_delete_directory = None;
-    if !clos_id_set && created_dir {
-        need_to_delete_directory = Some(container_dir);
-    }
+    let need_to_delete_directory = (!clos_id_set && created_dir).then_some(container_dir);
 
     Ok((need_to_delete_directory, created_monitoring_dir))
 }
