@@ -14,7 +14,7 @@ use crate::notify_socket::NotifyListener;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::intel_rdt::{
     delete_resctrl_monitoring_subdirectory, delete_resctrl_subdirectory,
-    delete_resctrl_subdirectory_by_id,
+    delete_resctrl_subdirectory_by_id, setup_intel_rdt,
 };
 use crate::process::{self};
 use crate::syscall::syscall::SyscallType;
@@ -195,13 +195,22 @@ impl ContainerBuilderImpl {
             pid_file: self.pid_file.to_owned(),
         };
 
-        let (init_pid, intel_rdt_dir, intel_rdt_monitoring_dir) =
-            process::container_main_process::container_main_process(&container_args).map_err(
-                |err| {
-                    tracing::error!("failed to run container process {}", err);
-                    LibcontainerError::MainProcess(err)
-                },
-            )?;
+        let init_pid = process::container_main_process::container_main_process(&container_args)
+            .map_err(|err| {
+                tracing::error!("failed to run container process {}", err);
+                LibcontainerError::MainProcess(err)
+            })?;
+
+        let mut intel_rdt_dir = None;
+        let mut intel_rdt_monitoring_dir = None;
+        if let Some(linux) = self.spec.linux() {
+            if let Some(intel_rdt) = linux.intel_rdt() {
+                let container_id = self.container.as_ref().map(|c| c.id());
+                let (dir, mon_dir) = setup_intel_rdt(container_id, &init_pid, intel_rdt)?;
+                intel_rdt_dir = dir;
+                intel_rdt_monitoring_dir = mon_dir;
+            }
+        }
 
         if let Some(container) = &mut self.container {
             // update status and pid of the container process

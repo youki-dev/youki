@@ -70,6 +70,8 @@ pub enum LibcontainerError {
     NetDevicesError(#[from] crate::utils::NetDevicesError),
     #[error(transparent)]
     NetworkError(#[from] crate::network::NetworkError),
+    #[error(transparent)]
+    IntelRdt(#[from] crate::process::intel_rdt::IntelRdtError),
 
     // Catch all errors that are not covered by the above
     #[error("syscall error")]
