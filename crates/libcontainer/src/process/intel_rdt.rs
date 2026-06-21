@@ -600,7 +600,11 @@ pub fn setup_intel_rdt(
     let container_id = maybe_container_id.ok_or(IntelRdtError::ResctrlIdNotFound)?;
     let clos_id_set = intel_rdt.clos_id().is_some();
     let id = intel_rdt.clos_id().as_deref().unwrap_or(container_id);
-    let only_clos_id_set = clos_id_set && get_schemata_data(intel_rdt).is_none();
+    let has_schemata = intel_rdt.l3_cache_schema().is_some()
+        || intel_rdt.mem_bw_schema().is_some()
+        || intel_rdt.schemata().as_ref().is_some_and(|s| !s.is_empty());
+
+    let only_clos_id_set = clos_id_set && !has_schemata;
     let container_dir = mount_point.join(id);
     let created_dir = setup_resctrl_group(&container_dir, *init_pid, only_clos_id_set)?;
 
