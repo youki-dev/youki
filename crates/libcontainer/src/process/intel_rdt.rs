@@ -40,11 +40,17 @@ pub enum IntelRdtError {
     #[error("resctrl closID directory didn't exist")]
     NoClosIDDirectory,
     #[error("failed to write to resctrl closID directory")]
-    WriteClosIDDirectory(#[source] std::io::Error),
+    WriteClosIDTasksFile(#[source] std::io::Error),
     #[error("failed to open resctrl closID directory")]
-    OpenClosIDDirectory(#[source] std::io::Error),
+    OpenClosIDTasksFile(#[source] std::io::Error),
     #[error("failed to create resctrl closID directory")]
     CreateClosIDDirectory(#[source] std::io::Error),
+    #[error("failed to write to resctrl monitoring tasks file")]
+    WriteMonitoringTasksFile(#[source] std::io::Error),
+    #[error("failed to open resctrl monitoring tasks file")]
+    OpenMonitoringTasksFile(#[source] std::io::Error),
+    #[error("failed to create resctrl monitoring directory")]
+    CreateMonitoringDirectory(#[source] std::io::Error),
     #[error("failed to canonicalize path")]
     Canonicalize(#[source] std::io::Error),
     #[error(transparent)]
@@ -231,13 +237,18 @@ fn setup_resctrl_group(
             return Err(IntelRdtError::NoClosIDDirectory);
         }
         fs::create_dir_all(resctrl_container_dir).map_err(|err| {
-            tracing::error!("failed to create resctrl subdirectory: {}", err);
+            tracing::error!("failed to create resctrl subdirectory: {err}");
             IntelRdtError::CreateClosIDDirectory(err)
         })?;
         created_dir = true;
     }
 
-    write_pid_to_tasks(resctrl_container_dir, init_pid)?;
+    write_pid_to_tasks(
+        resctrl_container_dir,
+        init_pid,
+        IntelRdtError::OpenClosIDTasksFile,
+        IntelRdtError::WriteClosIDTasksFile,
+    )?;
 
     Ok(created_dir)
 }
@@ -255,19 +266,28 @@ fn setup_monitoring_group(mon_dir: &Path, init_pid: Pid) -> Result<bool> {
 
     if !mon_dir.exists() {
         fs::create_dir_all(mon_dir).map_err(|err| {
-            tracing::error!("failed to create resctrl monitoring subdirectory: {}", err);
-            IntelRdtError::CreateClosIDDirectory(err)
+            tracing::error!("failed to create resctrl monitoring subdirectory: {err}");
+            IntelRdtError::CreateMonitoringDirectory(err)
         })?;
         created_dir = true;
     }
 
-    write_pid_to_tasks(mon_dir, init_pid)?;
+    write_pid_to_tasks(
+        mon_dir,
+        init_pid,
+        IntelRdtError::OpenMonitoringTasksFile,
+        IntelRdtError::WriteMonitoringTasksFile,
+    )?;
 
     Ok(created_dir)
 }
 
 /// Helper function to write the process ID to the tasks file
-fn write_pid_to_tasks(dir: &Path, pid: Pid) -> Result<()> {
+fn write_pid_to_tasks<F1, F2>(dir: &Path, pid: Pid, on_open_err: F1, on_write_err: F2) -> Result<()>
+where
+    F1: FnOnce(std::io::Error) -> IntelRdtError,
+    F2: FnOnce(std::io::Error) -> IntelRdtError,
+{
     let tasks = dir.join("tasks");
     // TODO(ipuustin): File doesn't need to be created, but it's easier
     // to test this way. Fix the tests so that the fake resctrl
@@ -276,15 +296,10 @@ fn write_pid_to_tasks(dir: &Path, pid: Pid) -> Result<()> {
         .create(true)
         .append(true)
         .open(tasks)
-        .map_err(|err| {
-            tracing::error!("failed to open resctrl tasks file: {}", err);
-            IntelRdtError::OpenClosIDDirectory(err)
-        })?;
+        .map_err(on_open_err)?;
 
-    write!(file, "{pid}").map_err(|err| {
-        tracing::error!("failed to write to resctrl tasks file: {}", err);
-        IntelRdtError::WriteClosIDDirectory(err)
-    })?;
+    file.write_all(pid.to_string().as_bytes())
+        .map_err(on_write_err)?;
 
     Ok(())
 }
