@@ -123,10 +123,13 @@ impl CgroupManager for AnyCgroupManager {
 }
 
 impl AnyCgroupManager {
-    /// Set cgroup ownership. Only affects the v2 manager; ownership is a no-op
-    /// for v1 and systemd.
+    /// Set cgroup ownership.
+    ///
+    /// Only affects the v2 manager for v1 and systemd.
+    #[cfg_attr(not(feature = "v2"), allow(unused_variables))]
     pub fn with_ownership(self, ownership: CgroupOwnership) -> Self {
         match self {
+            #[cfg(feature = "v2")]
             AnyCgroupManager::V2(m) => AnyCgroupManager::V2(m.with_ownership(ownership)),
             other => other,
         }
