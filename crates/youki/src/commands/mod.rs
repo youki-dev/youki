@@ -58,10 +58,10 @@ fn create_cgroup_manager<P: AsRef<Path>>(
 ) -> Result<AnyCgroupManager> {
     let container = load_container(root_path, container_id)?;
     Ok(libcgroups::common::create_cgroup_manager(
-        libcgroups::common::CgroupConfig::new(
-            container.spec()?.cgroup_path,
-            container.systemd(),
-            container.id().to_string(),
-        ),
+        libcgroups::common::CgroupConfig {
+            cgroup_path: container.spec()?.cgroup_path,
+            systemd_cgroup: container.systemd(),
+            container_name: container.id().to_string(),
+        },
     )?)
 }

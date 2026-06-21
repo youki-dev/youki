@@ -8,11 +8,11 @@ use oci_spec::runtime::{
     LinuxBlockIoBuilder, LinuxMemoryBuilder, LinuxResourcesBuilder, LinuxThrottleDeviceBuilder,
 };
 fn main() -> Result<()> {
-    let cfg = CgroupConfig::new(
-        PathBuf::from("system.slice:youki:test"),
-        true,
-        "test".to_owned(),
-    );
+    let cfg = CgroupConfig {
+        cgroup_path: PathBuf::from("system.slice:youki:test"),
+        systemd_cgroup: true,
+        container_name: "test".to_owned(),
+    };
     let manager = create_cgroup_manager(cfg)?;
     let mem_limit = 256 * 1024 * 1024;
     // Throttle rate in bytes per second (Bps) for the block IO device

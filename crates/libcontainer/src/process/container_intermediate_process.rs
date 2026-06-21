@@ -51,8 +51,15 @@ pub fn container_intermediate_process(
     let spec = &args.spec;
     let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
     let namespaces = Namespaces::try_from(linux.namespaces().as_ref())?;
+    // If in a rootless container, use best effort
+    let cgroup_ownership = if args.user_ns_config.is_some() {
+        libcgroups::common::CgroupOwnership::Delegated
+    } else {
+        libcgroups::common::CgroupOwnership::Full
+    };
     let cgroup_manager = libcgroups::common::create_cgroup_manager(args.cgroup_config.to_owned())
-        .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?;
+        .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?
+        .with_ownership(cgroup_ownership);
 
     let current_pid = Pid::this();
     // setting CPU affinity for tenant container before cgroup move
