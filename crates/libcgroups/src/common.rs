@@ -326,11 +326,55 @@ pub enum CreateCgroupSetupError {
     Systemd(#[from] systemd::manager::SystemdManagerError),
 }
 
+/// Describes how much of the cgroup hierarchy the process owns.
+///
+/// Under cgroup v2 delegation (e.g. a rootless container, or a read-only
+/// `/sys/fs/cgroup` mount) the process owns at most its own subtree; the mount
+/// root and the ancestors above its delegation boundary are owned upstream and
+/// read-only. `Delegated` makes cgroup creation best-effort so the container
+/// can still run without its own cgroup, mirroring runc's `rootless_cgroups`.
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CgroupOwnership {
+    /// The process fully owns the cgroup hierarchy (privileged / root). Failures
+    /// to create or join a cgroup are fatal.
+    #[default]
+    Full,
+    /// The cgroup hierarchy is delegated and may be partly read-only. Failures
+    /// to create or join a cgroup are non-fatal; the process stays in its parent
+    /// cgroup. A requested limit that cannot be applied still errors later.
+    Delegated,
+}
+
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct CgroupConfig {
     pub cgroup_path: PathBuf,
     pub systemd_cgroup: bool,
     pub container_name: String,
+    pub ownership: CgroupOwnership,
+}
+
+impl CgroupConfig {
+    /// Creates a config with `Full` ownership. Use [`Self::with_ownership`] to
+    /// opt into `Delegated` for rootless / delegated environments.
+    pub fn new(
+        cgroup_path: impl Into<PathBuf>,
+        systemd_cgroup: bool,
+        container_name: impl Into<String>,
+    ) -> Self {
+        Self {
+            cgroup_path: cgroup_path.into(),
+            systemd_cgroup,
+            container_name: container_name.into(),
+            ownership: CgroupOwnership::Full,
+        }
+    }
+
+    pub fn with_ownership(mut self, ownership: CgroupOwnership) -> Self {
+        self.ownership = ownership;
+        self
+    }
 }
 
 // Create any cgroup manager with customize root path. If root_path provided
@@ -358,7 +402,7 @@ pub fn create_cgroup_manager_with_root(
         CgroupSetup::Unified => {
             // ref https://github.com/opencontainers/runtime-spec/blob/main/config-linux.md#cgroups-path
             if cgroup_path.is_absolute() || !config.systemd_cgroup {
-                return Ok(create_v2_cgroup_manager(root, cgroup_path)?.any());
+                return Ok(create_v2_cgroup_manager(root, cgroup_path, config.ownership)?.any());
             }
             Ok(
                 create_systemd_cgroup_manager(root, cgroup_path, config.container_name.as_str())?
@@ -393,15 +437,18 @@ fn create_v1_cgroup_manager(
 fn create_v2_cgroup_manager(
     root_path: &Path,
     cgroup_path: &Path,
+    ownership: CgroupOwnership,
 ) -> Result<v2::manager::Manager, v2::manager::V2ManagerError> {
     tracing::info!("cgroup manager V2 will be used");
-    v2::manager::Manager::new(root_path.to_path_buf(), cgroup_path.to_owned())
+    Ok(v2::manager::Manager::new(root_path.to_path_buf(), cgroup_path.to_owned())?
+        .with_ownership(ownership))
 }
 
 #[cfg(not(feature = "v2"))]
 fn create_v2_cgroup_manager(
     _root_path: &Path,
     _cgroup_path: &Path,
+    _ownership: CgroupOwnership,
 ) -> Result<v2::manager::Manager, v2::manager::V2ManagerError> {
     Err(v2::manager::V2ManagerError::NotEnabled)
 }

@@ -4,6 +4,7 @@ use std::path::Component::RootDir;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use nix::errno::Errno;
 use nix::unistd::Pid;
 
 use super::controller::Controller;
@@ -22,8 +23,8 @@ use super::pids::Pids;
 use super::unified::{Unified, V2UnifiedError};
 use super::util::{self, CGROUP_SUBTREE_CONTROL, V2UtilError};
 use crate::common::{
-    self, AnyCgroupManager, CGROUP_PROCS, CgroupManager, ControllerOpt, FreezerState,
-    JoinSafelyError, PathBufExt, WrapIoResult, WrappedIoError,
+    self, AnyCgroupManager, CGROUP_PROCS, CgroupManager, CgroupOwnership, ControllerOpt,
+    FreezerState, JoinSafelyError, PathBufExt, WrapIoResult, WrappedIoError,
 };
 use crate::stats::{PidStatsError, Stats, StatsProvider};
 
@@ -77,11 +78,14 @@ pub struct Manager {
     root_path: PathBuf,
     cgroup_path: PathBuf,
     full_path: PathBuf,
+    ownership: CgroupOwnership,
 }
 
 impl Manager {
     /// Constructs a new cgroup manager with root path being the mount point
-    /// of a cgroup v2 fs and cgroup path being a relative path from the root
+    /// of a cgroup v2 fs and cgroup path being a relative path from the root.
+    /// Ownership defaults to [`CgroupOwnership::Full`]; use
+    /// [`Self::with_ownership`] for delegated/rootless environments.
     pub fn new(root_path: PathBuf, cgroup_path: PathBuf) -> Result<Self, V2ManagerError> {
         let full_path = root_path.join_safely(&cgroup_path)?;
 
@@ -89,7 +93,26 @@ impl Manager {
             root_path,
             cgroup_path,
             full_path,
+            ownership: CgroupOwnership::Full,
         })
+    }
+
+    pub fn with_ownership(mut self, ownership: CgroupOwnership) -> Self {
+        self.ownership = ownership;
+        self
+    }
+
+    fn is_delegated(&self) -> bool {
+        self.ownership == CgroupOwnership::Delegated
+    }
+
+    /// Whether `err` is a read-only-filesystem or permission error, i.e. the
+    /// expected failure when operating on a cgroup we do not own under delegation.
+    fn is_permission_error(err: &WrappedIoError) -> bool {
+        matches!(
+            err.inner().raw_os_error().map(Errno::from_raw),
+            Some(Errno::EROFS) | Some(Errno::EACCES)
+        )
     }
 
     /// Creates a unified cgroup at `self.full_path` and attaches a process to it
@@ -110,11 +133,25 @@ impl Manager {
         while let Some(component) = components.next() {
             current_path = current_path.join(component);
             if !current_path.exists() {
-                fs::create_dir(&current_path).wrap_create_dir(&current_path)?;
-                fs::metadata(&current_path)
-                    .wrap_other(&current_path)?
-                    .permissions()
-                    .set_mode(0o755);
+                match fs::create_dir(&current_path).wrap_create_dir(&current_path) {
+                    Ok(()) => {
+                        fs::metadata(&current_path)
+                            .wrap_other(&current_path)?
+                            .permissions()
+                            .set_mode(0o755);
+                    }
+                    // Under delegation the cgroup fs may be read-only to us; if we
+                    // cannot create the cgroup, run without one (the process stays
+                    // in its parent cgroup) rather than failing.
+                    Err(err) if self.is_delegated() && Self::is_permission_error(&err) => {
+                        tracing::debug!(
+                            "delegated cgroup: cannot create {current_path:?}: {err}; \
+                             leaving process in its parent cgroup"
+                        );
+                        return Ok(());
+                    }
+                    Err(err) => return Err(err.into()),
+                }
             }
 
             // last component cannot have subtree_control enabled due to internal process constraint
@@ -124,8 +161,25 @@ impl Manager {
             }
         }
 
-        common::write_cgroup_file(self.full_path.join(CGROUP_PROCS), pid)?;
-        Ok(())
+        self.attach_pid(pid)
+    }
+
+    /// Writes `pid` to the cgroup's `cgroup.procs`. Under delegated ownership a
+    /// read-only / permission failure is logged and ignored: the process simply
+    /// stays in its parent cgroup, mirroring runc's rootless_cgroups behavior.
+    fn attach_pid(&self, pid: Pid) -> Result<(), V2ManagerError> {
+        match common::write_cgroup_file(self.full_path.join(CGROUP_PROCS), pid) {
+            Ok(()) => Ok(()),
+            Err(err) if self.is_delegated() && Self::is_permission_error(&err) => {
+                tracing::debug!(
+                    "delegated cgroup: cannot move process into {:?}: {err}; \
+                     leaving process in its parent cgroup",
+                    self.full_path
+                );
+                Ok(())
+            }
+            Err(err) => Err(err.into()),
+        }
     }
 
     /// Reads the controllers already enabled in `{path}/cgroup.subtree_control`
@@ -187,8 +241,7 @@ impl CgroupManager for Manager {
 
     fn add_task(&self, pid: Pid) -> Result<(), Self::Error> {
         if self.full_path.exists() {
-            common::write_cgroup_file(self.full_path.join(CGROUP_PROCS), pid)?;
-            return Ok(());
+            return self.attach_pid(pid);
         }
         self.create_unified_cgroup(pid)?;
         Ok(())

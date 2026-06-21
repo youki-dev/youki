@@ -110,11 +110,19 @@ impl ContainerBuilderImpl {
             final_cgroups_path = normalized;
         }
 
-        let cgroup_config = libcgroups::common::CgroupConfig {
-            cgroup_path: final_cgroups_path,
-            systemd_cgroup: self.use_systemd || self.user_ns_config.is_some(),
-            container_name: self.container_id.to_owned(),
+        // A rootless container is delegated at most its own cgroup subtree, so
+        // cgroup creation must be best-effort (see CgroupOwnership::Delegated).
+        let cgroup_ownership = if self.user_ns_config.is_some() {
+            libcgroups::common::CgroupOwnership::Delegated
+        } else {
+            libcgroups::common::CgroupOwnership::Full
         };
+        let cgroup_config = libcgroups::common::CgroupConfig::new(
+            final_cgroups_path,
+            self.use_systemd || self.user_ns_config.is_some(),
+            self.container_id.to_owned(),
+        )
+        .with_ownership(cgroup_ownership);
         let process = self
             .spec
             .process()
@@ -217,11 +225,11 @@ impl ContainerBuilderImpl {
         let linux = self.spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
         let cgroups_path = utils::get_cgroup_path(linux.cgroups_path(), &self.container_id);
         let cmanager =
-            libcgroups::common::create_cgroup_manager(libcgroups::common::CgroupConfig {
-                cgroup_path: cgroups_path,
-                systemd_cgroup: self.use_systemd || self.user_ns_config.is_some(),
-                container_name: self.container_id.to_string(),
-            })?;
+            libcgroups::common::create_cgroup_manager(libcgroups::common::CgroupConfig::new(
+                cgroups_path,
+                self.use_systemd || self.user_ns_config.is_some(),
+                self.container_id.to_string(),
+            ))?;
 
         let mut errors = Vec::new();
 

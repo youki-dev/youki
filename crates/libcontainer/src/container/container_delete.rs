@@ -86,11 +86,11 @@ impl Container {
                     // check https://man7.org/linux/man-pages/man7/cgroups.7.html
                     // creating and removing cgroups section for more information on cgroups
                     let cmanager = libcgroups::common::create_cgroup_manager(
-                        libcgroups::common::CgroupConfig {
-                            cgroup_path: config.cgroup_path.to_owned(),
-                            systemd_cgroup: self.systemd(),
-                            container_name: self.id().to_string(),
-                        },
+                        libcgroups::common::CgroupConfig::new(
+                            config.cgroup_path.to_owned(),
+                            self.systemd(),
+                            self.id().to_string(),
+                        ),
                     )?;
                     cmanager.remove().map_err(|err| {
                         tracing::error!(cgroup_path = ?config.cgroup_path, "failed to remove cgroup due to: {err:?}");
