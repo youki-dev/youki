@@ -578,9 +578,8 @@ pub fn setup_intel_rdt(
     let mut created_monitoring_dir = None;
     if intel_rdt.enable_monitoring().unwrap_or(false) {
         let mon_dir = container_dir.join("mon_groups").join(container_id);
-        if setup_monitoring_group(&mon_dir, *init_pid)? {
-            created_monitoring_dir = Some(mon_dir);
-        }
+        setup_monitoring_group(&mon_dir, *init_pid)?;
+        created_monitoring_dir = Some(mon_dir);
     }
 
     // If closID is not set and the runtime has created the sub-directory,
