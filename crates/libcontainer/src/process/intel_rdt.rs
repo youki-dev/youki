@@ -51,6 +51,8 @@ pub enum IntelRdtError {
     Pathrs(#[from] pathrs::error::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error("failed to cleanup intel rdt: {0}")]
+    Cleanup(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -144,6 +146,45 @@ pub fn delete_resctrl_monitoring_subdirectory(path: &Path) -> Result<()> {
                 return Err(IntelRdtError::RemoveSubdirectory(err));
             }
         }
+    }
+
+    Ok(())
+}
+
+/// Cleans up the Intel RDT directories.
+///
+/// This function attempts to remove the monitoring directory and the main resource
+/// control (CLOS) directory. If the explicit path is not available but the legacy
+/// `clean_up_intel_rdt_subdirectory` flag is set, it will attempt to remove the
+/// directory by container ID.
+///
+/// It aggregates all cleanup failures into a single `Cleanup` error.
+pub fn cleanup_intel_rdt(
+    intel_rdt_dir: Option<&Path>,
+    intel_rdt_monitoring_dir: Option<&Path>,
+    clean_up_intel_rdt_subdirectory: Option<bool>,
+    id: &str,
+) -> Result<()> {
+    let mut errors = Vec::new();
+
+    if let Some(path) = intel_rdt_monitoring_dir {
+        if let Err(e) = delete_resctrl_monitoring_subdirectory(path) {
+            errors.push(format!("failed to delete monitoring directory: {e}"));
+        }
+    }
+
+    if let Some(path) = intel_rdt_dir {
+        if let Err(e) = delete_resctrl_subdirectory(path) {
+            errors.push(format!("failed to delete directory: {e}"));
+        }
+    } else if let Some(true) = clean_up_intel_rdt_subdirectory {
+        if let Err(e) = delete_resctrl_subdirectory_by_id(id) {
+            errors.push(format!("failed to delete directory by id: {e}"));
+        }
+    }
+
+    if !errors.is_empty() {
+        return Err(IntelRdtError::Cleanup(errors.join(";")));
     }
 
     Ok(())
@@ -924,6 +965,35 @@ mod test {
             written_data,
             "L3:0=f;1=f0\nL3:2=f\nMB:0=70;1=20\nL2:0=f;1=f0\n"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_cleanup_intel_rdt() -> Result<()> {
+        let tmp = tempfile::tempdir().unwrap();
+        let mon_dir = tmp.path().join("mon_groups").join("test_container");
+        fs::create_dir_all(&mon_dir)?;
+
+        let res = cleanup_intel_rdt(None, Some(&mon_dir), None, "test_container");
+        assert!(res.is_ok());
+        assert!(!mon_dir.exists());
+
+        // Both paths are provided, but `delete_resctrl_subdirectory` will fail
+        // because it tries to find the real resctrl mount point via procfs.
+        // We verify that `cleanup_intel_rdt` correctly wraps and aggregates the error.
+        let rdt_dir = tmp.path().join("test_container");
+        let res = cleanup_intel_rdt(Some(&rdt_dir), None, None, "test_container");
+        assert!(res.is_err());
+        let err_str = res.unwrap_err().to_string();
+        assert!(err_str.contains("failed to cleanup intel rdt: failed to delete directory: failed to find resctrl mount point"));
+
+        // Legacy flag is provided (`clean_up_intel_rdt_subdirectory=true`).
+        // It will also fail trying to find the mount point, and should aggregate correctly.
+        let res = cleanup_intel_rdt(None, None, Some(true), "test_container");
+        assert!(res.is_err());
+        let err_str = res.unwrap_err().to_string();
+        assert!(err_str.contains("failed to cleanup intel rdt: failed to delete directory by id: failed to find resctrl mount point"));
 
         Ok(())
     }

@@ -12,10 +12,7 @@ use super::{Container, ContainerStatus};
 use crate::error::{CreateContainerError, LibcontainerError, MissingSpecError};
 use crate::notify_socket::NotifyListener;
 use crate::process::args::{ContainerArgs, ContainerType};
-use crate::process::intel_rdt::{
-    delete_resctrl_monitoring_subdirectory, delete_resctrl_subdirectory,
-    delete_resctrl_subdirectory_by_id, setup_intel_rdt,
-};
+use crate::process::intel_rdt::{cleanup_intel_rdt, setup_intel_rdt};
 use crate::process::{self};
 use crate::syscall::syscall::SyscallType;
 use crate::user_ns::UserNamespaceConfig;
@@ -249,23 +246,14 @@ impl ContainerBuilderImpl {
         }
 
         if let Some(container) = &self.container {
-            if let Some(path) = container.intel_rdt_monitoring_dir() {
-                if let Err(e) = delete_resctrl_monitoring_subdirectory(path) {
-                    tracing::error!(path = ?path, error = ?e, "failed to delete resctrl monitoring subdirectory");
-                    errors.push(e.to_string());
-                }
-            }
-
-            if let Some(path) = container.intel_rdt_dir() {
-                if let Err(e) = delete_resctrl_subdirectory(path) {
-                    tracing::error!(path = ?path, error = ?e, "failed to delete resctrl subdirectory");
-                    errors.push(e.to_string());
-                }
-            } else if let Some(true) = container.clean_up_intel_rdt_subdirectory() {
-                if let Err(e) = delete_resctrl_subdirectory_by_id(container.id()) {
-                    tracing::error!(id = ?container.id(), error = ?e, "failed to delete resctrl subdirectory by id");
-                    errors.push(e.to_string());
-                }
+            if let Err(e) = cleanup_intel_rdt(
+                container.intel_rdt_dir().map(|p| p.as_path()),
+                container.intel_rdt_monitoring_dir().map(|p| p.as_path()),
+                container.clean_up_intel_rdt_subdirectory(),
+                container.id(),
+            ) {
+                tracing::error!(id = ?container.id(), error = ?e, "failed to cleanup intel rdt");
+                errors.push(e.to_string());
             }
 
             if container.root.exists() {
