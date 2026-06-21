@@ -237,23 +237,7 @@ fn setup_resctrl_group(
         created_dir = true;
     }
 
-    let tasks = resctrl_container_dir.join("tasks");
-    // TODO(ipuustin): File doesn't need to be created, but it's easier
-    // to test this way. Fix the tests so that the fake resctrl
-    // filesystem is pre-populated.
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(tasks)
-        .map_err(|err| {
-            tracing::error!("failed to open resctrl tasks file: {}", err);
-            IntelRdtError::OpenClosIDDirectory(err)
-        })?;
-
-    write!(file, "{init_pid}").map_err(|err| {
-        tracing::error!("failed to write to resctrl tasks file: {}", err);
-        IntelRdtError::WriteClosIDDirectory(err)
-    })?;
+    write_pid_to_tasks(resctrl_container_dir, init_pid)?;
 
     Ok(created_dir)
 }
@@ -277,22 +261,32 @@ fn setup_monitoring_group(mon_dir: &Path, init_pid: Pid) -> Result<bool> {
         created_dir = true;
     }
 
-    let tasks = mon_dir.join("tasks");
+    write_pid_to_tasks(mon_dir, init_pid)?;
+
+    Ok(created_dir)
+}
+
+/// Helper function to write the process ID to the tasks file
+fn write_pid_to_tasks(dir: &Path, pid: Pid) -> Result<()> {
+    let tasks = dir.join("tasks");
+    // TODO(ipuustin): File doesn't need to be created, but it's easier
+    // to test this way. Fix the tests so that the fake resctrl
+    // filesystem is pre-populated.
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(tasks)
         .map_err(|err| {
-            tracing::error!("failed to open resctrl monitoring tasks file: {}", err);
+            tracing::error!("failed to open resctrl tasks file: {}", err);
             IntelRdtError::OpenClosIDDirectory(err)
         })?;
 
-    write!(file, "{init_pid}").map_err(|err| {
-        tracing::error!("failed to write to resctrl monitoring tasks file: {}", err);
+    write!(file, "{pid}").map_err(|err| {
+        tracing::error!("failed to write to resctrl tasks file: {}", err);
         IntelRdtError::WriteClosIDDirectory(err)
     })?;
 
-    Ok(created_dir)
+    Ok(())
 }
 
 /// Merges the two schemas together, removing lines starting with "MB:" from
