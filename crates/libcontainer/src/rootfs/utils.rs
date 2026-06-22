@@ -640,8 +640,6 @@ mod tests {
 
     #[test]
     fn test_is_bind() {
-        use oci_spec::runtime::MountBuilder;
-
         // Legacy check
         let m1 = MountBuilder::default().typ("bind").build().unwrap();
         assert!(is_bind(&m1));
