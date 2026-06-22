@@ -4,11 +4,11 @@ mod cpu;
 use std::fs;
 use std::path::Path;
 
-use anyhow::Context;
+use anyhow::{Context, Result, anyhow};
 use nix::sys::statfs::{CGROUP2_SUPER_MAGIC, statfs};
 use test_framework::{ConditionalTest, TestGroup};
 
-use crate::utils::is_runtime_youki;
+use crate::utils::{is_runtime_youki, update_container};
 
 pub(super) fn is_cgroup_v2() -> bool {
     statfs("/sys/fs/cgroup")
@@ -25,6 +25,22 @@ pub(super) fn check_cgroup_value(base: &Path, file: &str, expected: &str) -> any
     if got != expected {
         anyhow::bail!("{}: expected {}, got {}", path.display(), expected, got);
     }
+    Ok(())
+}
+
+pub(super) fn update_container_and_wait<P: AsRef<Path>>(
+    id: &str,
+    dir: P,
+    args: &[&str],
+) -> Result<()> {
+    let status = update_container(id, dir, args)?
+        .wait()
+        .context("failed to wait for container update")?;
+
+    if !status.success() {
+        return Err(anyhow!("container update failed with status: {status}"));
+    }
+
     Ok(())
 }
 

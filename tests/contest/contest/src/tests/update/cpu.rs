@@ -6,9 +6,9 @@ use oci_spec::runtime::{
 };
 use test_framework::{TestResult, test_result};
 
-use super::check_cgroup_value;
+use super::{check_cgroup_value, update_container_and_wait};
 use crate::utils::test_utils::check_container_created;
-use crate::utils::{start_container, test_outside_container, update_container};
+use crate::utils::{start_container, test_outside_container};
 
 fn create_spec(cgroup_name: &str, resources: Option<LinuxResources>) -> Result<Spec> {
     let mut spec = SpecBuilder::default()
@@ -47,28 +47,22 @@ pub(crate) fn cpu_burst_test() -> TestResult {
 
         test_result!(check_cgroup_value(&cgroup_path, "cpu.max.burst", "0"));
 
-        update_container(
+        test_result!(update_container_and_wait(
             id,
             dir,
             &["--cpu-period", "900000", "--cpu-burst", "500000"],
-        )
-        .unwrap()
-        .wait()
-        .unwrap();
+        ));
         test_result!(check_cgroup_value(&cgroup_path, "cpu.max.burst", "500000"));
 
-        // issue: https://github.com/opencontainers/runc/issues/4210
-        // for systemd, cpu-burst value will be cleared, it's a known issue.
-        update_container(id, dir, &["--memory", "100M"])
-            .unwrap()
-            .wait()
-            .unwrap();
+        // Ensure a memory-only update does not reset cpu.max.burst.
+        test_result!(update_container_and_wait(id, dir, &["--memory", "100M"]));
         test_result!(check_cgroup_value(&cgroup_path, "cpu.max.burst", "500000"));
 
-        update_container(id, dir, &["--cpu-period", "900000", "--cpu-burst", "0"])
-            .unwrap()
-            .wait()
-            .unwrap();
+        test_result!(update_container_and_wait(
+            id,
+            dir,
+            &["--cpu-period", "900000", "--cpu-burst", "0"],
+        ));
         test_result!(check_cgroup_value(&cgroup_path, "cpu.max.burst", "0"));
 
         TestResult::Passed
