@@ -192,6 +192,13 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
     })
 }
 
+pub fn is_bind(m: &Mount) -> bool {
+    m.typ().as_deref() == Some("bind")
+        || m.options()
+            .as_deref()
+            .is_some_and(|opts| opts.iter().any(|o| o == "bind" || o == "rbind"))
+}
+
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
@@ -629,5 +636,31 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_is_bind() {
+        use oci_spec::runtime::MountBuilder;
+
+        // Legacy check
+        let m1 = MountBuilder::default().typ("bind").build().unwrap();
+        assert!(is_bind(&m1));
+
+        // Spec-compliant checks
+        let m2 = MountBuilder::default()
+            .options(vec!["bind".to_string()])
+            .build()
+            .unwrap();
+        assert!(is_bind(&m2));
+
+        let m3 = MountBuilder::default()
+            .options(vec!["rbind".to_string()])
+            .build()
+            .unwrap();
+        assert!(is_bind(&m3));
+
+        // Negative check
+        let m4 = MountBuilder::default().typ("tmpfs").build().unwrap();
+        assert!(!is_bind(&m4));
     }
 }
