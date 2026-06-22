@@ -1,11 +1,17 @@
 use anyhow::Result;
-use vergen_gitcl::{Emitter, GitclBuilder, RustcBuilder};
+use vergen_gitcl::{Emitter, Gitcl, Rustc};
 
 pub fn main() -> Result<()> {
+    // git failing is possible as we might be building in a bare
+    // repo without .git history ; which is why we have a workaround
+    // rustc failure is rarer, and we do not have a workaround in place
+    // so we only match for error of git, and bubble up all other errors
+    // via ? do error out the build
+    // also see https://github.com/rustyhorde/vergen/issues/174#issuecomment-3631861105
     if Emitter::default()
-        .add_instructions(&GitclBuilder::all_git()?)?
-        .add_instructions(&RustcBuilder::all_rustc()?)?
-        .emit()
+        .add_instructions(&Rustc::all_rustc())?
+        .add_instructions(&Gitcl::all_git())
+        .and_then(|emitter| emitter.emit())
         .is_err()
     {
         // currently we only inject git sha, so just this
