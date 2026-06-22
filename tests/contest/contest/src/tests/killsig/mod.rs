@@ -59,17 +59,21 @@ fn check_signal(signal: &str) -> TestResult {
         return TestResult::Failed(err);
     }
 
-    let kill_result =
-        kill_container_with_signal(container.get_id(), container.get_project_path(), signal)
-            .expect("failed to execute kill command")
-            .wait_with_output();
-    let kill_result = get_result_from_output(kill_result).into();
-    let stopped_result = container.wait_for_state("stopped", STATE_TIMEOUT);
+    let kill_result = match kill_container_with_signal(
+        container.get_id(),
+        container.get_project_path(),
+        signal,
+    ) {
+        Ok(child) => get_result_from_output(child.wait_with_output()).into(),
+        Err(err) => TestResult::Failed(err),
+    };
 
     if let TestResult::Failed(err) = kill_result {
         let _ = container.delete();
         return TestResult::Failed(err.context(format!("failed to send {signal}")));
     }
+
+    let stopped_result = container.wait_for_state("stopped", STATE_TIMEOUT);
 
     if let TestResult::Failed(err) = stopped_result {
         let _ = container.delete();
