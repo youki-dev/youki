@@ -8,11 +8,7 @@ use test_framework::{Test, TestGroup, TestResult, test_result};
 use crate::tests::lifecycle::{ContainerLifecycle, get_result_from_output};
 use crate::utils::kill_container_with_signal;
 
-const SIGNALS: [(&str, &str); 3] = [
-    ("killsig_TERM", "TERM"),
-    ("killsig_USR1", "USR1"),
-    ("killsig_USR2", "USR2"),
-];
+const SIGNALS: [&str; 3] = ["TERM", "USR1", "USR2"];
 const STATE_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn create_spec(signal: &str) -> anyhow::Result<Spec> {
@@ -100,9 +96,9 @@ fn check_signal(signal: &str) -> TestResult {
 pub fn get_killsig_test() -> TestGroup {
     let mut test_group = TestGroup::new("killsig");
 
-    for (name, signal) in SIGNALS {
+    for signal in SIGNALS {
         test_group.add(vec![Box::new(Test::new(
-            name,
+            signal,
             Box::new(move || check_signal(signal)),
         ))]);
     }
