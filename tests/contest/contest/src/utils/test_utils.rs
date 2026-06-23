@@ -534,35 +534,42 @@ pub fn wait_container_running<P: AsRef<Path>>(id: &str, dir: P) -> Result<()> {
     )
 }
 
-pub fn handle_console_socket(stream: std::os::unix::net::UnixStream) {
-    std::thread::spawn(move || {
-        use std::io::{IoSliceMut, Read};
-        use std::os::unix::io::AsRawFd;
+pub fn handle_console_socket(
+    stream: std::os::unix::net::UnixStream,
+) -> Option<std::os::fd::OwnedFd> {
+    use std::io::IoSliceMut;
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::unix::io::AsRawFd;
 
-        use nix::sys::socket::{ControlMessageOwned, MsgFlags, recvmsg};
+    use nix::sys::socket::{ControlMessageOwned, MsgFlags, recvmsg};
 
-        let mut buf = [0u8; 4096];
-        let mut iov = [IoSliceMut::new(&mut buf)];
-        let mut cmsg_space = nix::cmsg_space!([std::os::unix::io::RawFd; 1]);
-        let fd = stream.as_raw_fd();
+    // Set a read timeout so recvmsg doesn't block forever if the runtime
+    // connects to the socket but never sends the PTY master fd.
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(10)));
 
-        if let Ok(msg) = recvmsg::<()>(fd, &mut iov, Some(&mut cmsg_space), MsgFlags::empty())
-            && let Ok(cmsgs) = msg.cmsgs()
-        {
-            for cmsg in cmsgs {
-                if let ControlMessageOwned::ScmRights(_) = cmsg {
-                    // Keep the PTY master open by waiting for the stream to close
-                    let mut buf = [0u8; 1024];
-                    let mut stream_mut = &stream;
-                    while let Ok(n) = stream_mut.read(&mut buf) {
-                        if n == 0 {
-                            break;
-                        }
-                    }
-                }
+    let mut buf = [0u8; 4096];
+    let mut iov = [IoSliceMut::new(&mut buf)];
+    let mut cmsg_space = nix::cmsg_space!([std::os::unix::io::RawFd; 1]);
+    let fd = stream.as_raw_fd();
+
+    if let Ok(msg) = recvmsg::<()>(
+        fd,
+        &mut iov,
+        Some(&mut cmsg_space),
+        MsgFlags::MSG_CMSG_CLOEXEC,
+    ) && let Ok(cmsgs) = msg.cmsgs()
+    {
+        for cmsg in cmsgs {
+            if let ControlMessageOwned::ScmRights(fds) = cmsg
+                && let Some(&raw_fd) = fds.first()
+            {
+                // SAFETY: raw_fd is a valid file descriptor returned by recvmsg
+                // with MSG_CMSG_CLOEXEC set; we take sole ownership here.
+                return Some(unsafe { OwnedFd::from_raw_fd(raw_fd) });
             }
         }
-    });
+    }
+    None
 }
 
 /// Checkpoint a running container into `image_dir`.
@@ -673,7 +680,7 @@ pub fn restore_container(
     work_dir: Option<&Path>,
     restore_args: &[&str],
     global_args: &[&str],
-) -> Result<()> {
+) -> Result<Option<std::os::fd::OwnedFd>> {
     let stderr_file = tempfile::NamedTempFile::new().context("failed to create temp file")?;
 
     let mut args: Vec<std::ffi::OsString> = global_args.iter().map(Into::into).collect();
@@ -708,6 +715,7 @@ pub fn restore_container(
         false
     };
 
+    let mut pty_master: Option<std::os::fd::OwnedFd> = None;
     let mut listener = None;
     if is_terminal {
         let socket_path = bundle_path.join(format!("restore-console-{}.sock", id));
@@ -730,8 +738,26 @@ pub fn restore_container(
         .context("failed to spawn restore")?;
 
     if let Some(l) = listener {
-        let (stream, _) = l.accept()?;
-        handle_console_socket(stream);
+        // Accept with a timeout: if the restore process fails before connecting
+        // to the console socket, accept() would block forever without a timeout.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let l2 = l.try_clone().context("failed to clone listener")?;
+        std::thread::spawn(move || {
+            let _ = tx.send(l2.accept());
+        });
+        match rx.recv_timeout(Duration::from_secs(30)) {
+            Ok(Ok((stream, _))) => pty_master = handle_console_socket(stream),
+            Ok(Err(e)) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                bail!("restore console socket accept failed: {e}");
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                bail!("timed out waiting for restore to connect to console socket");
+            }
+        }
     }
 
     let status = child.wait().context("failed to wait for restore")?;
@@ -741,7 +767,7 @@ pub fn restore_container(
         bail!("restore failed ({}): {}", status, stderr);
     }
 
-    Ok(())
+    Ok(pty_master)
 }
 
 /// Returns true if CRIU is installed on the host.

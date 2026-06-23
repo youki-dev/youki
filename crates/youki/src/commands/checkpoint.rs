@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use liboci_cli::Checkpoint;
 
-use crate::commands::load_container;
+use crate::commands::{load_container, parse_cgroups_mode};
 
 pub fn checkpoint(args: Checkpoint, root_path: PathBuf) -> Result<()> {
     tracing::debug!("start checkpointing container {}", args.container_id);
@@ -23,16 +23,6 @@ pub fn checkpoint(args: Checkpoint, root_path: PathBuf) -> Result<()> {
     container
         .checkpoint(&opts)
         .with_context(|| format!("failed to checkpoint container {}", args.container_id))
-}
-
-fn parse_cgroups_mode(s: &str) -> Result<rust_criu::CgMode, anyhow::Error> {
-    match s {
-        "ignore" => Ok(rust_criu::CgMode::IGNORE),
-        "full" => Ok(rust_criu::CgMode::FULL),
-        "strict" => Ok(rust_criu::CgMode::STRICT),
-        "soft" => Ok(rust_criu::CgMode::SOFT),
-        _ => Err(anyhow::anyhow!("invalid manage-cgroups-mode: {s}")),
-    }
 }
 
 #[cfg(test)]
