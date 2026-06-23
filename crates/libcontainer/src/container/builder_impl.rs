@@ -211,17 +211,12 @@ impl ContainerBuilderImpl {
 
         if let Some(container) = &mut self.container {
             // update status and pid of the container process
-            let needs_cleanup = intel_rdt_dir.is_some();
             container
                 .set_status(ContainerStatus::Created)
                 .set_creator(nix::unistd::geteuid().as_raw())
                 .set_pid(init_pid.as_raw())
                 .set_intel_rdt_dir(intel_rdt_dir)
                 .set_intel_rdt_monitoring_dir(intel_rdt_monitoring_dir)
-                // DEPRECATED: We populate the legacy boolean field here so that if a user creates
-                // a container with this version of youki and then downgrades their binary to an
-                // older version, the older binary will still know to clean up the resctrl directory.
-                .set_clean_up_intel_rdt_directory(needs_cleanup)
                 .save()?;
         }
 
