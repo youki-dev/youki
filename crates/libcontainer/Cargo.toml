@@ -28,6 +28,7 @@ nix = { workspace = true, features = ["socket", "sched", "mount", "mman", "resou
 oci-spec = { workspace = true }
 procfs = { workspace = true }
 prctl = { workspace = true }
+protobuf = "= 3.7.2" # https://github.com/checkpoint-restore/rust-criu/issues/19
 libcgroups = { path = "../libcgroups", default-features = false, version = "0.6.0" } # MARK: Version
 libseccomp = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
@@ -42,6 +43,7 @@ netlink-packet-route = { workspace = true }
 netlink-sys = { workspace = true }
 netlink-packet-core = { workspace = true }
 pathrs = { workspace = true }
+scopeguard = { workspace = true }
 
 [dev-dependencies]
 oci-spec = { workspace = true, features = ["proptests"] }
@@ -50,4 +52,6 @@ serial_test = { workspace = true }
 tempfile = { workspace = true }
 anyhow = { workspace = true }
 rand = { workspace = true }
-scopeguard = { workspace = true }
+
+[package.metadata.cargo-machete]
+ignored = ["protobuf"]
