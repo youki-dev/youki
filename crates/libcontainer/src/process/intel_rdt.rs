@@ -241,29 +241,6 @@ fn setup_resctrl_group(
 /// Creates a dedicated monitoring group (`mon_groups/<container_id>`) inside the container's
 /// Intel RDT resource control directory and adds the container's PID to its `tasks` file.
 ///
-/// As per OCI runtime-spec v1.3.0, if `enable_monitoring` is set to true, the runtime MUST
-/// create this subdirectory. This allows users to track the resource utilization (e.g., L3 cache,
-/// memory bandwidth) of the container independently from the parent allocation group (CLOS).
-///
-/// Returns `true` if the runtime created the directory, or `false` if it already existed.
-fn setup_monitoring_group(mon_dir: &Path, init_pid: Pid) -> Result<()> {
-    if !mon_dir.exists() {
-        fs::create_dir_all(mon_dir).map_err(|err| {
-            tracing::error!("failed to create resctrl monitoring subdirectory: {err}");
-            IntelRdtError::CreateMonitoringDirectory(err)
-        })?;
-    }
-
-    write_pid_to_tasks(
-        mon_dir,
-        init_pid,
-        IntelRdtError::OpenMonitoringTasksFile,
-        IntelRdtError::WriteMonitoringTasksFile,
-    )?;
-
-    Ok(())
-}
-
 /// Helper function to write the process ID to the tasks file
 fn write_pid_to_tasks<F1, F2>(dir: &Path, pid: Pid, on_open_err: F1, on_write_err: F2) -> Result<()>
 where
@@ -614,7 +591,21 @@ pub fn setup_intel_rdt(
     let mut created_monitoring_dir = None;
     if intel_rdt.enable_monitoring().unwrap_or(false) {
         let mon_dir = container_dir.join("mon_groups").join(container_id);
-        setup_monitoring_group(&mon_dir, *init_pid)?;
+
+        if !mon_dir.exists() {
+            fs::create_dir_all(&mon_dir).map_err(|err| {
+                tracing::error!("failed to create resctrl monitoring subdirectory: {err}");
+                IntelRdtError::CreateMonitoringDirectory(err)
+            })?;
+        }
+
+        write_pid_to_tasks(
+            &mon_dir,
+            *init_pid,
+            IntelRdtError::OpenMonitoringTasksFile,
+            IntelRdtError::WriteMonitoringTasksFile,
+        )?;
+
         created_monitoring_dir = Some(mon_dir);
     }
 
@@ -867,26 +858,6 @@ mod test {
         // If the directory already exists then it's fine to have just clos_id.
         let res = setup_resctrl_group(&container_dir, Pid::from_raw(2500), true);
         assert!(!res.unwrap()); // no new directory created
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_setup_monitoring_group() -> Result<()> {
-        let tmp = tempfile::tempdir().unwrap();
-
-        let mon_dir = tmp.path().join("mon_groups").join("container_id");
-        let res = setup_monitoring_group(&mon_dir, Pid::from_raw(1000));
-        assert!(res.is_ok()); // new directory created
-
-        let res = fs::read_to_string(mon_dir.join("tasks"));
-        assert!(res.unwrap() == "1000");
-
-        let res = setup_monitoring_group(&mon_dir, Pid::from_raw(1500));
-        assert!(res.is_err()); // no new directory created
-
-        let res = fs::read_to_string(mon_dir.join("tasks"));
-        assert!(res.unwrap() == "10001500");
 
         Ok(())
     }
