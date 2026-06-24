@@ -877,13 +877,13 @@ mod test {
 
         let mon_dir = tmp.path().join("mon_groups").join("container_id");
         let res = setup_monitoring_group(&mon_dir, Pid::from_raw(1000));
-        assert!(res.unwrap()); // new directory created
+        assert!(res.is_ok()); // new directory created
 
         let res = fs::read_to_string(mon_dir.join("tasks"));
         assert!(res.unwrap() == "1000");
 
         let res = setup_monitoring_group(&mon_dir, Pid::from_raw(1500));
-        assert!(!res.unwrap()); // no new directory created
+        assert!(res.is_err()); // no new directory created
 
         let res = fs::read_to_string(mon_dir.join("tasks"));
         assert!(res.unwrap() == "10001500");
