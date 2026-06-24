@@ -246,15 +246,12 @@ fn setup_resctrl_group(
 /// memory bandwidth) of the container independently from the parent allocation group (CLOS).
 ///
 /// Returns `true` if the runtime created the directory, or `false` if it already existed.
-fn setup_monitoring_group(mon_dir: &Path, init_pid: Pid) -> Result<bool> {
-    let mut created_dir = false;
-
+fn setup_monitoring_group(mon_dir: &Path, init_pid: Pid) -> Result<()> {
     if !mon_dir.exists() {
         fs::create_dir_all(mon_dir).map_err(|err| {
             tracing::error!("failed to create resctrl monitoring subdirectory: {err}");
             IntelRdtError::CreateMonitoringDirectory(err)
         })?;
-        created_dir = true;
     }
 
     write_pid_to_tasks(
@@ -264,7 +261,7 @@ fn setup_monitoring_group(mon_dir: &Path, init_pid: Pid) -> Result<bool> {
         IntelRdtError::WriteMonitoringTasksFile,
     )?;
 
-    Ok(created_dir)
+    Ok(())
 }
 
 /// Helper function to write the process ID to the tasks file
