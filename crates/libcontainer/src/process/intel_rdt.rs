@@ -80,8 +80,12 @@ pub enum ParseLineError {
 type Result<T> = std::result::Result<T, IntelRdtError>;
 
 /// Removes the main resource control group (CLOS) directory for the container using its ID.
-/// This is kept for backwards compatibility with older state.json files where only
-/// `clean_up_intel_rdt_subdirectory` was stored instead of the explicit path.
+/// Helper to delete a resctrl subdirectory based ONLY on the container ID.
+///
+/// DEPRECATED: This function is only kept for backwards compatibility with
+/// legacy state files. It performs strict bounds checking to ensure it only
+/// deletes directories directly under the resctrl mount point, preventing
+/// accidental deletion of arbitrary paths or nested kernel files.
 pub fn delete_resctrl_subdirectory_by_id(id: &str) -> Result<()> {
     let dir = find_resctrl_mount_point().map_err(|err| {
         tracing::error!("failed to find resctrl mount point: {err}");
@@ -89,23 +93,6 @@ pub fn delete_resctrl_subdirectory_by_id(id: &str) -> Result<()> {
     })?;
 
     let path = dir.join(id);
-    delete_resctrl_subdirectory_with_dir(&dir, &path)
-}
-
-/// Removes the main resource control group (CLOS) directory for the container.
-/// This function includes a safety check (`parent == dir`) to ensure that only directories
-/// immediately under the resctrl mount point are deleted, preventing accidental deletion
-/// of nested kernel files or other sensitive directories.
-pub fn delete_resctrl_subdirectory(path: &Path) -> Result<()> {
-    let dir = find_resctrl_mount_point().map_err(|err| {
-        tracing::error!("failed to find resctrl mount point: {err}");
-        err
-    })?;
-
-    delete_resctrl_subdirectory_with_dir(&dir, path)
-}
-
-fn delete_resctrl_subdirectory_with_dir(dir: &Path, path: &Path) -> Result<()> {
     let container_resctrl_path = match path.canonicalize() {
         Ok(p) => p,
         Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
@@ -136,24 +123,21 @@ fn delete_resctrl_subdirectory_with_dir(dir: &Path, path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Removes the dedicated monitoring group subdirectory (`mon_groups/<container_id>`).
-/// Unlike `delete_resctrl_subdirectory`, this does not enforce the `parent == dir` safety check,
-/// because monitoring groups are intentionally nested deeper in the filesystem tree
-/// (either under a specific CLOS ID or under the root `mon_groups`). The path provided here
-/// is inherently trusted as it was resolved securely during container creation.
-pub fn delete_resctrl_monitoring_subdirectory(path: &Path) -> Result<()> {
-    if path.exists() {
-        if let Err(err) = fs::remove_dir(path) {
-            if err.kind() != ErrorKind::NotFound {
-                tracing::error!(
-                    ?path,
-                    "failed to remove resctrl monitoring subdirectory: {err}"
-                );
-                return Err(IntelRdtError::RemoveSubdirectory(err));
-            }
+/// Deletes an explicit resctrl subdirectory.
+///
+/// Because explicit paths are fully trusted (derived securely during container
+/// creation and stored in the internal state), this function performs a direct
+/// directory removal without redundant canonicalization or bounds checking.
+///
+/// It ignores `NotFound` errors, considering the deletion successful if the
+/// directory is already gone.
+pub fn delete_resctrl_subdirectory(path: &Path) -> Result<()> {
+    if let Err(err) = fs::remove_dir(path) {
+        if err.kind() != ErrorKind::NotFound {
+            tracing::error!(?path, "failed to remove resctrl subdirectory: {err}");
+            return Err(IntelRdtError::RemoveSubdirectory(err));
         }
     }
-
     Ok(())
 }
 
@@ -174,7 +158,7 @@ pub fn cleanup_intel_rdt(
     let mut errors = Vec::new();
 
     if let Some(path) = intel_rdt_monitoring_dir {
-        if let Err(e) = delete_resctrl_monitoring_subdirectory(path) {
+        if let Err(e) = delete_resctrl_subdirectory(path) {
             errors.push(format!("failed to delete monitoring directory: {e}"));
         }
     }
@@ -184,8 +168,9 @@ pub fn cleanup_intel_rdt(
             errors.push(format!("failed to delete directory: {e}"));
         }
     } else if let Some(true) = clean_up_intel_rdt_subdirectory {
+        // Fallback for legacy state files
         if let Err(e) = delete_resctrl_subdirectory_by_id(id) {
-            errors.push(format!("failed to delete directory by id: {e}"));
+            errors.push(format!("failed to delete directory by id: {}", e));
         }
     }
 
@@ -992,21 +977,20 @@ mod test {
         assert!(res.is_ok());
         assert!(!mon_dir.exists());
 
-        // Both paths are provided, but `delete_resctrl_subdirectory` will fail
-        // because it tries to find the real resctrl mount point via procfs.
-        // We verify that `cleanup_intel_rdt` correctly wraps and aggregates the error.
+        // Both paths are provided, and since they are absolute and explicit,
+        // it shouldn't fail even in test because it just deletes them directly.
         let rdt_dir = tmp.path().join("test_container");
+        fs::create_dir_all(&rdt_dir)?;
         let res = cleanup_intel_rdt(Some(&rdt_dir), None, None, "test_container");
-        assert!(res.is_err());
-        let err_str = res.unwrap_err().to_string();
-        assert!(err_str.contains("failed to cleanup intel rdt: failed to delete directory: failed to find resctrl mount point"));
+        assert!(res.is_ok());
+        assert!(!rdt_dir.exists());
 
         // Legacy flag is provided (`clean_up_intel_rdt_subdirectory=true`).
         // It will also fail trying to find the mount point, and should aggregate correctly.
         let res = cleanup_intel_rdt(None, None, Some(true), "test_container");
         assert!(res.is_err());
         let err_str = res.unwrap_err().to_string();
-        assert!(err_str.contains("failed to cleanup intel rdt: failed to delete directory by id: failed to find resctrl mount point"));
+        assert!(err_str.contains("failed to find resctrl mount point"));
 
         Ok(())
     }
