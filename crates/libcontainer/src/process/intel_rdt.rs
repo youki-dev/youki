@@ -248,12 +248,8 @@ where
     F2: FnOnce(std::io::Error) -> IntelRdtError,
 {
     let tasks = dir.join("tasks");
-    // TODO(ipuustin): File doesn't need to be created, but it's easier
-    // to test this way. Fix the tests so that the fake resctrl
-    // filesystem is pre-populated.
     let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
+        .write(true)
         .open(tasks)
         .map_err(on_open_err)?;
 
@@ -534,12 +530,7 @@ fn write_resctrl_schemata(
                 Err(IntelRdtError::ExistingSchemataMismatch)?;
             }
         } else {
-            // Write the combined schema to the schemata file.
-            // TODO(ipuustin): File doesn't need to be created, but it's easier
-            // to test this way. Fix the tests so that the fake resctrl
-            // filesystem is pre-populated.
             let mut file = OpenOptions::new()
-                .create(true)
                 .truncate(true)
                 .write(true)
                 .open(schemata)
@@ -618,6 +609,8 @@ pub fn setup_intel_rdt(
 
 #[cfg(test)]
 mod test {
+    use std::fs;
+
     use anyhow::Result;
 
     use super::*;
@@ -839,10 +832,18 @@ mod test {
     fn test_setup_resctrl_group() -> Result<()> {
         let tmp = tempfile::tempdir().unwrap();
 
+        // Helper to mock the resctrl filesystem structure
+        let create_mock_group = |path: &std::path::Path| {
+            fs::create_dir_all(path).unwrap();
+            fs::File::create(path.join("tasks")).unwrap();
+            fs::File::create(path.join("schemata")).unwrap();
+        };
+
         // Create the directory for id "foo".
         let container_dir = tmp.path().join("foo");
+        create_mock_group(&container_dir);
         let res = setup_resctrl_group(&container_dir, Pid::from_raw(1000), false);
-        assert!(res.unwrap()); // new directory created
+        assert!(!res.unwrap()); // no new directory created
         let res = fs::read_to_string(container_dir.join("tasks"));
         assert!(res.unwrap() == "1000");
 
@@ -856,7 +857,8 @@ mod test {
         assert!(res.is_err());
 
         // If the directory already exists then it's fine to have just clos_id.
-        let res = setup_resctrl_group(&container_dir, Pid::from_raw(2500), true);
+        create_mock_group(&foobar_dir);
+        let res = setup_resctrl_group(&foobar_dir, Pid::from_raw(2500), true);
         assert!(!res.unwrap()); // no new directory created
 
         Ok(())
@@ -868,15 +870,23 @@ mod test {
         let tmp = tempfile::tempdir().unwrap();
         let foobar_dir = tmp.path().join("foobar");
 
+        let create_mock_group = |path: &Path| {
+            fs::create_dir_all(path).unwrap();
+            fs::File::create(path.join("tasks")).unwrap();
+            fs::File::create(path.join("schemata")).unwrap();
+        };
+        create_mock_group(&foobar_dir);
+
         let res = setup_resctrl_group(&foobar_dir, Pid::from_raw(1000), false);
-        assert!(res.unwrap());
+        assert!(!res.unwrap());
 
         // No schemes, clos_id was not set, directory created (with container id).
         let empty_rdt = LinuxIntelRdtBuilder::default().build().unwrap();
         let res = write_resctrl_schemata(tmp.path(), "foobar", &empty_rdt, false, true);
         assert!(res.is_ok());
+        // Since we mock the files, it actually exists now but we haven't written to it
         let res = fs::read_to_string(tmp.path().join("foobar").join("schemata"));
-        assert!(res.is_err()); // File not found because no schemes.
+        assert!(res.unwrap().is_empty());
 
         let l3_1 = "L3:0=f;1=f0\nL3:2=f\nMB:0=20;1=70";
         let bw_1 = "MB:0=70;1=20";
@@ -921,6 +931,7 @@ mod test {
             .unwrap();
 
         let foobar_modern_dir = tmp.path().join("foobar_modern");
+        create_mock_group(&foobar_modern_dir);
         let _ = setup_resctrl_group(&foobar_modern_dir, Pid::from_raw(1001), false);
         let res = write_resctrl_schemata(tmp.path(), "foobar_modern", &rdt_schemata, false, true);
 
