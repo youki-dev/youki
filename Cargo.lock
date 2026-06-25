@@ -385,6 +385,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "bzip2"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49ecfb22d906f800d4fe833b6282cf4dc1c298f5057ca0b5445e5c209735ca47"
+dependencies = [
+ "bzip2-sys",
+]
+
+[[package]]
+name = "bzip2-sys"
+version = "0.1.13+1.0.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "225bff33b2141874fe80d71e07d6eec4f85c5c216453dd96388240f96e1acc14"
+dependencies = [
+ "cc",
+ "pkg-config",
+]
+
+[[package]]
 name = "caps"
 version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -624,7 +643,7 @@ dependencies = [
  "flate2",
  "libcgroups",
  "libcontainer",
- "nix",
+ "nix 0.31.3",
  "oci-spec",
  "procfs",
  "rand 0.10.4",
@@ -1494,7 +1513,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e35d6e78f4cebb90e51d543db8fe41528851d6deeef6ef21ebd4bfdc1e784776"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2112,7 +2131,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "tokio",
  "tower-service",
  "tracing",
@@ -2271,6 +2290,27 @@ dependencies = [
  "same-file",
  "walkdir",
  "winapi-util",
+]
+
+[[package]]
+name = "imago"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "806cbce8c1481e696ef9edf13e8cb41fea77557607146f60f9ceba809ba36238"
+dependencies = [
+ "async-trait",
+ "cfg-if",
+ "futures",
+ "libc",
+ "maybe-async",
+ "miniz_oxide 0.8.9",
+ "nix 0.30.1",
+ "page_size",
+ "parking_lot",
+ "rustc_version",
+ "tokio",
+ "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2502,6 +2542,177 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4933f3f57a8e9d9da04db23fb153356ecaf00cbd14aee46279c33dc80925c37"
 
 [[package]]
+name = "krun-arch"
+version = "0.1.0-1.19.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7929e765faba840293b8315aec15f08a2d52921935db8b4b23543769ee171777"
+dependencies = [
+ "krun-arch-gen",
+ "krun-smbios",
+ "krun-utils",
+ "kvm-bindings",
+ "kvm-ioctls",
+ "libc",
+ "vm-memory",
+ "vmm-sys-util 0.14.0",
+]
+
+[[package]]
+name = "krun-arch-gen"
+version = "0.1.0-1.19.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f13988bd9787f759bb2440cea4fe7aec9c1f79f5f3c20a12d1c0199b2f12b81"
+
+[[package]]
+name = "krun-cpuid"
+version = "0.1.0-1.19.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca631a94659c7ba7dd3d3f28ba4dc2e961ec5f16a8a3f5243f843157fc27285b"
+dependencies = [
+ "kvm-bindings",
+ "kvm-ioctls",
+ "vmm-sys-util 0.14.0",
+]
+
+[[package]]
+name = "krun-devices"
+version = "0.1.0-1.19.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "192d7438e8ff3cd729fee14e7b61d2cde73730e73355dd42d0ea1f691edaced7"
+dependencies = [
+ "bitflags 1.3.2",
+ "caps",
+ "crossbeam-channel",
+ "imago",
+ "krun-arch",
+ "krun-hvf",
+ "krun-polly",
+ "krun-utils",
+ "kvm-bindings",
+ "kvm-ioctls",
+ "libc",
+ "libloading",
+ "log",
+ "lru",
+ "nix 0.30.1",
+ "rand 0.9.5",
+ "virtio-bindings",
+ "vm-fdt",
+ "vm-memory",
+]
+
+[[package]]
+name = "krun-hvf"
+version = "0.1.0-1.19.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38d41a6526d8901e2d3eb4a11a31421b077e884f0fe43f6a3be322cb68813c6f"
+dependencies = [
+ "crossbeam-channel",
+ "krun-arch",
+ "libloading",
+ "log",
+]
+
+[[package]]
+name = "krun-init-blob"
+version = "0.1.0-1.19.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd8cabd8be6ed589cb5a3a7bb6a89379e46587bfd82c305bdc6646d48dfd16d9"
+
+[[package]]
+name = "krun-kernel"
+version = "0.1.0-1.19.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81649cb6ea993e89e18b4c2c1b77e7b6e18bbb323822126e15e0304b59391c0f"
+dependencies = [
+ "krun-utils",
+ "vm-memory",
+]
+
+[[package]]
+name = "krun-polly"
+version = "0.1.0-1.19.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05cab0ef28cca9c1e930f76b1c6fde1d5ff9d646691350e84297f7df1bf4f9a2"
+dependencies = [
+ "krun-utils",
+ "libc",
+]
+
+[[package]]
+name = "krun-smbios"
+version = "0.1.0-1.19.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9052465e18e4e2fb6420b94dc3655f7fc67b55a5d24b9e1fe12c6f8c7c30f5ac"
+dependencies = [
+ "vm-memory",
+]
+
+[[package]]
+name = "krun-utils"
+version = "0.1.0-1.19.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39e857f12687a93aba44ac399886bb5b3ccb45ca0a13d2d09b89b1f2a76a2143"
+dependencies = [
+ "bitflags 1.3.2",
+ "crossbeam-channel",
+ "kvm-bindings",
+ "libc",
+ "log",
+ "nix 0.30.1",
+ "vmm-sys-util 0.14.0",
+]
+
+[[package]]
+name = "krun-vmm"
+version = "0.1.0-1.19.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4bd8f3e34d48e71c1ed7bcabc95cb3e63f1b3588a59085aa709ed3909826309e"
+dependencies = [
+ "bzip2",
+ "crossbeam-channel",
+ "flate2",
+ "krun-arch",
+ "krun-arch-gen",
+ "krun-cpuid",
+ "krun-devices",
+ "krun-hvf",
+ "krun-kernel",
+ "krun-polly",
+ "krun-utils",
+ "kvm-bindings",
+ "kvm-ioctls",
+ "libc",
+ "linux-loader",
+ "log",
+ "nix 0.30.1",
+ "vm-memory",
+ "vmm-sys-util 0.15.0",
+ "zstd",
+]
+
+[[package]]
+name = "kvm-bindings"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a537873e15e8daabb416667e606d9b0abc2a8fb9a45bd5853b888ae0ead82f9"
+dependencies = [
+ "vmm-sys-util 0.14.0",
+]
+
+[[package]]
+name = "kvm-ioctls"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c8f7370330b4f57981e300fa39b02088f2f2a5c2d0f1f994e8090589619c56d"
+dependencies = [
+ "bitflags 2.13.0",
+ "kvm-bindings",
+ "libc",
+ "vmm-sys-util 0.14.0",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2541,7 +2752,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "222dd409cbd4db5e9d40410d17a168e1f80446386ae7bafbefa9bd0c1183ff64"
 dependencies = [
  "cc",
- "nix",
+ "nix 0.31.3",
  "pkg-config",
 ]
 
@@ -2563,7 +2774,7 @@ dependencies = [
  "libbpf-sys",
  "libc",
  "mockall",
- "nix",
+ "nix 0.31.3",
  "oci-spec",
  "pathrs",
  "procfs",
@@ -2591,7 +2802,7 @@ dependencies = [
  "netlink-packet-core",
  "netlink-packet-route",
  "netlink-sys",
- "nix",
+ "nix 0.31.3",
  "oci-spec",
  "pathrs",
  "prctl",
@@ -2608,6 +2819,29 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tracing",
+]
+
+[[package]]
+name = "libkrun"
+version = "1.19.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d37e6c1eff0328e203d37dcea5f71a45c0c111181fbdd221220bbe46355c892"
+dependencies = [
+ "crossbeam-channel",
+ "env_logger",
+ "krun-devices",
+ "krun-hvf",
+ "krun-init-blob",
+ "krun-polly",
+ "krun-utils",
+ "krun-vmm",
+ "kvm-bindings",
+ "kvm-ioctls",
+ "libc",
+ "libloading",
+ "log",
+ "once_cell",
+ "vm-memory",
 ]
 
 [[package]]
@@ -2697,6 +2931,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "linux-loader"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de72cb02c55ecffcf75fe78295926f872eb6eb0a58d629c58a8c324dc26380f6"
+dependencies = [
+ "vm-memory",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2734,6 +2977,15 @@ name = "log"
 version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
+
+[[package]]
+name = "lru"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a9f71e3591c7ec44d3e563e87bf14ddc2bada8519dca046e5b0e560cd004e2d"
+dependencies = [
+ "hashbrown 0.17.0",
+]
 
 [[package]]
 name = "lru-slab"
@@ -2789,6 +3041,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
 dependencies = [
  "regex-automata",
+]
+
+[[package]]
+name = "maybe-async"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "746873a384ad60adc5db74471dfaba74bd278afbdcfd81db93fafcdfc8b5ca0c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2983,6 +3246,19 @@ dependencies = [
  "bytes",
  "libc",
  "log",
+]
+
+[[package]]
+name = "nix"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
+dependencies = [
+ "bitflags 2.13.0",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
+ "memoffset",
 ]
 
 [[package]]
@@ -3200,6 +3476,16 @@ dependencies = [
  "libc",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "page_size"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30d5b2194ed13191c1999ae0704b7839fb18384fa22e49b57eeaa97d79ce40da"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
@@ -3443,7 +3729,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "059a34f111a9dee2ce1ac2826a68b24601c4298cfeb1a587c3cb493d5ab46f52"
 dependencies = [
  "libc",
- "nix",
+ "nix 0.31.3",
 ]
 
 [[package]]
@@ -3694,7 +3980,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.2",
  "rustls 0.23.39",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -3733,9 +4019,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4151,7 +4437,7 @@ dependencies = [
  "netlink-packet-core",
  "netlink-packet-route",
  "netlink-sys",
- "nix",
+ "nix 0.31.3",
  "oci-spec",
  "procfs",
  "tempfile",
@@ -4206,7 +4492,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4219,7 +4505,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4307,7 +4593,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4965,7 +5251,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5555,6 +5841,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "virtio-bindings"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "091f1f09cfbf2a78563b562e7a949465cce1aef63b6065645188d995162f8868"
+
+[[package]]
 name = "virtual-fs"
 version = "0.702.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5635,6 +5927,43 @@ name = "virtue"
 version = "0.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "051eb1abcf10076295e815102942cc58f9d5e3b4560e46e53c21e8ff6f3af7b1"
+
+[[package]]
+name = "vm-fdt"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e21282841a059bb62627ce8441c491f09603622cd5a21c43bfedc85a2952f23"
+
+[[package]]
+name = "vm-memory"
+version = "0.17.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f39348a049689cabd3377cdd9182bf526ec76a6f823b79903896452e9d7a7380"
+dependencies = [
+ "libc",
+ "thiserror 2.0.21",
+ "winapi",
+]
+
+[[package]]
+name = "vmm-sys-util"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d21f366bf22bfba3e868349978766a965cbe628c323d58e026be80b8357ab789"
+dependencies = [
+ "bitflags 1.3.2",
+ "libc",
+]
+
+[[package]]
+name = "vmm-sys-util"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "506c62fdf617a5176827c2f9afbcf1be155b03a9b4bf9617a60dbc07e3a1642f"
+dependencies = [
+ "bitflags 1.3.2",
+ "libc",
+]
 
 [[package]]
 name = "wai-bindgen-gen-core"
@@ -6861,7 +7190,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7305,9 +7634,9 @@ dependencies = [
  "clap_complete",
  "libcgroups",
  "libcontainer",
- "libloading",
+ "libkrun",
  "liboci-cli",
- "nix",
+ "nix 0.31.3",
  "oci-spec",
  "pathrs",
  "pentacle",
@@ -7320,8 +7649,8 @@ dependencies = [
  "serial_test",
  "tabwriter",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
- "thiserror 2.0.18",
  "tracing",
  "tracing-journald",
  "tracing-subscriber",
