@@ -1,5 +1,6 @@
 mod common;
 mod cpu;
+mod pids_limit;
 
 use std::fs;
 use std::path::Path;
@@ -66,6 +67,12 @@ pub fn get_update_test() -> TestGroup {
         Box::new(common::update_common_limits_test),
     );
 
+    let update_pids_limit_test = ConditionalTest::new(
+        "update_pids_limit_test",
+        Box::new(can_run),
+        Box::new(pids_limit::update_pids_limit_test),
+    );
+
     let cpu_burst_test = ConditionalTest::new(
         "cpu_burst_test",
         Box::new(can_run_update),
@@ -92,6 +99,7 @@ pub fn get_update_test() -> TestGroup {
 
     test_group.add(vec![
         Box::new(update_cgroup_v2_common_limits_test),
+        Box::new(update_pids_limit_test),
         Box::new(cpu_burst_test),
         Box::new(set_cpu_period_without_quota_test),
         Box::new(set_cpu_period_without_quota_invalid_test),
