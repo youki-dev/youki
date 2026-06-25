@@ -1,5 +1,5 @@
 pub mod executor;
-#[cfg(feature = "libkrun")]
+#[cfg(feature = "krun")]
 mod libkrun;
 #[cfg(feature = "wasm-wasmedge")]
 mod wasmedge;

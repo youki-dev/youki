@@ -5,14 +5,14 @@ use libcontainer::workload::{
 
 #[derive(Clone)]
 pub struct DefaultExecutor {
-    #[cfg(feature = "libkrun")]
+    #[cfg(feature = "krun")]
     libkrun: super::libkrun::LibkrunExecutor,
 }
 
 impl DefaultExecutor {
     pub fn new() -> Self {
         Self {
-            #[cfg(feature = "libkrun")]
+            #[cfg(feature = "krun")]
             libkrun: super::libkrun::get_executor(),
         }
     }
@@ -20,7 +20,7 @@ impl DefaultExecutor {
 
 impl HostExecutor for DefaultExecutor {
     fn modify_spec(&self, spec: Spec) -> Result<Spec, ExecutorError> {
-        #[cfg(feature = "libkrun")]
+        #[cfg(feature = "krun")]
         {
             if super::libkrun::can_handle(&spec) {
                 return self.libkrun.modify_spec(spec);
@@ -50,7 +50,7 @@ impl ContainerExecutor for DefaultExecutor {
             Err(ExecutorError::CantHandle(_)) => (),
             Err(err) => return Err(err),
         }
-        #[cfg(feature = "libkrun")]
+        #[cfg(feature = "krun")]
         {
             match self.libkrun.exec(spec) {
                 Ok(_) => return Ok(()),
@@ -83,7 +83,7 @@ impl ContainerExecutor for DefaultExecutor {
             Err(ExecutorValidationError::CantHandle(_)) => (),
             Err(err) => return Err(err),
         }
-        #[cfg(feature = "libkrun")]
+        #[cfg(feature = "krun")]
         match self.libkrun.validate(spec) {
             Ok(_) => return Ok(()),
             Err(ExecutorValidationError::CantHandle(_)) => (),
