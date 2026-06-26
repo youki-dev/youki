@@ -123,24 +123,6 @@ pub fn delete_resctrl_subdirectory_by_id(id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Deletes an explicit resctrl subdirectory.
-///
-/// Because explicit paths are fully trusted (derived securely during container
-/// creation and stored in the internal state), this function performs a direct
-/// directory removal without redundant canonicalization or bounds checking.
-///
-/// It ignores `NotFound` errors, considering the deletion successful if the
-/// directory is already gone.
-pub fn delete_resctrl_subdirectory(path: &Path) -> Result<()> {
-    if let Err(err) = fs::remove_dir(path) {
-        if err.kind() != ErrorKind::NotFound {
-            tracing::error!(?path, "failed to remove resctrl subdirectory: {err}");
-            return Err(IntelRdtError::RemoveSubdirectory(err));
-        }
-    }
-    Ok(())
-}
-
 /// Cleans up the Intel RDT directories.
 ///
 /// This function attempts to remove the monitoring directory and the main resource
@@ -156,6 +138,15 @@ pub fn cleanup_intel_rdt(
     id: &str,
 ) -> Result<()> {
     let mut errors = Vec::new();
+
+    let delete_resctrl_subdirectory = |path: &Path| -> Result<()> {
+        if let Err(err) = fs::remove_dir(path) {
+            if err.kind() != ErrorKind::NotFound {
+                return Err(IntelRdtError::RemoveSubdirectory(err));
+            }
+        }
+        Ok(())
+    };
 
     if let Some(path) = intel_rdt_monitoring_dir {
         if let Err(e) = delete_resctrl_subdirectory(path) {
