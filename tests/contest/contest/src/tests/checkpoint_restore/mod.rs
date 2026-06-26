@@ -1454,6 +1454,103 @@ fn checkpoint_and_restore_and_exec() -> TestResult {
     TestResult::Passed
 }
 
+fn checkpoint_and_restore_with_link_remap() -> TestResult {
+    const MARKER: &str = "link-remap-marker";
+
+    let ctx = match setup_cr_test(|_, spec| {
+        // Mount a writable tmpfs so the unlinked file lives on a filesystem CRIU
+        // can dump (the default rootfs entries are read-only bind mounts).
+        let tmpfs = MountBuilder::default()
+            .typ("tmpfs".to_string())
+            .source("tmpfs")
+            .destination(PathBuf::from("/link-remap"))
+            .options(vec!["rw".to_string()])
+            .build()
+            .unwrap();
+        let mut mounts = spec.mounts().clone().unwrap_or_default();
+        mounts.push(tmpfs);
+        spec.set_mounts(Some(mounts));
+
+        // Init process: write MARKER to a file, hold it open on fd 3, unlink it,
+        // then run the same ping loop the other tests rely on. fd 3 keeps the
+        // unlinked file alive across checkpoint/restore.
+        let mut process = spec.process().clone().unwrap_or_default();
+        process.set_args(Some(vec![
+            "sh".into(),
+            "-c".into(),
+            format!(
+                "echo -n {MARKER} > /link-remap/data; exec 3< /link-remap/data; unlink /link-remap/data; \
+                 while true; do read p < /fifo; if [ \"$p\" = 'Ping' ]; then echo \"ponG $p\" > /fifo; fi; done"
+            ),
+        ]));
+        spec.set_process(Some(process));
+    }) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    if let Err(e) = ctx.start() {
+        return e;
+    }
+
+    let id = &ctx.id;
+    let bundle = &ctx.bundle;
+    let image_dir = &ctx.image_dir;
+    let work_dir = &ctx.work_dir;
+
+    if let Err(e) = checkpoint_container(
+        bundle.path(),
+        id,
+        image_dir,
+        Some(work_dir),
+        &["--link-remap"],
+        &[],
+    ) {
+        return TestResult::Failed(anyhow!("checkpoint with --link-remap failed: {e}"));
+    }
+
+    if let Err(e) = wait_for_state(
+        id,
+        bundle,
+        WaitTarget::Deleted,
+        Duration::from_secs(5),
+        Duration::from_millis(100),
+    ) {
+        return TestResult::Failed(anyhow!(
+            "container state still accessible after checkpoint: {e}"
+        ));
+    }
+
+    if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
+        return TestResult::Failed(anyhow!("restore failed: {e}"));
+    }
+
+    if let Err(e) = wait_for_state(
+        id,
+        bundle,
+        WaitTarget::Status(LifecycleStatus::Running),
+        Duration::from_secs(10),
+        Duration::from_millis(100),
+    ) {
+        return TestResult::Failed(anyhow!("not running after restore: {e}"));
+    }
+
+    if let Err(e) = ping_container(bundle.path()) {
+        return TestResult::Failed(anyhow!("ping container failed after restore: {e}"));
+    }
+
+    // The unlinked file must have been linked back by CRIU on restore: its content,
+    // still held open on fd 3 by the init process, should match the original marker.
+    match exec_container(id, bundle.path(), &["cat", "/proc/1/fd/3"], None, &[]) {
+        Ok((stdout, _)) if stdout == MARKER => TestResult::Passed,
+        Ok((stdout, _)) => TestResult::Failed(anyhow!(
+            "restored unlinked file content mismatch: expected {MARKER:?}, got {stdout:?}"
+        )),
+        Err(e) => TestResult::Failed(anyhow!(
+            "failed to read restored unlinked file via /proc/1/fd/3: {e}"
+        )),
+    }
+}
+
 pub fn get_checkpoint_restore_tests() -> TestGroup {
     let mut tg = TestGroup::new("checkpoint_restore");
     // Run sequentially: CRIU uses global kernel resources and parallel
@@ -1517,6 +1614,10 @@ pub fn get_checkpoint_restore_tests() -> TestGroup {
     tg.add(vec![Box::new(cr_test!(
         "checkpoint_and_restore_and_exec",
         checkpoint_and_restore_and_exec
+    ))]);
+    tg.add(vec![Box::new(cr_test!(
+        "checkpoint_and_restore_with_link_remap",
+        checkpoint_and_restore_with_link_remap
     ))]);
 
     tg

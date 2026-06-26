@@ -25,9 +25,9 @@ pub struct Checkpoint {
     // TODO: Skip in-flight tcp connections
     // #[arg(long)]
     // pub tcp_skip_in_flight: bool,
-    // TODO: Allow one to link unlinked files back when possible
-    // #[arg(long)]
-    // pub link_remap: bool,
+    /// Allow one to link unlinked files back when possible
+    #[arg(long)]
+    pub link_remap: bool,
     /// Allow external unix sockets
     #[arg(long)]
     pub ext_unix_sk: bool,

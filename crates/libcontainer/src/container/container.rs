@@ -224,6 +224,7 @@ pub struct CheckpointOptions {
     pub tcp_established: bool,
     pub work_path: Option<PathBuf>,
     pub manage_cgroups_mode: rust_criu::CgMode,
+    pub link_remap: bool,
 }
 
 #[cfg(test)]
