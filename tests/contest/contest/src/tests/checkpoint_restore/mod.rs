@@ -1471,15 +1471,18 @@ fn checkpoint_and_restore_with_link_remap() -> TestResult {
         mounts.push(tmpfs);
         spec.set_mounts(Some(mounts));
 
-        // Init process: write MARKER to a file, hold it open on fd 3, unlink it,
-        // then run the same ping loop the other tests rely on. fd 3 keeps the
-        // unlinked file alive across checkpoint/restore.
+        // Init process: write MARKER to a file, add a second hard link (keep), hold the
+        // original open on fd 3, then unlink only the opened name. fd 3 now points to an
+        // unlinked-but-open file whose inode is still reachable via `keep`, which is the
+        // "invisible file" case that requires --link-remap. See:
+        // https://criu.org/Invisible_files
         let mut process = spec.process().clone().unwrap_or_default();
         process.set_args(Some(vec![
             "sh".into(),
             "-c".into(),
             format!(
-                "echo -n {MARKER} > /link-remap/data; exec 3< /link-remap/data; unlink /link-remap/data; \
+                "echo -n {MARKER} > /link-remap/data; ln /link-remap/data /link-remap/keep; \
+                 exec 3< /link-remap/data; unlink /link-remap/data; \
                  while true; do read p < /fifo; if [ \"$p\" = 'Ping' ]; then echo \"ponG $p\" > /fifo; fi; done"
             ),
         ]));
