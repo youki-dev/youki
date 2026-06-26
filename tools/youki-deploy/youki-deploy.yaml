@@ -1,0 +1,70 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: youki-system
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: youki
+handler: youki
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: youki-deploy
+  namespace: youki-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: youki-deploy
+  namespace: youki-system
+  labels:
+    app: youki-deploy
+spec:
+  selector:
+    matchLabels:
+      app: youki-deploy
+  template:
+    metadata:
+      labels:
+        app: youki-deploy
+    spec:
+      serviceAccountName: youki-deploy
+      hostPID: true
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+        - operator: Exists
+          effect: NoExecute
+      containers:
+        - name: installer
+          image: youki-installer:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          env:
+            - name: HOST_BIN_DIR
+              value: /host/usr/local/bin
+            - name: HOST_CONTAINERD_CONFIG
+              value: /host/etc/containerd/config.toml
+            - name: RUNTIME_HANDLER
+              value: youki
+          volumeMounts:
+            - name: host-usr-local-bin
+              mountPath: /host/usr/local/bin
+            - name: host-etc-containerd
+              mountPath: /host/etc/containerd
+      volumes:
+        - name: host-usr-local-bin
+          hostPath:
+            path: /usr/local/bin
+            type: Directory
+        - name: host-etc-containerd
+          hostPath:
+            path: /etc/containerd
+            type: Directory

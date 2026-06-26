@@ -12,3 +12,4 @@ This is divided into following sub-sections :
   - liboci-cli
   - libseccomp
 - Webassembly : This explains how to use webassembly module with youki.
+- Kubernetes : This explains how to install youki on a Kubernetes cluster as the OCI runtime via the youki-deploy DaemonSet.
