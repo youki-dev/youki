@@ -53,6 +53,8 @@ fn can_run() -> bool {
 // and the runtime supports the update command with all CLI flags.
 // youki only supports --pids-limit and --resources (JSON) via update CLI.
 // https://github.com/youki-dev/youki/blob/b55b14491ebddf66a29d109d0270b450e020fa32/crates/youki/src/commands/update.rs#L26
+// but --pids-limit is temporarily skipped because its behavior is incorrect.
+// See https://github.com/youki-dev/youki/issues/3594.
 // TODO: remove is_runtime_runc() condition when youki supports full update CLI & support test for cgroup_v1
 fn can_run_update() -> bool {
     !is_runtime_youki() && is_cgroup_v2()
@@ -69,7 +71,7 @@ pub fn get_update_test() -> TestGroup {
 
     let update_pids_limit_test = ConditionalTest::new(
         "update_pids_limit_test",
-        Box::new(can_run),
+        Box::new(can_run_update),
         Box::new(pids_limit::update_pids_limit_test),
     );
 
