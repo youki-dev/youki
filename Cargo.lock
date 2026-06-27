@@ -2679,6 +2679,7 @@ dependencies = [
  "pathrs",
  "prctl",
  "procfs",
+ "protobuf",
  "quickcheck",
  "rand 0.10.1",
  "regex",
