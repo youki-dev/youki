@@ -73,6 +73,8 @@ pub(crate) fn update_pids_limit_test() -> TestResult {
         test_result!(check_cgroup_value(&cgroup_path, "pids.max", "max"));
 
         // update pids.limit to 0, pids.max will become 1
+        // runc maps 0 to 1, because pids.max=0 would prevent any task from being created in the cgroup, making the container unusable
+        // this test follows runc's behavior
         update_container(id, dir, &["--pids-limit", "0"])
             .unwrap()
             .wait()
