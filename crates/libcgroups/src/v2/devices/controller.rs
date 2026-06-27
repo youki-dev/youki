@@ -51,17 +51,12 @@ impl Devices {
     ) -> Result<(), DevicesControllerError> {
         tracing::debug!("Apply Devices cgroup config");
 
-        // FIXME: should we start as "deny all"?
+        // Start with "deny all" as the default policy
         let mut emulator = emulator::Emulator::with_default_allow(false);
 
-        // FIXME: apply user-defined and default rules in which order?
-        if let Some(devices) = linux_devices {
-            for d in devices {
-                tracing::debug!("apply user defined rule: {:?}", d);
-                emulator.add_rule(d);
-            }
-        }
-
+        // Apply default rules first, so user-defined rules take precedence.
+        // BPF program checks rules in reverse order (last added = first checked),
+        // so we add defaults first, then user rules on top.
         for d in [
             default_devices().iter().map(|d| d.into()).collect(),
             default_allow_devices(),
@@ -70,6 +65,14 @@ impl Devices {
         {
             tracing::debug!("apply default rule: {:?}", d);
             emulator.add_rule(&d);
+        }
+
+        // Apply user-defined rules last, so they take precedence over defaults
+        if let Some(devices) = linux_devices {
+            for d in devices {
+                tracing::debug!("apply user defined rule: {:?}", d);
+                emulator.add_rule(d);
+            }
         }
 
         let prog = program::Program::from_rules(&emulator.rules, emulator.default_allow)?;
