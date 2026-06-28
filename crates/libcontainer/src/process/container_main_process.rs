@@ -178,29 +178,51 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                 break;
             }
             Message::HookRequest => {
-                let hooks = pending.hooks.take().ok_or_else(|| {
-                    ProcessError::Channel(channel::ChannelError::UnexpectedInitMessage(Box::new(
-                        Message::HookRequest,
-                    )))
-                })?;
+                if !std::mem::take(&mut pending.hooks) {
+                    return Err(ProcessError::Channel(
+                        channel::ChannelError::UnexpectedInitMessage(Box::new(
+                            Message::HookRequest,
+                        )),
+                    ));
+                }
+                let hooks = container_args
+                    .spec
+                    .hooks()
+                    .as_ref()
+                    .expect("pending hook request requires hooks in spec");
                 handle_hook_request(hooks, container_args, init_pid, &mut init_sender)?;
             }
             Message::SetupNetworkDeviceReady => {
-                let linux = pending.net_linux.take().ok_or_else(|| {
-                    ProcessError::Channel(channel::ChannelError::UnexpectedInitMessage(Box::new(
-                        Message::SetupNetworkDeviceReady,
-                    )))
-                })?;
+                if !std::mem::take(&mut pending.network_device) {
+                    return Err(ProcessError::Channel(
+                        channel::ChannelError::UnexpectedInitMessage(Box::new(
+                            Message::SetupNetworkDeviceReady,
+                        )),
+                    ));
+                }
+                let linux = container_args
+                    .spec
+                    .linux()
+                    .as_ref()
+                    .expect("pending network device setup requires linux in spec");
                 handle_setup_network_device(linux, init_pid, &mut init_sender)?;
             }
             Message::SeccompNotify => {
-                let seccomp = pending.seccomp.take().ok_or_else(|| {
-                    ProcessError::Channel(channel::ChannelError::UnexpectedInitMessage(Box::new(
-                        Message::SeccompNotify,
-                    )))
-                })?;
+                if !std::mem::take(&mut pending.seccomp) {
+                    return Err(ProcessError::Channel(
+                        channel::ChannelError::UnexpectedInitMessage(Box::new(
+                            Message::SeccompNotify,
+                        )),
+                    ));
+                }
                 #[cfg(feature = "libseccomp")]
                 {
+                    let seccomp = container_args
+                        .spec
+                        .linux()
+                        .as_ref()
+                        .and_then(|linux| linux.seccomp().as_ref())
+                        .expect("pending seccomp notification requires seccomp in spec");
                     let seccomp_fd = fd.ok_or(ProcessError::Channel(
                         channel::ChannelError::MissingSeccompFds,
                     ))?;
@@ -212,11 +234,8 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                         &mut init_sender,
                     )?;
                 }
-                // Without libseccomp, `pending.seccomp` is always `None`, so the
-                // take above has already returned an error; this arm is
-                // effectively unreachable.
                 #[cfg(not(feature = "libseccomp"))]
-                let _ = (seccomp, fd);
+                let _ = fd;
             }
             unexpected => {
                 return Err(ProcessError::Channel(
@@ -282,19 +301,19 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
 }
 
 /// Init-side setup requests that must complete before `InitReady`.
-struct PendingInitRequests<'a> {
-    hooks: Option<&'a oci_spec::runtime::Hooks>,
-    net_linux: Option<&'a Linux>,
-    seccomp: Option<&'a oci_spec::runtime::LinuxSeccomp>,
+struct PendingInitRequests {
+    hooks: bool,
+    network_device: bool,
+    seccomp: bool,
 }
 
-impl<'a> PendingInitRequests<'a> {
-    fn new(container_type: ContainerType, spec: &'a Spec) -> Self {
+impl PendingInitRequests {
+    fn new(container_type: ContainerType, spec: &Spec) -> Self {
         let hooks = match container_type {
-            ContainerType::InitContainer => spec.hooks().as_ref(),
-            ContainerType::TenantContainer { .. } => None,
+            ContainerType::InitContainer => spec.hooks().is_some(),
+            ContainerType::TenantContainer { .. } => false,
         };
-        let net_linux = spec.linux().as_ref().filter(|linux| {
+        let network_device = spec.linux().as_ref().is_some_and(|linux| {
             linux
                 .net_devices()
                 .as_ref()
@@ -305,19 +324,19 @@ impl<'a> PendingInitRequests<'a> {
             .linux()
             .as_ref()
             .and_then(|linux| linux.seccomp().as_ref())
-            .filter(|seccomp| crate::seccomp::is_notify(seccomp));
+            .is_some_and(crate::seccomp::is_notify);
         #[cfg(not(feature = "libseccomp"))]
-        let seccomp = None;
+        let seccomp = false;
 
         Self {
             hooks,
-            net_linux,
+            network_device,
             seccomp,
         }
     }
 
     fn has_pending(&self) -> bool {
-        self.hooks.is_some() || self.net_linux.is_some() || self.seccomp.is_some()
+        self.hooks || self.network_device || self.seccomp
     }
 }
 
@@ -618,17 +637,17 @@ mod tests {
             .build()?;
 
         let pending = PendingInitRequests::new(ContainerType::InitContainer, &spec);
-        assert!(pending.hooks.is_some());
+        assert!(pending.hooks);
         assert!(pending.has_pending());
 
         let pending =
             PendingInitRequests::new(ContainerType::TenantContainer { exec_notify_fd: -1 }, &spec);
-        assert!(pending.hooks.is_none());
+        assert!(!pending.hooks);
         assert!(!pending.has_pending());
 
         let spec = SpecBuilder::default().build()?;
         let pending = PendingInitRequests::new(ContainerType::InitContainer, &spec);
-        assert!(pending.hooks.is_none());
+        assert!(!pending.hooks);
         assert!(!pending.has_pending());
         Ok(())
     }
@@ -640,7 +659,7 @@ mod tests {
             .linux(LinuxBuilder::default().net_devices(devices).build()?)
             .build()?;
         let pending = PendingInitRequests::new(ContainerType::InitContainer, &spec);
-        assert!(pending.net_linux.is_some());
+        assert!(pending.network_device);
         assert!(pending.has_pending());
 
         let spec = SpecBuilder::default()
@@ -651,7 +670,7 @@ mod tests {
             )
             .build()?;
         let pending = PendingInitRequests::new(ContainerType::InitContainer, &spec);
-        assert!(pending.net_linux.is_none());
+        assert!(!pending.network_device);
         assert!(!pending.has_pending());
         Ok(())
     }
@@ -672,7 +691,7 @@ mod tests {
             .linux(LinuxBuilder::default().seccomp(notify).build()?)
             .build()?;
         let pending = PendingInitRequests::new(ContainerType::InitContainer, &spec);
-        assert!(pending.seccomp.is_some());
+        assert!(pending.seccomp);
         assert!(pending.has_pending());
 
         let non_notify = LinuxSeccompBuilder::default()
@@ -686,7 +705,7 @@ mod tests {
             .linux(LinuxBuilder::default().seccomp(non_notify).build()?)
             .build()?;
         let pending = PendingInitRequests::new(ContainerType::InitContainer, &spec);
-        assert!(pending.seccomp.is_none());
+        assert!(!pending.seccomp);
         assert!(!pending.has_pending());
         Ok(())
     }
@@ -698,11 +717,11 @@ mod tests {
             .build()?;
         let mut pending = PendingInitRequests::new(ContainerType::InitContainer, &spec);
 
-        assert!(pending.hooks.take().is_some());
+        assert!(std::mem::take(&mut pending.hooks));
         assert!(!pending.has_pending());
         // A second take models a duplicate request from the init process,
         // which the event loop reports as an unexpected message.
-        assert!(pending.hooks.take().is_none());
+        assert!(!std::mem::take(&mut pending.hooks));
         Ok(())
     }
 
