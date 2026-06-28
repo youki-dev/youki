@@ -166,34 +166,38 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     }
 
     let mut pending = PendingInitRequests::new(container_args.container_type, &container_args.spec);
-
     loop {
         let (msg, fd) = init_main_receiver.recv_init_message()?;
         match msg {
             Message::InitReady => {
                 if pending.has_pending() {
-                    return Err(unexpected_init_message(
-                        "pending init setup request",
-                        Message::InitReady,
+                    return Err(ProcessError::Channel(
+                        channel::ChannelError::UnexpectedInitMessage(Box::new(Message::InitReady)),
                     ));
                 }
                 break;
             }
             Message::HookRequest => {
                 let hooks = pending.hooks.take().ok_or_else(|| {
-                    unexpected_init_message(EXPECTED_INIT_MESSAGE, Message::HookRequest)
+                    ProcessError::Channel(channel::ChannelError::UnexpectedInitMessage(Box::new(
+                        Message::HookRequest,
+                    )))
                 })?;
                 handle_hook_request(hooks, container_args, init_pid, &mut init_sender)?;
             }
             Message::SetupNetworkDeviceReady => {
                 let linux = pending.net_linux.take().ok_or_else(|| {
-                    unexpected_init_message(EXPECTED_INIT_MESSAGE, Message::SetupNetworkDeviceReady)
+                    ProcessError::Channel(channel::ChannelError::UnexpectedInitMessage(Box::new(
+                        Message::SetupNetworkDeviceReady,
+                    )))
                 })?;
                 handle_setup_network_device(linux, init_pid, &mut init_sender)?;
             }
             Message::SeccompNotify => {
                 let seccomp = pending.seccomp.take().ok_or_else(|| {
-                    unexpected_init_message(EXPECTED_INIT_MESSAGE, Message::SeccompNotify)
+                    ProcessError::Channel(channel::ChannelError::UnexpectedInitMessage(Box::new(
+                        Message::SeccompNotify,
+                    )))
                 })?;
                 #[cfg(feature = "libseccomp")]
                 {
@@ -214,7 +218,11 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                 #[cfg(not(feature = "libseccomp"))]
                 let _ = (seccomp, fd);
             }
-            unexpected => return Err(unexpected_init_message(EXPECTED_INIT_MESSAGE, unexpected)),
+            unexpected => {
+                return Err(ProcessError::Channel(
+                    channel::ChannelError::UnexpectedInitMessage(Box::new(unexpected)),
+                ));
+            }
         }
     }
 
@@ -273,8 +281,6 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     Ok((init_pid, need_to_clean_up_intel_rdt_subdirectory))
 }
 
-const EXPECTED_INIT_MESSAGE: &str = "InitReady or a pending init setup request";
-
 /// Init-side setup requests that must complete before `InitReady`.
 struct PendingInitRequests<'a> {
     hooks: Option<&'a oci_spec::runtime::Hooks>,
@@ -313,13 +319,6 @@ impl<'a> PendingInitRequests<'a> {
     fn has_pending(&self) -> bool {
         self.hooks.is_some() || self.net_linux.is_some() || self.seccomp.is_some()
     }
-}
-
-fn unexpected_init_message(expected: &'static str, received: Message) -> ProcessError {
-    ProcessError::Channel(channel::ChannelError::UnexpectedMessage {
-        expected,
-        received: Box::new(received),
-    })
 }
 
 fn handle_hook_request(

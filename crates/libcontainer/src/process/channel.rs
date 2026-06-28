@@ -14,6 +14,8 @@ pub enum ChannelError {
         expected: &'static str,
         received: Box<Message>,
     },
+    #[error("received unexpected init message: {0:?}")]
+    UnexpectedInitMessage(Box<Message>),
     #[error("failed to receive. {msg:?}. {source:?}")]
     ReceiveError {
         msg: String,
