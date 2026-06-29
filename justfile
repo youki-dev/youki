@@ -2,8 +2,22 @@ alias build := youki-release
 alias youki := youki-dev
 
 KIND_CLUSTER_NAME := 'youki'
+DEV_VM_NAME := 'fedora'
 
 cwd := justfile_directory()
+
+destroy_vm:
+  limactl stop -f {{ DEV_VM_NAME }} && limactl remove {{ DEV_VM_NAME }}
+
+create_vm:
+  #!/bin/bash
+
+  export SD=$(pwd)/experiment/selinux
+  LIMA_FILE=$(yq '.param.ScriptDirectory = strenv(SD)' ./scripts/vms/fedora.yaml)
+  echo "Starting a VM using following lima configuration: "
+  echo "$LIMA_FILE"
+
+  echo "$LIMA_FILE" | limactl start --name={{ DEV_VM_NAME }} --progress -
 
 # build
 
