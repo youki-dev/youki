@@ -193,6 +193,10 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
 }
 
 pub fn is_bind(m: &Mount) -> bool {
+    // The `type == "bind"` check is kept only for backward compatibility
+    // with existing configs (see issue #3603); it diverges from runc, which
+    // rejects `type: "bind"` alone, and may be removed in a future release
+    // once a deprecation path is agreed upon.
     m.typ().as_deref() == Some("bind")
         || m.options()
             .as_deref()
