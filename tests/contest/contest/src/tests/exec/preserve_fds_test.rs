@@ -1,11 +1,11 @@
-use std::fs;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, BorrowedFd};
 use std::os::unix::process::CommandExt;
+use std::{fs, mem};
 
 use anyhow::anyhow;
-use nix::fcntl::{FcntlArg, FdFlag, fcntl};
-use nix::unistd::dup2;
-use test_framework::{TestResult, test_result};
+use nix::fcntl::{fcntl, FcntlArg, FdFlag};
+use nix::unistd::dup2_raw;
+use test_framework::{test_result, TestResult};
 
 use crate::utils::test_utils::{
     build_exec_command, check_container_created, start_container, test_outside_container,
@@ -47,11 +47,13 @@ pub(crate) fn preserve_fds_test() -> TestResult {
         // child processes, causing broken pipes or EPERM errors.
         unsafe {
             command.pre_exec(move || {
+                let fd = BorrowedFd::borrow_raw(fd);
                 let flags = FdFlag::from_bits_truncate(
                     fcntl(fd, FcntlArg::F_GETFD).expect("from_bits_truncate failed"),
                 );
                 fcntl(fd, FcntlArg::F_SETFD(flags & !FdFlag::FD_CLOEXEC)).expect("fcntl failed");
-                dup2(fd, 3).expect("dup2 failed");
+                // dup2_raw returns OwnedFd wrapping fd 3; forget it to keep fd 3 open for exec.
+                mem::forget(dup2_raw(fd, 3).expect("dup2 failed"));
                 Ok(())
             });
         }

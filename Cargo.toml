@@ -24,7 +24,7 @@ nc = "0.9.8"
 netlink-packet-core = "0.8.1"
 netlink-packet-route = "0.31.0"
 netlink-sys = "0.8.8"
-nix = "0.29.0"
+nix = "0.31.3"
 num_cpus = "1.17"
 oci-spec = { version = "0.10.0", features = ["runtime"] }
 pathrs = "0.2.4"
