@@ -29,6 +29,9 @@ pub(super) fn check_cgroup_value(base: &Path, file: &str, expected: &str) -> any
     Ok(())
 }
 
+/// Runs `update` and waits for it to complete successfully.
+/// Intended for happy-path tests only. Use `update_container` directly
+/// when testing expected failure cases.
 pub(super) fn update_container_and_wait<P: AsRef<Path>>(
     id: &str,
     dir: P,
@@ -99,6 +102,24 @@ pub fn get_update_test() -> TestGroup {
         Box::new(cpu::set_cpu_quota_without_period_test),
     );
 
+    let update_cpu_period_without_previous_limits_test = ConditionalTest::new(
+        "update_cpu_period_without_previous_limits_test",
+        Box::new(can_run_update),
+        Box::new(cpu::update_cpu_period_without_previous_limits_test),
+    );
+
+    let update_cpu_quota_without_previous_limits_test = ConditionalTest::new(
+        "update_cpu_quota_without_previous_limits_test",
+        Box::new(can_run_update),
+        Box::new(cpu::update_cpu_quota_without_previous_limits_test),
+    );
+
+    let update_cgroup_cpu_idle_test = ConditionalTest::new(
+        "update_cgroup_cpu_idle_test",
+        Box::new(can_run_update),
+        Box::new(cpu::update_cgroup_cpu_idle_test),
+    );
+
     test_group.add(vec![
         Box::new(update_cgroup_v2_common_limits_test),
         Box::new(update_pids_limit_test),
@@ -106,6 +127,9 @@ pub fn get_update_test() -> TestGroup {
         Box::new(set_cpu_period_without_quota_test),
         Box::new(set_cpu_period_without_quota_invalid_test),
         Box::new(set_cpu_quota_without_period_test),
+        Box::new(update_cpu_period_without_previous_limits_test),
+        Box::new(update_cpu_quota_without_previous_limits_test),
+        Box::new(update_cgroup_cpu_idle_test),
     ]);
     test_group
 }
