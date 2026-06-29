@@ -21,7 +21,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 WORKDIR /youki
 # Copy source code and build with required features
 COPY . .
-RUN cargo build --release -p youki --features "v1 v2"
+RUN cargo build --release -p youki --features "v1 v2 systemd"
 
 FROM scratch AS shim
 COPY --from=youki-build /youki/target/release/youki /
@@ -34,17 +34,25 @@ RUN curl -sSLf https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-${TARGETAR
 FROM scratch AS kind-bin
 COPY --from=kind-fetch /root/kind /kind
 
-FROM kind-base
+FROM kind-base AS kind-node-base
 RUN <<EOF
 set -e
 echo '[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.youki]' >> /etc/containerd/config.toml
 echo '  runtime_type = "io.containerd.runc.v2"' >> /etc/containerd/config.toml
 echo '   [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.youki.options]' >> /etc/containerd/config.toml
 echo '     BinaryName = "/usr/local/bin/youki"' >> /etc/containerd/config.toml
-sed -i 's,SystemdCgroup = true,,' /etc/containerd/config.toml
 EOF
 # Install runtime dependency for youki
 RUN apt-get update && apt-get install -y --no-install-recommends libseccomp2 \
     && rm -rf /var/lib/apt/lists/*
 COPY --link --from=shim /* /usr/local/bin/
+
+# Default node image: SystemdCgroup disabled for all runtimes (cgroupfs driver)
+FROM kind-node-base AS kind-node
+RUN sed -i 's,SystemdCgroup = true,,' /etc/containerd/config.toml
+
+# Node image: SystemdCgroup enabled for all runtimes including youki.
+# kindest/node has no dbus; this tests the /run/systemd/private fallback in youki.
+FROM kind-node-base AS kind-node-systemd-cgroup
+RUN echo '     SystemdCgroup = true' >> /etc/containerd/config.toml
 

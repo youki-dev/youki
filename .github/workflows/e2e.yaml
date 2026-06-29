@@ -123,6 +123,27 @@ jobs:
       - name: test/k8s/deploy
         run: just test-kind
 
+  k8s-tests-systemd-cgroup:
+    runs-on: ubuntu-24.04
+    needs: [youki-build]
+    timeout-minutes: 40
+    strategy:
+      matrix:
+        arch: [ "x86_64" ]
+        libc: [ "gnu", "musl" ]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download youki binary
+        uses: actions/download-artifact@v4
+        with:
+          name: youki-${{ matrix.arch }}-${{ matrix.libc }}
+      - name: Add the permission to run
+        run: chmod +x ./youki
+      - name: Install just
+        uses: taiki-e/install-action@just
+      - name: test/k8s/deploy (systemd cgroup)
+        run: just test-kind-systemd-cgroup
+
   oci-validation-go:
     runs-on: ubuntu-24.04
     needs: [youki-build]
