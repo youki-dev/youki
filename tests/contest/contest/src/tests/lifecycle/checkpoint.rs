@@ -411,6 +411,23 @@ pub fn checkpoint_link_remap() -> TestResult {
     };
 
     let result = checkpoint(bundle_path, &id, &image_path, vec!["--link-remap"], None);
+    if let TestResult::Failed(_) = &result {
+        cleanup();
+        return result;
+    }
+
+    // youki cannot restore, so instead verify CRIU recorded the link-remap into
+    // the image: dumping the open-but-unlinked file with --link-remap creates
+    // remap-fpath.img (a remap entry with the `linked` flag set).
+    let remap_img = image_path.join("remap-fpath.img");
+    let result = if remap_img.exists() {
+        TestResult::Passed
+    } else {
+        TestResult::Failed(anyhow!(
+            "expected remap-fpath.img to be created in the checkpoint image with --link-remap, \
+             but it is missing at {remap_img:?}"
+        ))
+    };
 
     cleanup();
     result
