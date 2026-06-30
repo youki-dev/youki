@@ -14,7 +14,7 @@
 
 use std::env;
 use std::io::IoSlice;
-use std::os::fd::OwnedFd;
+use std::os::fd::{BorrowedFd, OwnedFd};
 use std::os::unix::fs::{OpenOptionsExt, symlink};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::prelude::RawFd;
@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use nix::sys::socket::{self, UnixAddr};
 use nix::sys::stat::{SFlag, major, minor};
 use nix::sys::statfs::FsType;
-use nix::unistd::{close, dup2};
+use nix::unistd::{close, dup2_stderr, dup2_stdin, dup2_stdout};
 
 use crate::syscall::Syscall;
 use crate::utils::{VerifyInodeError, verify_inode};
@@ -376,17 +376,22 @@ fn mount_console(syscall: &dyn Syscall, slave: &OwnedFd) -> Result<()> {
 }
 
 fn connect_stdio(stdin: &RawFd, stdout: &RawFd, stderr: &RawFd) -> Result<()> {
-    dup2(stdin.as_raw_fd(), StdIO::Stdin.into()).map_err(|err| TTYError::ConnectStdIO {
+    // SAFETY: stdin/stdout/stderr fds are valid for the duration of this function
+    let stdin_fd = unsafe { BorrowedFd::borrow_raw(*stdin) };
+    let stdout_fd = unsafe { BorrowedFd::borrow_raw(*stdout) };
+    let stderr_fd = unsafe { BorrowedFd::borrow_raw(*stderr) };
+
+    dup2_stdin(stdin_fd).map_err(|err| TTYError::ConnectStdIO {
         source: err,
         stdio: StdIO::Stdin,
     })?;
-    dup2(stdout.as_raw_fd(), StdIO::Stdout.into()).map_err(|err| TTYError::ConnectStdIO {
+    dup2_stdout(stdout_fd).map_err(|err| TTYError::ConnectStdIO {
         source: err,
         stdio: StdIO::Stdout,
     })?;
     // FIXME: Rarely does it fail.
     // error message: `Error: Resource temporarily unavailable (os error 11)`
-    dup2(stderr.as_raw_fd(), StdIO::Stderr.into()).map_err(|err| TTYError::ConnectStdIO {
+    dup2_stderr(stderr_fd).map_err(|err| TTYError::ConnectStdIO {
         source: err,
         stdio: StdIO::Stderr,
     })?;
@@ -453,9 +458,10 @@ mod tests {
         // duplicate the existing std* fds
         // we need to restore them later, and we cannot simply store them
         // as they themselves get modified in setup_console
-        let old_stdin: RawFd = nix::unistd::dup(StdIO::Stdin.into())?;
-        let old_stdout: RawFd = nix::unistd::dup(StdIO::Stdout.into())?;
-        let old_stderr: RawFd = nix::unistd::dup(StdIO::Stderr.into())?;
+        // SAFETY: it is safe to borrow_raw(0/1/2) and then dup it to create a new owned fd
+        let old_stdin = nix::unistd::dup(unsafe { BorrowedFd::borrow_raw(StdIO::Stdin.into()) })?;
+        let old_stdout = nix::unistd::dup(unsafe { BorrowedFd::borrow_raw(StdIO::Stdout.into()) })?;
+        let old_stderr = nix::unistd::dup(unsafe { BorrowedFd::borrow_raw(StdIO::Stderr.into()) })?;
 
         let lis = UnixListener::bind(&socket_path);
         assert!(lis.is_ok());
@@ -467,9 +473,9 @@ mod tests {
         let status = setup_console(syscall.as_ref(), fd.into_raw_fd(), false);
 
         // restore the original std* before doing final assert
-        dup2(old_stdin, StdIO::Stdin.into())?;
-        dup2(old_stdout, StdIO::Stdout.into())?;
-        dup2(old_stderr, StdIO::Stderr.into())?;
+        nix::unistd::dup2_stdin(old_stdin)?;
+        nix::unistd::dup2_stdout(old_stdout)?;
+        nix::unistd::dup2_stderr(old_stderr)?;
 
         assert!(status.is_ok(), "setup_console failed: {:?}", status);
 
