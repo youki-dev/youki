@@ -18,6 +18,7 @@ pub fn checkpoint(args: Checkpoint, root_path: PathBuf) -> Result<()> {
         tcp_established: args.tcp_established,
         work_path: args.work_path,
         manage_cgroups_mode: parse_cgroups_mode(&args.manage_cgroups_mode)?,
+        link_remap: args.link_remap,
     };
     container
         .checkpoint(&opts)

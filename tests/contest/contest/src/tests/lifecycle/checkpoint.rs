@@ -1,12 +1,15 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use anyhow::anyhow;
+use anyhow::{Result, anyhow};
+use oci_spec::runtime::{MountBuilder, Spec};
 use test_framework::TestResult;
 
-use super::get_result_from_output;
-use crate::utils::get_runtime_path;
-use crate::utils::test_utils::State;
+use super::{create, get_result_from_output, start};
+use crate::utils::{
+    State, delete_container, generate_uuid, get_runtime_path, kill_container, prepare_bundle,
+    set_config, wait_container_running,
+};
 
 // Simple function to figure out the PID of the first container process
 fn get_container_pid(project_path: &Path, id: &str) -> Result<i32, TestResult> {
@@ -326,4 +329,106 @@ pub fn checkpoint_manage_cgroups_mode_soft(project_path: &Path, id: &str) -> Tes
     }
 
     TestResult::Passed
+}
+
+// Builds a spec whose init holds an "invisible file" (open-but-unlinked with a
+// surviving hard link), which CRIU can only dump with `--link-remap`.
+// See https://criu.org/Invisible_files.
+fn link_remap_spec() -> Result<Spec, TestResult> {
+    let mut spec = Spec::default();
+
+    let mut process = spec.process().clone().unwrap_or_default();
+    process.set_args(Some(vec![
+        "sh".to_string(),
+        "-c".to_string(),
+        "echo -n link-remap-marker > /work/data; ln /work/data /work/keep; \
+         exec 3< /work/data; unlink /work/data; while true; do sleep 1; done"
+            .to_string(),
+    ]));
+    spec.set_process(Some(process));
+
+    let tmpfs = MountBuilder::default()
+        .typ("tmpfs".to_string())
+        .source("tmpfs")
+        .destination(std::path::PathBuf::from("/work"))
+        .options(vec!["rw".to_string(), "nosuid".to_string()])
+        .build()
+        .map_err(|e| TestResult::Failed(anyhow!("failed to build tmpfs mount: {e}")))?;
+    let mut mounts = spec.mounts().clone().unwrap_or_default();
+    mounts.push(tmpfs);
+    spec.set_mounts(Some(mounts));
+
+    Ok(spec)
+}
+
+pub fn checkpoint_link_remap() -> TestResult {
+    let bundle = match prepare_bundle() {
+        Ok(b) => b,
+        Err(e) => return TestResult::Failed(anyhow!("failed to prepare bundle: {e}")),
+    };
+    let id = generate_uuid().to_string();
+
+    let spec = match link_remap_spec() {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if let Err(e) = set_config(&bundle, &spec) {
+        return TestResult::Failed(anyhow!("failed to write config.json: {e}"));
+    }
+
+    let bundle_path = bundle.path();
+
+    let cleanup = || {
+        if let Ok(mut child) = kill_container(&id, bundle_path) {
+            let _ = child.wait();
+        }
+        if let Ok(mut child) = delete_container(&id, bundle_path) {
+            let _ = child.wait();
+        }
+    };
+
+    if let Err(e) = create::create(bundle_path, &id) {
+        cleanup();
+        return TestResult::Failed(anyhow!("create container failed: {e}"));
+    }
+
+    if let Err(e) = start::start(bundle_path, &id) {
+        cleanup();
+        return TestResult::Failed(anyhow!("start container failed: {e}"));
+    }
+
+    if let Err(e) = wait_container_running(&id, bundle_path) {
+        cleanup();
+        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
+    }
+
+    let (_image_temp_dir, image_path) = match create_checkpoint_image_dir() {
+        Ok(v) => v,
+        Err(e) => {
+            cleanup();
+            return e;
+        }
+    };
+
+    let result = checkpoint(bundle_path, &id, &image_path, vec!["--link-remap"], None);
+    if let TestResult::Failed(_) = &result {
+        cleanup();
+        return result;
+    }
+
+    // youki cannot restore, so instead verify CRIU recorded the link-remap into
+    // the image: dumping the open-but-unlinked file with --link-remap creates
+    // remap-fpath.img (a remap entry with the `linked` flag set).
+    let remap_img = image_path.join("remap-fpath.img");
+    let result = if remap_img.exists() {
+        TestResult::Passed
+    } else {
+        TestResult::Failed(anyhow!(
+            "expected remap-fpath.img to be created in the checkpoint image with --link-remap, \
+             but it is missing at {remap_img:?}"
+        ))
+    };
+
+    cleanup();
+    result
 }
