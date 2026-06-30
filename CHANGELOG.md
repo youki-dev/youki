@@ -1,5 +1,130 @@
 # Changelog
 
+## [v0.6.1](https://github.com/youki-dev/youki/compare/v0.6.0...v0.6.1) - 2026-06-30
+
+### 💪 Improvements
+- feat(checkpoint): add CRIU version validation as prerequisite for checkpoint/restore by @nayuta723 in https://github.com/youki-dev/youki/pull/3438
+- Support manage-cgroup-mode option for checkpoint by @donkomura in https://github.com/youki-dev/youki/pull/3452
+- fix(3207, 3209) Difference between the exec command in runc and youki by @tommady in https://github.com/youki-dev/youki/pull/3210
+- fix(checkpoint): delete container state after checkpoint without --leave-running by @nayuta723 in https://github.com/youki-dev/youki/pull/3501
+- feat: add with_bundle() builder for init containers by @JosiahParry in https://github.com/youki-dev/youki/pull/3502
+- [ID-Mapped Mount] Impl Channel & Message by @YamasouA in https://github.com/youki-dev/youki/pull/3409
+- [ID-Mapped Mount] add idmapped mount spec validation by @YamasouA in https://github.com/youki-dev/youki/pull/3572
+- fix(libcgroups): add /run/systemd/private fallback for dbus system connection by @nayuta723 in https://github.com/youki-dev/youki/pull/3557
+### 🐛 Bug Fixes
+- fix duplicate mount entries on exec by @saku3 in https://github.com/youki-dev/youki/pull/3432
+- fix: inherit config.json env vars in exec processes by @KevinKickass in https://github.com/youki-dev/youki/pull/3439
+- Checking source file type with `is_dir()` in bind mount implementation by @logica0419 in https://github.com/youki-dev/youki/pull/3484
+- fix(libcgroups): Set MemorySwapMax to 0 when memory::limit == memory::swap by @souk4711 in https://github.com/youki-dev/youki/pull/3488
+- seccomp: fix multi-condition rule handling and follow runc for duplicate arg comparators by @saku3 in https://github.com/youki-dev/youki/pull/3489
+- fix: validate process.terminal field against --console-socket option by @nayuta723 in https://github.com/youki-dev/youki/pull/3528
+- fix: preserve mount flags for readonly remount of rootfs in init by @YawKar in https://github.com/youki-dev/youki/pull/3536
+- fix: ratime and rnostrictatime mount options failing with EINVAL by @kechigon in https://github.com/youki-dev/youki/pull/3467
+- fix(channel): split intermediate and init readiness channels by @uran0sH in https://github.com/youki-dev/youki/pull/3504
+- fix: respect bundle option in youki spec command by @YawKar in https://github.com/youki-dev/youki/pull/3543
+- fix(libcgroups): return typed error when systemd is not available by @SAY-5 in https://github.com/youki-dev/youki/pull/3546
+- fix youki spec command overwrites the existing config.json by @tommady in https://github.com/youki-dev/youki/pull/3555
+- fix: drop bounding caps by default if unset by @YawKar in https://github.com/youki-dev/youki/pull/3554
+- Use process env for StartContainer hooks when without explicit hook env by @bells17 in https://github.com/youki-dev/youki/pull/3470
+- fix: validation differences between youki and runc by @tommady in https://github.com/youki-dev/youki/pull/3556
+- fix(libcontainer): consider gid_mappings when looking up id-map binaries by @tkshsbcue in https://github.com/youki-dev/youki/pull/3624
+- fix(libcontainer): Bind mount detection should be based on bind/rbind options, not type == "bind" by @tommady in https://github.com/youki-dev/youki/pull/3611
+- fix(libcontainer): scope pivot_root rslave to the old root only by @saku3 in https://github.com/youki-dev/youki/pull/3621
+### 📖 Documentation improvements
+- docs: add adopters and use cases page by @utam0k in https://github.com/youki-dev/youki/pull/3458
+- fix(checkpoint): remove unimplemented options from help output by @nayuta723 in https://github.com/youki-dev/youki/pull/3455
+- docs: update SECURITY.md with dedicated security contact email by @utam0k in https://github.com/youki-dev/youki/pull/3492
+- docs: update logging guidance to reflect tracing usage by @saku3 in https://github.com/youki-dev/youki/pull/3498
+- docs: add LF Projects copyright disclaimer by @saku3 in https://github.com/youki-dev/youki/pull/3521
+### 🧪 Test improvements and Misc Fixes
+- Disable colors in logs by @stepancheg in https://github.com/youki-dev/youki/pull/3433
+- [Bug]: Duplicate error and chain printing by @CarloQuick in https://github.com/youki-dev/youki/pull/3419
+- test: remove runc skip for seccomp_notify and memory_policy by @nayuta723 in https://github.com/youki-dev/youki/pull/3445
+- chore(deps): upgrade rust-criu to 0.5.0 and protobuf to 3.7.2 by @donkomura in https://github.com/youki-dev/youki/pull/3446
+- docs(liboci-cli): add missing help descriptions to arguments and options by @xvchris in https://github.com/youki-dev/youki/pull/3456
+- Fix logging for dropping capabilities by @stepancheg in https://github.com/youki-dev/youki/pull/3436
+- contest: add checkpoint/restore integration tests by @nayuta723 in https://github.com/youki-dev/youki/pull/3448
+- ci: install CRIU in containerd integration tests and skip checkpoint tests by @nayuta723 in https://github.com/youki-dev/youki/pull/3475
+- Deduplicate e2e test hook helpers by @fspv in https://github.com/youki-dev/youki/pull/3412
+- fix(cross): replace external apk-anywhere image with inlined Alpine apk in Dockerfile.musl by @saku3 in https://github.com/youki-dev/youki/pull/3491
+- Add poststop_fail hook test by @fspv in https://github.com/youki-dev/youki/pull/3407
+- fix: use correct fedora version number and deprecate riskv64 from lima-setup.sh by @gat786 in https://github.com/youki-dev/youki/pull/3497
+- refactor: Use cargo autoinherit to factorize the dependencies by @lu-zero in https://github.com/youki-dev/youki/pull/3477
+- chore: bump containerd to v2.2.3 and go to 1.24.3 by @tommady in https://github.com/youki-dev/youki/pull/3509
+- ci: group wasmtime-related Dependabot updates by @saku3 in https://github.com/youki-dev/youki/pull/3511
+- ci: remove unused cgroups v1 dind workflow steps by @saku3 in https://github.com/youki-dev/youki/pull/3512
+- refactor: replace deprecated clap derive attributes with command and arg by @yan-ace62 in https://github.com/youki-dev/youki/pull/3466
+- ci: build CRIU from source by @saku3 in https://github.com/youki-dev/youki/pull/3520
+- docs: fix several typos in code, error messages, and docs by @Shion1305 in https://github.com/youki-dev/youki/pull/3535
+- [Refactor] Use `&&` operator in if-let conditions by @logica0419 in https://github.com/youki-dev/youki/pull/3531
+- Add checkpoint/restore integration tests to contest by @tommady in https://github.com/youki-dev/youki/pull/3493
+- test(dind): pin docker:dind to 29.4 until youki supports time namespace by @saku3 in https://github.com/youki-dev/youki/pull/3539
+- fix: parse info parameters exactly by @immanuwell in https://github.com/youki-dev/youki/pull/3541
+- add aarch64 bundle for integration test by @saku3 in https://github.com/youki-dev/youki/pull/3530
+- bump oci-spec 0.10.0 by @saku3 in https://github.com/youki-dev/youki/pull/3569
+- Skip namespaces that are not specified for the init process by @saku3 in https://github.com/youki-dev/youki/pull/3551
+- fix(wasmedge): replace unwrap with proper error propagation in exec by @immanuwell in https://github.com/youki-dev/youki/pull/3570
+- chore: update rust to v1.96.0 by @YJDoc2 in https://github.com/youki-dev/youki/pull/3587
+- feat(contest): add reason for TestResult::Skipped by @donkomura in https://github.com/youki-dev/youki/pull/3588
+- test(contest): add update cgroup v2 common limits integration test by @hayama17 in https://github.com/youki-dev/youki/pull/3580
+- test(config): Implement libcontainer config methods failure test cases by @Scanf-s in https://github.com/youki-dev/youki/pull/3602
+- fix(utils): reject network device names exceeding the kernel limit according to the kernel reference by @Scanf-s in https://github.com/youki-dev/youki/pull/3608
+- test: convert mount_into_container and cgroup_v2 tests to fd-based mock by @saku3 in https://github.com/youki-dev/youki/pull/3606
+- test(contest): add cpu update integration tests for cgroup v2 by @hayama17 in https://github.com/youki-dev/youki/pull/3592
+- test(contest): add update pids limit integration test by @moz-sec in https://github.com/youki-dev/youki/pull/3595
+### Other Changes
+- (auto merged) chore(deps): bump the patch group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3425
+- chore(deps): bump uuid from 1.16.0 to 1.21.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3427
+- chore(deps): bump tempfile from 3.24.0 to 3.25.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3426
+- (auto merged) chore(deps): bump time from 0.3.45 to 0.3.47 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3449
+- (auto merged) chore(deps): bump which from 8.0.0 to 8.0.2 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3450
+- (auto merged) chore(deps): bump quinn-proto from 0.11.13 to 0.11.14 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3451
+- chore(deps): bump uuid from 1.21.0 to 1.22.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3443
+- (auto merged) chore(deps): bump the patch group with 3 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3457
+- (auto merged) chore(deps): bump lz4_flex from 0.12.0 to 0.12.1 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3459
+- (auto merged) chore(deps): bump pathrs from 0.2.3 to 0.2.4 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3460
+- chore(deps): bump tempfile from 3.25.0 to 3.27.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3462
+- (auto merged) chore(deps): bump tar from 0.4.44 to 0.4.45 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3465
+- (auto merged) chore(deps): bump env_logger from 0.11.9 to 0.11.10 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3471
+- chore(deps): bump uuid from 1.22.0 to 1.23.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3474
+- chore(deps): bump wasmtime from 42.0.1 to 43.0.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3468
+- chore(deps): bump wasi-common from 42.0.1 to 43.0.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3469
+- (auto merged) chore(deps): bump libc from 0.2.183 to 0.2.184 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3480
+- Extend experiment seccomp program by @sat0ken in https://github.com/youki-dev/youki/pull/3464
+- chore(deps): bump bytes from 1.6.0 to 1.11.1 in /experiment/seccomp by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3487
+- (auto merged) chore(deps): bump wasi-common from 43.0.0 to 43.0.1 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3490
+- (auto merged) chore(deps): bump the patch group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3494
+- (auto merged) chore(deps): bump libc from 0.2.184 to 0.2.185 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3496
+- chore(deps): bump fastrand from 2.3.0 to 2.4.1 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3486
+- (auto merged) chore(deps): bump uuid from 1.23.0 to 1.23.1 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3505
+- (auto merged) chore(deps): bump openssl from 0.10.75 to 0.10.78 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3513
+- chore(deps): bump the wasmtime group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3514
+- chore(deps): bump procfs from 0.17.0 to 0.18.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3290
+- chore(deps): bump libc from 0.2.185 to 0.2.186 in the patch group across 1 directory by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3516
+- chore(deps): bump the wasmtime group across 1 directory with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3519
+- (auto merged) chore(deps): bump openssl from 0.10.78 to 0.10.79 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3532
+- (auto merged) chore(deps): bump rkyv from 0.8.15 to 0.8.16 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3537
+- (auto merged) chore(deps): bump tar from 0.4.45 to 0.4.46 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3544
+- (auto merged) chore(deps): bump serde_json from 1.0.149 to 1.0.150 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3548
+- (auto merged) chore(deps): bump openssl from 0.10.79 to 0.10.80 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3549
+- (auto merged) chore(deps): bump uuid from 1.23.1 to 1.23.2 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3574
+- (auto merged) chore(deps): bump nc from 0.9.7 to 0.9.8 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3579
+- (auto merged) chore(deps): bump chrono from 0.4.44 to 0.4.45 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3581
+- (auto merged) chore(deps): bump which from 8.0.2 to 8.0.3 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3582
+- (auto merged) chore(deps): bump the patch group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3584
+- chore(deps): bump serial_test from 3.4.0 to 3.5.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3575
+- chore(deps): bump the wasmtime group across 1 directory with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3583
+- chore(deps): bump netlink-packet-route from 0.26.0 to 0.31.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3586
+- (auto merged) chore(deps): bump the wasmtime group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3593
+- (auto merged) chore(deps): bump which from 8.0.3 to 8.0.4 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3598
+- (auto merged) chore(deps): bump pathrs from 0.2.4 to 0.2.5 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3601
+- chore(deps): bump rust-criu from 0.5.0 to 0.6.1 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3610
+- chore(deps): bump the wasmtime group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3613
+- (auto merged) chore(deps): bump the wasmtime group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3615
+- (auto merged) chore(deps): bump uuid from 1.23.3 to 1.23.4 in the patch group by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3616
+- (auto merged) chore(deps): bump the patch group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3617
+- chore(deps): bump mockall from 0.14.0 to 0.15.0 by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3625
+
 ## [v0.6.0](https://github.com/youki-dev/youki/compare/v0.5.7...v0.6.0) - 2026-02-25
 ### 💪 Improvements
 - Add net device feature by @nayuta723 in https://github.com/youki-dev/youki/pull/3163
