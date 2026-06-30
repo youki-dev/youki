@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io::{IoSlice, IoSliceMut};
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -25,8 +25,10 @@ pub struct DbusConnection {
     /// Is the socket system level or session specific
     #[allow(dead_code)]
     system: bool,
-    /// socket fd
-    socket: i32,
+    /// Owned socket fd for the connection. Holding an `OwnedFd` (instead of a bare
+    /// `RawFd`) makes ownership explicit and closes the socket automatically when the
+    /// connection is dropped.
+    socket: OwnedFd,
     /// name id assigned by dbus for the connection
     id: Option<String>,
     /// counter for messages
@@ -130,18 +132,17 @@ impl DbusConnection {
     /// Open a new dbus connection to given address
     /// authenticating as user with given uid
     pub fn new(addr: &str, uid: u32, system: bool) -> Result<Self> {
-        // Use ManuallyDrop to keep the socket open.
-        let socket = std::mem::ManuallyDrop::new(socket::socket(
+        let socket = socket::socket(
             socket::AddressFamily::Unix,
             socket::SockType::Stream,
             socket::SockFlag::empty(),
             None,
-        )?);
+        )?;
 
         let addr = socket::UnixAddr::new(addr)?;
         socket::connect(socket.as_raw_fd(), &addr)?;
         let mut dbus = Self {
-            socket: socket.as_raw_fd(),
+            socket,
             msg_ctr: AtomicU32::new(0),
             id: None,
             system,
@@ -167,15 +168,19 @@ impl DbusConnection {
         let mut buf = [0; 64];
 
         // dbus connection always start with a 0 byte sent as first thing
-        socket::send(self.socket, &[0], socket::MsgFlags::empty())?;
+        socket::send(self.socket.as_raw_fd(), &[0], socket::MsgFlags::empty())?;
 
         let msg = format!("AUTH EXTERNAL {}\r\n", uid_to_hex_str(uid));
 
         // then we send our auth with uid
-        socket::send(self.socket, msg.as_bytes(), socket::MsgFlags::empty())?;
+        socket::send(
+            self.socket.as_raw_fd(),
+            msg.as_bytes(),
+            socket::MsgFlags::empty(),
+        )?;
 
         // we get the reply and check if all went well or not
-        socket::recv(self.socket, &mut buf, socket::MsgFlags::empty())?;
+        socket::recv(self.socket.as_raw_fd(), &mut buf, socket::MsgFlags::empty())?;
 
         let reply: Vec<u8> = buf.iter().filter(|v| **v != 0).copied().collect();
 
@@ -195,7 +200,7 @@ impl DbusConnection {
         // we can also send AGREE_UNIX_FD before this if we need to deal with sending/receiving
         // fds over the connection, but because youki doesn't need it, we can skip that
         socket::send(
-            self.socket,
+            self.socket.as_raw_fd(),
             "BEGIN\r\n".as_bytes(),
             socket::MsgFlags::empty(),
         )?;
@@ -251,7 +256,7 @@ impl DbusConnection {
             let mut reply_buffer = [IoSliceMut::new(&mut reply[0..])];
 
             let reply_res = socket::recvmsg::<()>(
-                self.socket,
+                self.socket.as_raw_fd(),
                 &mut reply_buffer,
                 None,
                 socket::MsgFlags::empty(),
@@ -297,7 +302,7 @@ impl DbusConnection {
         let serialized = message.serialize();
 
         socket::sendmsg::<()>(
-            self.socket,
+            self.socket.as_raw_fd(),
             &[IoSlice::new(&serialized)],
             &[],
             socket::MsgFlags::empty(),
