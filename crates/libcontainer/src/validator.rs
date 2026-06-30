@@ -17,6 +17,7 @@ impl Validator {
         Self::validate_spec_for_scheduler(spec)?;
         Self::validate_spec_for_io_priority(spec)?;
         Self::validate_spec_for_intel_rdt(spec)?;
+        Self::validate_spec_for_time_namespace(spec)?;
 
         Ok(())
     }
@@ -285,6 +286,27 @@ impl Validator {
             }
         }
 
+        Ok(())
+    }
+
+    // Validates time namespace configuration. Rejects two invalid combinations
+    // when time_offsets is set:
+    //   (1) no time namespace in the spec -- nothing for the offsets to apply to
+    //   (2) time namespace has a path -- joining an existing NS, whose offsets are
+    //       already fixed and cannot be rewritten
+    fn validate_spec_for_time_namespace(spec: &Spec) -> Result<(), ErrInvalidSpec> {
+        if let Some(linux) = spec.linux()
+            && linux.time_offsets().is_some()
+        {
+            let time_ns = linux
+                .namespaces()
+                .as_ref()
+                .and_then(|nss| nss.iter().find(|ns| ns.typ() == LinuxNamespaceType::Time))
+                .ok_or(ErrInvalidSpec::TimeNamespace)?;
+            if time_ns.path().is_some() {
+                return Err(ErrInvalidSpec::TimeOffsetsWithPath);
+            }
+        }
         Ok(())
     }
 }
@@ -833,5 +855,80 @@ mod tests {
             Validator::validate_spec_for_intel_rdt(&spec_traversal_trailing).unwrap_err(),
             ErrInvalidSpec::InvalidIntelRdtClosId
         ));
+    }
+
+    #[test]
+    fn test_validate_spec_for_time_namespace() {
+        use std::collections::HashMap;
+
+        use oci_spec::runtime::LinuxTimeOffset;
+
+        let offsets: HashMap<String, LinuxTimeOffset> =
+            [("monotonic".to_string(), LinuxTimeOffset::default())]
+                .into_iter()
+                .collect();
+
+        // offsets set but no time namespace -> TimeNamespace
+        let spec_offsets_without_ns = SpecBuilder::default()
+            .linux(
+                LinuxBuilder::default()
+                    .namespaces(vec![])
+                    .time_offsets(offsets.clone())
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(matches!(
+            Validator::validate_spec_for_time_namespace(&spec_offsets_without_ns).unwrap_err(),
+            ErrInvalidSpec::TimeNamespace
+        ));
+
+        // offsets set and the time namespace joins an existing one (has a path) -> TimeOffsetsWithPath
+        let spec_offsets_with_path = SpecBuilder::default()
+            .linux(
+                LinuxBuilder::default()
+                    .namespaces(vec![
+                        LinuxNamespaceBuilder::default()
+                            .typ(LinuxNamespaceType::Time)
+                            .path("/proc/1/ns/time")
+                            .build()
+                            .unwrap(),
+                    ])
+                    .time_offsets(offsets.clone())
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(matches!(
+            Validator::validate_spec_for_time_namespace(&spec_offsets_with_path).unwrap_err(),
+            ErrInvalidSpec::TimeOffsetsWithPath
+        ));
+
+        // offsets set with a new time namespace (no path) -> Ok
+        let spec_valid = SpecBuilder::default()
+            .linux(
+                LinuxBuilder::default()
+                    .namespaces(vec![
+                        LinuxNamespaceBuilder::default()
+                            .typ(LinuxNamespaceType::Time)
+                            .build()
+                            .unwrap(),
+                    ])
+                    .time_offsets(offsets)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(Validator::validate_spec_for_time_namespace(&spec_valid).is_ok());
+
+        // no offsets at all -> Ok (nothing to validate)
+        let spec_no_offsets = SpecBuilder::default()
+            .linux(LinuxBuilder::default().namespaces(vec![]).build().unwrap())
+            .build()
+            .unwrap();
+        assert!(Validator::validate_spec_for_time_namespace(&spec_no_offsets).is_ok());
     }
 }
