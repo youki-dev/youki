@@ -4,12 +4,18 @@ use std::path::{Path, PathBuf};
 use nix::unistd;
 use oci_spec::runtime::Spec;
 
-use super::{Executor, ExecutorError, ExecutorValidationError};
+use super::{ContainerExecutor, Executor, ExecutorError, ExecutorValidationError, HostExecutor};
 
 #[derive(Clone)]
 pub struct DefaultExecutor {}
 
-impl Executor for DefaultExecutor {
+impl HostExecutor for DefaultExecutor {
+    fn modify_spec(&self, spec: Spec) -> Result<Spec, ExecutorError> {
+        Ok(spec)
+    }
+}
+
+impl ContainerExecutor for DefaultExecutor {
     fn exec(&self, spec: &Spec) -> Result<(), ExecutorError> {
         tracing::debug!("executing workload with default handler");
         let args = spec
@@ -107,6 +113,8 @@ impl Executor for DefaultExecutor {
         Ok(())
     }
 }
+
+impl Executor for DefaultExecutor {}
 
 pub fn get_executor() -> Box<dyn Executor> {
     Box::new(DefaultExecutor {})
