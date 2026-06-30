@@ -123,14 +123,14 @@ impl CgroupManager for AnyCgroupManager {
 }
 
 impl AnyCgroupManager {
-    /// Set cgroup ownership.
+    /// Marks the cgroup manager as operating in a rootless environment.
     ///
-    /// Only affects the v2 manager for v1 and systemd.
+    /// Only affects the v2 manager.
     #[cfg_attr(not(feature = "v2"), allow(unused_variables))]
-    pub fn with_ownership(self, ownership: CgroupOwnership) -> Self {
+    pub fn with_rootless(self, rootless: bool) -> Self {
         match self {
             #[cfg(feature = "v2")]
-            AnyCgroupManager::V2(m) => AnyCgroupManager::V2(m.with_ownership(ownership)),
+            AnyCgroupManager::V2(m) => AnyCgroupManager::V2(m.with_rootless(rootless)),
             other => other,
         }
     }
@@ -338,19 +338,6 @@ pub enum CreateCgroupSetupError {
     V2(#[from] v2::manager::V2ManagerError),
     #[error("systemd error: {0}")]
     Systemd(#[from] systemd::manager::SystemdManagerError),
-}
-
-/// Whether cgroups are delegated or owned by the process
-///
-/// In delegated environments such as container-in-container,
-/// the cgroup hierarchy is likely read-only. When using
-/// [CgroupOwnership::Delegated], errors become non-fatal.
-#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum CgroupOwnership {
-    #[default]
-    Full,
-    Delegated,
 }
 
 #[derive(Clone)]

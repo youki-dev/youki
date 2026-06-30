@@ -23,8 +23,8 @@ use super::pids::Pids;
 use super::unified::{Unified, V2UnifiedError};
 use super::util::{self, CGROUP_SUBTREE_CONTROL, V2UtilError};
 use crate::common::{
-    self, AnyCgroupManager, CGROUP_PROCS, CgroupManager, CgroupOwnership, ControllerOpt,
-    FreezerState, JoinSafelyError, PathBufExt, WrapIoResult, WrappedIoError,
+    self, AnyCgroupManager, CGROUP_PROCS, CgroupManager, ControllerOpt, FreezerState,
+    JoinSafelyError, PathBufExt, WrapIoResult, WrappedIoError,
 };
 use crate::stats::{PidStatsError, Stats, StatsProvider};
 
@@ -78,14 +78,13 @@ pub struct Manager {
     root_path: PathBuf,
     cgroup_path: PathBuf,
     full_path: PathBuf,
-    ownership: CgroupOwnership,
+    rootless: bool,
 }
 
 impl Manager {
     /// Constructs a new cgroup manager with root path being the mount point
     /// of a cgroup v2 fs and cgroup path being a relative path from the root.
-    /// Sets ownership model to [CgroupOwnership::Full]. For rootless
-    /// environments call `.with_ownership(CgroupOwnership::Delegated)`.
+    /// For rootless environments call .with_rootless(true).
     pub fn new(root_path: PathBuf, cgroup_path: PathBuf) -> Result<Self, V2ManagerError> {
         let full_path = root_path.join_safely(&cgroup_path)?;
 
@@ -93,26 +92,21 @@ impl Manager {
             root_path,
             cgroup_path,
             full_path,
-            ownership: CgroupOwnership::Full,
+            rootless: false,
         })
     }
 
-    /// Sets the cgroup ownership model.
+    /// Marks the manager as operating in a rootless environment.
     ///
     /// By default, [libcontainer] assumes full ownership of cgroups.
-    /// However, in container-in-container environments, ownership
-    /// is delegated.
-    pub fn with_ownership(mut self, ownership: CgroupOwnership) -> Self {
-        self.ownership = ownership;
+    /// In rootless setups such as container-in-container, the cgroup
+    /// hierarchy is often read-only, so permission errors are non-fatal.
+    pub fn with_rootless(mut self, rootless: bool) -> Self {
+        self.rootless = rootless;
         self
     }
 
-    // utility to check for delegated ownership
-    fn is_delegated(&self) -> bool {
-        self.ownership == CgroupOwnership::Delegated
-    }
-
-    // Utility to check for expected errors in delegated cgroup environments
+    // Utility to check for expected errors in rootless cgroup environments
     fn is_permission_error(err: &WrappedIoError) -> bool {
         matches!(
             err.inner().raw_os_error().map(Errno::from_raw),
@@ -148,9 +142,9 @@ impl Manager {
 
                     // in container-in-container environments these paths are often read-only
                     // we do not error here—rather we continue in a best effort
-                    Err(err) if self.is_delegated() && Self::is_permission_error(&err) => {
+                    Err(err) if self.rootless && Self::is_permission_error(&err) => {
                         tracing::debug!(
-                            "delegated cgroup: cannot create {current_path:?}: {err}; \
+                            "rootless cgroup: cannot create {current_path:?}: {err}; \
                              leaving process in its parent cgroup"
                         );
                         return Ok(());
@@ -174,9 +168,9 @@ impl Manager {
         // we log and continue rather than error out hard
         match common::write_cgroup_file(self.full_path.join(CGROUP_PROCS), pid) {
             Ok(()) => Ok(()),
-            Err(err) if self.is_delegated() && Self::is_permission_error(&err) => {
+            Err(err) if self.rootless && Self::is_permission_error(&err) => {
                 tracing::debug!(
-                    "delegated cgroup: cannot move process into {:?}: {err}; \
+                    "rootless cgroup: cannot move process into {:?}: {err}; \
                      leaving process in its parent cgroup",
                     self.full_path
                 );
@@ -186,40 +180,12 @@ impl Manager {
         }
     }
 
-    /// Reads the controllers already enabled in `{path}/cgroup.subtree_control`
-    fn get_enabled_controllers(path: &Path) -> Result<Vec<String>, WrappedIoError> {
-        let content = common::read_cgroup_file(path.join(CGROUP_SUBTREE_CONTROL))?;
-        Ok(content.split_whitespace().map(str::to_owned).collect())
-    }
-
-    /// Returns the subset of `controllers` (formatted as `+name`) not yet
-    /// enabled in `{path}/cgroup.subtree_control`
-    fn missing_controllers(
-        path: &Path,
-        controllers: &[String],
-    ) -> Result<Vec<String>, WrappedIoError> {
-        let enabled = Self::get_enabled_controllers(path)?;
-        Ok(controllers
-            .iter()
-            .filter(|c| !enabled.iter().any(|e| e == c.trim_start_matches('+')))
-            .cloned()
-            .collect())
-    }
-
-    // best-effort enabling of `controllers` in `{path}/cgroup.subtree_control`
+    // best-effort enabling of `controllers` in `{path}/cgroup.subtree_control`.
+    // Writing an already-enabled controller is idempotent in cgroup v2, so we
+    // simply attempt to write each one and ignore errors.
     // See https://github.com/youki-dev/youki/issues/3597#issuecomment-4749947856
     fn enable_controllers(path: &Path, controllers: &[String]) {
-        let to_enable = match Self::missing_controllers(path, controllers) {
-            Ok(missing) => missing,
-            Err(err) => {
-                tracing::debug!(
-                    "could not read {path:?}/{CGROUP_SUBTREE_CONTROL}: {err}; attempting to enable all controllers"
-                );
-                controllers.to_vec()
-            }
-        };
-
-        for controller in &to_enable {
+        for controller in controllers {
             if let Err(err) =
                 common::write_cgroup_file_str(path.join(CGROUP_SUBTREE_CONTROL), controller)
             {
