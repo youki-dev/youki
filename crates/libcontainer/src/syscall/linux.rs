@@ -14,11 +14,11 @@ use caps::{CapSet, CapsHashSet};
 use libc::{c_char, setdomainname, uid_t};
 use nix::dir::Dir;
 use nix::fcntl;
-use nix::fcntl::{OFlag, open};
-use nix::mount::{MntFlags, MsFlags, mount, umount2};
-use nix::sched::{CloneFlags, unshare};
-use nix::sys::stat::{Mode, SFlag, mknod};
-use nix::unistd::{Gid, Uid, chown, chroot, close, fchdir, pivot_root, sethostname};
+use nix::fcntl::{open, OFlag};
+use nix::mount::{mount, umount2, MntFlags, MsFlags};
+use nix::sched::{unshare, CloneFlags};
+use nix::sys::stat::{mknod, Mode, SFlag};
+use nix::unistd::{chdir, chown, chroot, fchdir, pivot_root, sethostname, Gid, Uid};
 use oci_spec::runtime::PosixRlimit;
 use pathrs::flags::OpenFlags;
 use pathrs::procfs::{ProcfsBase, ProcfsHandle};
@@ -381,15 +381,30 @@ impl Syscall for LinuxSyscall {
 
     /// Function to set given path as root path inside process
     fn pivot_rootfs(&self, path: &Path) -> Result<()> {
-        // open the path as directory and read only
+        // open oldroot as directory
+        // returns a OwnedFd as of nix v0.31
+        let oldroot = open(
+            "/",
+            OFlag::O_DIRECTORY | OFlag::O_PATH | OFlag::O_CLOEXEC,
+            Mode::empty(),
+        )
+        .inspect_err(|errno| {
+            tracing::error!(?errno, ?path, "failed to open the old root for pivot root");
+        })?;
+
+        // open newroot as directory
         // returns a OwnedFd as of nix v0.31
         let newroot = open(
             path,
-            OFlag::O_DIRECTORY | OFlag::O_RDONLY | OFlag::O_CLOEXEC,
+            OFlag::O_DIRECTORY | OFlag::O_PATH | OFlag::O_CLOEXEC,
             Mode::empty(),
         )
         .inspect_err(|errno| {
             tracing::error!(?errno, ?path, "failed to open the new root for pivot root");
+        })?;
+
+        fchdir(&newroot).inspect_err(|errno| {
+            tracing::error!(?errno, ?newroot, "failed to fchdir to new root");
         })?;
 
         // make the given path as the root directory for the container
@@ -400,15 +415,23 @@ impl Syscall for LinuxSyscall {
         // this path. This is done, as otherwise, we will need to create a separate temporary directory under the new root path
         // so we can move the original root there, and then unmount that. This way saves the creation of the temporary
         // directory to put original root directory.
-        pivot_root(path, path).inspect_err(|errno| {
+        pivot_root(".", ".").inspect_err(|errno| {
             tracing::error!(?errno, ?path, "failed to pivot root to");
+        })?;
+
+        // Currently our "." is oldroot (according to the current kernel code).
+        // However, purely for safety, we will fchdir(oldroot) since there isn't
+        // really any guarantee from the kernel what /proc/self/cwd will be after a
+        // pivot_root(2).
+        fchdir(&oldroot).inspect_err(|errno| {
+            tracing::error!(?errno, ?oldroot, "failed to fchdir to old root");
         })?;
 
         // Make the original root directory rslave to avoid propagating unmount event to the host mount namespace.
         // We should use MS_SLAVE not MS_PRIVATE according to https://github.com/opencontainers/runc/pull/1500.
         mount(
             None::<&str>,
-            "/",
+            ".",
             None::<&str>,
             MsFlags::MS_SLAVE | MsFlags::MS_REC,
             None::<&str>,
@@ -421,19 +444,12 @@ impl Syscall for LinuxSyscall {
         // MNT_DETACH makes the mount point unavailable to new accesses, but waits till the original mount point
         // to be free of activity to actually unmount
         // see https://man7.org/linux/man-pages/man2/umount2.2.html for more information
-        umount2("/", MntFlags::MNT_DETACH).inspect_err(|errno| {
+        umount2(".", MntFlags::MNT_DETACH).inspect_err(|errno| {
             tracing::error!(?errno, "failed to unmount old root directory");
         })?;
         // Change directory to the new root
-        fchdir(&newroot).inspect_err(|errno| {
-            tracing::error!(?errno, ?newroot, "failed to change directory to new root");
-        })?;
-
-        //close is explicitly kept for error handling
-        //however can be removed since newroot is a OwnedFd now
-        //and close is handled automatically
-        close(newroot).inspect_err(|errno| {
-            tracing::error!(?errno, "failed to close new root directory");
+        chdir("/").inspect_err(|errno| {
+            tracing::error!(?errno, "failed to change directory to new root");
         })?;
 
         Ok(())
@@ -1015,7 +1031,7 @@ mod tests {
     use std::os::unix::prelude::AsRawFd;
     use std::str::FromStr;
 
-    use anyhow::{Context, Result, bail};
+    use anyhow::{bail, Context, Result};
     use nix::{fcntl, sys, unistd};
     use serial_test::serial;
 
