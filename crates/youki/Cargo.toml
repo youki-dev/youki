@@ -1,6 +1,6 @@
 [package]
 name = "youki"
-version = "0.6.0" # MARK: Version
+version = "0.6.1" # MARK: Version
 description = "A container runtime written in Rust"
 license = "Apache-2.0"
 repository = "https://github.com/youki-dev/youki"
@@ -26,8 +26,8 @@ wasm-wasmtime = ["wasmtime", "wasi-common"]
 clap = { workspace = true, features = ["std", "suggestions", "derive", "cargo", "help", "usage", "error-context"] }
 anyhow = { workspace = true }
 chrono = { workspace = true, features = ["clock", "serde"] }
-libcgroups = { path = "../libcgroups", default-features = false, version = "0.6.0" } # MARK: Version
-libcontainer = { path = "../libcontainer", default-features = false, version = "0.6.0" } # MARK: Version
+libcgroups = { path = "../libcgroups", default-features = false, version = "0.6.1" } # MARK: Version
+libcontainer = { path = "../libcontainer", default-features = false, version = "0.6.1" } # MARK: Version
 liboci-cli = { workspace = true }
 nix = { workspace = true }
 pentacle = { workspace = true }
