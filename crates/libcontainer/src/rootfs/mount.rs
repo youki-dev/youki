@@ -28,6 +28,7 @@ use procfs::{FromRead, ProcessCGroups};
 use super::symlink::Symlink;
 use super::symlink::SymlinkError;
 use super::utils::{MountOptionConfig, parse_mount};
+use crate::rootfs::utils::is_bind;
 use crate::syscall::syscall::create_syscall;
 use crate::syscall::{Syscall, SyscallError, linux};
 use crate::utils::{PathBufExt, retry};
@@ -589,7 +590,7 @@ impl Mount {
 
         let source = m.source().as_ref().ok_or(MountError::NoSource)?;
         let dir_perm = Permissions::from_mode(0o755);
-        let src = if typ == Some("bind") {
+        let src = if is_bind(m) {
             let src = canonicalize(source).map_err(|err| {
                 tracing::error!("failed to canonicalize {:?}: {}", source, err);
                 err
@@ -629,15 +630,10 @@ impl Mount {
         let dest: OwnedFd = root.resolve(container_dest)?.into();
         let dest_fd = dest.as_fd();
 
-        let is_bind = typ == Some("bind")
-            || m.options()
-                .as_deref()
-                .is_some_and(|ops| ops.iter().any(|o| o == "bind" || o == "rbind"));
-
         // fd-based mount flow:
         // - bind: open_tree -> mount_setattr -> move_mount
         // - nonbind: fsopen -> fsconfig -> fsmount -> mount_setattr -> move_mount
-        if is_bind {
+        if is_bind(m) {
             let recursive = m
                 .options()
                 .as_ref()
@@ -957,7 +953,7 @@ impl Mount {
                     return Ok(());
                 }
 
-                if mount.typ().as_deref() == Some("bind") {
+                if is_bind(mount) {
                     if let Some(source) = mount.source() {
                         let stat = statfs(source).map_err(MountError::from)?;
                         if stat.filesystem_type() == PROC_SUPER_MAGIC {

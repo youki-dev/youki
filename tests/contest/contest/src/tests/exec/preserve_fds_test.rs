@@ -3,9 +3,9 @@ use std::os::unix::process::CommandExt;
 use std::{fs, mem};
 
 use anyhow::anyhow;
-use nix::fcntl::{fcntl, FcntlArg, FdFlag};
+use nix::fcntl::{FcntlArg, FdFlag, fcntl};
 use nix::unistd::dup2_raw;
-use test_framework::{test_result, TestResult};
+use test_framework::{TestResult, test_result};
 
 use crate::utils::test_utils::{
     build_exec_command, check_container_created, start_container, test_outside_container,

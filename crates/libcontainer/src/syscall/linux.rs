@@ -14,11 +14,11 @@ use caps::{CapSet, CapsHashSet};
 use libc::{c_char, setdomainname, uid_t};
 use nix::dir::Dir;
 use nix::fcntl;
-use nix::fcntl::{open, OFlag};
-use nix::mount::{mount, umount2, MntFlags, MsFlags};
-use nix::sched::{unshare, CloneFlags};
-use nix::sys::stat::{mknod, Mode, SFlag};
-use nix::unistd::{chdir, chown, chroot, fchdir, pivot_root, sethostname, Gid, Uid};
+use nix::fcntl::{OFlag, open};
+use nix::mount::{MntFlags, MsFlags, mount, umount2};
+use nix::sched::{CloneFlags, unshare};
+use nix::sys::stat::{Mode, SFlag, mknod};
+use nix::unistd::{Gid, Uid, chdir, chown, chroot, fchdir, pivot_root, sethostname};
 use oci_spec::runtime::PosixRlimit;
 use pathrs::flags::OpenFlags;
 use pathrs::procfs::{ProcfsBase, ProcfsHandle};
@@ -1031,7 +1031,7 @@ mod tests {
     use std::os::unix::prelude::AsRawFd;
     use std::str::FromStr;
 
-    use anyhow::{bail, Context, Result};
+    use anyhow::{Context, Result, bail};
     use nix::{fcntl, sys, unistd};
     use serial_test::serial;
 
