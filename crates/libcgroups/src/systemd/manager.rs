@@ -4,7 +4,7 @@ use std::fmt::{Debug, Display};
 use std::fs::{self};
 use std::path::Component::RootDir;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use nix::NixPath;
 use nix::unistd::Pid;
@@ -27,6 +27,10 @@ use crate::systemd::dbus_native::serialize::Variant;
 use crate::systemd::io::Io;
 use crate::systemd::unified::Unified;
 use crate::v2::manager::{Manager as FsManager, V2ManagerError};
+
+const CONNECT_MAX_RETRIES: u32 = 7;
+const CONNECT_BASE_DELAY_MS: u64 = 100;
+const CONNECT_JITTER_DIVISOR: u64 = 8; // jitter up to 1/8 of delay (~12.5%)
 
 const CGROUP_CONTROLLERS: &str = "cgroup.controllers";
 const CGROUP_SUBTREE_CONTROL: &str = "cgroup.subtree_control";
@@ -190,31 +194,120 @@ impl Manager {
         use_system: bool,
         cgroup_wait_timeout_duration: Duration,
     ) -> Result<Self, SystemdManagerError> {
+        use super::dbus_native::utils::DbusError;
+
         let mut destructured_path: CgroupsPath = cgroups_path.as_path().try_into()?;
         ensure_parent_unit(&mut destructured_path, use_system);
 
-        let client = match use_system {
-            true => DbusConnection::new_system()?,
-            false => DbusConnection::new_session()?,
+        // EAGAIN from a recv() that timed out via SO_RCVTIMEO (set in dbus::connect()).
+        let is_eagain = |e: &SystemdManagerError| {
+            matches!(
+                e,
+                SystemdManagerError::SystemdClient(SystemdClientError::DBus(
+                    DbusError::Nix(errno)
+                )) if *errno == nix::errno::Errno::EAGAIN
+            )
         };
 
-        let (cgroups_path, delegation_boundary) =
-            Self::construct_cgroups_path(&destructured_path, &client)?;
-        let full_path = root_path.join_safely(&cgroups_path)?;
-        let fs_manager = FsManager::new(root_path.clone(), cgroups_path.clone())?;
+        // Exponential backoff: base * 2^attempt + jitter (~12.5%).
+        // At most ~15 seconds of total sleep across CONNECT_MAX_RETRIES attempts.
+        let backoff = |retry: u32| -> Duration {
+            let delay_ms = CONNECT_BASE_DELAY_MS << retry;
+            let jitter_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.subsec_nanos() as u64 % (1 + delay_ms / CONNECT_JITTER_DIVISOR))
+                .unwrap_or(0);
+            Duration::from_millis(delay_ms + jitter_ms)
+        };
 
-        Ok(Manager {
-            root_path,
-            cgroups_path,
-            full_path,
-            container_name,
-            unit_name: Self::get_unit_name(&destructured_path),
-            destructured_path,
-            client,
-            fs_manager,
-            delegation_boundary,
-            cgroup_wait_timeout_duration,
-        })
+        let try_connect = || -> Result<DbusConnection, SystemdManagerError> {
+            if use_system {
+                Ok(DbusConnection::new_system()?)
+            } else {
+                Ok(DbusConnection::new_session()?)
+            }
+        };
+
+        // Retry loop covering both connection (auth) and initial method calls.
+        // EAGAIN can arrive during either phase; after a timeout the socket is
+        // in an inconsistent state, so we drop it and reconnect from scratch.
+        let mut last_err = None;
+        for retry in 0..CONNECT_MAX_RETRIES {
+            // Step 1 — connect + auth (+ Hello for daemon bus).
+            let client = match try_connect() {
+                Ok(c) => c,
+                Err(e) if !is_eagain(&e) => return Err(e),
+                Err(e) => {
+                    let is_last = retry + 1 == CONNECT_MAX_RETRIES;
+                    if is_last {
+                        tracing::debug!(
+                            "dbus connect EAGAIN on attempt {}/{}, giving up",
+                            retry + 1,
+                            CONNECT_MAX_RETRIES
+                        );
+                    } else {
+                        tracing::debug!(
+                            "dbus connect EAGAIN on attempt {}/{}, retrying after backoff",
+                            retry + 1,
+                            CONNECT_MAX_RETRIES
+                        );
+                        std::thread::sleep(backoff(retry));
+                    }
+                    last_err = Some(e);
+                    continue;
+                }
+            };
+
+            // Step 2 — initial method calls to discover the cgroup path.
+            // On EAGAIN, client is dropped here and the next iteration reconnects.
+            match Self::construct_cgroups_path(&destructured_path, &client) {
+                Ok((cgroups_path, delegation_boundary)) => {
+                    let full_path = root_path.join_safely(&cgroups_path)?;
+                    let fs_manager = FsManager::new(root_path.clone(), cgroups_path.clone())?;
+                    return Ok(Manager {
+                        root_path,
+                        cgroups_path,
+                        full_path,
+                        container_name,
+                        unit_name: Self::get_unit_name(&destructured_path),
+                        destructured_path,
+                        client,
+                        fs_manager,
+                        delegation_boundary,
+                        cgroup_wait_timeout_duration,
+                    });
+                }
+                Err(e) if !is_eagain(&e) => return Err(e),
+                Err(e) => {
+                    let is_last = retry + 1 == CONNECT_MAX_RETRIES;
+                    if is_last {
+                        tracing::debug!(
+                            "dbus setup EAGAIN on attempt {}/{}, giving up",
+                            retry + 1,
+                            CONNECT_MAX_RETRIES
+                        );
+                    } else {
+                        tracing::debug!(
+                            "dbus setup EAGAIN on attempt {}/{}, reconnecting after backoff",
+                            retry + 1,
+                            CONNECT_MAX_RETRIES
+                        );
+                        std::thread::sleep(backoff(retry));
+                    }
+                    last_err = Some(e);
+                }
+            }
+        }
+
+        let err_msg = last_err
+            .as_ref()
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "unknown error".to_string());
+        Err(SystemdClientError::DBus(DbusError::ConnectionError(format!(
+            "dbus connection failed after {} retries: {}",
+            CONNECT_MAX_RETRIES, err_msg
+        )))
+        .into())
     }
 
     /// get_unit_name returns the unit (scope) name from the path provided by the user
