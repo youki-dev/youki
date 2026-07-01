@@ -372,6 +372,14 @@ fn mount_console(syscall: &dyn Syscall, slave: &OwnedFd, console_path: &Path) ->
     Ok(())
 }
 
+/// Reconnects the container process's stdio (file descriptors 0, 1, 2) to the PTY slave.
+/// 
+/// To send and receive data through the PTY slave, the container's default
+/// file descriptors 0, 1, 2 must be redirected to the PTY slave's file descriptor.
+/// 
+/// The dup2(old_fd, new_fd) system call points newfd at the same open file as oldfd.
+/// Here newfd is the container's fd (0, 1, 2) and oldfd is the PTY slave.
+/// Therefore, the container's stdout and stderr data is forwarded to the PTY slave.
 fn connect_stdio(stdin: &RawFd, stdout: &RawFd, stderr: &RawFd) -> Result<()> {
     dup2(stdin.as_raw_fd(), StdIO::Stdin.into()).map_err(|err| TTYError::ConnectStdIO {
         source: err,
@@ -561,7 +569,7 @@ mod tests {
     #[test]
     fn test_mount_console() {
         use crate::syscall::test::TestHelperSyscall;
-        
+
         use tempfile::{tempdir, tempfile};
 
         // Define necessary variables
