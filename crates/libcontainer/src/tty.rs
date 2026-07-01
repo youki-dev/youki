@@ -335,12 +335,9 @@ pub fn setup_console(syscall: &dyn Syscall, console_fd: RawFd, mount: bool) -> R
 fn mount_console(syscall: &dyn Syscall, slave: &OwnedFd, console_path: &Path) -> Result<()> {
     use std::fs::OpenOptions;
 
-    let console_path = Path::new(console_path);
-
     tracing::debug!(
         slave_fd = slave.as_raw_fd(),
-        "mounting PTY on {CONSOLE_PATH}"
-    );
+        "mounting PTY on {}", console_path.display());
 
     // Create /dev/console mount target.
     // O_NOFOLLOW: prevent symlink attacks (CVE-2025-52565)
@@ -353,7 +350,7 @@ fn mount_console(syscall: &dyn Syscall, slave: &OwnedFd, console_path: &Path) ->
         .mode(0o666)
         .open(console_path)
         .map_err(|err| {
-            tracing::error!(?err, "failed to create {CONSOLE_PATH}");
+            tracing::error!(?err, "failed to create {}", console_path.display());
             TTYError::CreateDevConsole { source: err }
         })?;
 
@@ -363,14 +360,14 @@ fn mount_console(syscall: &dyn Syscall, slave: &OwnedFd, console_path: &Path) ->
         tracing::error!(
             ?err,
             slave_fd = slave.as_raw_fd(),
-            "failed to bind mount pty on {CONSOLE_PATH}"
+            "failed to bind mount pty on {}", console_path.display()
         );
         TTYError::MountConsole { source: err }
     })?;
 
     tracing::debug!(
         slave_fd = slave.as_raw_fd(),
-        "mounted PTY on {CONSOLE_PATH}"
+        "mounted PTY on {}", console_path.display()
     );
     Ok(())
 }
@@ -448,7 +445,7 @@ mod tests {
     fn test_setup_console() -> Result<()> {
         // This test fails when run in WSL2.
         // When it calls openpty() in setup_console() which opens /dev/ptmx, it must be on a real devpts mount.
-        // On native Ubuntu system, /dev/ptmx is a symlink to /dev/pts/ptmx, so the master is devpts-backend (with proper magic number).
+        // On native Ubuntu system, /dev/ptmx is a symlink to /dev/pts/ptmx, so the master is devpts-backed (with proper magic number).
         // But on WSL2, /dev/ptmx is a real char device node living directly on /dev, which is devtmpfs (different magic number, shared with tmpfs).
         // Therefore you may skip this test if you are WSL2 user.
         use crate::syscall::syscall::create_syscall;
@@ -580,5 +577,6 @@ mod tests {
 
         // Check the mount target contains test_console_path
         assert_eq!(calls[0].target, test_console_path);
+        assert_eq!(calls[0].fd, slave.as_raw_fd());
     }
 }

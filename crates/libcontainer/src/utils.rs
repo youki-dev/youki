@@ -674,7 +674,7 @@ mod tests {
 
         let result = verify_inode(&fd, |stat, _| {
             called.set(true);
-            assert_ne!(stat.st_ino, 0); // verify fd refers a proper indoe
+            assert_ne!(stat.st_ino, 0); // verify fd refers a proper inode
             Ok(())
         });
         assert!(result.is_ok());
@@ -683,7 +683,6 @@ mod tests {
 
     #[test]
     fn test_verify_inode_verification_error() {
-        // check if the closure is called and return Ok
         let file = tempfile::tempfile().unwrap();
         let fd = OwnedFd::from(file);
 
