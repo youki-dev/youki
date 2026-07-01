@@ -14,6 +14,8 @@ pub enum ChannelError {
         expected: &'static str,
         received: Box<Message>,
     },
+    #[error("received unexpected init message: {0:?}")]
+    UnexpectedInitMessage(Box<Message>),
     #[error("failed to receive. {msg:?}. {source:?}")]
     ReceiveError {
         msg: String,
@@ -182,13 +184,21 @@ impl MainReceiver {
         }
     }
 
-    pub fn recv_message_with_fds(&mut self) -> Result<(Message, Option<[RawFd; 1]>), ChannelError> {
-        self.receiver
-            .recv_with_fds::<[RawFd; 1]>()
-            .map_err(|err| ChannelError::ReceiveError {
-                msg: "waiting for message".to_string(),
+    /// Receives an init message, normalizing error messages and taking ownership of
+    /// any attached fd.
+    pub fn recv_init_message(&mut self) -> Result<(Message, Option<OwnedFd>), ChannelError> {
+        let (msg, fds) = self.receiver.recv_with_fds::<[RawFd; 1]>().map_err(|err| {
+            ChannelError::ReceiveError {
+                msg: "waiting for init message".to_string(),
                 source: err,
-            })
+            }
+        })?;
+        let fd = fds.map(|fds| unsafe { OwnedFd::from_raw_fd(fds[0]) });
+        match msg {
+            Message::ExecFailed(err) => Err(ChannelError::ExecError(err)),
+            Message::OtherError(err) => Err(ChannelError::OtherError(err)),
+            msg => Ok((msg, fd)),
+        }
     }
 
     pub fn wait_for_seccomp_request(&mut self) -> Result<i32, ChannelError> {
@@ -747,6 +757,43 @@ mod tests {
             }
         };
 
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_recv_init_message_passes_through_protocol_message() -> Result<()> {
+        let (mut sender, mut receiver) = main_channel()?;
+        sender.init_ready()?;
+        let (msg, fd) = receiver.recv_init_message()?;
+        assert!(matches!(msg, Message::InitReady));
+        assert!(fd.is_none());
+        sender.close()?;
+        receiver.close()?;
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_recv_init_message_normalizes_exec_failed() -> Result<()> {
+        let (mut sender, mut receiver) = main_channel()?;
+        sender.exec_failed("boom".to_string())?;
+        let err = receiver.recv_init_message().unwrap_err();
+        assert!(matches!(err, ChannelError::ExecError(msg) if msg == "boom"));
+        sender.close()?;
+        receiver.close()?;
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_recv_init_message_normalizes_other_error() -> Result<()> {
+        let (mut sender, mut receiver) = main_channel()?;
+        sender.send_error("boom".to_string())?;
+        let err = receiver.recv_init_message().unwrap_err();
+        assert!(matches!(err, ChannelError::OtherError(msg) if msg == "boom"));
+        sender.close()?;
+        receiver.close()?;
         Ok(())
     }
 }
