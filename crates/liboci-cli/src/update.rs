@@ -51,11 +51,11 @@ pub struct Update {
     pub memory_reservation: Option<u64>,
 
     /// Set total memory + swap usage to num bytes. Use -1 to unset the limit (i.e. use unlimited swap).
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     pub memory_swap: Option<i64>,
 
-    /// Set the maximum number of processes allowed in the container
-    #[arg(long)]
+    /// Set the maximum number of processes allowed in the container. Use -1 for no limit (i.e. `max`).
+    #[arg(long, allow_hyphen_values = true)]
     pub pids_limit: Option<i64>,
 
     /// Set the value for Intel RDT/CAT L3 cache schema.
@@ -69,4 +69,46 @@ pub struct Update {
     /// Container identifier
     #[arg(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
     pub container_id: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::Update;
+
+    #[derive(Parser)]
+    struct Wrapper {
+        #[command(flatten)]
+        update: Update,
+    }
+
+    fn parse(args: &[&str]) -> Update {
+        Wrapper::parse_from(args).update
+    }
+
+    #[test]
+    fn pids_limit_accepts_negative_value() {
+        let update = parse(&["update", "--pids-limit", "-1", "container-id"]);
+        assert_eq!(update.pids_limit, Some(-1));
+        assert_eq!(update.container_id, "container-id");
+    }
+
+    #[test]
+    fn pids_limit_accepts_zero_and_positive() {
+        assert_eq!(
+            parse(&["update", "--pids-limit", "0", "id"]).pids_limit,
+            Some(0)
+        );
+        assert_eq!(
+            parse(&["update", "--pids-limit", "12345", "id"]).pids_limit,
+            Some(12345)
+        );
+    }
+
+    #[test]
+    fn memory_swap_accepts_negative_value() {
+        let update = parse(&["update", "--memory-swap", "-1", "container-id"]);
+        assert_eq!(update.memory_swap, Some(-1));
+    }
 }
