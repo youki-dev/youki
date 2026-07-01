@@ -403,9 +403,8 @@ mod tests {
     use anyhow::{Ok, Result};
     use serial_test::serial;
 
+    use super::*;
     use crate::syscall::test::TestHelperSyscall;
-
-use super::*;
 
     const CONSOLE_SOCKET: &str = "console-socket";
 
@@ -566,7 +565,7 @@ use super::*;
     #[test]
     fn test_mount_console() {
         use tempfile::{tempdir, tempfile};
-        
+
         // Define necessary variables
         let syscall = TestHelperSyscall::default();
         let tmp = tempdir().unwrap();
