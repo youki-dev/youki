@@ -138,6 +138,8 @@ pub enum ErrInvalidSpec {
     SysctlNotInSeparateNamespace(String),
     #[error("invalid intelRdt.closID (must not contain '.', '..', or '/')")]
     InvalidIntelRdtClosId,
+    #[error("mount {field} contains a null byte: {value:?}")]
+    MountContainsNullByte { field: String, value: String },
 }
 
 #[derive(Debug, thiserror::Error)]
