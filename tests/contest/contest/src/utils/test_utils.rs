@@ -534,6 +534,63 @@ pub fn wait_container_running<P: AsRef<Path>>(id: &str, dir: P) -> Result<()> {
     )
 }
 
+/// Runs a container in detached mode with a console socket and waits until it is running.
+///
+/// This mirrors runc's `run -d --console-socket` flow, which is required to exercise
+/// containers configured with `terminal: true` (such containers refuse to start without
+/// an active console socket to receive the PTY master fd).
+///
+/// The function binds a Unix socket at `<dir>/console.sock`, spawns the runtime with
+/// `run -d`, accepts the console socket connection and keeps the received PTY master open
+/// for the lifetime of the container (see [`handle_console_socket`]), then blocks until
+/// the container reaches the `Running` state.
+///
+/// `dir` is the test root directory following the layout produced by `prepare_bundle`:
+/// the runtime state lives under `<dir>/runtime` and the OCI bundle under `<dir>/bundle`.
+///
+/// On success the container is left running; the caller is responsible for cleanup
+/// (e.g. `kill_container`/`delete_container`).
+pub fn run_container_with_console<P: AsRef<Path>>(id: &str, dir: P) -> Result<()> {
+    let dir = dir.as_ref();
+    let bundle_path = dir.join("bundle");
+    let console_socket = dir.join("console.sock");
+
+    let listener = std::os::unix::net::UnixListener::bind(&console_socket)
+        .with_context(|| format!("failed to bind console socket at {console_socket:?}"))?;
+
+    let mut child = Command::new(get_runtime_path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .arg("--root")
+        .arg(dir.join("runtime"))
+        .arg("run")
+        .arg("-d")
+        .arg("--bundle")
+        .arg(&bundle_path)
+        .arg("--console-socket")
+        .arg(&console_socket)
+        .arg(id)
+        .current_dir(dir)
+        .spawn()
+        .context("could not run container with console socket")?;
+
+    // Accept the runtime's connection and take ownership of the PTY master fd so it
+    // stays open while the container runs. Do this before waiting on the child, since
+    // `run -d` only detaches once the console socket handshake has completed.
+    let (stream, _) = listener
+        .accept()
+        .context("failed to accept console socket connection")?;
+    handle_console_socket(stream);
+
+    let status = child.wait().context("failed to wait for run -d")?;
+    if !status.success() {
+        bail!("run -d failed ({status})");
+    }
+
+    wait_container_running(id, dir)
+}
+
 pub fn handle_console_socket(stream: std::os::unix::net::UnixStream) {
     std::thread::spawn(move || {
         use std::io::{IoSliceMut, Read};
