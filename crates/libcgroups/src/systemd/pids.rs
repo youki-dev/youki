@@ -30,10 +30,12 @@ impl Controller for Pids {
 
 impl Pids {
     fn apply(pids: &LinuxPids, properties: &mut HashMap<&str, Variant>) {
-        let limit = if pids.limit() > 0 {
-            pids.limit() as u64
-        } else {
+        // Per the runtime-spec, a negative limit (e.g. -1) means no limit
+        // (u64::MAX / "infinity"), while 0 is a valid limit value.
+        let limit = if pids.limit() < 0 {
             u64::MAX
+        } else {
+            pids.limit() as u64
         };
 
         properties.insert(TASKS_MAX, Variant::U64(limit));
@@ -85,6 +87,8 @@ mod tests {
 
     #[test]
     fn test_pids_zero_limit() -> Result<()> {
+        // Per the runtime-spec, 0 is a valid limit value and must be honored
+        // as-is rather than being treated as unlimited.
         let resources = LinuxResourcesBuilder::default()
             .pids(LinuxPidsBuilder::default().limit(0).build()?)
             .build()?;
@@ -99,7 +103,7 @@ mod tests {
 
         let task_max = properties.get(TASKS_MAX).unwrap();
         let val = recast!(task_max, Variant)?;
-        assert_eq!(val, Variant::U64(u64::MAX));
+        assert_eq!(val, Variant::U64(0));
 
         Ok(())
     }

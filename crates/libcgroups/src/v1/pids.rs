@@ -41,10 +41,12 @@ impl StatsProvider for Pids {
 
 impl Pids {
     fn apply(root_path: &Path, pids: &LinuxPids) -> Result<(), WrappedIoError> {
-        let limit = if pids.limit() > 0 {
-            pids.limit().to_string()
-        } else {
+        // Per the runtime-spec, a negative limit (e.g. -1) means no limit ("max"),
+        // while 0 is a valid limit value and must be honored as-is.
+        let limit = if pids.limit() < 0 {
             "max".to_string()
+        } else {
+            pids.limit().to_string()
         };
 
         common::write_cgroup_file_str(root_path.join(CGROUP_PIDS_MAX), &limit)?;
@@ -78,7 +80,24 @@ mod tests {
     #[test]
     fn test_set_pids_max() {
         let tmp = tempfile::tempdir().unwrap();
-        set_fixture(tmp.path(), CGROUP_PIDS_MAX, "0").expect("set fixture for 0 pids");
+        set_fixture(tmp.path(), CGROUP_PIDS_MAX, "0").expect("set fixture for -1 pids");
+
+        // A negative limit (e.g. -1) means no limit ("max").
+        let pids = LinuxPidsBuilder::default().limit(-1).build().unwrap();
+
+        Pids::apply(tmp.path(), &pids).expect("apply pids");
+
+        let content =
+            std::fs::read_to_string(tmp.path().join(CGROUP_PIDS_MAX)).expect("Read pids contents");
+        assert_eq!("max".to_string(), content);
+    }
+
+    #[test]
+    fn test_set_pids_zero_is_a_valid_limit() {
+        // Per the runtime-spec, 0 is a valid limit value and must be written
+        // literally rather than being treated as "max".
+        let tmp = tempfile::tempdir().unwrap();
+        set_fixture(tmp.path(), CGROUP_PIDS_MAX, "max").expect("set fixture for 0 pids");
 
         let pids = LinuxPidsBuilder::default().limit(0).build().unwrap();
 
@@ -86,7 +105,7 @@ mod tests {
 
         let content =
             std::fs::read_to_string(tmp.path().join(CGROUP_PIDS_MAX)).expect("Read pids contents");
-        assert_eq!("max".to_string(), content);
+        assert_eq!("0".to_string(), content);
     }
 
     #[test]
