@@ -124,10 +124,15 @@ pub fn create_container<P: AsRef<Path>>(
 
 /// Sends a kill command to the given container process
 pub fn kill_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
+    kill_container_with_signal(id, dir, "9")
+}
+
+/// Sends a kill command with the given signal to the container process
+pub fn kill_container_with_signal<P: AsRef<Path>>(id: &str, dir: P, signal: &str) -> Result<Child> {
     let res = runtime_command(dir)
         .arg("kill")
         .arg(id)
-        .arg("9")
+        .arg(signal)
         .spawn()
         .context("could not kill container")?;
     Ok(res)
