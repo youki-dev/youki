@@ -446,7 +446,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_setup_console() -> Result<()> {
-        // This test failes when run in WSL2.
+        // This test fails when run in WSL2.
         // When it calls openpty() in setup_console() which opens /dev/ptmx, it must be on a real devpts mount.
         // On native Ubuntu system, /dev/ptmx is a symlink to /dev/pts/ptmx, so the master is devpts-backend (with proper magic number).
         // But on WSL2, /dev/ptmx is a real char device node living directly on /dev, which is devtmpfs (different magic number, shared with tmpfs).
