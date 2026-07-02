@@ -14,7 +14,6 @@ use crate::hooks;
 use crate::network::network_device::dev_change_net_namespace;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::fork::{self, CloneCb};
-use crate::process::intel_rdt::setup_intel_rdt;
 use crate::process::{channel, container_intermediate_process};
 use crate::syscall::SyscallError;
 use crate::user_ns::UserNamespaceConfig;
@@ -50,7 +49,7 @@ pub enum ProcessError {
 
 type Result<T> = std::result::Result<T, ProcessError>;
 
-pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bool)> {
+pub fn container_main_process(container_args: &ContainerArgs) -> Result<Pid> {
     // We use a set of channels to communicate between parent and child process.
     // Each channel is uni-directional. Because we will pass these channel to
     // cloned process, we have to be deligent about closing any unused channel.
@@ -138,18 +137,6 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     // The intermediate process will send the init pid once it forks the init
     // process.  The intermediate process should exit after this point.
     let init_pid = intermediate_main_receiver.wait_for_intermediate_ready()?;
-    let mut need_to_clean_up_intel_rdt_subdirectory = false;
-
-    if let Some(linux) = container_args.spec.linux() {
-        if let Some(intel_rdt) = linux.intel_rdt() {
-            let container_id = container_args
-                .container
-                .as_ref()
-                .map(|container| container.id());
-            need_to_clean_up_intel_rdt_subdirectory =
-                setup_intel_rdt(container_id, &init_pid, intel_rdt)?;
-        }
-    }
 
     // if file to write the pid to is specified, write pid of the child
     if let Some(pid_file) = &container_args.pid_file {
@@ -296,7 +283,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
         Err(err) => return Err(ProcessError::WaitIntermediateProcess(err)),
     };
 
-    Ok((init_pid, need_to_clean_up_intel_rdt_subdirectory))
+    Ok(init_pid)
 }
 
 fn setup_mapping(config: &UserNamespaceConfig, pid: Pid) -> Result<()> {
