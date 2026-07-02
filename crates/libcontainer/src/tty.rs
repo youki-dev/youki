@@ -337,7 +337,9 @@ fn mount_console(syscall: &dyn Syscall, slave: &OwnedFd, console_path: &Path) ->
 
     tracing::debug!(
         slave_fd = slave.as_raw_fd(),
-        "mounting PTY on {}", console_path.display());
+        "mounting PTY on {}",
+        console_path.display()
+    );
 
     // Create /dev/console mount target.
     // O_NOFOLLOW: prevent symlink attacks (CVE-2025-52565)
@@ -360,23 +362,25 @@ fn mount_console(syscall: &dyn Syscall, slave: &OwnedFd, console_path: &Path) ->
         tracing::error!(
             ?err,
             slave_fd = slave.as_raw_fd(),
-            "failed to bind mount pty on {}", console_path.display()
+            "failed to bind mount pty on {}",
+            console_path.display()
         );
         TTYError::MountConsole { source: err }
     })?;
 
     tracing::debug!(
         slave_fd = slave.as_raw_fd(),
-        "mounted PTY on {}", console_path.display()
+        "mounted PTY on {}",
+        console_path.display()
     );
     Ok(())
 }
 
 /// Reconnects the container process's stdio (file descriptors 0, 1, 2) to the PTY slave.
-/// 
+///
 /// To send and receive data through the PTY slave, the container's default
 /// file descriptors 0, 1, 2 must be redirected to the PTY slave's file descriptor.
-/// 
+///
 /// The dup2(old_fd, new_fd) system call points newfd at the same open file as oldfd.
 /// Here newfd is the container's fd (0, 1, 2) and oldfd is the PTY slave.
 /// Therefore, the container's stdout and stderr data is forwarded to the PTY slave.
@@ -568,9 +572,9 @@ mod tests {
 
     #[test]
     fn test_mount_console() {
-        use crate::syscall::test::TestHelperSyscall;
-
         use tempfile::{tempdir, tempfile};
+
+        use crate::syscall::test::TestHelperSyscall;
 
         // Define necessary variables
         let syscall = TestHelperSyscall::default();
