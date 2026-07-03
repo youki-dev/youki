@@ -376,14 +376,6 @@ fn mount_console(syscall: &dyn Syscall, slave: &OwnedFd, console_path: &Path) ->
     Ok(())
 }
 
-/// Reconnects the container process's stdio (file descriptors 0, 1, 2) to the PTY slave.
-///
-/// To send and receive data through the PTY slave, the container's default
-/// file descriptors 0, 1, 2 must be redirected to the PTY slave's file descriptor.
-///
-/// The dup2(old_fd, new_fd) system call points newfd at the same open file as oldfd.
-/// Here newfd is the container's fd (0, 1, 2) and oldfd is the PTY slave.
-/// Therefore, the container's stdout and stderr data is forwarded to the PTY slave.
 fn connect_stdio(stdin: &RawFd, stdout: &RawFd, stderr: &RawFd) -> Result<()> {
     dup2(stdin.as_raw_fd(), StdIO::Stdin.into()).map_err(|err| TTYError::ConnectStdIO {
         source: err,
@@ -581,8 +573,8 @@ mod tests {
         let tmp = tempdir().unwrap();
         let test_console_path = tmp.path().join("console");
         let slave = OwnedFd::from(tempfile().unwrap());
-
         mount_console(&syscall, &slave, &test_console_path).unwrap();
+        assert!(test_console_path.exists());
 
         // Fetch MountFromFdArgs records to check if slave mounted once
         let calls = syscall.get_mount_from_fd_args();
