@@ -122,6 +122,20 @@ impl CgroupManager for AnyCgroupManager {
     }
 }
 
+impl AnyCgroupManager {
+    /// Marks the cgroup manager as operating in a rootless environment.
+    ///
+    /// Only affects the v2 manager.
+    #[cfg_attr(not(feature = "v2"), allow(unused_variables))]
+    pub fn with_rootless(self, rootless: bool) -> Self {
+        match self {
+            #[cfg(feature = "v2")]
+            AnyCgroupManager::V2(m) => AnyCgroupManager::V2(m.with_rootless(rootless)),
+            other => other,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum CgroupSetup {
     Hybrid,
