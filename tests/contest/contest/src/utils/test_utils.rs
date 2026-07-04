@@ -565,6 +565,55 @@ pub fn handle_console_socket(stream: std::os::unix::net::UnixStream) {
     });
 }
 
+/// Spawn a container detached (`run -d`) with a console socket.
+///
+/// This is needed whenever a test relies on `terminal: true`, which requires an
+/// active console socket to receive the container's PTY master fd. It binds a
+/// Unix socket at `<bundle>/console.sock`, launches
+/// `--root <bundle>/runtime run -d --console-socket ... <id>` for the bundle at
+/// `<bundle>/bundle`, accepts the console connection, and hands the received fd
+/// to [`handle_console_socket`] so the PTY master stays open. Returns once the
+/// detached `run` process has exited successfully.
+///
+/// Extracted from the checkpoint/restore suite (see issue #3529) so other suites
+/// that need console sockets or detached runs can reuse it. Callers are
+/// responsible for waiting on the container's state afterwards (e.g. with
+/// [`wait_container_running`]).
+pub fn run_container_detached_with_console<P: AsRef<Path>>(id: &str, bundle: P) -> Result<()> {
+    let bundle = bundle.as_ref();
+    let runtime_path = get_runtime_path();
+    let actual_bundle_path = bundle.join("bundle");
+    let console_socket = bundle.join("console.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&console_socket)
+        .with_context(|| format!("failed to bind console socket at {console_socket:?}"))?;
+
+    let mut child = Command::new(runtime_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .arg("--root")
+        .arg(bundle.join("runtime"))
+        .arg("run")
+        .arg("-d")
+        .arg("--bundle")
+        .arg(&actual_bundle_path)
+        .arg("--console-socket")
+        .arg(&console_socket)
+        .arg(id)
+        .current_dir(bundle)
+        .spawn()?;
+
+    let (stream, _) = listener.accept()?;
+    handle_console_socket(stream);
+
+    let status = child.wait()?;
+    if !status.success() {
+        bail!("run -d failed ({status})");
+    }
+
+    Ok(())
+}
+
 /// Checkpoint a running container into `image_dir`.
 ///
 /// * `global_args` are passed before the `checkpoint` subcommand (e.g., `&["--debug"]`).

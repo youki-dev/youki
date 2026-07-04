@@ -19,9 +19,9 @@ use test_framework::{ConditionalTest, TestGroup, TestResult};
 use crate::utils::{
     LifecycleStatus, WaitTarget, build_checkpoint_command, checkpoint_container, criu_has_feature,
     criu_installed, delete_container, exec_container, generate_uuid, get_container_pid,
-    get_runtime_path, handle_console_socket, is_runtime_youki, kill_container, net, prepare_bundle,
-    restore_container, set_config, try_checkpoint_container, wait_container_running,
-    wait_for_state,
+    get_runtime_path, is_runtime_youki, kill_container, net, prepare_bundle, restore_container,
+    run_container_detached_with_console, set_config, try_checkpoint_container,
+    wait_container_running, wait_for_state,
 };
 
 /// Used as check_fn for all `ConditionalTests` in this module:
@@ -75,39 +75,9 @@ impl CrTestContext {
         self.restore_id = Some(rid);
     }
 
-    // TODO: Consider extracting this into test_utils.rs as run_container_with_console (see issue #3529)
     fn start(&self) -> Result<(), TestResult> {
-        let runtime_path = get_runtime_path();
-        let actual_bundle_path = self.bundle.path().join("bundle");
-        let console_socket = self.bundle.path().join("console.sock");
-        let listener = std::os::unix::net::UnixListener::bind(&console_socket)
-            .map_err(|e| TestResult::Failed(anyhow!("failed to bind console socket: {e}")))?;
-
         let run_result = (|| -> Result<()> {
-            let mut child = std::process::Command::new(runtime_path)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .arg("--root")
-                .arg(self.bundle.path().join("runtime"))
-                .arg("run")
-                .arg("-d")
-                .arg("--bundle")
-                .arg(&actual_bundle_path)
-                .arg("--console-socket")
-                .arg(&console_socket)
-                .arg(&self.id)
-                .current_dir(self.bundle.path())
-                .spawn()?;
-
-            let (stream, _) = listener.accept()?;
-            handle_console_socket(stream);
-
-            let status = child.wait()?;
-            if !status.success() {
-                bail!("run -d failed ({status})");
-            }
-
+            run_container_detached_with_console(&self.id, self.bundle.path())?;
             wait_container_running(&self.id, &self.bundle)?;
             ping_container(self.bundle.path())
         })();
