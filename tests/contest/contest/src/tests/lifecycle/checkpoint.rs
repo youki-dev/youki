@@ -432,3 +432,72 @@ pub fn checkpoint_link_remap() -> TestResult {
     cleanup();
     result
 }
+
+/// Check that a namespace was treated as external by CRIU.
+/// Fails if `<img_prefix>-*.img` is absent or lacks `ext_key`.
+/// CRIU img files embed protobuf strings as raw UTF-8, so a byte search suffices.
+fn check_external_ns(
+    checkpoint_dir: &Path,
+    img_prefix: &str,
+    ext_key: &[u8],
+) -> Result<(), TestResult> {
+    let ns_img = std::fs::read_dir(checkpoint_dir)
+        .map_err(|e| TestResult::Failed(anyhow::anyhow!("failed to read dir: {}", e)))?
+        .flatten()
+        .find(|e| e.file_name().to_string_lossy().starts_with(img_prefix))
+        .map(|e| e.path());
+
+    let img = ns_img.ok_or_else(|| {
+        TestResult::Failed(anyhow::anyhow!(
+            "{}-*.img not found in {:?}: namespace image is missing",
+            img_prefix,
+            checkpoint_dir,
+        ))
+    })?;
+
+    let bytes = std::fs::read(&img)
+        .map_err(|e| TestResult::Failed(anyhow::anyhow!("failed to read {:?}: {}", img, e)))?;
+    if !bytes.windows(ext_key.len()).any(|w| w == ext_key) {
+        return Err(TestResult::Failed(anyhow::anyhow!(
+            "{:?} does not contain ext_key={}: namespace was not treated as external",
+            img,
+            String::from_utf8_lossy(ext_key),
+        )));
+    }
+
+    Ok(())
+}
+
+/// Check that the network namespace was treated as external by CRIU.
+pub fn check_external_netns(checkpoint_dir: &Path) -> Result<(), TestResult> {
+    check_external_ns(checkpoint_dir, "netns", b"extRootNetNS")
+}
+
+/// Check that the PID namespace was treated as external by CRIU.
+pub fn check_external_pidns(checkpoint_dir: &Path) -> Result<(), TestResult> {
+    check_external_ns(checkpoint_dir, "pidns", b"extRootPidNS")
+}
+
+/// Checkpoint a container started with external network and PID namespaces.
+/// Verifies that CRIU recorded both namespaces as external.
+pub fn checkpoint_with_external_namespaces(project_path: &Path, id: &str) -> TestResult {
+    let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+
+    let result = checkpoint(project_path, id, &image_path, vec!["--leave-running"], None);
+    if !matches!(result, TestResult::Passed) {
+        return result;
+    }
+
+    if let Err(e) = check_external_netns(&image_path) {
+        return e;
+    }
+
+    if let Err(e) = check_external_pidns(&image_path) {
+        return e;
+    }
+
+    TestResult::Passed
+}
