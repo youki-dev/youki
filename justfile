@@ -2,6 +2,7 @@ alias build := youki-release
 alias youki := youki-dev
 
 KIND_CLUSTER_NAME := 'youki'
+KIND_SYSTEMD_CLUSTER_NAME := 'youki-systemd'
 
 cwd := justfile_directory()
 
@@ -92,7 +93,7 @@ kind-cluster: bin-kind
     set -euo pipefail
 
     mkdir -p tests/k8s/_out/
-    docker buildx build -f tests/k8s/Dockerfile --iidfile=tests/k8s/_out/img --load .
+    docker buildx build -f tests/k8s/Dockerfile --target kind-node --iidfile=tests/k8s/_out/img --load .
     image=$(cat tests/k8s/_out/img)
     bin/kind create cluster --name {{ KIND_CLUSTER_NAME }} --image=$image
 
@@ -102,6 +103,23 @@ test-kind: kind-cluster
     kubectl --context=kind-{{ KIND_CLUSTER_NAME }} wait deployment nginx-deployment --for condition=Available=True --timeout=90s
     kubectl --context=kind-{{ KIND_CLUSTER_NAME }} get pods -o wide
     kubectl --context=kind-{{ KIND_CLUSTER_NAME }} delete -f tests/k8s/deploy.yaml
+
+[private]
+kind-cluster-systemd-cgroup: bin-kind
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    mkdir -p tests/k8s/_out/
+    docker buildx build -f tests/k8s/Dockerfile --target kind-node-systemd-cgroup --iidfile=tests/k8s/_out/img-systemd --load .
+    image=$(cat tests/k8s/_out/img-systemd)
+    bin/kind create cluster --name {{ KIND_SYSTEMD_CLUSTER_NAME }} --image=$image
+
+# run youki with kind and systemd cgroup enabled (regression test for dbus socket path)
+test-kind-systemd-cgroup: kind-cluster-systemd-cgroup
+    kubectl --context=kind-{{ KIND_SYSTEMD_CLUSTER_NAME }} apply -f tests/k8s/deploy.yaml
+    kubectl --context=kind-{{ KIND_SYSTEMD_CLUSTER_NAME }} wait deployment nginx-deployment --for condition=Available=True --timeout=90s
+    kubectl --context=kind-{{ KIND_SYSTEMD_CLUSTER_NAME }} get pods -o wide
+    kubectl --context=kind-{{ KIND_SYSTEMD_CLUSTER_NAME }} delete -f tests/k8s/deploy.yaml
 
 # Bin
 
@@ -114,6 +132,10 @@ bin-kind:
 # Clean kind test env
 clean-test-kind:
 	kind delete cluster --name {{ KIND_CLUSTER_NAME }}
+
+# Clean kind test env (systemd cgroup variant)
+clean-test-kind-systemd-cgroup:
+	kind delete cluster --name {{ KIND_SYSTEMD_CLUSTER_NAME }}
 
 # misc
 

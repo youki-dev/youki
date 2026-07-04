@@ -373,20 +373,22 @@ fn is_id_mapped(id: u32, mappings: &[LinuxIdMapping]) -> bool {
 pub fn lookup_map_binaries(
     spec: &Linux,
 ) -> std::result::Result<Option<(PathBuf, PathBuf)>, MappingError> {
-    if let Some(uid_mappings) = spec.uid_mappings() {
-        if uid_mappings.len() == 1 && uid_mappings.len() == 1 {
-            return Ok(None);
-        }
+    let uid_mappings_len = spec.uid_mappings().as_ref().map_or(0, |m| m.len());
+    let gid_mappings_len = spec.gid_mappings().as_ref().map_or(0, |m| m.len());
 
-        let uidmap = lookup_map_binary("newuidmap")?;
-        let gidmap = lookup_map_binary("newgidmap")?;
+    // The newuidmap/newgidmap helper binaries are only required to write more
+    // than one mapping. A single mapping (or none) for both uid and gid can be
+    // written directly to /proc/<pid>/{uid,gid}_map without them.
+    if uid_mappings_len <= 1 && gid_mappings_len <= 1 {
+        return Ok(None);
+    }
 
-        match (uidmap, gidmap) {
-            (Some(newuidmap), Some(newgidmap)) => Ok(Some((newuidmap, newgidmap))),
-            _ => Err(MappingError::BinaryNotFound),
-        }
-    } else {
-        Ok(None)
+    let uidmap = lookup_map_binary("newuidmap")?;
+    let gidmap = lookup_map_binary("newgidmap")?;
+
+    match (uidmap, gidmap) {
+        (Some(newuidmap), Some(newgidmap)) => Ok(Some((newuidmap, newgidmap))),
+        _ => Err(MappingError::BinaryNotFound),
     }
 }
 
@@ -463,6 +465,66 @@ mod tests {
 
     fn gen_u32() -> u32 {
         rand::rng().random()
+    }
+
+    #[test]
+    fn test_lookup_map_binaries_single_mappings() -> Result<()> {
+        // A single uid mapping and a single gid mapping can both be written
+        // directly to /proc/<pid>/{uid,gid}_map, so no helper binary is needed.
+        let linux = LinuxBuilder::default()
+            .uid_mappings(vec![
+                LinuxIdMappingBuilder::default()
+                    .host_id(1000_u32)
+                    .container_id(0_u32)
+                    .size(1_u32)
+                    .build()?,
+            ])
+            .gid_mappings(vec![
+                LinuxIdMappingBuilder::default()
+                    .host_id(1000_u32)
+                    .container_id(0_u32)
+                    .size(1_u32)
+                    .build()?,
+            ])
+            .build()?;
+
+        assert!(lookup_map_binaries(&linux)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_lookup_map_binaries_multiple_gid_mappings() -> Result<()> {
+        // Regression test: a single uid mapping together with multiple gid
+        // mappings still needs newgidmap to be written. Previously
+        // lookup_map_binaries only looked at uid_mappings and wrongly reported
+        // that no helper binary was required for this case.
+        let linux = LinuxBuilder::default()
+            .uid_mappings(vec![
+                LinuxIdMappingBuilder::default()
+                    .host_id(1000_u32)
+                    .container_id(0_u32)
+                    .size(1_u32)
+                    .build()?,
+            ])
+            .gid_mappings(vec![
+                LinuxIdMappingBuilder::default()
+                    .host_id(1000_u32)
+                    .container_id(0_u32)
+                    .size(1_u32)
+                    .build()?,
+                LinuxIdMappingBuilder::default()
+                    .host_id(2000_u32)
+                    .container_id(10_u32)
+                    .size(5_u32)
+                    .build()?,
+            ])
+            .build()?;
+
+        // Whether newuidmap/newgidmap are installed is environment dependent,
+        // so this is either Ok(Some(..)) or Err(BinaryNotFound). The point of
+        // the regression test is that it must never be Ok(None).
+        assert!(!matches!(lookup_map_binaries(&linux), Ok(None)));
+        Ok(())
     }
 
     #[test]

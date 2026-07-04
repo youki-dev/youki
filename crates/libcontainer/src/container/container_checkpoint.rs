@@ -12,6 +12,7 @@ use super::container_criu::{CRIU_VERSION_MINIMUM, check_criu_version};
 use super::{Container, ContainerStatus};
 use crate::container::container::CheckpointOptions;
 use crate::error::LibcontainerError;
+use crate::rootfs::utils::is_bind;
 
 const CRIU_CHECKPOINT_LOG_FILE: &str = "dump.log";
 const DESCRIPTORS_JSON: &str = "descriptors.json";
@@ -60,45 +61,41 @@ impl Container {
         let spec = Spec::load(source_spec_path)?;
         let mounts = spec.mounts().clone();
         for m in mounts.unwrap_or_default() {
-            match m.typ().as_deref() {
-                Some("bind") => {
-                    let dest = m
-                        .destination()
-                        .clone()
-                        .into_os_string()
-                        .into_string()
-                        .expect("failed to convert mount destination");
-                    criu.set_external_mount(dest.clone(), dest);
-                }
-                Some("cgroup") => {
-                    match libcgroups::common::get_cgroup_setup()? {
-                        // For v1 it is necessary to list all cgroup mounts as external mounts
-                        Legacy | Hybrid => {
-                            #[cfg(not(feature = "v1"))]
-                            panic!(
-                                "libcontainer can't run in a Legacy or Hybrid cgroup setup without the v1 feature"
-                            );
-                            #[cfg(feature = "v1")]
-                            for mp in libcgroups::v1::util::list_subsystem_mount_points().map_err(
-                                |err| {
-                                    tracing::error!(?err, "failed to get subsystem mount points");
-                                    LibcontainerError::OtherCgroup(err.to_string())
-                                },
-                            )? {
-                                let cgroup_mount = mp
-                                    .clone()
-                                    .into_os_string()
-                                    .into_string()
-                                    .expect("failed to convert mount point");
-                                if cgroup_mount.starts_with(DEFAULT_CGROUP_ROOT) {
-                                    criu.set_external_mount(cgroup_mount.clone(), cgroup_mount);
-                                }
+            if is_bind(&m) {
+                let dest = m
+                    .destination()
+                    .clone()
+                    .into_os_string()
+                    .into_string()
+                    .expect("failed to convert mount destination");
+                criu.set_external_mount(dest.clone(), dest);
+            } else if m.typ().as_deref() == Some("cgroup") {
+                match libcgroups::common::get_cgroup_setup()? {
+                    // For v1 it is necessary to list all cgroup mounts as external mounts
+                    Legacy | Hybrid => {
+                        #[cfg(not(feature = "v1"))]
+                        panic!(
+                            "libcontainer can't run in a Legacy or Hybrid cgroup setup without the v1 feature"
+                        );
+                        #[cfg(feature = "v1")]
+                        for mp in
+                            libcgroups::v1::util::list_subsystem_mount_points().map_err(|err| {
+                                tracing::error!(?err, "failed to get subsystem mount points");
+                                LibcontainerError::OtherCgroup(err.to_string())
+                            })?
+                        {
+                            let cgroup_mount = mp
+                                .clone()
+                                .into_os_string()
+                                .into_string()
+                                .expect("failed to convert mount point");
+                            if cgroup_mount.starts_with(DEFAULT_CGROUP_ROOT) {
+                                criu.set_external_mount(cgroup_mount.clone(), cgroup_mount);
                             }
                         }
-                        _ => (),
                     }
+                    _ => (),
                 }
-                _ => (),
             }
         }
 
@@ -169,6 +166,7 @@ impl Container {
                 .unwrap(),
         );
         criu.cgroups_mode(opts.manage_cgroups_mode.clone());
+        criu.set_link_remap(opts.link_remap);
 
         criu.dump().map_err(|err| {
             tracing::error!(?err, id = ?self.id(), logfile = ?opts.image_path.join(CRIU_CHECKPOINT_LOG_FILE), "checkpointing container failed");
