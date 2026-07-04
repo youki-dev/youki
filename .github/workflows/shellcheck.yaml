@@ -1,0 +1,24 @@
+name: 🐚 ShellCheck
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          # Start at "warning" so this can be adopted without a large, risky
+          # sweep of the existing scripts. Info/style findings (mostly SC2086
+          # quoting) can be tightened in follow-ups.
+          severity: warning

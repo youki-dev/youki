@@ -18,7 +18,7 @@ fi
 cp "$RUNTIME" "$RUNC_DIR/runc"
 chmod +x "$RUNC_DIR/runc"
 
-cd "$RUNC_DIR"
+cd "$RUNC_DIR" || exit
 
 sudo make test-binaries
 

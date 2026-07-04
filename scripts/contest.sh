@@ -40,7 +40,7 @@ else
     ${ROOT}/contest run --runtime "$RUNTIME" --runtimetest "${ROOT}/runtimetest" 2>&1 | tee "$LOGFILE"
 fi
 
-if [ 0 -ne $(grep "not ok" $LOGFILE | wc -l ) ]; then
+if [ 0 -ne "$(grep "not ok" "$LOGFILE" | wc -l)" ]; then
     exit 1
 fi
 

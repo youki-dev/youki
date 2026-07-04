@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # This is a temporary test-collection for validating youki runs correctly with podman in rootless mode
 # This will be moved to a proper rust based test crate, similar to rust-integration tests soon
 
@@ -30,15 +31,15 @@ CGROUP_SUB_PATH=$(podman inspect exec-test | jq .[0].State.CgroupPath | tr -d "\
 CGROUP_PATH="/sys/fs/cgroup$CGROUP_SUB_PATH/cgroup.procs"
 
 # assert we have exactly one process in the cgroup
-test $(cat $CGROUP_PATH | wc -l) -eq 1
+test "$(cat "$CGROUP_PATH" | wc -l)" -eq 1
 # assert pid match
-test $(cat $CGROUP_PATH) -eq $(podman inspect exec-test | jq .[0].State.Pid)
+test "$(cat "$CGROUP_PATH")" -eq "$(podman inspect exec-test | jq .[0].State.Pid)"
 
 podman exec -d --runtime $runtime exec-test sleep 5m
 
 # we cannot exactly check the pid of tenant here, instead just check that there are
 # two processes in the same cgroup now
-test $(cat $CGROUP_PATH | wc -l) -eq 2
+test "$(cat "$CGROUP_PATH" | wc -l)" -eq 2
 
 podman kill exec-test
 podman rm --force --ignore exec-test

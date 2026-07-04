@@ -121,9 +121,11 @@ for case in "${test_cases[@]}"; do
   echo "Running $case"
   logfile="./log/$case.log"
   mkdir -p "$(dirname $logfile)"
+  # $logfile lives under a user-owned ./log dir created above, so the shell (not sudo) can write it.
+  # shellcheck disable=SC2024
   sudo RUST_BACKTRACE=1 RUNTIME=${RUNTIME} ${OCI_TEST_DIR}/validation/$case >$logfile 2>&1 || (cat $logfile && exit 1)
-  if [ 0 -ne $(grep "not ok" $logfile | wc -l ) ]; then
-    if [ 0 -eq $(grep "# cgroupv2 is not supported yet " $logfile | wc -l ) ]; then
+  if [ 0 -ne "$(grep "not ok" "$logfile" | wc -l)" ]; then
+    if [ 0 -eq "$(grep "# cgroupv2 is not supported yet " "$logfile" | wc -l)" ]; then
       echo "Skip $case because oci-runtime-tools doesn't support cgroup v2"
       continue;
     fi
