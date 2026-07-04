@@ -65,6 +65,7 @@ fn check_signal(signal: &str) -> TestResult {
     };
 
     if let TestResult::Failed(err) = kill_result {
+        let _ = container.kill();
         let _ = container.delete();
         return TestResult::Failed(err.context(format!("failed to send {signal}")));
     }
