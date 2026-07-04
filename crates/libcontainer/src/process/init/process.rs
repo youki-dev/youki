@@ -45,6 +45,7 @@ pub fn container_init_process(
     init_receiver: &mut channel::InitReceiver,
 ) -> Result<()> {
     let mut ctx = InitContext::try_from(args)?;
+    let terminal = ctx.process.terminal().unwrap_or_default();
 
     setsid().map_err(|err| {
         tracing::error!(?err, "failed to setsid to create a session");
@@ -57,8 +58,8 @@ pub fn container_init_process(
 
     memory_policy::setup_memory_policy(ctx.linux.memory_policy(), ctx.syscall.as_ref())?;
 
-    // If no console socket, set up stdio now
-    if args.console_socket.is_none() {
+    // No console (no socket, no terminal): pass the provided stdio through now
+    if args.console_socket.is_none() && !terminal {
         if let Some(stdin) = args.stdin {
             dup2(stdin, 0).map_err(InitProcessError::NixOther)?;
             close(stdin).map_err(InitProcessError::NixOther)?;
@@ -152,13 +153,24 @@ pub fn container_init_process(
     // mount=true for init (mount /dev/console), false for exec (already mounted)
     // See: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/standard_init_linux.go
     // See: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/setns_init_linux.go
-    if let Some(csocketfd) = args.console_socket {
+    let pty_master_fd = if args.console_socket.is_some() || terminal {
         let mount_console = matches!(args.container_type, ContainerType::InitContainer);
-        tty::setup_console(ctx.syscall.as_ref(), csocketfd, mount_console).map_err(|err| {
+        match tty::setup_console(
+            ctx.syscall.as_ref(),
+            args.console_socket,
+            mount_console,
+            ctx.process.console_size(),
+        )
+        .map_err(|err| {
             tracing::error!(?err, "failed to set up tty");
             InitProcessError::Tty(err)
-        })?;
-    }
+        })? {
+            tty::PtyMaster::Foreground(fd) => Some(fd),
+            tty::PtyMaster::SentToSocket => None,
+        }
+    } else {
+        None
+    };
 
     if let Some(personality) = ctx.linux.personality() {
         if let Some(flags) = personality.flags() {
@@ -432,13 +444,15 @@ pub fn container_init_process(
     // payload.  Note, because we are already inside the pid namespace, the pid
     // outside the pid namespace should be recorded by the intermediate process
     // already.
-    main_sender.init_ready().map_err(|err| {
-        tracing::error!(
-            ?err,
-            "failed to notify main process that init process is ready"
-        );
-        InitProcessError::Channel(err)
-    })?;
+    main_sender
+        .init_ready(pty_master_fd.as_ref().map(|fd| fd.as_raw_fd()))
+        .map_err(|err| {
+            tracing::error!(
+                ?err,
+                "failed to notify main process that init process is ready"
+            );
+            InitProcessError::Channel(err)
+        })?;
     main_sender.close().map_err(|err| {
         tracing::error!(?err, "failed to close down main sender in init process");
         InitProcessError::Channel(err)

@@ -69,9 +69,9 @@ pub(super) struct ContainerBuilderImpl {
 }
 
 impl ContainerBuilderImpl {
-    pub(super) fn create(&mut self) -> Result<Pid, LibcontainerError> {
+    pub(super) fn create(&mut self) -> Result<(Pid, Option<OwnedFd>), LibcontainerError> {
         match self.run_container() {
-            Ok(pid) => Ok(pid),
+            Ok(ret) => Ok(ret),
             Err(outer) => {
                 // Only the init container should be cleaned up in the case of
                 // an error.
@@ -90,7 +90,7 @@ impl ContainerBuilderImpl {
         matches!(self.container_type, ContainerType::InitContainer)
     }
 
-    fn run_container(&mut self) -> Result<Pid, LibcontainerError> {
+    fn run_container(&mut self) -> Result<(Pid, Option<OwnedFd>), LibcontainerError> {
         let linux = self.spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
         let base_cgroups_path = utils::get_cgroup_path(linux.cgroups_path(), &self.container_id);
         let mut final_cgroups_path = base_cgroups_path;
@@ -192,11 +192,13 @@ impl ContainerBuilderImpl {
             pid_file: self.pid_file.to_owned(),
         };
 
-        let init_pid = process::container_main_process::container_main_process(&container_args)
-            .map_err(|err| {
-                tracing::error!("failed to run container process {}", err);
-                LibcontainerError::MainProcess(err)
-            })?;
+        let (init_pid, pty_master_fd) = process::container_main_process::container_main_process(
+            &container_args,
+        )
+        .map_err(|err| {
+            tracing::error!("failed to run container process {}", err);
+            LibcontainerError::MainProcess(err)
+        })?;
 
         let mut intel_rdt_dir = None;
         let mut intel_rdt_monitoring_dir = None;
@@ -220,7 +222,7 @@ impl ContainerBuilderImpl {
                 .save()?;
         }
 
-        Ok(init_pid)
+        Ok((init_pid, pty_master_fd))
     }
 
     fn cleanup_container(&self) -> Result<(), LibcontainerError> {

@@ -1,4 +1,5 @@
 use std::fs;
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -73,7 +74,7 @@ impl InitContainerBuilder {
     }
 
     /// Creates a new container
-    pub fn build(self) -> Result<Container, LibcontainerError> {
+    pub fn build(self) -> Result<(Container, Option<OwnedFd>), LibcontainerError> {
         let spec = self.load_spec()?;
         // validate terminal field against console socket presence before any side effects
         // (mirrors runc's checkTerminal called at the top of runner.run())
@@ -135,11 +136,11 @@ impl InitContainerBuilder {
             process_label: None,
         };
 
-        builder_impl.create()?;
+        let (_, pty_master_fd) = builder_impl.create()?;
 
         container.refresh_state()?;
 
-        Ok(container)
+        Ok((container, pty_master_fd))
     }
 
     fn create_container_dir(&self) -> Result<PathBuf, LibcontainerError> {

@@ -16,7 +16,7 @@ impl Container {
     /// use libcontainer::syscall::syscall::SyscallType;
     ///
     /// # fn main() -> anyhow::Result<()> {
-    /// let mut container = ContainerBuilder::new(
+    /// let (mut container, _pty_master_fd) = ContainerBuilder::new(
     ///     "74f1a4cb3801".to_owned(),
     ///     SyscallType::default(),
     /// )
