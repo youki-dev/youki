@@ -45,19 +45,47 @@ pub fn cleanup_netns(name: &str) -> Result<()> {
     }
 }
 
+/// Wait until systemd-udevd finishes processing rules triggered by device
+/// creation events.
+pub fn udev_settle() {
+    let _ = std::process::Command::new("udevadm").arg("settle").output();
+}
+
 pub fn create_dummy_device(name: &str) -> Result<()> {
     let output = std::process::Command::new("ip")
         .args(vec!["link", "add", name, "type", "dummy"])
         .output()?;
 
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(anyhow!(
+    if !output.status.success() {
+        return Err(anyhow!(
             "Failed to create dummy device: {}",
             String::from_utf8_lossy(&output.stderr)
-        ))
+        ));
     }
+    udev_settle();
+    Ok(())
+}
+
+/// Create a dummy device with the MAC address and MTU set atomically in the
+/// creation request. Setting the address after creation races with
+/// systemd-udevd's MACAddressPolicy=persistent, which may overwrite it.
+/// An explicitly assigned address at creation time is left untouched.
+/// See https://github.com/opencontainers/runc/pull/5324
+pub fn create_dummy_device_with_attributes(name: &str, mac: &str, mtu: &str) -> Result<()> {
+    let output = std::process::Command::new("ip")
+        .args(vec![
+            "link", "add", name, "address", mac, "mtu", mtu, "type", "dummy",
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "Failed to create dummy device: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    udev_settle();
+    Ok(())
 }
 
 pub fn delete_dummy_device(name: &str) -> Result<()> {
@@ -83,6 +111,11 @@ pub struct DummyDevice {
 impl DummyDevice {
     pub fn create(name: String) -> Result<Self> {
         create_dummy_device(&name)?;
+        Ok(Self { name })
+    }
+
+    pub fn create_with_attributes(name: String, mac: &str, mtu: &str) -> Result<Self> {
+        create_dummy_device_with_attributes(&name, mac, mtu)?;
         Ok(Self { name })
     }
 }
