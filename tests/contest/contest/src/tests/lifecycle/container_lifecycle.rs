@@ -129,6 +129,14 @@ impl ContainerLifecycle {
         )
     }
 
+    pub fn checkpoint_link_remap(&self) -> TestResult {
+        if !criu_installed() {
+            return TestResult::Skipped("CRIU is not installed".to_string());
+        }
+
+        checkpoint::checkpoint_link_remap()
+    }
+
     /// Wait for the container to reach a specific state
     pub fn wait_for_state(&self, expected_state: &str, timeout: Duration) -> TestResult {
         use crate::tests::lifecycle::state;
@@ -180,6 +188,7 @@ impl TestableGroup for ContainerLifecycle {
                 "checkpoint with cgroups-mode soft",
                 self.checkpoint_manage_cgroups_mode_soft(),
             ),
+            ("checkpoint with link-remap", self.checkpoint_link_remap()),
             ("kill", self.kill()),
             ("state", self.state()),
             ("delete", self.delete()),
@@ -208,6 +217,9 @@ impl TestableGroup for ContainerLifecycle {
                     "checkpoint with cgroups-mode soft",
                     self.checkpoint_manage_cgroups_mode_soft(),
                 )),
+                "checkpoint_link_remap" => {
+                    ret.push(("checkpoint with link-remap", self.checkpoint_link_remap()))
+                }
                 "kill" => ret.push(("kill", self.kill())),
                 "state" => ret.push(("state", self.state())),
                 "delete" => ret.push(("delete", self.delete())),
