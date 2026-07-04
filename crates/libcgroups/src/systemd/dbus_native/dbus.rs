@@ -150,25 +150,22 @@ fn get_actual_uid() -> Result<u32> {
 impl DbusConnection {
     /// Open a new dbus connection to the given address, authenticate, and register with the daemon.
     pub fn new(addr: &str, uid: u32, system: bool) -> Result<Self> {
-
         let socket = socket::socket(
-
             socket::AddressFamily::Unix,
             socket::SockType::Stream,
             socket::SockFlag::empty(),
             None,
         )?;
 
-
         let addr = socket::UnixAddr::new(addr)?;
         socket::connect(socket.as_raw_fd(), &addr)?;
-        let mut dbus = Self {
+        let dbus = Self {
             socket,
-
             msg_ctr: AtomicU32::new(0),
             id: None,
             system,
-        })
+        };
+        Ok(dbus)
     }
 
     /// Perform the dbus SASL AUTH EXTERNAL / BEGIN exchange.
@@ -268,6 +265,9 @@ impl DbusConnection {
     /// Helper function to get complete message in chunks
     /// over the socket. This will loop and collect all of the message
     /// chunks into a single vector
+    /// Helper function to get complete message in chunks
+    /// over the socket. This will loop and collect all of the message
+    /// chunks into a single vector
     fn receive_complete_response(&self) -> Result<Vec<u8>> {
         let mut ret = Vec::with_capacity(512);
         loop {
@@ -279,9 +279,15 @@ impl DbusConnection {
                 &mut reply_buffer,
                 None,
                 socket::MsgFlags::empty(),
-            );
+            )?;
 
-
+            if reply_res.bytes_received == 0 {
+                break;
+            }
+            ret.extend_from_slice(&reply[0..reply_res.bytes_received]);
+        }
+        Ok(ret)
+    }
     /// Read exactly `buf.len()` bytes from the socket, retrying on EINTR.
     fn read_exact(&self, buf: &mut [u8]) -> Result<()> {
         let mut total = 0;
