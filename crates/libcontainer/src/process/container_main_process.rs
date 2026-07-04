@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::PathBuf;
 
 use nix::sys::wait::{WaitStatus, waitpid};
@@ -49,7 +49,7 @@ pub enum ProcessError {
 
 type Result<T> = std::result::Result<T, ProcessError>;
 
-pub fn container_main_process(container_args: &ContainerArgs) -> Result<Pid> {
+pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, Option<OwnedFd>)> {
     // We use a set of channels to communicate between parent and child process.
     // Each channel is uni-directional. Because we will pass these channel to
     // cloned process, we have to be deligent about closing any unused channel.
@@ -233,7 +233,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<Pid> {
         err
     })?;
 
-    init_main_receiver.wait_for_init_ready().map_err(|err| {
+    let pty_master_fd = init_main_receiver.wait_for_init_ready().map_err(|err| {
         tracing::error!("failed to wait for init ready: {}", err);
         err
     })?;
@@ -283,7 +283,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<Pid> {
         Err(err) => return Err(ProcessError::WaitIntermediateProcess(err)),
     };
 
-    Ok(init_pid)
+    Ok((init_pid, pty_master_fd))
 }
 
 fn setup_mapping(config: &UserNamespaceConfig, pid: Pid) -> Result<()> {

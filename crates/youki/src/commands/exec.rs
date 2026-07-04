@@ -4,36 +4,38 @@ use anyhow::Result;
 use libcontainer::container::builder::ContainerBuilder;
 use libcontainer::syscall::syscall::SyscallType;
 use liboci_cli::Exec;
-use nix::sys::wait::{WaitStatus, waitpid};
 
+use crate::commands::foreground;
 use crate::workload::executor::default_executor;
 
 pub fn exec(args: Exec, root_path: PathBuf) -> Result<i32> {
     let user = args.user.map(|(u, _)| u);
     let group = args.user.and_then(|(_, g)| g);
 
-    let pid = ContainerBuilder::new(args.container_id.clone(), SyscallType::default())
-        .with_executor(default_executor())
-        .with_root_path(root_path)?
-        .with_console_socket(args.console_socket.as_ref())
-        .with_pid_file(args.pid_file.as_ref())?
-        .with_preserved_fds(args.preserve_fds)
-        .validate_id()?
-        .as_tenant()
-        .with_detach(args.detach)
-        .with_cwd(args.cwd.as_ref())
-        .with_env(args.env.clone().into_iter().collect())
-        .with_process(args.process.as_ref())
-        .with_no_new_privs(args.no_new_privs)
-        .with_container_args(args.command.clone())
-        .with_additional_gids(args.additional_gids)
-        .with_user(user)
-        .with_group(group)
-        .with_capabilities(args.cap)
-        .with_ignore_paused(args.ignore_paused)
-        .with_sub_cgroup(args.cgroup)
-        .with_apparmor(args.apparmor)
-        .build()?;
+    let (pid, pty_master_fd) =
+        ContainerBuilder::new(args.container_id.clone(), SyscallType::default())
+            .with_executor(default_executor())
+            .with_root_path(root_path)?
+            .with_console_socket(args.console_socket.as_ref())
+            .with_pid_file(args.pid_file.as_ref())?
+            .with_preserved_fds(args.preserve_fds)
+            .validate_id()?
+            .as_tenant()
+            .with_detach(args.detach)
+            .with_cwd(args.cwd.as_ref())
+            .with_env(args.env.clone().into_iter().collect())
+            .with_process(args.process.as_ref())
+            .with_no_new_privs(args.no_new_privs)
+            .with_container_args(args.command.clone())
+            .with_additional_gids(args.additional_gids)
+            .with_user(user)
+            .with_group(group)
+            .with_capabilities(args.cap)
+            .with_ignore_paused(args.ignore_paused)
+            .with_sub_cgroup(args.cgroup)
+            .with_apparmor(args.apparmor)
+            .with_tty(args.tty)
+            .build()?;
 
     // See https://github.com/youki-dev/youki/pull/1252 for a detailed explanation
     // basically, if there is any error in starting exec, the build above will return error
@@ -43,9 +45,5 @@ pub fn exec(args: Exec, root_path: PathBuf) -> Result<i32> {
         return Ok(0);
     }
 
-    match waitpid(pid, None)? {
-        WaitStatus::Exited(_, status) => Ok(status),
-        WaitStatus::Signaled(_, sig, _) => Ok(sig as i32),
-        _ => Ok(0),
-    }
+    foreground::handle_foreground(pid, pty_master_fd)
 }

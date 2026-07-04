@@ -56,6 +56,7 @@ use crate::tests::scheduler::get_scheduler_test;
 use crate::tests::seccomp::get_seccomp_test;
 use crate::tests::seccomp_notify::get_seccomp_notify_test;
 use crate::tests::sysctl::get_sysctl_test;
+use crate::tests::terminal::get_terminal_test;
 use crate::tests::tlb::get_tlb_test;
 use crate::tests::uid_mappings::get_uid_mappings_test;
 use crate::tests::update::get_update_test;
@@ -179,6 +180,7 @@ fn main() -> Result<()> {
     let personality = get_personality_test();
     let prohibit_symlink = get_prohibit_symlink_test();
     let net_devices = get_net_devices_test();
+    let terminal = get_terminal_test();
     let checkpoint_restore = get_checkpoint_restore_tests();
     let update = get_update_test();
 
@@ -238,6 +240,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(personality));
     tm.add_test_group(Box::new(prohibit_symlink));
     tm.add_test_group(Box::new(io_priority_test));
+    tm.add_test_group(Box::new(terminal));
     tm.add_test_group(Box::new(checkpoint_restore));
     tm.add_test_group(Box::new(update));
     tm.add_cleanup(Box::new(cgroups::cleanup_v1));

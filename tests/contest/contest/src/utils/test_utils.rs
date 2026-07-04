@@ -802,6 +802,13 @@ pub fn build_exec_command<P: AsRef<Path>>(
             command.args(&cmd);
         }
     } else {
+        // With --process, only pass through flags (the process.json holds the command).
+        for a in args {
+            let s = a.as_ref();
+            if !s.is_empty() && s.to_string_lossy().starts_with("--") {
+                command.arg(s);
+            }
+        }
         command.arg(id);
     }
 
