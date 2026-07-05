@@ -18,6 +18,7 @@ pub mod test_utils;
 pub mod tty;
 pub mod user_ns;
 pub mod utils;
+pub mod validator;
 pub mod workload;
 
 // Because the `libcontainer` api uses the oci_spec who resides in a different

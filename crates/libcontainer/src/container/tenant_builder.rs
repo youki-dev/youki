@@ -14,12 +14,13 @@ use nix::unistd::{Pid, pipe2, read};
 use oci_spec::runtime::{
     Capabilities as SpecCapabilities, Capability as SpecCapability, LinuxBuilder,
     LinuxCapabilities, LinuxCapabilitiesBuilder, LinuxNamespace, LinuxNamespaceBuilder,
-    LinuxNamespaceType, LinuxSchedulerPolicy, Process, ProcessBuilder, Spec, UserBuilder,
+    LinuxNamespaceType, Process, ProcessBuilder, Spec, UserBuilder,
 };
 use procfs::process::Namespace;
 
 use super::Container;
 use super::builder::ContainerBuilder;
+use super::mount_validation::validate_idmapped_mounts;
 use crate::capabilities::CapabilityExt;
 use crate::container::ContainerStatus;
 use crate::container::builder_impl::ContainerBuilderImpl;
@@ -28,6 +29,7 @@ use crate::notify_socket::NotifySocket;
 use crate::process::args::ContainerType;
 use crate::syscall::syscall::create_syscall;
 use crate::user_ns::UserNamespaceConfig;
+use crate::validator::Validator;
 use crate::{tty, utils};
 
 const NAMESPACE_TYPES: &[&str] = &["ipc", "uts", "net", "pid", "mnt", "cgroup"];
@@ -355,94 +357,15 @@ impl TenantContainerBuilder {
             Err(ErrInvalidSpec::UnsupportedVersion)?;
         }
 
-        if let Some(process) = spec.process() {
-            if let Some(io_priority) = process.io_priority() {
-                let priority = io_priority.priority();
-                let iop_class_res = serde_json::to_string(&io_priority.class());
-                match iop_class_res {
-                    Ok(iop_class) => {
-                        if !(0..=7).contains(&priority) {
-                            tracing::error!(
-                                ?priority,
-                                "io priority '{}' not between 0 and 7 (inclusive), class '{}' not in (IO_PRIO_CLASS_RT,IO_PRIO_CLASS_BE,IO_PRIO_CLASS_IDLE)",
-                                priority,
-                                iop_class
-                            );
-                            Err(ErrInvalidSpec::IoPriority)?;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!(?priority, ?e, "failed to parse io priority class");
-                        Err(ErrInvalidSpec::IoPriority)?;
-                    }
-                }
-            }
+        Validator::validate_spec(spec)?;
 
-            if let Some(sc) = process.scheduler() {
-                let policy = sc.policy();
-                if let Some(nice) = sc.nice() {
-                    // https://man7.org/linux/man-pages/man2/sched_setattr.2.html#top_of_page
-                    if (*policy == LinuxSchedulerPolicy::SchedBatch
-                        || *policy == LinuxSchedulerPolicy::SchedOther)
-                        && (*nice < -20 || *nice > 19)
-                    {
-                        tracing::error!(
-                            ?nice,
-                            "invalid scheduler.nice: '{}', must be within -20 to 19",
-                            nice
-                        );
-                        Err(ErrInvalidSpec::Scheduler)?;
-                    }
-                }
-                if let Some(priority) = sc.priority() {
-                    if *priority != 0
-                        && (*policy != LinuxSchedulerPolicy::SchedFifo
-                            && *policy != LinuxSchedulerPolicy::SchedRr)
-                    {
-                        tracing::error!(
-                            ?policy,
-                            "scheduler.priority can only be specified for SchedFIFO or SchedRR policy"
-                        );
-                        Err(ErrInvalidSpec::Scheduler)?;
-                    }
-                }
-                if *policy != LinuxSchedulerPolicy::SchedDeadline {
-                    if let Some(runtime) = sc.runtime() {
-                        if *runtime != 0 {
-                            tracing::error!(
-                                ?runtime,
-                                "scheduler runtime can only be specified for SchedDeadline policy"
-                            );
-                            Err(ErrInvalidSpec::Scheduler)?;
-                        }
-                    }
-                    if let Some(deadline) = sc.deadline() {
-                        if *deadline != 0 {
-                            tracing::error!(
-                                ?deadline,
-                                "scheduler deadline can only be specified for SchedDeadline policy"
-                            );
-                            Err(ErrInvalidSpec::Scheduler)?;
-                        }
-                    }
-                    if let Some(period) = sc.period() {
-                        if *period != 0 {
-                            tracing::error!(
-                                ?period,
-                                "scheduler period can only be specified for SchedDeadline policy"
-                            );
-                            Err(ErrInvalidSpec::Scheduler)?;
-                        }
-                    }
-                }
-            }
-        }
+        let syscall = create_syscall();
 
         if let Some(mounts) = spec.mounts() {
             utils::validate_mount_options(mounts)?;
+            validate_idmapped_mounts(mounts, spec.linux().as_ref(), &*syscall)?;
         }
 
-        let syscall = create_syscall();
         utils::validate_spec_for_new_user_ns(spec, &*syscall)?;
         utils::validate_spec_for_net_devices(spec, &*syscall)
             .map_err(LibcontainerError::NetDevicesError)?;

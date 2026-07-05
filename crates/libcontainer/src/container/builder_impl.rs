@@ -12,7 +12,7 @@ use super::{Container, ContainerStatus};
 use crate::error::{CreateContainerError, LibcontainerError, MissingSpecError};
 use crate::notify_socket::NotifyListener;
 use crate::process::args::{ContainerArgs, ContainerType};
-use crate::process::intel_rdt::delete_resctrl_subdirectory;
+use crate::process::intel_rdt::{cleanup_intel_rdt, setup_intel_rdt};
 use crate::process::{self};
 use crate::syscall::syscall::SyscallType;
 use crate::user_ns::UserNamespaceConfig;
@@ -192,13 +192,22 @@ impl ContainerBuilderImpl {
             pid_file: self.pid_file.to_owned(),
         };
 
-        let (init_pid, need_to_clean_up_intel_rdt_dir) =
-            process::container_main_process::container_main_process(&container_args).map_err(
-                |err| {
-                    tracing::error!("failed to run container process {}", err);
-                    LibcontainerError::MainProcess(err)
-                },
-            )?;
+        let init_pid = process::container_main_process::container_main_process(&container_args)
+            .map_err(|err| {
+                tracing::error!("failed to run container process {}", err);
+                LibcontainerError::MainProcess(err)
+            })?;
+
+        let mut intel_rdt_dir = None;
+        let mut intel_rdt_monitoring_dir = None;
+        if let Some(linux) = self.spec.linux() {
+            if let Some(intel_rdt) = linux.intel_rdt() {
+                let container_id = self.container.as_ref().map(|c| c.id());
+                let (dir, mon_dir) = setup_intel_rdt(container_id, &init_pid, intel_rdt)?;
+                intel_rdt_dir = dir;
+                intel_rdt_monitoring_dir = mon_dir;
+            }
+        }
 
         if let Some(container) = &mut self.container {
             // update status and pid of the container process
@@ -206,7 +215,8 @@ impl ContainerBuilderImpl {
                 .set_status(ContainerStatus::Created)
                 .set_creator(nix::unistd::geteuid().as_raw())
                 .set_pid(init_pid.as_raw())
-                .set_clean_up_intel_rdt_directory(need_to_clean_up_intel_rdt_dir)
+                .set_intel_rdt_dir(intel_rdt_dir)
+                .set_intel_rdt_monitoring_dir(intel_rdt_monitoring_dir)
                 .save()?;
         }
 
@@ -231,11 +241,14 @@ impl ContainerBuilderImpl {
         }
 
         if let Some(container) = &self.container {
-            if let Some(true) = container.clean_up_intel_rdt_subdirectory() {
-                if let Err(e) = delete_resctrl_subdirectory(container.id()) {
-                    tracing::error!(id = ?container.id(), error = ?e, "failed to delete resctrl subdirectory");
-                    errors.push(e.to_string());
-                }
+            if let Err(e) = cleanup_intel_rdt(
+                container.intel_rdt_dir().map(|p| p.as_path()),
+                container.intel_rdt_monitoring_dir().map(|p| p.as_path()),
+                container.clean_up_intel_rdt_subdirectory(),
+                container.id(),
+            ) {
+                tracing::error!(id = ?container.id(), error = ?e, "failed to cleanup intel rdt");
+                errors.push(e.to_string());
             }
 
             if container.root.exists() {

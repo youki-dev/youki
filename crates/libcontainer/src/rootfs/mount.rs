@@ -28,6 +28,7 @@ use procfs::{FromRead, ProcessCGroups};
 use super::symlink::Symlink;
 use super::symlink::SymlinkError;
 use super::utils::{MountOptionConfig, parse_mount};
+use crate::rootfs::utils::is_bind;
 use crate::syscall::syscall::create_syscall;
 use crate::syscall::{Syscall, SyscallError, linux};
 use crate::utils::{PathBufExt, retry};
@@ -589,7 +590,7 @@ impl Mount {
 
         let source = m.source().as_ref().ok_or(MountError::NoSource)?;
         let dir_perm = Permissions::from_mode(0o755);
-        let src = if typ == Some("bind") {
+        let src = if is_bind(m) {
             let src = canonicalize(source).map_err(|err| {
                 tracing::error!("failed to canonicalize {:?}: {}", source, err);
                 err
@@ -629,15 +630,10 @@ impl Mount {
         let dest: OwnedFd = root.resolve(container_dest)?.into();
         let dest_fd = dest.as_fd();
 
-        let is_bind = typ == Some("bind")
-            || m.options()
-                .as_deref()
-                .is_some_and(|ops| ops.iter().any(|o| o == "bind" || o == "rbind"));
-
         // fd-based mount flow:
         // - bind: open_tree -> mount_setattr -> move_mount
         // - nonbind: fsopen -> fsconfig -> fsmount -> mount_setattr -> move_mount
-        if is_bind {
+        if is_bind(m) {
             let recursive = m
                 .options()
                 .as_ref()
@@ -957,7 +953,7 @@ impl Mount {
                     return Ok(());
                 }
 
-                if mount.typ().as_deref() == Some("bind") {
+                if is_bind(mount) {
                     if let Some(source) = mount.source() {
                         let stat = statfs(source).map_err(MountError::from)?;
                         if stat.filesystem_type() == PROC_SUPER_MAGIC {
@@ -1030,13 +1026,48 @@ mod tests {
     use anyhow::{Context, Ok, Result};
 
     use super::*;
-    use crate::syscall::test::{ArgName, MountArgs, TestHelperSyscall};
+    use crate::syscall::test::{ArgName, FsconfigArgs, FsopenArgs, TestHelperSyscall};
+
+    fn helper_syscall(m: &Mount) -> &TestHelperSyscall {
+        m.syscall
+            .as_any()
+            .downcast_ref::<TestHelperSyscall>()
+            .unwrap()
+    }
+
+    // Helpers to build the expected fsconfig calls of the fd-based mount flow.
+    fn fsc_str(key: &str, val: &str) -> FsconfigArgs {
+        FsconfigArgs {
+            cmd: linux::FSCONFIG_SET_STRING as u32,
+            key: Some(key.to_string()),
+            val: Some(val.to_string()),
+            aux: 0,
+        }
+    }
+
+    fn fsc_flag(key: &str) -> FsconfigArgs {
+        FsconfigArgs {
+            cmd: linux::FSCONFIG_SET_FLAG as u32,
+            key: Some(key.to_string()),
+            val: None,
+            aux: 0,
+        }
+    }
+
+    fn fsc_create() -> FsconfigArgs {
+        FsconfigArgs {
+            cmd: linux::FSCONFIG_CMD_CREATE as u32,
+            key: None,
+            val: None,
+            aux: 0,
+        }
+    }
 
     #[test]
-    #[ignore] // TODO: fix fd-based test
     fn test_mount_into_container() -> Result<()> {
         let tmp_dir = tempfile::tempdir()?;
         {
+            // Non-bind mount (devpts) uses the fsopen/fsconfig/fsmount flow.
             let m = Mount::new();
             let mount = &SpecMountBuilder::default()
                 .destination(PathBuf::from("/dev/pts"))
@@ -1063,25 +1094,48 @@ mod tests {
                 .is_ok()
             );
 
-            let want = vec![MountArgs {
-                source: Some(PathBuf::from("devpts")),
-                target: tmp_dir.path().join("dev/pts"),
-                fstype: Some("devpts".to_string()),
-                flags: MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC,
-                data: Some(
-                    "newinstance,ptmxmode=0666,mode=0620,gid=5,context=\"defaults\"".to_string(),
-                ),
-            }];
-            let got = &m
-                .syscall
-                .as_any()
-                .downcast_ref::<TestHelperSyscall>()
-                .unwrap()
-                .get_mount_args();
-            assert_eq!(want, *got);
-            assert_eq!(got.len(), 1);
+            let s = helper_syscall(&m);
+
+            assert_eq!(
+                s.get_fsopen_args(),
+                vec![FsopenArgs {
+                    fsname: Some("devpts".to_string()),
+                    flags: 0,
+                }]
+            );
+
+            // source, then each mount option, then the create command. The
+            // SELinux mount label is only applied when SELinux is enabled.
+            let mut want_fsconfig = vec![
+                fsc_str("source", "devpts"),
+                fsc_flag("newinstance"),
+                fsc_str("ptmxmode", "0666"),
+                fsc_str("mode", "0620"),
+                fsc_str("gid", "5"),
+            ];
+            if Path::new("/sys/fs/selinux").exists() {
+                want_fsconfig.push(fsc_str("context", "defaults"));
+            }
+            want_fsconfig.push(fsc_create());
+            assert_eq!(s.get_fsconfig_args(), want_fsconfig);
+
+            let setattr = s.get_mount_setattr_args();
+            assert_eq!(setattr.len(), 1);
+            assert_eq!(
+                setattr[0].attr_set,
+                linux::MOUNT_ATTR_NOSUID | linux::MOUNT_ATTR_NOEXEC
+            );
+
+            let mv = s.get_move_mount_args();
+            assert_eq!(mv.len(), 1);
+            assert_eq!(
+                mv[0].to_dirfd_path.as_deref(),
+                Some(tmp_dir.path().join("dev/pts").as_path())
+            );
         }
         {
+            // Read-only bind mount uses the open_tree flow; the read-only flag
+            // is applied via mount_setattr (no separate remount).
             let m = Mount::new();
             let mount = &SpecMountBuilder::default()
                 .destination(PathBuf::from("/dev/null"))
@@ -1101,31 +1155,26 @@ mod tests {
                     .is_ok()
             );
 
-            let want = vec![
-                MountArgs {
-                    source: Some(tmp_dir.path().join("null")),
-                    target: tmp_dir.path().join("dev/null"),
-                    fstype: Some("bind".to_string()),
-                    flags: MsFlags::MS_RDONLY,
-                    data: Some("".to_string()),
-                },
-                // remount one
-                MountArgs {
-                    source: None,
-                    target: tmp_dir.path().join("dev/null"),
-                    fstype: None,
-                    flags: MsFlags::MS_RDONLY | MsFlags::MS_REMOUNT,
-                    data: None,
-                },
-            ];
-            let got = &m
-                .syscall
-                .as_any()
-                .downcast_ref::<TestHelperSyscall>()
-                .unwrap()
-                .get_mount_args();
-            assert_eq!(want, *got);
-            assert_eq!(got.len(), 2);
+            let s = helper_syscall(&m);
+
+            let open_tree = s.get_open_tree_args();
+            assert_eq!(open_tree.len(), 1);
+            assert_eq!(
+                open_tree[0].path.as_deref(),
+                Some(tmp_dir.path().join("null").to_str().unwrap())
+            );
+            assert_eq!(open_tree[0].flags & linux::AT_RECURSIVE, 0);
+
+            let setattr = s.get_mount_setattr_args();
+            assert_eq!(setattr.len(), 1);
+            assert_eq!(setattr[0].attr_set, linux::MOUNT_ATTR_RDONLY);
+
+            let mv = s.get_move_mount_args();
+            assert_eq!(mv.len(), 1);
+            assert_eq!(
+                mv[0].to_dirfd_path.as_deref(),
+                Some(tmp_dir.path().join("dev/null").as_path())
+            );
         }
         {
             // Socket file bind-mount
@@ -1144,23 +1193,29 @@ mod tests {
                     .is_ok()
             );
 
-            let want = vec![MountArgs {
-                source: Some(tmp_dir.path().join("tmp.sock")),
-                target: tmp_dir.path().join("tmp.sock"),
-                fstype: Some("bind".to_string()),
-                flags: MsFlags::empty(),
-                data: Some("".to_string()),
-            }];
-            let got = &m
-                .syscall
-                .as_any()
-                .downcast_ref::<TestHelperSyscall>()
-                .unwrap()
-                .get_mount_args();
-            assert_eq!(want, *got);
-            assert_eq!(got.len(), 2);
+            let s = helper_syscall(&m);
+
+            let open_tree = s.get_open_tree_args();
+            assert_eq!(open_tree.len(), 1);
+            assert_eq!(
+                open_tree[0].path.as_deref(),
+                Some(tmp_dir.path().join("tmp.sock").to_str().unwrap())
+            );
+            assert_eq!(open_tree[0].flags & linux::AT_RECURSIVE, 0);
+
+            let setattr = s.get_mount_setattr_args();
+            assert_eq!(setattr.len(), 1);
+            assert_eq!(setattr[0].attr_set, 0);
+
+            let mv = s.get_move_mount_args();
+            assert_eq!(mv.len(), 1);
+            assert_eq!(
+                mv[0].to_dirfd_path.as_deref(),
+                Some(tmp_dir.path().join("tmp.sock").as_path())
+            );
         }
         {
+            // EINVAL on the first attempt is retried once and then succeeds.
             let m = Mount::new();
             let mount = &SpecMountBuilder::default()
                 .destination(PathBuf::from("/tmp/retry"))
@@ -1169,23 +1224,21 @@ mod tests {
                 .build()?;
             let mount_option_config = parse_mount(mount)?;
 
-            let syscall = m
-                .syscall
-                .as_any()
-                .downcast_ref::<TestHelperSyscall>()
-                .unwrap();
-            syscall.set_ret_err(ArgName::Mount, || {
+            let syscall = helper_syscall(&m);
+            syscall.set_ret_err(ArgName::Fsopen, || {
                 Err(crate::syscall::SyscallError::Nix(nix::errno::Errno::EINVAL))
             });
-            syscall.set_ret_err_times(ArgName::Mount, 1);
+            syscall.set_ret_err_times(ArgName::Fsopen, 1);
 
             assert!(
                 m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
                     .is_ok()
             );
-            assert_eq!(syscall.get_mount_args().len(), 1);
+            // The failed first fsopen isn't recorded; only the retried one is.
+            assert_eq!(syscall.get_fsopen_args().len(), 1);
         }
         {
+            // EINVAL on both attempts gives up.
             let m = Mount::new();
             let mount = &SpecMountBuilder::default()
                 .destination(PathBuf::from("/tmp/retry"))
@@ -1194,23 +1247,20 @@ mod tests {
                 .build()?;
             let mount_option_config = parse_mount(mount)?;
 
-            let syscall = m
-                .syscall
-                .as_any()
-                .downcast_ref::<TestHelperSyscall>()
-                .unwrap();
-            syscall.set_ret_err(ArgName::Mount, || {
+            let syscall = helper_syscall(&m);
+            syscall.set_ret_err(ArgName::Fsopen, || {
                 Err(crate::syscall::SyscallError::Nix(nix::errno::Errno::EINVAL))
             });
-            syscall.set_ret_err_times(ArgName::Mount, 2);
+            syscall.set_ret_err_times(ArgName::Fsopen, 2);
 
             assert!(
                 m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
                     .is_err()
             );
-            assert_eq!(syscall.get_mount_args().len(), 0);
+            assert_eq!(syscall.get_fsopen_args().len(), 0);
         }
         {
+            // EBUSY is retried up to MAX_EBUSY_MOUNT_ATTEMPTS times.
             let m = Mount::new();
             let mount = &SpecMountBuilder::default()
                 .destination(PathBuf::from("/tmp/retry"))
@@ -1219,23 +1269,20 @@ mod tests {
                 .build()?;
             let mount_option_config = parse_mount(mount)?;
 
-            let syscall = m
-                .syscall
-                .as_any()
-                .downcast_ref::<TestHelperSyscall>()
-                .unwrap();
-            syscall.set_ret_err(ArgName::Mount, || {
+            let syscall = helper_syscall(&m);
+            syscall.set_ret_err(ArgName::Fsopen, || {
                 Err(crate::syscall::SyscallError::Nix(nix::errno::Errno::EBUSY))
             });
-            syscall.set_ret_err_times(ArgName::Mount, MAX_EBUSY_MOUNT_ATTEMPTS as usize - 1);
+            syscall.set_ret_err_times(ArgName::Fsopen, MAX_EBUSY_MOUNT_ATTEMPTS as usize - 1);
 
             assert!(
                 m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
                     .is_ok()
             );
-            assert_eq!(syscall.get_mount_args().len(), 1);
+            assert_eq!(syscall.get_fsopen_args().len(), 1);
         }
         {
+            // EBUSY beyond MAX_EBUSY_MOUNT_ATTEMPTS gives up.
             let m = Mount::new();
             let mount = &SpecMountBuilder::default()
                 .destination(PathBuf::from("/tmp/retry"))
@@ -1244,21 +1291,17 @@ mod tests {
                 .build()?;
             let mount_option_config = parse_mount(mount)?;
 
-            let syscall = m
-                .syscall
-                .as_any()
-                .downcast_ref::<TestHelperSyscall>()
-                .unwrap();
-            syscall.set_ret_err(ArgName::Mount, || {
+            let syscall = helper_syscall(&m);
+            syscall.set_ret_err(ArgName::Fsopen, || {
                 Err(crate::syscall::SyscallError::Nix(nix::errno::Errno::EBUSY))
             });
-            syscall.set_ret_err_times(ArgName::Mount, MAX_EBUSY_MOUNT_ATTEMPTS as usize);
+            syscall.set_ret_err_times(ArgName::Fsopen, MAX_EBUSY_MOUNT_ATTEMPTS as usize);
 
             assert!(
                 m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
                     .is_err()
             );
-            assert_eq!(syscall.get_mount_args().len(), 0);
+            assert_eq!(syscall.get_fsopen_args().len(), 0);
         }
 
         Ok(())
@@ -1352,201 +1395,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "v1")]
-    #[ignore] // TODO: fix fd-based test
-    fn test_namespaced_subsystem_success() -> Result<()> {
-        let tmp = tempfile::tempdir().unwrap();
-        let container_cgroup = Path::new("/container_cgroup");
-
-        let mounter = Mount::new();
-
-        let spec_cgroup_mount = SpecMountBuilder::default()
-            .destination(container_cgroup)
-            .source("cgroup")
-            .typ("cgroup")
-            .build()
-            .context("failed to build cgroup mount")?;
-
-        let mount_opts = MountOptions {
-            root: tmp.path(),
-            label: None,
-            cgroup_ns: true,
-        };
-
-        let subsystem_name = "cpu";
-
-        mounter
-            .setup_namespaced_subsystem(&spec_cgroup_mount, &mount_opts, subsystem_name, false)
-            .context("failed to setup namespaced subsystem")?;
-
-        let expected = MountArgs {
-            source: Some(PathBuf::from("cgroup")),
-            target: tmp
-                .path()
-                .join_safely(container_cgroup)?
-                .join(subsystem_name),
-            fstype: Some("cgroup".to_owned()),
-            flags: MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
-            data: Some("cpu".to_owned()),
-        };
-
-        let got = mounter
-            .syscall
-            .as_any()
-            .downcast_ref::<TestHelperSyscall>()
-            .unwrap()
-            .get_mount_args();
-
-        assert_eq!(got.len(), 1);
-        assert_eq!(expected, got[0]);
-
-        Ok(())
-    }
-
-    #[test]
-    #[cfg(feature = "v1")]
-    #[ignore] // TODO: fix fd-based test
-    fn test_emulated_subsystem_success() -> Result<()> {
-        // arrange
-        let tmp = tempfile::tempdir().unwrap();
-        let host_cgroup_mount = tmp.path().join("host_cgroup");
-        let host_cgroup = host_cgroup_mount.join("cpu/container1");
-        fs::create_dir_all(&host_cgroup)?;
-
-        let container_cgroup = Path::new("/container_cgroup");
-        let mounter = Mount::new();
-
-        let spec_cgroup_mount = SpecMountBuilder::default()
-            .destination(container_cgroup)
-            .source("cgroup")
-            .typ("cgroup")
-            .build()
-            .context("failed to build cgroup mount")?;
-
-        let mount_opts = MountOptions {
-            root: tmp.path(),
-            label: None,
-            cgroup_ns: false,
-        };
-
-        let subsystem_name = "cpu";
-        let mut process_cgroups = HashMap::new();
-        process_cgroups.insert("cpu".to_owned(), "container1".to_owned());
-
-        // act
-        mounter
-            .setup_emulated_subsystem(
-                &spec_cgroup_mount,
-                &mount_opts,
-                subsystem_name,
-                false,
-                &host_cgroup_mount.join(subsystem_name),
-                &process_cgroups,
-            )
-            .context("failed to setup emulated subsystem")?;
-
-        // assert
-        let expected = MountArgs {
-            source: Some(host_cgroup),
-            target: tmp
-                .path()
-                .join_safely(container_cgroup)?
-                .join(subsystem_name),
-            fstype: Some("bind".to_owned()),
-            flags: MsFlags::MS_BIND | MsFlags::MS_REC,
-            data: Some("".to_owned()),
-        };
-
-        let got = mounter
-            .syscall
-            .as_any()
-            .downcast_ref::<TestHelperSyscall>()
-            .unwrap()
-            .get_mount_args();
-
-        assert_eq!(got.len(), 1);
-        assert_eq!(expected, got[0]);
-
-        Ok(())
-    }
-
-    #[test]
-    #[cfg(feature = "v1")]
-    #[ignore] // TODO: fix fd-based test
-    fn test_mount_cgroup_v1() -> Result<()> {
-        // arrange
-        let tmp = tempfile::tempdir()?;
-        let container_cgroup = PathBuf::from("/sys/fs/cgroup");
-
-        let spec_cgroup_mount = SpecMountBuilder::default()
-            .destination(&container_cgroup)
-            .source("cgroup")
-            .typ("cgroup")
-            .build()
-            .context("failed to build cgroup mount")?;
-
-        let mount_opts = MountOptions {
-            root: tmp.path(),
-            label: None,
-            cgroup_ns: true,
-        };
-
-        let mounter = Mount::new();
-
-        // act
-        mounter
-            .mount_cgroup_v1(&spec_cgroup_mount, &mount_opts)
-            .context("failed to mount cgroup v1")?;
-
-        // assert
-        let mut got = mounter
-            .syscall
-            .as_any()
-            .downcast_ref::<TestHelperSyscall>()
-            .unwrap()
-            .get_mount_args()
-            .into_iter();
-
-        let host_mounts = libcgroups::v1::util::list_subsystem_mount_points()?;
-        assert_eq!(got.len(), host_mounts.len() + 1);
-
-        let expected = MountArgs {
-            source: Some(PathBuf::from("tmpfs".to_owned())),
-            target: tmp.path().join_safely(&container_cgroup)?,
-            fstype: Some("tmpfs".to_owned()),
-            flags: MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
-            data: Some("mode=755".to_owned()),
-        };
-        assert_eq!(expected, got.next().unwrap());
-
-        for (host_mount, act) in host_mounts.iter().zip(got) {
-            let subsystem_name = host_mount.file_name().and_then(|f| f.to_str()).unwrap();
-            let expected = MountArgs {
-                source: Some(PathBuf::from("cgroup".to_owned())),
-                target: tmp
-                    .path()
-                    .join_safely(&container_cgroup)?
-                    .join(subsystem_name),
-                fstype: Some("cgroup".to_owned()),
-                flags: MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
-                data: Some(
-                    if subsystem_name == "systemd" {
-                        format!("name={subsystem_name}")
-                    } else {
-                        subsystem_name.to_string()
-                    }
-                    .to_owned(),
-                ),
-            };
-            assert_eq!(expected, act);
-        }
-
-        Ok(())
-    }
-
-    #[test]
     #[cfg(feature = "v2")]
-    #[ignore] // TODO: fix fd-based test
     fn test_mount_cgroup_v2() -> Result<()> {
         // arrange
         let tmp = tempfile::tempdir().unwrap();
@@ -1579,23 +1428,35 @@ mod tests {
             .context("failed to mount cgroup v2")?;
 
         // assert
-        let expected = MountArgs {
-            source: Some(PathBuf::from("cgroup".to_owned())),
-            target: tmp.path().join_safely(container_cgroup)?,
-            fstype: Some("cgroup2".to_owned()),
-            flags: MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
-            data: Some("".to_owned()),
-        };
+        let s = helper_syscall(&mounter);
 
-        let got = mounter
-            .syscall
-            .as_any()
-            .downcast_ref::<TestHelperSyscall>()
-            .unwrap()
-            .get_mount_args();
+        // cgroup v2 is a non-bind mount (cgroup2 filesystem).
+        assert_eq!(
+            s.get_fsopen_args(),
+            vec![FsopenArgs {
+                fsname: Some("cgroup2".to_string()),
+                flags: 0,
+            }]
+        );
+        // No mount data, so only the source and the create command.
+        assert_eq!(
+            s.get_fsconfig_args(),
+            vec![fsc_str("source", "cgroup"), fsc_create()]
+        );
 
-        assert_eq!(got.len(), 1);
-        assert_eq!(expected, got[0]);
+        let setattr = s.get_mount_setattr_args();
+        assert_eq!(setattr.len(), 1);
+        assert_eq!(
+            setattr[0].attr_set,
+            linux::MOUNT_ATTR_NOEXEC | linux::MOUNT_ATTR_NOSUID | linux::MOUNT_ATTR_NODEV
+        );
+
+        let mv = s.get_move_mount_args();
+        assert_eq!(mv.len(), 1);
+        assert_eq!(
+            mv[0].to_dirfd_path.as_deref(),
+            Some(tmp.path().join_safely(container_cgroup)?.as_path())
+        );
 
         Ok(())
     }

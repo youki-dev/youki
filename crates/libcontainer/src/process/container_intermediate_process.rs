@@ -11,6 +11,7 @@ use super::init::process as init_process;
 use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
 use crate::process::{channel, cpu_affinity, fork};
+use crate::utils::rootless_required;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IntermediateProcessError {
@@ -51,8 +52,10 @@ pub fn container_intermediate_process(
     let spec = &args.spec;
     let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
     let namespaces = Namespaces::try_from(linux.namespaces().as_ref())?;
+    let rootless = rootless_required(command.as_ref()).unwrap_or(false);
     let cgroup_manager = libcgroups::common::create_cgroup_manager(args.cgroup_config.to_owned())
-        .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?;
+        .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?
+        .with_rootless(rootless);
 
     let current_pid = Pid::this();
     // setting CPU affinity for tenant container before cgroup move

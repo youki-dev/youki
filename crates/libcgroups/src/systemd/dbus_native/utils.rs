@@ -44,13 +44,15 @@ pub enum DbusError {
     BusctlError(String),
     #[error("could not parse uid from busctl: {0}")]
     UidError(ParseIntError),
+    #[error("nix error: {0}")]
+    Nix(nix::Error),
 }
 
 pub type Result<T> = std::result::Result<T, SystemdClientError>;
 
 impl From<nix::Error> for SystemdClientError {
     fn from(err: nix::Error) -> SystemdClientError {
-        DbusError::ConnectionError(err.to_string()).into()
+        DbusError::Nix(err).into()
     }
 }
 

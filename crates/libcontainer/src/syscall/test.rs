@@ -2,6 +2,7 @@ use std::any::Any;
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
+use std::fs::{File, read_link};
 use std::os::fd::{AsRawFd, BorrowedFd, RawFd};
 use std::os::unix::io::OwnedFd;
 use std::path::{Path, PathBuf};
@@ -38,6 +39,7 @@ pub struct MoveMountArgs {
     pub from_path: Option<OsString>,
     pub to_dirfd: i32,
     pub to_path: Option<OsString>,
+    pub to_dirfd_path: Option<PathBuf>,
     pub flags: u32,
 }
 
@@ -45,6 +47,39 @@ pub struct MoveMountArgs {
 pub struct FsopenArgs {
     pub fsname: Option<String>,
     pub flags: u32,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct FsconfigArgs {
+    pub cmd: u32,
+    pub key: Option<String>,
+    pub val: Option<String>,
+    pub aux: libc::c_int,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct FsmountArgs {
+    pub flags: u32,
+    pub attr_flags: Option<u64>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct OpenTreeArgs {
+    pub dirfd: i32,
+    pub path: Option<String>,
+    pub flags: u32,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MountSetattrArgs {
+    pub dirfd: i32,
+    pub pathname: PathBuf,
+    pub flags: u32,
+    pub attr_set: u64,
+    pub attr_clr: u64,
+    pub propagation: u64,
+    pub userns_fd: u64,
+    pub size: libc::size_t,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -106,6 +141,10 @@ pub enum ArgName {
     UMount2,
     MoveMount,
     Fsopen,
+    Fsconfig,
+    Fsmount,
+    OpenTree,
+    MountSetattr,
 }
 
 impl ArgName {
@@ -125,6 +164,11 @@ impl ArgName {
             ArgName::IoPriority,
             ArgName::MemPolicy,
             ArgName::MoveMount,
+            ArgName::Fsopen,
+            ArgName::Fsconfig,
+            ArgName::Fsmount,
+            ArgName::OpenTree,
+            ArgName::MountSetattr,
         ]
         .iter()
         .copied()
@@ -174,6 +218,13 @@ impl MockCalls {
     fn fetch_mut(&self, name: ArgName) -> RefMut<'_, Mock> {
         self.args.get(&name).unwrap().borrow_mut()
     }
+}
+
+/// Open a fresh, valid file descriptor for use as a placeholder return value
+/// from fd-returning syscalls (`fsopen`/`fsmount`/`open_tree`). Tests don't
+/// dereference it; it only needs to be a real, owned fd.
+fn dummy_owned_fd() -> OwnedFd {
+    OwnedFd::from(File::open("/dev/null").expect("failed to open /dev/null for a test fd"))
 }
 
 #[derive(Default)]
@@ -263,7 +314,7 @@ impl Syscall for TestHelperSyscall {
     ) -> Result<()> {
         // For tests: resolve /proc/self/fd/<n> to the real path before recording.
         let target_owned = if target.starts_with(Path::new("/proc/self/fd")) {
-            std::fs::read_link(target).unwrap_or_else(|_| target.to_owned())
+            read_link(target).unwrap_or_else(|_| target.to_owned())
         } else {
             target.to_owned()
         };
@@ -298,37 +349,81 @@ impl Syscall for TestHelperSyscall {
         to_path: Option<&str>,
         flags: u32,
     ) -> Result<()> {
-        let rec = MoveMountArgs {
-            from_dirfd: from_dirfd.as_raw_fd(),
-            from_path: from_path.map(OsString::from),
-            to_dirfd: to_dirfd.as_raw_fd(),
-            to_path: to_path.map(OsString::from),
-            flags,
+        // The destination is usually passed by fd (MOVE_MOUNT_T_EMPTY_PATH), so
+        // resolve the real path it points at via /proc/self/fd while the fd is
+        // still open, for later assertions.
+        let to_dirfd_path = if to_path.is_none() {
+            read_link(format!("/proc/self/fd/{}", to_dirfd.as_raw_fd())).ok()
+        } else {
+            None
         };
-        self.mocks.act(ArgName::MoveMount, Box::new(rec))
+
+        self.mocks.act(
+            ArgName::MoveMount,
+            Box::new(MoveMountArgs {
+                from_dirfd: from_dirfd.as_raw_fd(),
+                from_path: from_path.map(OsString::from),
+                to_dirfd: to_dirfd.as_raw_fd(),
+                to_path: to_path.map(OsString::from),
+                to_dirfd_path,
+                flags,
+            }),
+        )
     }
 
-    fn fsopen(&self, _: Option<&str>, _: u32) -> Result<OwnedFd> {
-        todo!()
+    fn fsopen(&self, fstype: Option<&str>, flags: u32) -> Result<OwnedFd> {
+        self.mocks.act(
+            ArgName::Fsopen,
+            Box::new(FsopenArgs {
+                fsname: fstype.map(|s| s.to_owned()),
+                flags,
+            }),
+        )?;
+        Ok(dummy_owned_fd())
     }
 
     fn fsconfig(
         &self,
-        _: BorrowedFd<'_>,
-        _: u32,
-        _: Option<&str>,
-        _: Option<&str>,
-        _: libc::c_int,
+        _fsfd: BorrowedFd<'_>,
+        cmd: u32,
+        key: Option<&str>,
+        val: Option<&str>,
+        aux: libc::c_int,
     ) -> Result<()> {
-        todo!()
+        self.mocks.act(
+            ArgName::Fsconfig,
+            Box::new(FsconfigArgs {
+                cmd,
+                key: key.map(|s| s.to_owned()),
+                val: val.map(|s| s.to_owned()),
+                aux,
+            }),
+        )
     }
 
-    fn fsmount(&self, _: BorrowedFd<'_>, _: u32, _: Option<u64>) -> Result<OwnedFd> {
-        todo!()
+    fn fsmount(
+        &self,
+        _fsfd: BorrowedFd<'_>,
+        flags: u32,
+        attr_flags: Option<u64>,
+    ) -> Result<OwnedFd> {
+        self.mocks.act(
+            ArgName::Fsmount,
+            Box::new(FsmountArgs { flags, attr_flags }),
+        )?;
+        Ok(dummy_owned_fd())
     }
 
-    fn open_tree(&self, _: RawFd, _: Option<&str>, _: u32) -> Result<OwnedFd> {
-        todo!()
+    fn open_tree(&self, dirfd: RawFd, path: Option<&str>, flags: u32) -> Result<OwnedFd> {
+        self.mocks.act(
+            ArgName::OpenTree,
+            Box::new(OpenTreeArgs {
+                dirfd,
+                path: path.map(|s| s.to_owned()),
+                flags,
+            }),
+        )?;
+        Ok(dummy_owned_fd())
     }
 
     fn symlink(&self, original: &Path, link: &Path) -> Result<()> {
@@ -370,13 +465,25 @@ impl Syscall for TestHelperSyscall {
 
     fn mount_setattr(
         &self,
-        _: BorrowedFd<'_>,
-        _: &Path,
-        _: u32,
-        _: &linux::MountAttr,
-        _: libc::size_t,
+        dirfd: BorrowedFd<'_>,
+        pathname: &Path,
+        flags: u32,
+        mount_attr: &linux::MountAttr,
+        size: libc::size_t,
     ) -> Result<()> {
-        todo!()
+        self.mocks.act(
+            ArgName::MountSetattr,
+            Box::new(MountSetattrArgs {
+                dirfd: dirfd.as_raw_fd(),
+                pathname: pathname.to_owned(),
+                flags,
+                attr_set: mount_attr.attr_set,
+                attr_clr: mount_attr.attr_clr,
+                propagation: mount_attr.propagation,
+                userns_fd: mount_attr.userns_fd,
+                size,
+            }),
+        )
     }
 
     fn set_io_priority(&self, class: i64, priority: i64) -> Result<()> {
@@ -472,6 +579,60 @@ impl TestHelperSyscall {
             .iter()
             .map(|x| x.downcast_ref::<MountArgs>().unwrap().clone())
             .collect::<Vec<MountArgs>>()
+    }
+
+    pub fn get_fsopen_args(&self) -> Vec<FsopenArgs> {
+        self.mocks
+            .fetch(ArgName::Fsopen)
+            .values
+            .iter()
+            .map(|x| x.downcast_ref::<FsopenArgs>().unwrap().clone())
+            .collect::<Vec<FsopenArgs>>()
+    }
+
+    pub fn get_fsconfig_args(&self) -> Vec<FsconfigArgs> {
+        self.mocks
+            .fetch(ArgName::Fsconfig)
+            .values
+            .iter()
+            .map(|x| x.downcast_ref::<FsconfigArgs>().unwrap().clone())
+            .collect::<Vec<FsconfigArgs>>()
+    }
+
+    pub fn get_fsmount_args(&self) -> Vec<FsmountArgs> {
+        self.mocks
+            .fetch(ArgName::Fsmount)
+            .values
+            .iter()
+            .map(|x| x.downcast_ref::<FsmountArgs>().unwrap().clone())
+            .collect::<Vec<FsmountArgs>>()
+    }
+
+    pub fn get_open_tree_args(&self) -> Vec<OpenTreeArgs> {
+        self.mocks
+            .fetch(ArgName::OpenTree)
+            .values
+            .iter()
+            .map(|x| x.downcast_ref::<OpenTreeArgs>().unwrap().clone())
+            .collect::<Vec<OpenTreeArgs>>()
+    }
+
+    pub fn get_mount_setattr_args(&self) -> Vec<MountSetattrArgs> {
+        self.mocks
+            .fetch(ArgName::MountSetattr)
+            .values
+            .iter()
+            .map(|x| x.downcast_ref::<MountSetattrArgs>().unwrap().clone())
+            .collect::<Vec<MountSetattrArgs>>()
+    }
+
+    pub fn get_move_mount_args(&self) -> Vec<MoveMountArgs> {
+        self.mocks
+            .fetch(ArgName::MoveMount)
+            .values
+            .iter()
+            .map(|x| x.downcast_ref::<MoveMountArgs>().unwrap().clone())
+            .collect::<Vec<MoveMountArgs>>()
     }
 
     pub fn get_mount_from_fd_args(&self) -> Vec<MountFromFdArgs> {

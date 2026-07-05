@@ -10,7 +10,7 @@ pub enum TestResult {
     /// Test was ok
     Passed,
     /// Test needed to be skipped
-    Skipped,
+    Skipped(String),
     /// Test was error
     Failed(Error),
 }

@@ -7,12 +7,14 @@ use user_ns::UserNamespaceConfig;
 
 use super::builder::ContainerBuilder;
 use super::builder_impl::ContainerBuilderImpl;
+use super::mount_validation::validate_idmapped_mounts;
 use super::{Container, ContainerStatus};
 use crate::config::YoukiConfig;
 use crate::error::{ErrInvalidSpec, LibcontainerError, MissingSpecError};
 use crate::notify_socket::NOTIFY_FILE;
 use crate::process::args::ContainerType;
 use crate::syscall::syscall::create_syscall;
+use crate::validator::Validator;
 use crate::{apparmor, tty, user_ns, utils};
 
 // Builder that can be used to configure the properties of a new container
@@ -184,6 +186,8 @@ impl InitContainerBuilder {
             Err(ErrInvalidSpec::UnsupportedVersion)?;
         }
 
+        Validator::validate_spec(spec)?;
+
         if let Some(process) = spec.process() {
             if let Some(profile) = process.apparmor_profile() {
                 let apparmor_is_enabled = apparmor::is_enabled().map_err(|err| {
@@ -198,35 +202,15 @@ impl InitContainerBuilder {
                     Err(ErrInvalidSpec::AppArmorNotEnabled)?;
                 }
             }
-
-            if let Some(io_priority) = process.io_priority() {
-                let priority = io_priority.priority();
-                let iop_class_res = serde_json::to_string(&io_priority.class());
-                match iop_class_res {
-                    Ok(iop_class) => {
-                        if !(0..=7).contains(&priority) {
-                            tracing::error!(
-                                ?priority,
-                                "io priority '{}' not between 0 and 7 (inclusive), class '{}' not in (IO_PRIO_CLASS_RT,IO_PRIO_CLASS_BE,IO_PRIO_CLASS_IDLE)",
-                                priority,
-                                iop_class
-                            );
-                            Err(ErrInvalidSpec::IoPriority)?;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!(?priority, ?e, "failed to parse io priority class");
-                        Err(ErrInvalidSpec::IoPriority)?;
-                    }
-                }
-            }
-        }
-
-        if let Some(mounts) = spec.mounts() {
-            utils::validate_mount_options(mounts)?;
         }
 
         let syscall = create_syscall();
+
+        if let Some(mounts) = spec.mounts() {
+            utils::validate_mount_options(mounts)?;
+            validate_idmapped_mounts(mounts, spec.linux().as_ref(), &*syscall)?;
+        }
+
         utils::validate_spec_for_new_user_ns(spec, &*syscall)?;
         utils::validate_spec_for_net_devices(spec, &*syscall)
             .map_err(LibcontainerError::NetDevicesError)?;
