@@ -12,6 +12,7 @@ use oci_spec::runtime::{Linux, LinuxNamespaceType, Spec};
 #[cfg(feature = "libseccomp")]
 use oci_spec::runtime::{SECCOMP_FD_NAME, VERSION as OCI_VERSION};
 
+use crate::container::Container;
 use crate::hooks;
 use crate::network::network_device::dev_change_net_namespace;
 use crate::process::args::{ContainerArgs, ContainerType};
@@ -188,7 +189,12 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                     .hooks()
                     .as_ref()
                     .expect("pending hook request requires hooks in spec");
-                handle_hook_request(hooks, container_args, init_pid, &mut init_sender)?;
+                handle_hook_request(
+                    hooks,
+                    container_args.container.as_ref(),
+                    init_pid,
+                    &mut init_sender,
+                )?;
             }
             Message::SetupNetworkDeviceReady => {
                 if !std::mem::take(&mut pending.network_device) {
@@ -225,7 +231,8 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
                         channel::ChannelError::MissingSeccompFds,
                     ))?;
                     handle_seccomp_notify(
-                        container_args,
+                        container_args.container.as_ref(),
+                        container_args.container_type,
                         init_pid,
                         seccomp,
                         seccomp_fd,
@@ -340,11 +347,11 @@ impl PendingInitRequests {
 
 fn handle_hook_request(
     hooks: &oci_spec::runtime::Hooks,
-    container_args: &ContainerArgs,
+    container: Option<&Container>,
     init_pid: Pid,
     init_sender: &mut channel::InitSender,
 ) -> Result<()> {
-    if let Some(container) = container_args.container.as_ref() {
+    if let Some(container) = container {
         hooks::run_hooks(
             hooks.prestart().as_ref(),
             Some(&container.state),
@@ -378,17 +385,15 @@ fn handle_hook_request(
 /// alongside the notify fd.
 #[cfg(feature = "libseccomp")]
 fn build_container_process_state(
-    container_args: &ContainerArgs,
+    container: Option<&Container>,
+    container_type: ContainerType,
     init_pid: Pid,
     seccomp: &oci_spec::runtime::LinuxSeccomp,
 ) -> Result<oci_spec::runtime::ContainerProcessState> {
-    let container = container_args
-        .container
-        .as_ref()
-        .ok_or(ProcessError::ContainerStateRequired)?;
+    let container = container.ok_or(ProcessError::ContainerStateRequired)?;
 
     // Determine OCI status based on container type (matching runc behavior)
-    let oci_status = match container_args.container_type {
+    let oci_status = match container_type {
         ContainerType::InitContainer => oci_spec::runtime::ContainerState::Creating,
         ContainerType::TenantContainer { .. } => oci_spec::runtime::ContainerState::Running,
     };
@@ -415,13 +420,14 @@ fn build_container_process_state(
 
 #[cfg(feature = "libseccomp")]
 fn handle_seccomp_notify(
-    container_args: &ContainerArgs,
+    container: Option<&Container>,
+    container_type: ContainerType,
     init_pid: Pid,
     seccomp: &oci_spec::runtime::LinuxSeccomp,
     seccomp_fd: OwnedFd,
     init_sender: &mut channel::InitSender,
 ) -> Result<()> {
-    let state = build_container_process_state(container_args, init_pid, seccomp)?;
+    let state = build_container_process_state(container, container_type, init_pid, seccomp)?;
 
     let listener_path = seccomp
         .listener_path()
