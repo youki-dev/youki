@@ -125,9 +125,13 @@ mod tests {
     use std::thread;
 
     use anyhow::Result;
+    use nix::unistd::Pid;
+    use oci_spec::runtime::{ContainerState, LinuxSeccompBuilder, SECCOMP_FD_NAME};
     use serial_test::serial;
 
     use super::*;
+    use crate::container::Container;
+    use crate::process::args::ContainerType;
 
     // Verifies that the encoded state is delivered with the seccomp notify fd via SCM_RIGHTS.
     #[test]
@@ -155,5 +159,59 @@ mod tests {
         assert_eq!(want, got);
         assert!(th.join().is_ok());
         Ok(())
+    }
+
+    // A missing container state must be rejected instead of building a state.
+    #[test]
+    fn build_container_process_state_requires_container() {
+        let seccomp = LinuxSeccompBuilder::default().build().unwrap();
+        let err = build_container_process_state(
+            None,
+            ContainerType::InitContainer,
+            Pid::from_raw(42),
+            &seccomp,
+        )
+        .expect_err("missing container state should be rejected");
+        assert!(matches!(err, SeccompListenerError::ContainerStateRequired));
+    }
+
+    // An init container reports the `Creating` OCI status (matching runc), and
+    // the built state carries the init pid and the seccomp notify fd name.
+    #[test]
+    fn build_container_process_state_maps_init_container_to_creating() {
+        let mut container = Container::default();
+        container.state.id = "test-id".to_string();
+        let seccomp = LinuxSeccompBuilder::default().build().unwrap();
+
+        let state = build_container_process_state(
+            Some(&container),
+            ContainerType::InitContainer,
+            Pid::from_raw(42),
+            &seccomp,
+        )
+        .expect("state should build");
+
+        assert_eq!(*state.pid(), 42);
+        assert_eq!(state.fds(), &vec![SECCOMP_FD_NAME.to_string()]);
+        assert_eq!(state.state().id().as_str(), "test-id");
+        assert_eq!(*state.state().pid(), Some(42));
+        assert_eq!(*state.state().status(), ContainerState::Creating);
+    }
+
+    // A tenant container reports the `Running` OCI status (matching runc).
+    #[test]
+    fn build_container_process_state_maps_tenant_container_to_running() {
+        let container = Container::default();
+        let seccomp = LinuxSeccompBuilder::default().build().unwrap();
+
+        let state = build_container_process_state(
+            Some(&container),
+            ContainerType::TenantContainer { exec_notify_fd: -1 },
+            Pid::from_raw(7),
+            &seccomp,
+        )
+        .expect("state should build");
+
+        assert_eq!(*state.state().status(), ContainerState::Running);
     }
 }
