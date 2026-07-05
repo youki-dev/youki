@@ -3,6 +3,11 @@ use std::os::fd::AsRawFd;
 use std::path::Path;
 
 use nix::sys::socket::{self, UnixAddr};
+use nix::unistd::Pid;
+use oci_spec::runtime::{SECCOMP_FD_NAME, VERSION as OCI_VERSION};
+
+use crate::container::Container;
+use crate::process::args::ContainerType;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SeccompListenerError {
@@ -12,6 +17,10 @@ pub enum SeccompListenerError {
     EncodeState(#[source] serde_json::Error),
     #[error("unix syscall fails")]
     UnixOther(#[source] nix::Error),
+    #[error("container state is required")]
+    ContainerStateRequired,
+    #[error("failed to build OCI state: {0}")]
+    OciStateBuild(String),
 }
 
 type Result<T> = std::result::Result<T, SeccompListenerError>;
@@ -70,6 +79,42 @@ pub(crate) fn sync_seccomp_send_msg(listener_path: &Path, msg: &[u8], fd: i32) -
     // The spec requires the listener socket to be closed immediately after sending.
     drop(socket);
     Ok(())
+}
+
+/// Builds the OCI `ContainerProcessState` sent to the seccomp listener
+/// alongside the notify fd.
+pub(crate) fn build_container_process_state(
+    container: Option<&Container>,
+    container_type: ContainerType,
+    init_pid: Pid,
+    seccomp: &oci_spec::runtime::LinuxSeccomp,
+) -> Result<oci_spec::runtime::ContainerProcessState> {
+    let container = container.ok_or(SeccompListenerError::ContainerStateRequired)?;
+
+    // Determine OCI status based on container type (matching runc behavior)
+    let oci_status = match container_type {
+        ContainerType::InitContainer => oci_spec::runtime::ContainerState::Creating,
+        ContainerType::TenantContainer { .. } => oci_spec::runtime::ContainerState::Running,
+    };
+
+    let oci_state = oci_spec::runtime::StateBuilder::default()
+        .version(OCI_VERSION)
+        .id(container.state.id.clone())
+        .status(oci_status)
+        .pid(init_pid.as_raw())
+        .bundle(container.state.bundle.clone())
+        .annotations(container.state.annotations.clone().unwrap_or_default())
+        .build()
+        .map_err(|e| SeccompListenerError::OciStateBuild(e.to_string()))?;
+
+    oci_spec::runtime::ContainerProcessStateBuilder::default()
+        .version(OCI_VERSION)
+        .fds(vec![SECCOMP_FD_NAME.to_string()])
+        .pid(init_pid.as_raw())
+        .metadata(seccomp.listener_metadata().clone().unwrap_or_default())
+        .state(oci_state)
+        .build()
+        .map_err(|e| SeccompListenerError::OciStateBuild(e.to_string()))
 }
 
 #[cfg(test)]

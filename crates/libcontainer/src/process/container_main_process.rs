@@ -9,8 +9,6 @@ use std::path::PathBuf;
 use nix::sys::wait::{WaitStatus, waitpid};
 use nix::unistd::Pid;
 use oci_spec::runtime::{Linux, LinuxNamespaceType, Spec};
-#[cfg(feature = "libseccomp")]
-use oci_spec::runtime::{SECCOMP_FD_NAME, VERSION as OCI_VERSION};
 
 use crate::container::Container;
 use crate::hooks;
@@ -31,8 +29,6 @@ pub enum ProcessError {
     SetGroupsDeny(#[source] std::io::Error),
     #[error(transparent)]
     UserNamespace(#[from] crate::user_ns::UserNamespaceError),
-    #[error("container state is required")]
-    ContainerStateRequired,
     #[error("failed to wait for intermediate process")]
     WaitIntermediateProcess(#[source] nix::Error),
     #[error(transparent)]
@@ -50,8 +46,6 @@ pub enum ProcessError {
     SyscallOther(#[source] SyscallError),
     #[error("failed hooks {0}")]
     Hooks(#[from] crate::hooks::HookError),
-    #[error("failed to build OCI state: {0}")]
-    OciStateBuild(String),
 }
 
 type Result<T> = std::result::Result<T, ProcessError>;
@@ -381,43 +375,6 @@ fn handle_hook_request(
     Ok(())
 }
 
-/// Builds the OCI `ContainerProcessState` sent to the seccomp listener
-/// alongside the notify fd.
-#[cfg(feature = "libseccomp")]
-fn build_container_process_state(
-    container: Option<&Container>,
-    container_type: ContainerType,
-    init_pid: Pid,
-    seccomp: &oci_spec::runtime::LinuxSeccomp,
-) -> Result<oci_spec::runtime::ContainerProcessState> {
-    let container = container.ok_or(ProcessError::ContainerStateRequired)?;
-
-    // Determine OCI status based on container type (matching runc behavior)
-    let oci_status = match container_type {
-        ContainerType::InitContainer => oci_spec::runtime::ContainerState::Creating,
-        ContainerType::TenantContainer { .. } => oci_spec::runtime::ContainerState::Running,
-    };
-
-    let oci_state = oci_spec::runtime::StateBuilder::default()
-        .version(OCI_VERSION)
-        .id(container.state.id.clone())
-        .status(oci_status)
-        .pid(init_pid.as_raw())
-        .bundle(container.state.bundle.clone())
-        .annotations(container.state.annotations.clone().unwrap_or_default())
-        .build()
-        .map_err(|e| ProcessError::OciStateBuild(e.to_string()))?;
-
-    oci_spec::runtime::ContainerProcessStateBuilder::default()
-        .version(OCI_VERSION)
-        .fds(vec![SECCOMP_FD_NAME.to_string()])
-        .pid(init_pid.as_raw())
-        .metadata(seccomp.listener_metadata().clone().unwrap_or_default())
-        .state(oci_state)
-        .build()
-        .map_err(|e| ProcessError::OciStateBuild(e.to_string()))
-}
-
 #[cfg(feature = "libseccomp")]
 fn handle_seccomp_notify(
     container: Option<&Container>,
@@ -427,7 +384,12 @@ fn handle_seccomp_notify(
     seccomp_fd: OwnedFd,
     init_sender: &mut channel::InitSender,
 ) -> Result<()> {
-    let state = build_container_process_state(container, container_type, init_pid, seccomp)?;
+    let state = crate::process::seccomp_listener::build_container_process_state(
+        container,
+        container_type,
+        init_pid,
+        seccomp,
+    )?;
 
     let listener_path = seccomp
         .listener_path()
