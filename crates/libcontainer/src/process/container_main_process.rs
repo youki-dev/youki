@@ -15,7 +15,6 @@ use crate::hooks;
 use crate::network::network_device::dev_change_net_namespace;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::fork::{self, CloneCb};
-use crate::process::intel_rdt::setup_intel_rdt;
 use crate::process::message::Message;
 use crate::process::{channel, container_intermediate_process};
 use crate::syscall::SyscallError;
