@@ -47,7 +47,7 @@ pub fn cleanup_netns(name: &str) -> Result<()> {
 
 /// Wait until systemd-udevd finishes processing rules triggered by device
 /// creation events.
-pub fn udev_settle() {
+fn udev_settle() {
     let _ = std::process::Command::new("udevadm").arg("settle").output();
 }
 
@@ -62,7 +62,6 @@ pub fn create_dummy_device(name: &str) -> Result<()> {
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    udev_settle();
     Ok(())
 }
 
@@ -71,7 +70,7 @@ pub fn create_dummy_device(name: &str) -> Result<()> {
 /// systemd-udevd's MACAddressPolicy=persistent, which may overwrite it.
 /// An explicitly assigned address at creation time is left untouched.
 /// See https://github.com/opencontainers/runc/pull/5324
-pub fn create_dummy_device_with_attributes(name: &str, mac: &str, mtu: &str) -> Result<()> {
+fn create_dummy_device_with_attributes(name: &str, mac: &str, mtu: &str) -> Result<()> {
     let output = std::process::Command::new("ip")
         .args(vec![
             "link", "add", name, "address", mac, "mtu", mtu, "type", "dummy",
