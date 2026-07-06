@@ -34,6 +34,7 @@ impl StatsProvider for Pids {
 
 impl Pids {
     fn apply(root_path: &Path, pids: &LinuxPids) -> Result<(), WrappedIoError> {
+        // follow runc's behavior of mapping 0 to 1 due to systemd limitations
         let limit = match pids.limit() {
             0 => "1".to_string(),
             1.. => pids.limit().to_string(),
