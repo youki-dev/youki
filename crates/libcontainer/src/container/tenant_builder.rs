@@ -47,6 +47,7 @@ pub struct TenantContainerBuilder {
     capabilities: Vec<String>,
     process: Option<PathBuf>,
     detached: bool,
+    tty: bool,
     as_sibling: bool,
     additional_gids: Vec<u32>,
     user: Option<u32>,
@@ -146,6 +147,7 @@ impl TenantContainerBuilder {
             capabilities: Vec::new(),
             process: None,
             detached: false,
+            tty: false,
             as_sibling: false,
             additional_gids: vec![],
             user: None,
@@ -202,6 +204,11 @@ impl TenantContainerBuilder {
         self
     }
 
+    pub fn with_tty(mut self, tty: bool) -> Self {
+        self.tty = tty;
+        self
+    }
+
     pub fn with_additional_gids(mut self, gids: Vec<u32>) -> Self {
         self.additional_gids = gids;
         self
@@ -238,7 +245,7 @@ impl TenantContainerBuilder {
     }
 
     /// Joins an existing container
-    pub fn build(self) -> Result<Pid, LibcontainerError> {
+    pub fn build(self) -> Result<(Pid, Option<OwnedFd>), LibcontainerError> {
         let container_dir = self.lookup_container_dir()?;
         let container = self.load_container_state(container_dir.clone())?;
         let mut spec = self.load_init_spec(&container)?;
@@ -289,7 +296,7 @@ impl TenantContainerBuilder {
             process_label: self.process_label,
         };
 
-        let pid = builder_impl.create()?;
+        let (pid, pty_master_fd) = builder_impl.create()?;
 
         let mut notify_socket = NotifySocket::new(notify_path);
         notify_socket.notify_container_start()?;
@@ -309,7 +316,7 @@ impl TenantContainerBuilder {
             match read(read_end.as_raw_fd(), &mut buf).map_err(LibcontainerError::OtherSyscall)? {
                 0 => {
                     if err_str_buf.is_empty() {
-                        return Ok(pid);
+                        return Ok((pid, pty_master_fd));
                     } else {
                         return Err(LibcontainerError::Other(
                             String::from_utf8_lossy(&err_str_buf).to_string(),
@@ -439,6 +446,8 @@ impl TenantContainerBuilder {
             }
 
             process_builder = process_builder.user(user_builder.build()?);
+
+            process_builder = process_builder.terminal(self.tty);
 
             process_builder.build()?
         };

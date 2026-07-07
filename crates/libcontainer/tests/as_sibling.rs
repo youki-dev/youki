@@ -66,7 +66,7 @@ fn run_init_process_as_child() -> Result<()> {
     prepare_container_root(&root)?;
 
     let id = format!("test-container-{:x}", hash(root.as_ref()));
-    let container = ContainerBuilder::new(id, SyscallType::Linux)
+    let (container, _pty_master_fd) = ContainerBuilder::new(id, SyscallType::Linux)
         .with_executor(SomeExecutor)
         .with_root_path(root.as_ref())?
         .as_init(root.as_ref())
@@ -93,7 +93,7 @@ fn run_init_process_as_sibling() -> Result<()> {
     prepare_container_root(&root)?;
 
     let id = format!("test-container-{:x}", hash(root.as_ref()));
-    let container = ContainerBuilder::new(id, SyscallType::Linux)
+    let (container, _pty_master_fd) = ContainerBuilder::new(id, SyscallType::Linux)
         .with_executor(SomeExecutor)
         .with_root_path(root.as_ref())?
         .as_init(root.as_ref())

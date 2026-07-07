@@ -46,6 +46,7 @@ pub mod scheduler;
 pub mod seccomp;
 pub mod seccomp_notify;
 pub mod sysctl;
+pub mod terminal;
 pub mod tlb;
 pub mod uid_mappings;
 pub mod update;
