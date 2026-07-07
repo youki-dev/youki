@@ -30,6 +30,7 @@ fn create_spec(cgroup_name: &str, resources: Option<LinuxResources>) -> Result<S
     Ok(spec)
 }
 
+// "cpu burst"
 pub(crate) fn cpu_burst_test() -> TestResult {
     const CGROUP_NAME: &str = "cpu_burst";
     let spec = test_result!(create_spec(CGROUP_NAME, None));
@@ -110,7 +111,7 @@ pub(crate) fn set_cpu_period_without_quota_test() -> TestResult {
     })
 }
 
-// set cpu period with no quota (invalid period)
+// "set cpu period with no quota (invalid period)"
 pub(crate) fn set_cpu_period_without_quota_invalid_test() -> TestResult {
     const CGROUP_NAME: &str = "cpu_period_invalid";
     let cpu = test_result!(
@@ -139,6 +140,7 @@ pub(crate) fn set_cpu_period_without_quota_invalid_test() -> TestResult {
     })
 }
 
+// "set cpu quota with no period"
 pub(crate) fn set_cpu_quota_without_period_test() -> TestResult {
     const CGROUP_NAME: &str = "cpu_quota_no_period";
     let cpu = test_result!(
@@ -178,6 +180,7 @@ pub(crate) fn set_cpu_quota_without_period_test() -> TestResult {
     })
 }
 
+// "update cpu period with no previous period/quota set"
 pub(crate) fn update_cpu_period_without_previous_limits_test() -> TestResult {
     const CGROUP_NAME: &str = "update_cpu_period_without_previous_limits";
     let cpu = test_result!(
@@ -219,6 +222,7 @@ pub(crate) fn update_cpu_period_without_previous_limits_test() -> TestResult {
     })
 }
 
+// "update cpu quota with no previous period/quota set"
 pub(crate) fn update_cpu_quota_without_previous_limits_test() -> TestResult {
     const CGROUP_NAME: &str = "update_cpu_quota_without_previous_limits";
     let cpu = test_result!(
@@ -260,6 +264,7 @@ pub(crate) fn update_cpu_quota_without_previous_limits_test() -> TestResult {
     })
 }
 
+// "update cgroup cpu.idle"
 pub(crate) fn update_cgroup_cpu_idle_test() -> TestResult {
     const CGROUP_NAME: &str = "update_cgroup_cpu_idle";
 
@@ -322,4 +327,11 @@ pub(crate) fn update_cgroup_cpu_idle_test() -> TestResult {
 
         TestResult::Passed
     })
+
+    // Not ported: runc's "update cpu period in a pod cgroup with pod limit set"
+    // requires cgroup v1.
+    //
+    // Not ported: runc's "update cgroup cpu.idle via systemd v252+"
+    // requires the systemd cgroup driver (systemd_v252); contest tests
+    // currently target the cgroupfs driver only.
 }
