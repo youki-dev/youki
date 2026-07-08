@@ -416,42 +416,19 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
         Ok(ns) => ns,
         Err(e) => return TestResult::Failed(anyhow!("Failed to create netns: {e}")),
     };
-    let _dev = match net::DummyDevice::create(dev_name.clone()) {
-        Ok(d) => d,
-        Err(e) => return TestResult::Failed(anyhow!("Failed to create dummy dev: {e}")),
-    };
-
     let mtu = "1789";
     let mac = "00:11:22:33:44:55";
     let ip = "169.254.169.77/32";
 
-    let out = match Command::new("ip")
-        .args(["link", "set", "mtu", mtu, "dev", &dev_name])
-        .output()
-    {
-        Ok(out) => out,
-        Err(e) => return TestResult::Failed(anyhow!("ip link set mtu execution failed: {e}")),
+    // Set the MAC address and MTU in the device creation request instead of
+    // separate `ip link set` commands afterwards. The latter races with
+    // systemd-udevd (MACAddressPolicy=persistent) rewriting the MAC of newly
+    // created devices, while an address given at creation time is respected.
+    // See https://github.com/opencontainers/runc/pull/5324
+    let _dev = match net::DummyDevice::create_with_attributes(dev_name.clone(), mac, mtu) {
+        Ok(d) => d,
+        Err(e) => return TestResult::Failed(anyhow!("Failed to create dummy dev: {e}")),
     };
-    if !out.status.success() {
-        return TestResult::Failed(anyhow!(
-            "ip link set mtu failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
-    }
-
-    let out = match Command::new("ip")
-        .args(["link", "set", "address", mac, "dev", &dev_name])
-        .output()
-    {
-        Ok(out) => out,
-        Err(e) => return TestResult::Failed(anyhow!("ip link set address execution failed: {e}")),
-    };
-    if !out.status.success() {
-        return TestResult::Failed(anyhow!(
-            "ip link set address failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
-    }
 
     let out = match Command::new("ip")
         .args(["address", "add", ip, "dev", &dev_name])
