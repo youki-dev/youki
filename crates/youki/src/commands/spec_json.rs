@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 use libcontainer::oci_spec::runtime::{
-    Capabilities, LinuxBuilder, LinuxIdMappingBuilder, LinuxNamespace, LinuxNamespaceBuilder,
-    LinuxNamespaceType, Mount, Spec,
+    Capabilities, LinuxBuilder, LinuxDeviceCgroupBuilder, LinuxIdMappingBuilder, LinuxNamespace,
+    LinuxNamespaceBuilder, LinuxNamespaceType, Mount, Spec,
 };
 use libcontainer::syscall::syscall::Syscall;
 use serde_json::to_writer_pretty;
@@ -20,6 +20,18 @@ pub fn get_default() -> Result<Spec> {
             process.set_capabilities(Some(capabilities));
         }
         spec.set_process(Some(process));
+    }
+
+    if let Some(mut linux) = spec.linux().clone() {
+        if let Some(mut resources) = linux.resources().clone() {
+            let default_device = LinuxDeviceCgroupBuilder::default()
+                .allow(false)
+                .access("rwm".to_string())
+                .build()?;
+            resources.set_devices(Some(vec![default_device]));
+            linux.set_resources(Some(resources));
+        }
+        spec.set_linux(Some(linux));
     }
 
     Ok(spec)
