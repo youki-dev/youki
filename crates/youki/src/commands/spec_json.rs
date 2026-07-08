@@ -4,14 +4,25 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 use libcontainer::oci_spec::runtime::{
-    LinuxBuilder, LinuxIdMappingBuilder, LinuxNamespace, LinuxNamespaceBuilder, LinuxNamespaceType,
-    Mount, Spec,
+    Capabilities, LinuxBuilder, LinuxIdMappingBuilder, LinuxNamespace, LinuxNamespaceBuilder,
+    LinuxNamespaceType, Mount, Spec,
 };
 use libcontainer::syscall::syscall::Syscall;
 use serde_json::to_writer_pretty;
 
 pub fn get_default() -> Result<Spec> {
-    Ok(Spec::default())
+    let mut spec = Spec::default();
+
+    if let Some(mut process) = spec.process().clone() {
+        if let Some(mut capabilities) = process.capabilities().clone() {
+            capabilities.set_inheritable(Some(Capabilities::new()));
+            capabilities.set_ambient(Some(Capabilities::new()));
+            process.set_capabilities(Some(capabilities));
+        }
+        spec.set_process(Some(process));
+    }
+
+    Ok(spec)
 }
 
 pub fn get_rootless(syscall: &dyn Syscall) -> Result<Spec> {
