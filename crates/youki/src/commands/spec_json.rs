@@ -3,6 +3,7 @@ use std::io::{BufWriter, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
+use libcgroups::common::{CgroupSetup, get_cgroup_setup};
 use libcontainer::oci_spec::runtime::{
     Capabilities, LinuxBuilder, LinuxDeviceCgroupBuilder, LinuxIdMappingBuilder, LinuxNamespace,
     LinuxNamespaceBuilder, LinuxNamespaceType, Mount, Spec,
@@ -19,6 +20,7 @@ pub fn get_default() -> Result<Spec> {
             capabilities.set_ambient(Some(Capabilities::new()));
             process.set_capabilities(Some(capabilities));
         }
+
         spec.set_process(Some(process));
     }
 
@@ -31,6 +33,16 @@ pub fn get_default() -> Result<Spec> {
             resources.set_devices(Some(vec![default_device]));
             linux.set_resources(Some(resources));
         }
+
+        if let Some(namespaces) = linux.namespaces().clone() {
+            let mut filtered_namespaces = namespaces;
+            let setup = get_cgroup_setup().unwrap_or(CgroupSetup::Legacy);
+            if !matches!(setup, CgroupSetup::Unified) {
+                filtered_namespaces.retain(|ns| ns.typ() != LinuxNamespaceType::Cgroup);
+            }
+            linux.set_namespaces(Some(filtered_namespaces));
+        }
+
         spec.set_linux(Some(linux));
     }
 
