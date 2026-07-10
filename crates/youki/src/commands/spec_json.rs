@@ -12,41 +12,8 @@ use libcontainer::syscall::syscall::Syscall;
 use serde_json::to_writer_pretty;
 
 pub fn get_default() -> Result<Spec> {
-    let mut spec = Spec::default();
-
-    if let Some(mut process) = spec.process().clone() {
-        if let Some(mut capabilities) = process.capabilities().clone() {
-            capabilities.set_inheritable(Some(Capabilities::new()));
-            capabilities.set_ambient(Some(Capabilities::new()));
-            process.set_capabilities(Some(capabilities));
-        }
-
-        spec.set_process(Some(process));
-    }
-
-    if let Some(mut linux) = spec.linux().clone() {
-        if let Some(mut resources) = linux.resources().clone() {
-            let default_device = LinuxDeviceCgroupBuilder::default()
-                .allow(false)
-                .access("rwm".to_string())
-                .build()?;
-            resources.set_devices(Some(vec![default_device]));
-            linux.set_resources(Some(resources));
-        }
-
-        if let Some(namespaces) = linux.namespaces().clone() {
-            let mut filtered_namespaces = namespaces;
-            let setup = get_cgroup_setup().unwrap_or(CgroupSetup::Legacy);
-            if !matches!(setup, CgroupSetup::Unified) {
-                filtered_namespaces.retain(|ns| ns.typ() != LinuxNamespaceType::Cgroup);
-            }
-            linux.set_namespaces(Some(filtered_namespaces));
-        }
-
-        spec.set_linux(Some(linux));
-    }
-
-    Ok(spec)
+    let spec = Spec::default();
+    get_filtered_spec(spec)
 }
 
 pub fn get_rootless(syscall: &dyn Syscall) -> Result<Spec> {
@@ -117,6 +84,42 @@ pub fn get_rootless(syscall: &dyn Syscall) -> Result<Spec> {
 
     let mut spec = get_default()?;
     spec.set_linux(Some(linux)).set_mounts(Some(mounts));
+    get_filtered_spec(spec)
+}
+
+fn get_filtered_spec(mut spec: Spec) -> Result<Spec> {
+    if let Some(mut process) = spec.process().clone() {
+        if let Some(mut capabilities) = process.capabilities().clone() {
+            capabilities.set_inheritable(Some(Capabilities::new()));
+            capabilities.set_ambient(Some(Capabilities::new()));
+            process.set_capabilities(Some(capabilities));
+        }
+
+        spec.set_process(Some(process));
+    }
+
+    if let Some(mut linux) = spec.linux().clone() {
+        if let Some(mut resources) = linux.resources().clone() {
+            let default_device = LinuxDeviceCgroupBuilder::default()
+                .allow(false)
+                .access("rwm".to_string())
+                .build()?;
+            resources.set_devices(Some(vec![default_device]));
+            linux.set_resources(Some(resources));
+        }
+
+        if let Some(namespaces) = linux.namespaces().clone() {
+            let mut filtered_namespaces = namespaces;
+            let setup = get_cgroup_setup().unwrap_or(CgroupSetup::Legacy);
+            if !matches!(setup, CgroupSetup::Unified) {
+                filtered_namespaces.retain(|ns| ns.typ() != LinuxNamespaceType::Cgroup);
+            }
+            linux.set_namespaces(Some(filtered_namespaces));
+        }
+
+        spec.set_linux(Some(linux));
+    }
+
     Ok(spec)
 }
 
