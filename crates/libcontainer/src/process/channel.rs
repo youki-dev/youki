@@ -584,6 +584,48 @@ mod tests {
 
     #[test]
     #[serial]
+    fn test_channel_time_offset_request() -> Result<()> {
+        let (sender, receiver) = &mut main_channel()?;
+        match unsafe { unistd::fork()? } {
+            unistd::ForkResult::Parent { child } => {
+                wait::waitpid(child, None)?;
+                receiver.wait_for_time_offset_request()?;
+                receiver.close()?;
+            }
+            unistd::ForkResult::Child => {
+                sender
+                    .time_offset_request()
+                    .with_context(|| "Failed to send time offset request")?;
+                sender.close()?;
+                std::process::exit(0);
+            }
+        };
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_channel_time_offsets_ack() -> Result<()> {
+        let (sender, receiver) = &mut intermediate_channel()?;
+        match unsafe { unistd::fork()? } {
+            unistd::ForkResult::Parent { child } => {
+                wait::waitpid(child, None)?;
+                receiver.wait_for_time_offsets_ack()?;
+            }
+            unistd::ForkResult::Child => {
+                sender
+                    .time_offsets_written()
+                    .with_context(|| "Failed to send time offsets written")?;
+                std::process::exit(0);
+            }
+        };
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
     fn test_channel_mount_fd_error() -> Result<()> {
         let (sender, receiver) = &mut init_channel()?;
         sender.send_mount_fd_error("boom".to_string())?;

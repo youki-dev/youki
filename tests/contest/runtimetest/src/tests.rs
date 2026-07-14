@@ -1448,12 +1448,26 @@ pub fn validate_time_offsets(spec: &Spec) {
     for line in actual_offsets.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() != 3 {
+            eprintln!("Invalid time offset format: {line}");
             continue;
         }
 
         let clock_type = parts[0];
-        let actual_secs = parts[1].parse::<i64>().unwrap();
-        let actual_nanosecs = parts[2].parse::<u32>().unwrap();
+        let actual_secs = match parts[1].parse::<i64>() {
+            Ok(value) => value,
+            Err(e) => {
+                eprintln!("Invalid seconds value in `{line}`: {e}");
+                continue;
+            }
+        };
+
+        let actual_nanosecs = match parts[2].parse::<u32>() {
+            Ok(value) => value,
+            Err(e) => {
+                eprintln!("Invalid nanoseconds value in `{line}`: {e}");
+                continue;
+            }
+        };
 
         let expected = match clock_type {
             "monotonic" => Some((monotonic_secs, monotonic_nanosecs)),

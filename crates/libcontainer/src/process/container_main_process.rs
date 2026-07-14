@@ -130,11 +130,25 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
 
     // If creating a container with time namespace and offsets are specified,
     // the intermediate process will ask the main process to write the time offsets.
-    build_timens_offsets(container_args.spec.linux().as_ref())
+    container_args
+        .spec
+        .linux()
+        .as_ref()
+        .and_then(build_timens_offsets)
         .map(|time_offsets| -> Result<()> {
             // This must be done from the parent process since CAP_SYS_TIME is required.
             intermediate_main_receiver.wait_for_time_offset_request()?;
-            setup_time_offsets(&time_offsets, intermediate_pid)?;
+            tracing::debug!("write time offsets for pid {intermediate_pid:?}: '{time_offsets}'");
+            std::fs::write(
+                format!("/proc/{intermediate_pid}/timens_offsets"),
+                &time_offsets,
+            )
+            .map_err(|err| {
+                tracing::error!(
+                    "failed to write timens_offsets for pid {intermediate_pid:?}: {err}"
+                );
+                ProcessError::SyscallOther(SyscallError::IO(err))
+            })?;
             inter_sender.time_offsets_written()?;
             Ok(())
         })
@@ -333,8 +347,7 @@ fn setup_mapping(config: &UserNamespaceConfig, pid: Pid) -> Result<()> {
 
 /// Builds the payload to write to the kernel's `/proc/<pid>/timens_offsets`
 /// from the spec's `timeOffsets`.
-fn build_timens_offsets(linux: Option<&Linux>) -> Option<String> {
-    let linux = linux?;
+fn build_timens_offsets(linux: &Linux) -> Option<String> {
     let offsets = linux.time_offsets().as_ref()?;
     if offsets.is_empty() {
         return None;
@@ -425,17 +438,6 @@ fn move_network_devices_to_container(
             .collect::<Result<HashMap<String, Vec<crate::network::cidr::CidrAddress>>>>()?;
         init_sender.move_network_device(addrs_map)?;
     }
-    Ok(())
-}
-
-fn setup_time_offsets(offsets: &str, pid: Pid) -> Result<()> {
-    tracing::debug!("write time offsets for pid {:?}: '{}'", pid, offsets);
-
-    std::fs::write(format!("/proc/{pid}/timens_offsets"), offsets).map_err(|err| {
-        tracing::error!("failed to write timens_offsets for pid {:?}: {}", pid, err);
-        ProcessError::SyscallOther(SyscallError::IO(err))
-    })?;
-
     Ok(())
 }
 

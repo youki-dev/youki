@@ -857,16 +857,18 @@ mod tests {
         ));
     }
 
+    fn timens_offsets() -> std::collections::HashMap<String, oci_spec::runtime::LinuxTimeOffset> {
+        [(
+            "monotonic".to_string(),
+            oci_spec::runtime::LinuxTimeOffset::default(),
+        )]
+        .into_iter()
+        .collect()
+    }
+
     #[test]
-    fn test_validate_spec_for_time_namespace() {
-        use std::collections::HashMap;
-
-        use oci_spec::runtime::LinuxTimeOffset;
-
-        let offsets: HashMap<String, LinuxTimeOffset> =
-            [("monotonic".to_string(), LinuxTimeOffset::default())]
-                .into_iter()
-                .collect();
+    fn test_validate_spec_for_time_namespace_error() {
+        let offsets = timens_offsets();
 
         // offsets set but no time namespace -> TimeNamespace
         let spec_offsets_without_ns = SpecBuilder::default()
@@ -895,7 +897,7 @@ mod tests {
                             .build()
                             .unwrap(),
                     ])
-                    .time_offsets(offsets.clone())
+                    .time_offsets(offsets)
                     .build()
                     .unwrap(),
             )
@@ -905,6 +907,11 @@ mod tests {
             Validator::validate_spec_for_time_namespace(&spec_offsets_with_path).unwrap_err(),
             ErrInvalidSpec::TimeOffsetsWithPath
         ));
+    }
+
+    #[test]
+    fn test_validate_spec_for_time_namespace_success() {
+        let offsets = timens_offsets();
 
         // offsets set with a new time namespace (no path) -> Ok
         let spec_valid = SpecBuilder::default()
