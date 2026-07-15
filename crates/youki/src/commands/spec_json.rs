@@ -13,7 +13,7 @@ use serde_json::to_writer_pretty;
 
 pub fn get_default() -> Result<Spec> {
     let spec = Spec::default();
-    get_filtered_spec(spec)
+    normalize_spec(spec)
 }
 
 pub fn get_rootless(syscall: &dyn Syscall) -> Result<Spec> {
@@ -84,7 +84,7 @@ pub fn get_rootless(syscall: &dyn Syscall) -> Result<Spec> {
 
     let mut spec = get_default()?;
     spec.set_linux(Some(linux)).set_mounts(Some(mounts));
-    get_filtered_spec(spec)
+    normalize_spec(spec)
 }
 
 fn normalize_spec(mut spec: Spec) -> Result<Spec> {
