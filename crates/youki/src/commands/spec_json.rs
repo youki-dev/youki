@@ -87,7 +87,7 @@ pub fn get_rootless(syscall: &dyn Syscall) -> Result<Spec> {
     get_filtered_spec(spec)
 }
 
-fn get_filtered_spec(mut spec: Spec) -> Result<Spec> {
+fn normalize_spec(mut spec: Spec) -> Result<Spec> {
     if let Some(mut process) = spec.process().clone() {
         if let Some(mut capabilities) = process.capabilities().clone() {
             capabilities.set_inheritable(Some(Capabilities::new()));
