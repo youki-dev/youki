@@ -325,32 +325,6 @@ pub struct ContainerProcessState {
     pub state: State,
 }
 
-#[derive(Serialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct StateExporter<'a> {
-    pub oci_version: &'a str,
-    pub id: &'a str,
-    pub status: ContainerStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pid: Option<i32>,
-    pub bundle: &'a Path,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub annotations: Option<&'a HashMap<String, String>>,
-}
-
-impl<'a> From<&'a State> for StateExporter<'a> {
-    fn from(state: &'a State) -> Self {
-        Self {
-            oci_version: &state.oci_version,
-            id: &state.id,
-            status: state.status,
-            pid: state.pid,
-            bundle: &state.bundle,
-            annotations: state.annotations.as_ref(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
