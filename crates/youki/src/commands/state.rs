@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use libcontainer::container::state::{ContainerStatus, State as LibState};
+use libcontainer::container::state::{ContainerStatus, State as ContainerState};
 use liboci_cli::State;
 use serde::Serialize;
 
@@ -28,8 +28,8 @@ pub struct StateExporter<'a> {
     pub annotations: Option<&'a HashMap<String, String>>,
 }
 
-impl<'a> From<&'a LibState> for StateExporter<'a> {
-    fn from(state: &'a LibState) -> Self {
+impl<'a> From<&'a ContainerState> for StateExporter<'a> {
+    fn from(state: &'a ContainerState) -> Self {
         Self {
             oci_version: &state.oci_version,
             id: &state.id,
