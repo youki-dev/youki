@@ -16,8 +16,8 @@
         <link rel="icon" href="favicon-de23e50b.svg">
         <link rel="shortcut icon" href="favicon-8114d1fc.png">
         <link rel="stylesheet" href="css/variables-8adf115d.css">
-        <link rel="stylesheet" href="css/general-0392ca55.css">
-        <link rel="stylesheet" href="css/chrome-fc474251.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
         <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-77cda521.js";
+            window.path_to_searchindex_js = "searchindex-172a64dd.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-96345dbb.js"></script>
+        <script src="toc-542fda56.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -241,6 +241,7 @@ youki is named after the Japanese word ‘youki’, which means ‘a container�
 </ul>
 </li>
 <li>Webassembly : This explains how to use webassembly module with youki.</li>
+<li>Kubernetes : This explains how to install youki on a Kubernetes cluster as the OCI runtime via the youki-deploy DaemonSet.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="basic-setup"><a class="header" href="#basic-setup">Basic Setup</a></h1>
@@ -767,6 +768,66 @@ ENTRYPOINT ["wasm-module.wasm"]
 </li>
 </ol>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="using-youki-as-a-kubernetes-runtime"><a class="header" href="#using-youki-as-a-kubernetes-runtime">Using youki as a Kubernetes runtime</a></h1>
+<p>youki implements the OCI runtime spec, so it can be plugged into any
+Kubernetes cluster. Once youki is installed on each node and the
+node’s container runtime is configured to know about it, individual
+Pods can opt in via <code>runtimeClassName: youki</code>.</p>
+<h2 id="youki-deploy-ready-to-use-installer-for-kind--containerd"><a class="header" href="#youki-deploy-ready-to-use-installer-for-kind--containerd">youki-deploy: ready-to-use installer for kind / containerd</a></h2>
+<p>The repository ships a small installer under
+<a href="https://github.com/youki-dev/youki/tree/main/tools/youki-deploy"><code>tools/youki-deploy/</code></a>
+which automates install the youki binary on every node, and register
+it as a containerd runtime. It is composed of:</p>
+<ul>
+<li>A Docker image that bundles the youki release binary and an
+<code>install-youki.sh</code> script.</li>
+<li>A Kubernetes DaemonSet manifest that runs that image as a privileged
+pod on every node, mounts the host’s <code>/usr/local/bin</code> and
+<code>/etc/containerd</code>, copies the binary into place, patches
+<code>/etc/containerd/config.toml</code>, and restarts containerd.</li>
+</ul>
+<p>It is currently exercised against <a href="https://kind.sigs.k8s.io/">kind</a>
+(Kubernetes-in-Docker) but the manifests are Kubernetes
+resources and should apply to any containerd-based cluster.</p>
+<h2 id="try-it-locally-on-kind"><a class="header" href="#try-it-locally-on-kind">Try it locally on kind</a></h2>
+<p>To stand up the cluster + DaemonSet:</p>
+<pre><code class="language-console">$ just kind-deploy
+</code></pre>
+<p>To tear it down:</p>
+<pre><code class="language-console">$ just clean-test-kind-deploy
+</code></pre>
+<p>See also
+<a href="#kubernetes-test">Developer Documentation &gt; Kubernetes test</a>.</p>
+<h2 id="using-youki-for-your-own-pods"><a class="header" href="#using-youki-for-your-own-pods">Using youki for your own Pods</a></h2>
+<p>Once the DaemonSet is installed, just add <code>runtimeClassName: youki</code> to
+the pod spec:</p>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-youki
+spec:
+  runtimeClassName: youki
+  containers:
+    - name: nginx
+      image: nginx:1.27-alpine
+</code></pre>
+<p>Pods without <code>runtimeClassName</code> continue to use whatever the cluster’s
+default OCI runtime is (typically <code>runc</code>), so installing youki-deploy
+is non-disruptive for existing workloads.</p>
+<h2 id="caveats"><a class="header" href="#caveats">Caveats</a></h2>
+<ul>
+<li>The installer modifies <code>/usr/local/bin/youki</code> and
+<code>/etc/containerd/config.toml</code> on the host. It does not currently
+uninstall on DaemonSet deletion - removing youki and the containerd
+config patch must be done manually.</li>
+<li>The DaemonSet manifest references the installer image as
+<code>youki-installer:latest</code>, which is loaded into the local kind cluster
+by <code>just kind-deploy</code>. To deploy on a real cluster, build the image
+from <code>tools/youki-deploy/Dockerfile</code> and push it to a registry that
+your cluster nodes can pull from, then update the image field in
+<code>tools/youki-deploy/youki-deploy.yaml</code>.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="community"><a class="header" href="#community">Community</a></h1>
 <ul>
 <li><a href="#adopters-and-use-cases">Adopters and Use Cases</a></li>
@@ -1221,7 +1282,7 @@ when the executor can’t handle the workload.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="contest"><a class="header" href="#contest">Contest</a></h1>
 <p>This is youki’s original integration to verify the behavior of the low-level container runtime.</p>
-<p><img src="assets/rust_oci_tests.png" alt="Overview"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="assets/rust_oci_tests.png" alt="Overview"><span class="img-wrapper"><img src="assets/rust_oci_tests.png" alt="Overview"></span></label></p>
 <h1 id="how-to-run"><a class="header" href="#how-to-run">How to run</a></h1>
 <pre><code class="language-console">just test-contest
 </code></pre>
@@ -1416,12 +1477,29 @@ $ just test-runc-comp
 <h1 id="kubernetes-test"><a class="header" href="#kubernetes-test">Kubernetes test</a></h1>
 <h2 id="notes-5"><a class="header" href="#notes-5">Notes</a></h2>
 <p>This test verifies that youki works correctly as a container runtime in a Kubernetes environment using <a href="https://kind.sigs.k8s.io/">Kind</a> (Kubernetes in Docker).</p>
+<h2 id="single-node-deploy-test"><a class="header" href="#single-node-deploy-test">Single Node deploy test</a></h2>
 <p>The test builds a custom Kind node image with youki, creates a cluster, and deploys nginx pods using a RuntimeClass that specifies youki as the runtime.</p>
 <h2 id="local-3"><a class="header" href="#local-3">Local</a></h2>
 <pre><code class="language-console">$ just test-kind
 </code></pre>
 <p>To clean up an existing Kind cluster first:</p>
 <pre><code class="language-console">$ just clean-test-kind
+</code></pre>
+<h2 id="multi-node-deploy-test"><a class="header" href="#multi-node-deploy-test">Multi Node deploy test</a></h2>
+<p>In addition to the single-node <code>test-kind</code> flow above, there is a
+multi-node variant that mirrors how youki would be installed on a real
+Kubernetes cluster: the cluster nodes themselves stay as vanilla
+<code>kindest/node</code> images, and a DaemonSet running on every node
+installs youki onto the host and registers it with containerd at
+runtime.</p>
+<h3 id="local-1-1"><a class="header" href="#local-1-1">Local</a></h3>
+<pre><code class="language-console">$ just test-kind-deploy
+</code></pre>
+<p>Or to only stand up the cluster + DaemonSet without the nginx smoke test:</p>
+<pre><code class="language-console">$ just kind-deploy
+</code></pre>
+<p>Clean up:</p>
+<pre><code class="language-console">$ just clean-test-kind-deploy
 </code></pre>
 
                     </main>
@@ -1460,7 +1538,7 @@ $ just test-runc-comp
 
         <script src="clipboard-1626706a.min.js"></script>
         <script src="highlight-abc7f01d.js"></script>
-        <script src="book-c22b7243.js"></script>
+        <script src="book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
 

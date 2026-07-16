@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Basics - Youki User and Developer Documentation</title>
+        <title>Kubernetes - Youki User and Developer Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -174,40 +174,75 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="basics"><a class="header" href="#basics">Basics</a></h1>
-<p>This section has the general information and resources needed to work with any part of youki. As youki is written in Rust, you should know some basic Rust before. If you don’t yet, some good resources for that can be found on the Rust’s <a href="https://www.rust-lang.org/learn">official site</a>.</p>
-<h2 id="youki"><a class="header" href="#youki">Youki</a></h2>
-<p>Youki is a low level container runtime, which deals with the creation and management of Linux containers. Some of other such low-level runtimes are <a href="https://github.com/opencontainers/runc">runc</a> and <a href="https://github.com/containers/crun">crun</a>. These are usually used by a higher-level runtime such as Docker or Podman to actually create and manage containers, where the higher level runtime provides a much easier interface for users.</p>
-<p>Before you start working on developing youki, you should go through <a href="../user/introduction.html">the User documentation</a> as it specifies the requirements and setup for running youki. For developing youki, you will need to install the dependencies and clone the repo, as specified in the <a href="../user/basic_setup.html">Basic Setup</a> and <a href="../user/basic_usage.html">Basic Usage</a> sections.</p>
-<h2 id="testing-while-developing"><a class="header" href="#testing-while-developing">Testing while developing</a></h2>
-<p>While developing youki, you might need to compile and test the code from time to time, to make sure it is working and and something is not accidentally broken. Currently there are two ways to verify that:</p>
+                        <h1 id="using-youki-as-a-kubernetes-runtime"><a class="header" href="#using-youki-as-a-kubernetes-runtime">Using youki as a Kubernetes runtime</a></h1>
+<p>youki implements the OCI runtime spec, so it can be plugged into any
+Kubernetes cluster. Once youki is installed on each node and the
+node’s container runtime is configured to know about it, individual
+Pods can opt in via <code>runtimeClassName: youki</code>.</p>
+<h2 id="youki-deploy-ready-to-use-installer-for-kind--containerd"><a class="header" href="#youki-deploy-ready-to-use-installer-for-kind--containerd">youki-deploy: ready-to-use installer for kind / containerd</a></h2>
+<p>The repository ships a small installer under
+<a href="https://github.com/youki-dev/youki/tree/main/tools/youki-deploy"><code>tools/youki-deploy/</code></a>
+which automates install the youki binary on every node, and register
+it as a containerd runtime. It is composed of:</p>
 <ul>
-<li>Unit tests, which test individual components of youki</li>
-<li>Integration tests, which test the complete functionality of youki commands from start to end.</li>
+<li>A Docker image that bundles the youki release binary and an
+<code>install-youki.sh</code> script.</li>
+<li>A Kubernetes DaemonSet manifest that runs that image as a privileged
+pod on every node, mounts the host’s <code>/usr/local/bin</code> and
+<code>/etc/containerd</code>, copies the binary into place, patches
+<code>/etc/containerd/config.toml</code>, and restarts containerd.</li>
 </ul>
-<p>As the steps to run these tests can be a bit tedious, a makefile in project the root provides an easy way to run these quickly. The makefile currently states three individual test :</p>
+<p>It is currently exercised against <a href="https://kind.sigs.k8s.io/">kind</a>
+(Kubernetes-in-Docker) but the manifests are Kubernetes
+resources and should apply to any containerd-based cluster.</p>
+<h2 id="try-it-locally-on-kind"><a class="header" href="#try-it-locally-on-kind">Try it locally on kind</a></h2>
+<p>To stand up the cluster + DaemonSet:</p>
+<pre><code class="language-console">$ just kind-deploy
+</code></pre>
+<p>To tear it down:</p>
+<pre><code class="language-console">$ just clean-test-kind-deploy
+</code></pre>
+<p>See also
+<a href="../developer/e2e/kubernetes_test.html">Developer Documentation &gt; Kubernetes test</a>.</p>
+<h2 id="using-youki-for-your-own-pods"><a class="header" href="#using-youki-for-your-own-pods">Using youki for your own Pods</a></h2>
+<p>Once the DaemonSet is installed, just add <code>runtimeClassName: youki</code> to
+the pod spec:</p>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-youki
+spec:
+  runtimeClassName: youki
+  containers:
+    - name: nginx
+      image: nginx:1.27-alpine
+</code></pre>
+<p>Pods without <code>runtimeClassName</code> continue to use whatever the cluster’s
+default OCI runtime is (typically <code>runc</code>), so installing youki-deploy
+is non-disruptive for existing workloads.</p>
+<h2 id="caveats"><a class="header" href="#caveats">Caveats</a></h2>
 <ul>
-<li>test: The unit tests</li>
-<li>oci-integration-test: The integration tests provided by OCI, these are the current standard to make sure youki is OCI compliant.</li>
-<li>integration-test: This is the Rust port of the OCI runtime tests, as there are some issues in the OCI tests. See <a href="./e2e/integration_test.html">integration_test</a> page.</li>
+<li>The installer modifies <code>/usr/local/bin/youki</code> and
+<code>/etc/containerd/config.toml</code> on the host. It does not currently
+uninstall on DaemonSet deletion - removing youki and the containerd
+config patch must be done manually.</li>
+<li>The DaemonSet manifest references the installer image as
+<code>youki-installer:latest</code>, which is loaded into the local kind cluster
+by <code>just kind-deploy</code>. To deploy on a real cluster, build the image
+from <code>tools/youki-deploy/Dockerfile</code> and push it to a registry that
+your cluster nodes can pull from, then update the image field in
+<code>tools/youki-deploy/youki-deploy.yaml</code>.</li>
 </ul>
-<p>All three can be run by using <code>make test-all</code>, or you can run the individual command to run specific tests.</p>
-<h2 id="resources"><a class="header" href="#resources">Resources</a></h2>
-<h4 id="oci"><a class="header" href="#oci">OCI</a></h4>
-<p>Open containers initiative is project, which provides a standardization and standardized specification for operating-system-level virtualization. That way components that confirm to the specification provided by OCI spec, can interoperate with each other easily, and developing of new applications becomes easier. For example youki can be used in place of runc in Docker, as all three : Docker, runc and youki are OCI compliant, and have a standard interface.</p>
-<p>Their main GitHub page is at <a href="https://github.com/opencontainers">https://github.com/opencontainers</a>, and more information about the runtime specifications can be found at <a href="https://github.com/opencontainers/runtime-spec/blob/master/runtime.md">https://github.com/opencontainers/runtime-spec/blob/master/runtime.md</a>.</p>
-<p>As youki needs to deal with a lot of low level programming interfaces of Linux Kernel, another good place know is the online man pages project, which can be found at <a href="https://man7.org/">https://man7.org/</a>. Man pages provide detailed information about the programming interfaces of various features of Linux Kernel. You can simply search <code>man &lt;feature-name&gt;</code> using a search engine, or you can search at the site itself, at <a href="https://man7.org/linux/man-pages/index.html">https://man7.org/linux/man-pages/index.html</a>. These can be very helpful to know about the behavior and usage of and reasoning behind various kernel features used throughout youki.</p>
-<p>Happy developing!!!</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../developer/introduction.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../user/webassembly.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../developer/unwritten_rules.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../community/introduction.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -217,11 +252,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../developer/introduction.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../user/webassembly.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../developer/unwritten_rules.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../community/introduction.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

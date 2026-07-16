@@ -15,8 +15,8 @@
         <link rel="icon" href="../../favicon-de23e50b.svg">
         <link rel="shortcut icon" href="../../favicon-8114d1fc.png">
         <link rel="stylesheet" href="../../css/variables-8adf115d.css">
-        <link rel="stylesheet" href="../../css/general-0392ca55.css">
-        <link rel="stylesheet" href="../../css/chrome-fc474251.css">
+        <link rel="stylesheet" href="../../css/general-e96d0476.css">
+        <link rel="stylesheet" href="../../css/chrome-d279d366.css">
         <link rel="stylesheet" href="../../css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
@@ -35,10 +35,10 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-77cda521.js";
+            window.path_to_searchindex_js = "../../searchindex-172a64dd.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../toc-96345dbb.js"></script>
+        <script src="../../toc-542fda56.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -177,12 +177,29 @@
                         <h1 id="kubernetes-test"><a class="header" href="#kubernetes-test">Kubernetes test</a></h1>
 <h2 id="notes"><a class="header" href="#notes">Notes</a></h2>
 <p>This test verifies that youki works correctly as a container runtime in a Kubernetes environment using <a href="https://kind.sigs.k8s.io/">Kind</a> (Kubernetes in Docker).</p>
+<h2 id="single-node-deploy-test"><a class="header" href="#single-node-deploy-test">Single Node deploy test</a></h2>
 <p>The test builds a custom Kind node image with youki, creates a cluster, and deploys nginx pods using a RuntimeClass that specifies youki as the runtime.</p>
 <h2 id="local"><a class="header" href="#local">Local</a></h2>
 <pre><code class="language-console">$ just test-kind
 </code></pre>
 <p>To clean up an existing Kind cluster first:</p>
 <pre><code class="language-console">$ just clean-test-kind
+</code></pre>
+<h2 id="multi-node-deploy-test"><a class="header" href="#multi-node-deploy-test">Multi Node deploy test</a></h2>
+<p>In addition to the single-node <code>test-kind</code> flow above, there is a
+multi-node variant that mirrors how youki would be installed on a real
+Kubernetes cluster: the cluster nodes themselves stay as vanilla
+<code>kindest/node</code> images, and a DaemonSet running on every node
+installs youki onto the host and registers it with containerd at
+runtime.</p>
+<h3 id="local-1"><a class="header" href="#local-1">Local</a></h3>
+<pre><code class="language-console">$ just test-kind-deploy
+</code></pre>
+<p>Or to only stand up the cluster + DaemonSet without the nginx smoke test:</p>
+<pre><code class="language-console">$ just kind-deploy
+</code></pre>
+<p>Clean up:</p>
+<pre><code class="language-console">$ just clean-test-kind-deploy
 </code></pre>
 
                     </main>
@@ -227,7 +244,7 @@
 
         <script src="../../clipboard-1626706a.min.js"></script>
         <script src="../../highlight-abc7f01d.js"></script>
-        <script src="../../book-c22b7243.js"></script>
+        <script src="../../book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
 
