@@ -1,0 +1,31 @@
+# Cargo / build artifacts
+target/
+contest-target/
+bin/
+
+# Built binaries dropped at repo root by scripts/build.sh
+youki
+runtimetest
+contest
+
+# Test fixtures (not needed for image builds)
+bundle.tar.gz
+test.log
+
+# Git / CI metadata (not used inside images)
+.git/
+.github/
+
+# Docs build outputs
+docs/book/book/
+
+# IDE / editor / OS noise
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Misc
+node_modules/
+*.log
