@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::fs::File;
 use std::os::fd::AsRawFd;
@@ -145,26 +145,13 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<Pid> {
         }
     }
 
-    let mut pending = PendingInitRequests::new(container_args.container_type, &container_args.spec);
+    let mut sequence =
+        InitRequestSequence::new(container_args.container_type, &container_args.spec);
     loop {
         let (msg, fd) = init_main_receiver.recv_init_message()?;
-        match msg {
-            Message::InitReady => {
-                if pending.has_pending() {
-                    return Err(ProcessError::Channel(
-                        channel::ChannelError::UnexpectedInitMessage(Box::new(Message::InitReady)),
-                    ));
-                }
-                break;
-            }
-            Message::HookRequest => {
-                if !std::mem::take(&mut pending.hooks) {
-                    return Err(ProcessError::Channel(
-                        channel::ChannelError::UnexpectedInitMessage(Box::new(
-                            Message::HookRequest,
-                        )),
-                    ));
-                }
+        match sequence.accept(&msg)? {
+            InitRequest::Ready => break,
+            InitRequest::Hooks => {
                 let hooks = container_args
                     .spec
                     .hooks()
@@ -177,14 +164,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<Pid> {
                     &mut init_sender,
                 )?;
             }
-            Message::SetupNetworkDeviceReady => {
-                if !std::mem::take(&mut pending.network_device) {
-                    return Err(ProcessError::Channel(
-                        channel::ChannelError::UnexpectedInitMessage(Box::new(
-                            Message::SetupNetworkDeviceReady,
-                        )),
-                    ));
-                }
+            InitRequest::Network => {
                 let linux = container_args
                     .spec
                     .linux()
@@ -192,14 +172,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<Pid> {
                     .expect("pending network device setup requires linux in spec");
                 handle_setup_network_device(linux, init_pid, &mut init_sender)?;
             }
-            Message::SeccompNotify => {
-                if !std::mem::take(&mut pending.seccomp) {
-                    return Err(ProcessError::Channel(
-                        channel::ChannelError::UnexpectedInitMessage(Box::new(
-                            Message::SeccompNotify,
-                        )),
-                    ));
-                }
+            InitRequest::Seccomp => {
                 #[cfg(feature = "libseccomp")]
                 {
                     let seccomp = container_args
@@ -222,11 +195,6 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<Pid> {
                 }
                 #[cfg(not(feature = "libseccomp"))]
                 let _ = fd;
-            }
-            unexpected => {
-                return Err(ProcessError::Channel(
-                    channel::ChannelError::UnexpectedInitMessage(Box::new(unexpected)),
-                ));
             }
         }
     }
@@ -286,14 +254,20 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<Pid> {
     Ok(init_pid)
 }
 
-/// Init-side setup requests that must complete before `InitReady`.
-struct PendingInitRequests {
-    hooks: bool,
-    network_device: bool,
-    seccomp: bool,
+/// One-shot init-side setup requests, in the order they must be received.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InitRequest {
+    Hooks,
+    Network,
+    Seccomp,
+    Ready,
 }
 
-impl PendingInitRequests {
+struct InitRequestSequence {
+    pending: VecDeque<InitRequest>,
+}
+
+impl InitRequestSequence {
     fn new(container_type: ContainerType, spec: &Spec) -> Self {
         let hooks = match container_type {
             ContainerType::InitContainer => spec.hooks().is_some(),
@@ -314,16 +288,51 @@ impl PendingInitRequests {
         #[cfg(not(feature = "libseccomp"))]
         let seccomp = false;
 
-        Self {
-            hooks,
-            network_device,
-            seccomp,
-        }
+        Self::from_requirements(hooks, network_device, seccomp)
     }
 
-    fn has_pending(&self) -> bool {
-        self.hooks || self.network_device || self.seccomp
+    fn from_requirements(hooks: bool, network: bool, seccomp: bool) -> Self {
+        let mut pending = VecDeque::new();
+        if hooks {
+            pending.push_back(InitRequest::Hooks);
+        }
+        if network {
+            pending.push_back(InitRequest::Network);
+        }
+        if seccomp {
+            pending.push_back(InitRequest::Seccomp);
+        }
+        pending.push_back(InitRequest::Ready);
+
+        Self { pending }
     }
+
+    /// Accepts only the next one-shot request in the init synchronization
+    /// protocol. Repeatable requests, such as mount-fd requests, must be
+    /// dispatched before this method and do not advance this sequence.
+    fn accept(
+        &mut self,
+        message: &Message,
+    ) -> std::result::Result<InitRequest, channel::ChannelError> {
+        let received = match message {
+            Message::HookRequest => InitRequest::Hooks,
+            Message::SetupNetworkDeviceReady => InitRequest::Network,
+            Message::SeccompNotify => InitRequest::Seccomp,
+            Message::InitReady => InitRequest::Ready,
+            _ => return Err(unexpected_init_message(message)),
+        };
+
+        if self.pending.front() != Some(&received) {
+            return Err(unexpected_init_message(message));
+        }
+
+        self.pending.pop_front();
+        Ok(received)
+    }
+}
+
+fn unexpected_init_message(message: &Message) -> channel::ChannelError {
+    channel::ChannelError::UnexpectedInitMessage(Box::new(message.clone()))
 }
 
 fn handle_hook_request(
@@ -493,6 +502,86 @@ mod tests {
     use super::*;
     use crate::process::channel::{intermediate_channel, main_channel};
     use crate::user_ns::UserNamespaceIDMapper;
+
+    #[test]
+    fn init_request_sequence_accepts_requests_in_order() {
+        let mut sequence = InitRequestSequence::from_requirements(true, true, true);
+
+        assert_eq!(
+            sequence.accept(&Message::HookRequest).unwrap(),
+            InitRequest::Hooks
+        );
+        assert_eq!(
+            sequence.accept(&Message::SetupNetworkDeviceReady).unwrap(),
+            InitRequest::Network
+        );
+        assert_eq!(
+            sequence.accept(&Message::SeccompNotify).unwrap(),
+            InitRequest::Seccomp
+        );
+        assert_eq!(
+            sequence.accept(&Message::InitReady).unwrap(),
+            InitRequest::Ready
+        );
+    }
+
+    #[test]
+    fn init_request_sequence_skips_optional_requests() {
+        let mut sequence = InitRequestSequence::from_requirements(false, true, false);
+
+        assert_eq!(
+            sequence.accept(&Message::SetupNetworkDeviceReady).unwrap(),
+            InitRequest::Network
+        );
+        assert_eq!(
+            sequence.accept(&Message::InitReady).unwrap(),
+            InitRequest::Ready
+        );
+    }
+
+    #[test]
+    fn init_request_sequence_accepts_ready_when_no_setup_is_required() {
+        let mut sequence = InitRequestSequence::from_requirements(false, false, false);
+
+        assert_eq!(
+            sequence.accept(&Message::InitReady).unwrap(),
+            InitRequest::Ready
+        );
+    }
+
+    #[test]
+    fn init_request_sequence_rejects_out_of_order_request() {
+        let mut sequence = InitRequestSequence::from_requirements(true, true, true);
+
+        let err = sequence.accept(&Message::SeccompNotify).unwrap_err();
+        assert!(matches!(
+            err,
+            channel::ChannelError::UnexpectedInitMessage(_)
+        ));
+    }
+
+    #[test]
+    fn init_request_sequence_rejects_duplicate_request() {
+        let mut sequence = InitRequestSequence::from_requirements(true, false, false);
+        sequence.accept(&Message::HookRequest).unwrap();
+
+        let err = sequence.accept(&Message::HookRequest).unwrap_err();
+        assert!(matches!(
+            err,
+            channel::ChannelError::UnexpectedInitMessage(_)
+        ));
+    }
+
+    #[test]
+    fn init_request_sequence_rejects_ready_while_setup_is_pending() {
+        let mut sequence = InitRequestSequence::from_requirements(false, true, false);
+
+        let err = sequence.accept(&Message::InitReady).unwrap_err();
+        assert!(matches!(
+            err,
+            channel::ChannelError::UnexpectedInitMessage(_)
+        ));
+    }
 
     #[test]
     #[serial]
