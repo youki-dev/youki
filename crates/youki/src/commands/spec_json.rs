@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, anyhow};
 use libcgroups::common::{CgroupSetup, get_cgroup_setup};
 use libcontainer::oci_spec::runtime::{
-    Capabilities, LinuxBuilder, LinuxDeviceCgroupBuilder, LinuxIdMappingBuilder, LinuxNamespace,
+    LinuxBuilder, LinuxDeviceCgroupBuilder, LinuxIdMappingBuilder, LinuxNamespace,
     LinuxNamespaceBuilder, LinuxNamespaceType, Mount, Spec,
 };
 use libcontainer::syscall::syscall::Syscall;
@@ -90,8 +90,8 @@ pub fn get_rootless(syscall: &dyn Syscall) -> Result<Spec> {
 fn normalize_spec(mut spec: Spec) -> Result<Spec> {
     if let Some(mut process) = spec.process().clone() {
         if let Some(mut capabilities) = process.capabilities().clone() {
-            capabilities.set_inheritable(Some(Capabilities::new()));
-            capabilities.set_ambient(Some(Capabilities::new()));
+            capabilities.set_inheritable(None);
+            capabilities.set_ambient(None);
             process.set_capabilities(Some(capabilities));
         }
 
