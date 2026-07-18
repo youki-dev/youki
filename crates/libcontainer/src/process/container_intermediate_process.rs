@@ -1,9 +1,8 @@
 use std::os::fd::FromRawFd;
 
 use libcgroups::common::CgroupManager;
-use nix::unistd::{close, write, Gid, Pid, Uid};
+use nix::unistd::{Gid, Pid, Uid, close, getpid, write};
 use oci_spec::runtime::{LinuxNamespace, LinuxNamespaceType, LinuxResources};
-use procfs::process::Process;
 
 use super::args::{ContainerArgs, ContainerType};
 use super::channel::{IntermediateReceiver, MainSender};
@@ -12,6 +11,7 @@ use super::init::process as init_process;
 use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
 use crate::process::{channel, cpu_affinity, fork};
+use crate::utils::rootless_required;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IntermediateProcessError {
@@ -43,7 +43,8 @@ pub fn container_intermediate_process(
     args: &ContainerArgs,
     intermediate_chan: &mut (channel::IntermediateSender, channel::IntermediateReceiver),
     init_chan: &mut (channel::InitSender, channel::InitReceiver),
-    main_sender: &mut channel::MainSender,
+    intermediate_main_sender: &mut channel::MainSender,
+    init_main_sender: &mut channel::MainSender,
 ) -> Result<()> {
     let (inter_sender, inter_receiver) = intermediate_chan;
     let (init_sender, init_receiver) = init_chan;
@@ -51,8 +52,10 @@ pub fn container_intermediate_process(
     let spec = &args.spec;
     let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
     let namespaces = Namespaces::try_from(linux.namespaces().as_ref())?;
+    let rootless = rootless_required(command.as_ref()).unwrap_or(false);
     let cgroup_manager = libcgroups::common::create_cgroup_manager(args.cgroup_config.to_owned())
-        .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?;
+        .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?
+        .with_rootless(rootless);
 
     let current_pid = Pid::this();
     // setting CPU affinity for tenant container before cgroup move
@@ -103,7 +106,12 @@ pub fn container_intermediate_process(
     // https://man7.org/linux/man-pages/man7/user_namespaces.7.html for more
     // information
     if let Some(user_namespace) = namespaces.get(LinuxNamespaceType::User)? {
-        setup_userns(&namespaces, user_namespace, main_sender, inter_receiver)?;
+        setup_userns(
+            &namespaces,
+            user_namespace,
+            intermediate_main_sender,
+            inter_receiver,
+        )?;
 
         // After UID and GID mapping is configured correctly in the Youki main
         // process, We want to make sure continue as the root user inside the
@@ -148,11 +156,18 @@ pub fn container_intermediate_process(
                 tracing::error!(?err, "failed to close sender in the intermediate process");
                 return -1;
             }
-            match init_process::container_init_process(args, main_sender, init_receiver) {
+            if let Err(err) = intermediate_main_sender.close() {
+                tracing::error!(
+                    ?err,
+                    "failed to close intermediate main sender in init process"
+                );
+                return -1;
+            }
+            match init_process::container_init_process(args, init_main_sender, init_receiver) {
                 Ok(_) => 0,
                 Err(e) => {
                     tracing::error!("failed to initialize container process: {e}");
-                    if let Err(err) = main_sender.exec_failed(e.to_string()) {
+                    if let Err(err) = init_main_sender.exec_failed(e.to_string()) {
                         tracing::error!(?err, "failed sending error to main sender");
                     }
                     if let ContainerType::TenantContainer { exec_notify_fd } = args.container_type {
@@ -194,14 +209,20 @@ pub fn container_intermediate_process(
         })?;
     }
 
-    main_sender.intermediate_ready(pid).map_err(|err| {
-        tracing::error!("failed to wait on intermediate process: {}", err);
-        err
-    })?;
+    intermediate_main_sender
+        .intermediate_ready(pid)
+        .map_err(|err| {
+            tracing::error!("failed to wait on intermediate process: {}", err);
+            err
+        })?;
 
     // Close unused senders here so we don't have lingering socket around.
-    main_sender.close().map_err(|err| {
+    intermediate_main_sender.close().map_err(|err| {
         tracing::error!("failed to close unused main sender: {}", err);
+        err
+    })?;
+    init_main_sender.close().map_err(|err| {
+        tracing::error!("failed to close unused init main sender: {}", err);
         err
     })?;
     inter_sender.close().map_err(|err| {
@@ -264,26 +285,24 @@ fn apply_cgroups<
     resources: Option<&LinuxResources>,
     init: bool,
 ) -> Result<()> {
-    let pid = Pid::from_raw(Process::myself()?.pid());
+    let pid = getpid();
     cmanager.add_task(pid).map_err(|err| {
         tracing::error!(?pid, ?err, ?init, "failed to add task to cgroup");
         IntermediateProcessError::Cgroup(err.to_string())
     })?;
 
-    if let Some(resources) = resources {
-        if init {
-            let controller_opt = libcgroups::common::ControllerOpt {
-                resources,
-                freezer_state: None,
-                oom_score_adj: None,
-                disable_oom_killer: false,
-            };
+    if init && let Some(resources) = resources {
+        let controller_opt = libcgroups::common::ControllerOpt {
+            resources,
+            freezer_state: None,
+            oom_score_adj: None,
+            disable_oom_killer: false,
+        };
 
-            cmanager.apply(&controller_opt).map_err(|err| {
-                tracing::error!(?pid, ?err, ?init, "failed to apply cgroup");
-                IntermediateProcessError::Cgroup(err.to_string())
-            })?;
-        }
+        cmanager.apply(&controller_opt).map_err(|err| {
+            tracing::error!(?pid, ?err, ?init, "failed to apply cgroup");
+            IntermediateProcessError::Cgroup(err.to_string())
+        })?;
     }
 
     Ok(())

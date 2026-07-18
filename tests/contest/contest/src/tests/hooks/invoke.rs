@@ -1,38 +1,52 @@
-use std::fs::File;
-use std::io::Read;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use oci_spec::runtime::{Hook, HookBuilder, HooksBuilder, ProcessBuilder, Spec, SpecBuilder};
 use test_framework::{Test, TestGroup, TestResult};
 
-use crate::utils::test_utils::{start_container, CreateOptions};
-use crate::utils::{create_container, delete_container, generate_uuid, prepare_bundle, set_config};
+use crate::utils::{
+    CreateOptions, LifecycleStatus, WaitTarget, create_container, delete_container, generate_uuid,
+    prepare_bundle, set_config, start_container, wait_for_state,
+};
+
+const STATE_WAIT_TIMEOUT_SECS: u64 = 5;
+const STATE_POLL_INTERVAL_MILLIS: u64 = 100;
 
 const HOOK_OUTPUT_FILE: &str = "output";
 
-fn create_hook_output_file() {
-    std::fs::File::create(HOOK_OUTPUT_FILE).expect("fail to create hook output file");
+pub fn get_hook_output_path(bundle: &tempfile::TempDir) -> PathBuf {
+    bundle
+        .as_ref()
+        .join("bundle")
+        .join("rootfs")
+        .join(HOOK_OUTPUT_FILE)
 }
 
-fn delete_hook_output_file() {
-    std::fs::remove_file(HOOK_OUTPUT_FILE).expect("fail to remove hook output file");
+pub fn delete_hook_output_file(path: &Path) -> anyhow::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => bail!("failed to remove output file: {}", e),
+    }
 }
 
-fn write_log_hook(content: &str) -> Hook {
-    let output = std::fs::canonicalize(HOOK_OUTPUT_FILE).unwrap();
-    let output = output.to_str().unwrap();
+pub fn write_log_hook(content: &str, host_output_file_path: &str) -> Hook {
     HookBuilder::default()
         .path("/bin/sh")
         .args(vec![
             "sh".to_string(),
             "-c".to_string(),
-            format!("echo '{content}' >> {output}",),
+            format!("echo '{content}' >> {host_output_file_path}",),
         ])
         .build()
         .expect("could not build hook")
 }
 
-fn get_spec() -> Spec {
+fn get_spec(host_output_file: &str) -> Spec {
+    let write_format = |content: &str| write_log_hook(content, host_output_file);
+
     SpecBuilder::default()
         .process(
             ProcessBuilder::default()
@@ -43,16 +57,28 @@ fn get_spec() -> Spec {
         .hooks(
             HooksBuilder::default()
                 .prestart(vec![
-                    write_log_hook("pre-start1 called"),
-                    write_log_hook("pre-start2 called"),
+                    write_format("pre-start1 called"),
+                    write_format("pre-start2 called"),
+                ])
+                .create_runtime(vec![
+                    write_format("create-runtime1 called"),
+                    write_format("create-runtime2 called"),
+                ])
+                .create_container(vec![
+                    write_format("create-container1 called"),
+                    write_format("create-container2 called"),
+                ])
+                .start_container(vec![
+                    write_format("start-container1 called"),
+                    write_format("start-container2 called"),
                 ])
                 .poststart(vec![
-                    write_log_hook("post-start1 called"),
-                    write_log_hook("post-start2 called"),
+                    write_format("post-start1 called"),
+                    write_format("post-start2 called"),
                 ])
                 .poststop(vec![
-                    write_log_hook("post-stop1 called"),
-                    write_log_hook("post-stop2 called"),
+                    write_format("post-stop1 called"),
+                    write_format("post-stop2 called"),
                 ])
                 .build()
                 .expect("could not build hooks"),
@@ -61,35 +87,60 @@ fn get_spec() -> Spec {
         .unwrap()
 }
 
+fn wait_for_target(id: &str, bundle_path: &Path, target: WaitTarget) {
+    wait_for_state(
+        id,
+        bundle_path,
+        target,
+        Duration::from_secs(STATE_WAIT_TIMEOUT_SECS),
+        Duration::from_millis(STATE_POLL_INTERVAL_MILLIS),
+    )
+    .unwrap();
+}
+
 fn get_test(test_name: &'static str) -> Test {
     Test::new(
         test_name,
         Box::new(move || {
-            create_hook_output_file();
-            let spec = get_spec();
             let id = generate_uuid();
             let id_str = id.to_string();
             let bundle = prepare_bundle().unwrap();
+            let host_output_file = get_hook_output_path(&bundle);
+            let host_output_file_str = host_output_file.to_str().unwrap();
+
+            let spec = get_spec(host_output_file_str);
+
             set_config(&bundle, &spec).unwrap();
             create_container(&id_str, &bundle, &CreateOptions::default())
                 .unwrap()
                 .wait()
                 .unwrap();
+            wait_for_target(
+                &id_str,
+                bundle.path(),
+                WaitTarget::Status(LifecycleStatus::Created),
+            );
             start_container(&id_str, &bundle).unwrap().wait().unwrap();
             delete_container(&id_str, &bundle).unwrap().wait().unwrap();
-            let log = {
-                let mut output = File::open("output").expect("cannot open hook log");
-                let mut log = String::new();
-                output
-                    .read_to_string(&mut log)
-                    .expect("fail to read hook log");
-                log
-            };
-            delete_hook_output_file();
-            if log != "pre-start1 called\npre-start2 called\npost-start1 called\npost-start2 called\npost-stop1 called\npost-stop2 called\n" {
+            wait_for_target(&id_str, bundle.path(), WaitTarget::Deleted);
+            let log = fs::read_to_string(&host_output_file).expect("cannot read output file");
+            delete_hook_output_file(&host_output_file).unwrap();
+            let expected = "pre-start1 called\n\
+                    pre-start2 called\n\
+                    create-runtime1 called\n\
+                    create-runtime2 called\n\
+                    create-container1 called\n\
+                    create-container2 called\n\
+                    post-start1 called\n\
+                    post-start2 called\n\
+                    post-stop1 called\n\
+                    post-stop2 called\n";
+            if log != expected {
                 return TestResult::Failed(anyhow!(
-                        "error : hooks must be called in the listed order, {log:?}"
-                        ));
+                    "error: hooks must be called in the listed order.\n\
+                    got:\n{log}\n\
+                    expected:\n{expected}"
+                ));
             }
             TestResult::Passed
         }),

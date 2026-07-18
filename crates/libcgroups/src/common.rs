@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf, StripPrefixError};
 use std::time::Duration;
 
-use nix::sys::statfs::{statfs, CGROUP2_SUPER_MAGIC, TMPFS_MAGIC};
+use nix::sys::statfs::{CGROUP2_SUPER_MAGIC, TMPFS_MAGIC, statfs};
 use nix::unistd::Pid;
 use oci_spec::runtime::LinuxResources;
 #[cfg(any(feature = "cgroupsv2_devices", feature = "v1"))]
@@ -118,6 +118,20 @@ impl CgroupManager for AnyCgroupManager {
             AnyCgroupManager::Systemd(m) => Ok(m.get_all_pids()?),
             AnyCgroupManager::V1(m) => Ok(m.get_all_pids()?),
             AnyCgroupManager::V2(m) => Ok(m.get_all_pids()?),
+        }
+    }
+}
+
+impl AnyCgroupManager {
+    /// Marks the cgroup manager as operating in a rootless environment.
+    ///
+    /// Only affects the v2 manager.
+    #[cfg_attr(not(feature = "v2"), allow(unused_variables))]
+    pub fn with_rootless(self, rootless: bool) -> Self {
+        match self {
+            #[cfg(feature = "v2")]
+            AnyCgroupManager::V2(m) => AnyCgroupManager::V2(m.with_rootless(rootless)),
+            other => other,
         }
     }
 }
@@ -280,7 +294,7 @@ pub fn get_cgroup_setup_with_root(root_path: &Path) -> Result<CgroupSetup, GetCg
             // hybrid mode. If a cgroup2 filesystem has been mounted under the "unified"
             // folder we are in hybrid mode, otherwise we are in legacy mode.
             let stat = statfs(root_path)
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))
+                .map_err(std::io::Error::other)
                 .wrap_other(root_path)?;
             if stat.filesystem_type() == CGROUP2_SUPER_MAGIC {
                 return Ok(CgroupSetup::Unified);
@@ -290,7 +304,7 @@ pub fn get_cgroup_setup_with_root(root_path: &Path) -> Result<CgroupSetup, GetCg
                 let unified = &Path::new(root_path).join("unified");
                 if Path::new(unified).exists() {
                     let stat = statfs(unified)
-                        .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))
+                        .map_err(std::io::Error::other)
                         .wrap_other(unified)?;
                     if stat.filesystem_type() == CGROUP2_SUPER_MAGIC {
                         return Ok(CgroupSetup::Hybrid);
@@ -412,10 +426,10 @@ fn create_systemd_cgroup_manager(
     cgroup_path: &Path,
     container_name: &str,
 ) -> Result<systemd::manager::Manager, systemd::manager::SystemdManagerError> {
+    use crate::systemd::manager::PROCESS_IN_CGROUP_TIMEOUT_DURATION;
+
     if !systemd::booted() {
-        panic!(
-            "systemd cgroup flag passed, but systemd support for managing cgroups is not available"
-        );
+        return Err(systemd::manager::SystemdManagerError::SystemdNotAvailable);
     }
 
     let use_system = is_true_root().map_err(systemd::manager::SystemdManagerError::WrappedIo)?;
@@ -429,6 +443,7 @@ fn create_systemd_cgroup_manager(
         cgroup_path.to_owned(),
         container_name.into(),
         use_system,
+        PROCESS_IN_CGROUP_TIMEOUT_DURATION,
     )
 }
 

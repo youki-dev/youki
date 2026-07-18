@@ -111,7 +111,7 @@ where
 mod tests {
     use core::panic;
 
-    use anyhow::{bail, Result};
+    use anyhow::{Result, bail};
 
     use super::*;
 

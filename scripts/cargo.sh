@@ -19,9 +19,9 @@ set -euo pipefail
 # build scripts, proc macros). The computed value of the target
 # directory can be obtained with `cargo.sh --print-target-dir`.
 #
-# Lastly, when using `cross` this scrips sets some configuration
+# Lastly, when using `cross` this scripts sets some configuration
 # to allow running `youki` tests inside the `cross`` container.
-# Please check the comments in this scrips to learm more about that.
+# Please check the comments in this scripts to learm more about that.
 #
 # Limitations:
 #  * You **must** use the `CARGO_BUILD_TARGET` environment variable
@@ -63,7 +63,8 @@ if [ "$CARGO" == "cross" ]; then
     # run with user same as the invoking user, so that the dbus is connected with correct user
     # we want pid ns of host, because we will be connecting to the host dbus, and it needs task pid from host
     # finally we need to mount the cgroup as read-only, as we need that to check if the tasks are correctly added
-    export CROSS_CONTAINER_OPTS="--privileged --user `id -u`:`id -g` --pid=host -v /sys/fs/cgroup:/sys/fs/cgroup:ro -v/run:/run --mount=type=bind,source=/tmp,destination=/tmp,bind-propagation=shared"
+    # Note: Mount `-v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro` to read the information of the created test user.
+    export CROSS_CONTAINER_OPTS="--privileged --user `id -u`:`id -g` --pid=host -v /sys/fs/cgroup:/sys/fs/cgroup:ro -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro -v /run:/run --mount=type=bind,source=/tmp,destination=/tmp,bind-propagation=shared"
 fi
 
 if [ "$1" == "--print-target-dir" ]; then

@@ -4,12 +4,13 @@ use std::fmt::{Debug, Display};
 use std::fs::{self};
 use std::path::Component::RootDir;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use nix::unistd::Pid;
 use nix::NixPath;
+use nix::unistd::Pid;
 
 use super::controller::Controller;
-use super::controller_type::{ControllerType, CONTROLLER_TYPES};
+use super::controller_type::{CONTROLLER_TYPES, ControllerType};
 use super::cpu::Cpu;
 use super::cpuset::CpuSet;
 use super::dbus_native::client::SystemdClient;
@@ -23,11 +24,17 @@ use crate::common::{
 };
 use crate::stats::Stats;
 use crate::systemd::dbus_native::serialize::Variant;
+use crate::systemd::io::Io;
 use crate::systemd::unified::Unified;
 use crate::v2::manager::{Manager as FsManager, V2ManagerError};
 
+const CONNECT_MAX_RETRIES: u32 = 7;
+const CONNECT_BASE_DELAY_MS: u64 = 100;
+const CONNECT_JITTER_DIVISOR: u64 = 8; // jitter up to 1/8 of delay (~12.5%)
+
 const CGROUP_CONTROLLERS: &str = "cgroup.controllers";
 const CGROUP_SUBTREE_CONTROL: &str = "cgroup.subtree_control";
+pub const PROCESS_IN_CGROUP_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
 
 pub struct Manager {
     /// Root path of the cgroup hierarchy e.g. /sys/fs/cgroup
@@ -49,6 +56,8 @@ pub struct Manager {
     fs_manager: FsManager,
     /// Last control group which is managed by systemd, e.g. /user.slice/user-1000/user@1000.service
     delegation_boundary: PathBuf,
+    /// Duration to wait for a specific PID to be added to a cgroup
+    cgroup_wait_timeout_duration: Duration,
 }
 
 /// Represents the systemd cgroups path:
@@ -156,16 +165,25 @@ pub enum SystemdManagerError {
     #[error("in v2 manager: {0}")]
     V2Manager(#[from] V2ManagerError),
 
+    #[error("Timeout waiting for pid {0} to be added to cgroup")]
+    WaitForProcessInCgroupTimeout(String),
+
     #[error("in cpu controller: {0}")]
     Cpu(#[from] super::cpu::SystemdCpuError),
     #[error("in cpuset controller: {0}")]
     CpuSet(#[from] super::cpuset::SystemdCpuSetError),
+    #[error("in io controller: {0}")]
+    Io(#[from] super::io::SystemdIoError),
     #[error("in memory controller: {0}")]
     Memory(#[from] super::memory::SystemdMemoryError),
     #[error("in pids controller: {0}")]
     Pids(Infallible),
     #[error("in pids unified controller: {0}")]
     Unified(#[from] super::unified::SystemdUnifiedError),
+    #[error(
+        "systemd cgroup flag passed, but systemd support for managing cgroups is not available"
+    )]
+    SystemdNotAvailable,
 }
 
 impl Manager {
@@ -174,31 +192,122 @@ impl Manager {
         cgroups_path: PathBuf,
         container_name: String,
         use_system: bool,
+        cgroup_wait_timeout_duration: Duration,
     ) -> Result<Self, SystemdManagerError> {
+        use super::dbus_native::utils::DbusError;
+
         let mut destructured_path: CgroupsPath = cgroups_path.as_path().try_into()?;
         ensure_parent_unit(&mut destructured_path, use_system);
 
-        let client = match use_system {
-            true => DbusConnection::new_system()?,
-            false => DbusConnection::new_session()?,
+        // EAGAIN from a recv() that timed out via SO_RCVTIMEO (set in dbus::connect()).
+        let is_eagain = |e: &SystemdManagerError| {
+            matches!(
+                e,
+                SystemdManagerError::SystemdClient(SystemdClientError::DBus(
+                    DbusError::Nix(errno)
+                )) if *errno == nix::errno::Errno::EAGAIN
+            )
         };
 
-        let (cgroups_path, delegation_boundary) =
-            Self::construct_cgroups_path(&destructured_path, &client)?;
-        let full_path = root_path.join_safely(&cgroups_path)?;
-        let fs_manager = FsManager::new(root_path.clone(), cgroups_path.clone())?;
+        // Exponential backoff: base * 2^attempt + jitter (~12.5%).
+        // At most ~15 seconds of total sleep across CONNECT_MAX_RETRIES attempts.
+        let backoff = |retry: u32| -> Duration {
+            let delay_ms = CONNECT_BASE_DELAY_MS << retry;
+            let jitter_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.subsec_nanos() as u64 % (1 + delay_ms / CONNECT_JITTER_DIVISOR))
+                .unwrap_or(0);
+            Duration::from_millis(delay_ms + jitter_ms)
+        };
 
-        Ok(Manager {
-            root_path,
-            cgroups_path,
-            full_path,
-            container_name,
-            unit_name: Self::get_unit_name(&destructured_path),
-            destructured_path,
-            client,
-            fs_manager,
-            delegation_boundary,
-        })
+        let try_connect = || -> Result<DbusConnection, SystemdManagerError> {
+            if use_system {
+                Ok(DbusConnection::new_system()?)
+            } else {
+                Ok(DbusConnection::new_session()?)
+            }
+        };
+
+        // Retry loop covering both connection (auth) and initial method calls.
+        // EAGAIN can arrive during either phase; after a timeout the socket is
+        // in an inconsistent state, so we drop it and reconnect from scratch.
+        let mut last_err = None;
+        for retry in 0..CONNECT_MAX_RETRIES {
+            // Step 1 — connect + auth (+ Hello for daemon bus).
+            let client = match try_connect() {
+                Ok(c) => c,
+                Err(e) if !is_eagain(&e) => return Err(e),
+                Err(e) => {
+                    let is_last = retry + 1 == CONNECT_MAX_RETRIES;
+                    if is_last {
+                        tracing::debug!(
+                            "dbus connect EAGAIN on attempt {}/{}, giving up",
+                            retry + 1,
+                            CONNECT_MAX_RETRIES
+                        );
+                    } else {
+                        tracing::debug!(
+                            "dbus connect EAGAIN on attempt {}/{}, retrying after backoff",
+                            retry + 1,
+                            CONNECT_MAX_RETRIES
+                        );
+                        std::thread::sleep(backoff(retry));
+                    }
+                    last_err = Some(e);
+                    continue;
+                }
+            };
+
+            // Step 2 — initial method calls to discover the cgroup path.
+            // On EAGAIN, client is dropped here and the next iteration reconnects.
+            match Self::construct_cgroups_path(&destructured_path, &client) {
+                Ok((cgroups_path, delegation_boundary)) => {
+                    let full_path = root_path.join_safely(&cgroups_path)?;
+                    let fs_manager = FsManager::new(root_path.clone(), cgroups_path.clone())?;
+                    return Ok(Manager {
+                        root_path,
+                        cgroups_path,
+                        full_path,
+                        container_name,
+                        unit_name: Self::get_unit_name(&destructured_path),
+                        destructured_path,
+                        client,
+                        fs_manager,
+                        delegation_boundary,
+                        cgroup_wait_timeout_duration,
+                    });
+                }
+                Err(e) if !is_eagain(&e) => return Err(e),
+                Err(e) => {
+                    let is_last = retry + 1 == CONNECT_MAX_RETRIES;
+                    if is_last {
+                        tracing::debug!(
+                            "dbus setup EAGAIN on attempt {}/{}, giving up",
+                            retry + 1,
+                            CONNECT_MAX_RETRIES
+                        );
+                    } else {
+                        tracing::debug!(
+                            "dbus setup EAGAIN on attempt {}/{}, reconnecting after backoff",
+                            retry + 1,
+                            CONNECT_MAX_RETRIES
+                        );
+                        std::thread::sleep(backoff(retry));
+                    }
+                    last_err = Some(e);
+                }
+            }
+        }
+
+        let err_msg = last_err
+            .as_ref()
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "unknown error".to_string());
+        Err(SystemdClientError::DBus(DbusError::ConnectionError(format!(
+            "dbus connection failed after {} retries: {}",
+            CONNECT_MAX_RETRIES, err_msg
+        )))
+        .into())
     }
 
     /// get_unit_name returns the unit (scope) name from the path provided by the user
@@ -305,6 +414,33 @@ impl Manager {
         Ok(())
     }
 
+    fn wait_for_process_in_cgroup(&self, pid: Pid) -> Result<(), SystemdManagerError> {
+        let start = Instant::now();
+        while start.elapsed() < self.cgroup_wait_timeout_duration {
+            // If it fails, it most likely means that the cgroup hasn't been set up yet.
+            let result = self.fs_manager.get_all_pids();
+            if let Ok(pids) = result {
+                if pids.contains(&pid) {
+                    tracing::info!("Process {} successfully added to cgroup", pid);
+                    return Ok(());
+                }
+            } else if let Err(e) = result {
+                if let V2ManagerError::WrappedIo(ref wrapped_io_error) = e {
+                    if !matches!(wrapped_io_error, WrappedIoError::Read { .. }) {
+                        return Err(e.into());
+                    }
+                } else {
+                    return Err(e.into());
+                }
+            }
+
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        Err(SystemdManagerError::WaitForProcessInCgroupTimeout(
+            pid.to_string(),
+        ))
+    }
+
     fn get_available_controllers<P: AsRef<Path>>(
         &self,
         cgroups_path: P,
@@ -366,6 +502,9 @@ impl CgroupManager for Manager {
             &self.unit_name,
         )?;
 
+        // There is a chance that the intermediate process ends before systemd gets the dbus message to add it to transit unit.
+        self.wait_for_process_in_cgroup(pid)?;
+
         Ok(())
     }
 
@@ -390,7 +529,9 @@ impl CgroupManager for Manager {
                 ControllerType::Memory => {
                     Memory::apply(controller_opt, systemd_version, &mut properties)?;
                 }
-                _ => {}
+                ControllerType::Io => {
+                    Io::apply(controller_opt, systemd_version, &mut properties)?;
+                }
             };
         }
 
@@ -399,7 +540,6 @@ impl CgroupManager for Manager {
 
         if !properties.is_empty() {
             self.ensure_controllers_attached()?;
-
             self.client
                 .set_unit_properties(&self.unit_name, &properties)?;
         }
@@ -542,6 +682,7 @@ mod tests {
 
         Ok(())
     }
+
     #[test]
     fn test_task_addition() {
         let manager = Manager::new(
@@ -549,6 +690,7 @@ mod tests {
             ":youki:test".into(),
             "youki_test_container".into(),
             false,
+            PROCESS_IN_CGROUP_TIMEOUT_DURATION,
         )
         .unwrap();
         let mut p1 = std::process::Command::new("sleep")
@@ -573,5 +715,28 @@ mod tests {
         // the remove call above should remove the dir, we just do this again
         // for contingency, and thus ignore the result
         let _ = fs::remove_dir(&manager.full_path);
+    }
+
+    #[test]
+    fn test_error_thrown_if_process_never_added_to_cgroup() -> Result<()> {
+        let manager = Manager::new(
+            DEFAULT_CGROUP_ROOT.into(),
+            ":youki:test".into(),
+            "youki_test_container".into(),
+            false,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        // Bogus Pid
+        let p1_id = nix::unistd::Pid::from_raw(-1_i32);
+
+        let result = manager.wait_for_process_in_cgroup(p1_id);
+
+        assert!(matches!(
+            result,
+            Err(SystemdManagerError::WaitForProcessInCgroupTimeout(..))
+        ));
+        Ok(())
     }
 }

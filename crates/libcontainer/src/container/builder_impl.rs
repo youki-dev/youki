@@ -12,12 +12,13 @@ use super::{Container, ContainerStatus};
 use crate::error::{CreateContainerError, LibcontainerError, MissingSpecError};
 use crate::notify_socket::NotifyListener;
 use crate::process::args::{ContainerArgs, ContainerType};
-use crate::process::intel_rdt::delete_resctrl_subdirectory;
+use crate::process::intel_rdt::{cleanup_intel_rdt, setup_intel_rdt};
 use crate::process::{self};
 use crate::syscall::syscall::SyscallType;
 use crate::user_ns::UserNamespaceConfig;
+use crate::utils;
+use crate::utils::PathBufExt;
 use crate::workload::Executor;
-use crate::{hooks, utils};
 
 pub(super) struct ContainerBuilderImpl {
     /// Flag indicating if an init or a tenant container should be created
@@ -59,6 +60,12 @@ pub(super) struct ContainerBuilderImpl {
     pub stderr: Option<OwnedFd>,
     // Indicate if the init process should be a sibling of the main process.
     pub as_sibling: bool,
+    // Run the process in an (existing) sub-cgroup(s)
+    pub sub_cgroup_path: Option<String>,
+    // Asm process label for the process commonly used with selinux.
+    // TODO: youki does not support selinux yet
+    #[allow(dead_code)]
+    pub process_label: Option<String>,
 }
 
 impl ContainerBuilderImpl {
@@ -85,9 +92,26 @@ impl ContainerBuilderImpl {
 
     fn run_container(&mut self) -> Result<Pid, LibcontainerError> {
         let linux = self.spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
-        let cgroups_path = utils::get_cgroup_path(linux.cgroups_path(), &self.container_id);
+        let base_cgroups_path = utils::get_cgroup_path(linux.cgroups_path(), &self.container_id);
+        let mut final_cgroups_path = base_cgroups_path;
+
+        if let Some(sub_cgroup_path) = &self.sub_cgroup_path
+            && sub_cgroup_path != "/"
+        {
+            let potential_path = final_cgroups_path.join(sub_cgroup_path);
+            let normalized = potential_path.normalize();
+
+            if !normalized.starts_with(&final_cgroups_path) {
+                return Err(LibcontainerError::OtherCgroup(format!(
+                    "{} is not a sub cgroup path",
+                    sub_cgroup_path
+                )));
+            }
+            final_cgroups_path = normalized;
+        }
+
         let cgroup_config = libcgroups::common::CgroupConfig {
-            cgroup_path: cgroups_path,
+            cgroup_path: final_cgroups_path,
             systemd_cgroup: self.use_systemd || self.user_ns_config.is_some(),
             container_name: self.container_id.to_owned(),
         };
@@ -165,22 +189,24 @@ impl ContainerBuilderImpl {
             stdout: self.stdout.as_ref().map(|x| x.as_raw_fd()),
             stderr: self.stderr.as_ref().map(|x| x.as_raw_fd()),
             as_sibling: self.as_sibling,
+            pid_file: self.pid_file.to_owned(),
         };
 
-        let (init_pid, need_to_clean_up_intel_rdt_dir) =
-            process::container_main_process::container_main_process(&container_args).map_err(
-                |err| {
-                    tracing::error!("failed to run container process {}", err);
-                    LibcontainerError::MainProcess(err)
-                },
-            )?;
-
-        // if file to write the pid to is specified, write pid of the child
-        if let Some(pid_file) = &self.pid_file {
-            fs::write(pid_file, format!("{init_pid}")).map_err(|err| {
-                tracing::error!("failed to write pid to file: {}", err);
-                LibcontainerError::OtherIO(err)
+        let init_pid = process::container_main_process::container_main_process(&container_args)
+            .map_err(|err| {
+                tracing::error!("failed to run container process {}", err);
+                LibcontainerError::MainProcess(err)
             })?;
+
+        let mut intel_rdt_dir = None;
+        let mut intel_rdt_monitoring_dir = None;
+        if let Some(linux) = self.spec.linux() {
+            if let Some(intel_rdt) = linux.intel_rdt() {
+                let container_id = self.container.as_ref().map(|c| c.id());
+                let (dir, mon_dir) = setup_intel_rdt(container_id, &init_pid, intel_rdt)?;
+                intel_rdt_dir = dir;
+                intel_rdt_monitoring_dir = mon_dir;
+            }
         }
 
         if let Some(container) = &mut self.container {
@@ -189,18 +215,9 @@ impl ContainerBuilderImpl {
                 .set_status(ContainerStatus::Created)
                 .set_creator(nix::unistd::geteuid().as_raw())
                 .set_pid(init_pid.as_raw())
-                .set_clean_up_intel_rdt_directory(need_to_clean_up_intel_rdt_dir)
+                .set_intel_rdt_dir(intel_rdt_dir)
+                .set_intel_rdt_monitoring_dir(intel_rdt_monitoring_dir)
                 .save()?;
-        }
-
-        if matches!(self.container_type, ContainerType::InitContainer) {
-            if let Some(hooks) = self.spec.hooks() {
-                hooks::run_hooks(
-                    hooks.create_runtime().as_ref(),
-                    self.container.as_ref(),
-                    None,
-                )?
-            }
         }
 
         Ok(init_pid)
@@ -224,11 +241,14 @@ impl ContainerBuilderImpl {
         }
 
         if let Some(container) = &self.container {
-            if let Some(true) = container.clean_up_intel_rdt_subdirectory() {
-                if let Err(e) = delete_resctrl_subdirectory(container.id()) {
-                    tracing::error!(id = ?container.id(), error = ?e, "failed to delete resctrl subdirectory");
-                    errors.push(e.to_string());
-                }
+            if let Err(e) = cleanup_intel_rdt(
+                container.intel_rdt_dir().map(|p| p.as_path()),
+                container.intel_rdt_monitoring_dir().map(|p| p.as_path()),
+                container.clean_up_intel_rdt_subdirectory(),
+                container.id(),
+            ) {
+                tracing::error!(id = ?container.id(), error = ?e, "failed to cleanup intel rdt");
+                errors.push(e.to_string());
             }
 
             if container.root.exists() {

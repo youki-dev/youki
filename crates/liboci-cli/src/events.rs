@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::time::Duration;
 
-use clap::Parser;
+use clap::Args;
 
 /// Units accepted in an interval string, ordered so that multi-character
 /// suffixes are matched before their single-character prefixes (e.g. `ms`
@@ -71,16 +71,16 @@ fn parse_interval(s: &str) -> Result<Duration, Box<dyn Error + Send + Sync + 'st
 }
 
 /// Show resource statistics for the container
-#[derive(Parser, Debug)]
+#[derive(Args, Debug)]
 pub struct Events {
     /// Sets the stats collection interval, e.g. `1s`, `100ms` or `1h30m` (default: 5s)
-    #[clap(long, default_value = "5s", value_parser = parse_interval)]
+    #[arg(long, default_value = "5s", value_parser = parse_interval)]
     pub interval: Duration,
     /// Display the container stats only once
-    #[clap(long)]
+    #[arg(long)]
     pub stats: bool,
     /// Name of the container instance
-    #[clap(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
+    #[arg(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
     pub container_id: String,
 }
 

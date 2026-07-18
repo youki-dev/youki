@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use libcgroups::common::CgroupManager;
 use liboci_cli::Ps;
 
@@ -56,5 +56,5 @@ fn get_pid_index(title: &str) -> Result<usize> {
             return Ok(index);
         }
     }
-    bail!("could't find PID field in ps output");
+    bail!("couldn't find PID field in ps output");
 }

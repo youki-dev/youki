@@ -1,6 +1,6 @@
 use std::{io, process};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 pub fn get_result_from_output(res: io::Result<process::Output>) -> Result<()> {
     match res {
@@ -15,8 +15,4 @@ pub fn get_result_from_output(res: io::Result<process::Output>) -> Result<()> {
         }
         io::Result::Err(e) => Err(anyhow::Error::new(e)),
     }
-}
-
-pub fn criu_installed() -> bool {
-    which::which("criu").is_ok()
 }

@@ -36,6 +36,7 @@ fn main() {
         "masked_paths" => tests::validate_masked_paths(&spec),
         "set_host_name" => tests::validate_hostname(&spec),
         "mounts_recursive" => tests::validate_mounts_recursive(&spec),
+        "mounts_recursive_rbind_ro" => tests::validate_mounts_recursive_rbind_ro(),
         "domainname_test" => tests::validate_domainname(&spec),
         "seccomp" => tests::validate_seccomp(&spec),
         "sysctl" => tests::validate_sysctl(&spec),
@@ -44,8 +45,12 @@ fn main() {
         "io_priority_class_rt" => tests::test_io_priority_class(&spec, IoprioClassRt),
         "io_priority_class_be" => tests::test_io_priority_class(&spec, IoprioClassBe),
         "io_priority_class_idle" => tests::test_io_priority_class(&spec, IoprioClassIdle),
+        "memory_policy" => tests::validate_memory_policy(&spec),
         "devices" => tests::validate_devices(&spec),
         "root_readonly" => tests::test_validate_root_readonly(&spec),
+        "process_capabilities_bounding_unset" => {
+            tests::validate_process_capabilities_bounding_unset(&spec)
+        }
         "process" => tests::validate_process(&spec),
         "process_user" => tests::validate_process_user(&spec),
         "process_rlimits" => tests::validate_process_rlimits(&spec),
@@ -54,6 +59,7 @@ fn main() {
         "fd_control" => tests::validate_fd_control(&spec),
         "rootfs_propagation" => tests::validate_rootfs_propagation(&spec),
         "uid_mappings" => tests::validate_uid_mappings(&spec),
+        "net_devices" => tests::validate_net_devices(&spec),
         _ => eprintln!("error due to unexpected execute test name: {execute_test}"),
     }
 }

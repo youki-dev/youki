@@ -1,11 +1,14 @@
-use clap::Parser;
+use clap::Args;
 
 /// Send the specified signal to the container
-#[derive(Parser, Debug)]
+#[derive(Args, Debug)]
 pub struct Kill {
-    #[clap(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
+    /// Container identifier
+    #[arg(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
     pub container_id: String,
+    /// Signal to send to the container (e.g. KILL, TERM, 9)
     pub signal: String,
-    #[clap(short, long)]
+    /// Send the signal to all processes inside the container
+    #[arg(short, long)]
     pub all: bool,
 }

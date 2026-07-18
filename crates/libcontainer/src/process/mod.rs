@@ -9,6 +9,7 @@ pub mod cpu_affinity;
 mod fork;
 pub mod init;
 pub mod intel_rdt;
+pub mod memory_policy;
 mod message;
 #[cfg(feature = "libseccomp")]
 mod seccomp_listener;

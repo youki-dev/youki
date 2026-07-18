@@ -4,11 +4,12 @@ use std::path::Component::RootDir;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use nix::errno::Errno;
 use nix::unistd::Pid;
 
 use super::controller::Controller;
 use super::controller_type::{
-    ControllerType, PseudoControllerType, CONTROLLER_TYPES, PSEUDO_CONTROLLER_TYPES,
+    CONTROLLER_TYPES, ControllerType, PSEUDO_CONTROLLER_TYPES, PseudoControllerType,
 };
 use super::cpu::{Cpu, V2CpuControllerError, V2CpuStatsError};
 use super::cpuset::CpuSet;
@@ -20,10 +21,10 @@ use super::io::{Io, V2IoControllerError, V2IoStatsError};
 use super::memory::{Memory, V2MemoryControllerError, V2MemoryStatsError};
 use super::pids::Pids;
 use super::unified::{Unified, V2UnifiedError};
-use super::util::{self, V2UtilError, CGROUP_SUBTREE_CONTROL};
+use super::util::{self, CGROUP_SUBTREE_CONTROL, V2UtilError};
 use crate::common::{
-    self, AnyCgroupManager, CgroupManager, ControllerOpt, FreezerState, JoinSafelyError,
-    PathBufExt, WrapIoResult, WrappedIoError, CGROUP_PROCS,
+    self, AnyCgroupManager, CGROUP_PROCS, CgroupManager, ControllerOpt, FreezerState,
+    JoinSafelyError, PathBufExt, WrapIoResult, WrappedIoError,
 };
 use crate::stats::{PidStatsError, Stats, StatsProvider};
 
@@ -77,11 +78,13 @@ pub struct Manager {
     root_path: PathBuf,
     cgroup_path: PathBuf,
     full_path: PathBuf,
+    rootless: bool,
 }
 
 impl Manager {
     /// Constructs a new cgroup manager with root path being the mount point
-    /// of a cgroup v2 fs and cgroup path being a relative path from the root
+    /// of a cgroup v2 fs and cgroup path being a relative path from the root.
+    /// For rootless environments call .with_rootless(true).
     pub fn new(root_path: PathBuf, cgroup_path: PathBuf) -> Result<Self, V2ManagerError> {
         let full_path = root_path.join_safely(&cgroup_path)?;
 
@@ -89,7 +92,26 @@ impl Manager {
             root_path,
             cgroup_path,
             full_path,
+            rootless: false,
         })
+    }
+
+    /// Marks the manager as operating in a rootless environment.
+    ///
+    /// By default, [libcontainer] assumes full ownership of cgroups.
+    /// In rootless setups such as container-in-container, the cgroup
+    /// hierarchy is often read-only, so permission errors are non-fatal.
+    pub fn with_rootless(mut self, rootless: bool) -> Self {
+        self.rootless = rootless;
+        self
+    }
+
+    // Utility to check for expected errors in rootless cgroup environments
+    fn is_permission_error(err: &WrappedIoError) -> bool {
+        matches!(
+            err.inner().raw_os_error().map(Errno::from_raw),
+            Some(Errno::EROFS) | Some(Errno::EACCES)
+        )
     }
 
     /// Creates a unified cgroup at `self.full_path` and attaches a process to it
@@ -99,7 +121,7 @@ impl Manager {
             .map(|c| format!("+{c}"))
             .collect();
 
-        Self::write_controllers(&self.root_path, &controllers)?;
+        Self::enable_controllers(&self.root_path, &controllers);
 
         let mut current_path = self.root_path.clone();
         let mut components = self
@@ -110,31 +132,69 @@ impl Manager {
         while let Some(component) = components.next() {
             current_path = current_path.join(component);
             if !current_path.exists() {
-                fs::create_dir(&current_path).wrap_create_dir(&current_path)?;
-                fs::metadata(&current_path)
-                    .wrap_other(&current_path)?
-                    .permissions()
-                    .set_mode(0o755);
+                match fs::create_dir(&current_path).wrap_create_dir(&current_path) {
+                    Ok(()) => {
+                        fs::metadata(&current_path)
+                            .wrap_other(&current_path)?
+                            .permissions()
+                            .set_mode(0o755);
+                    }
+
+                    // in container-in-container environments these paths are often read-only
+                    // we do not error here—rather we continue in a best effort
+                    Err(err) if self.rootless && Self::is_permission_error(&err) => {
+                        tracing::debug!(
+                            "rootless cgroup: cannot create {current_path:?}: {err}; \
+                             leaving process in its parent cgroup"
+                        );
+                        return Ok(());
+                    }
+                    Err(err) => return Err(err.into()),
+                }
             }
 
             // last component cannot have subtree_control enabled due to internal process constraint
             // if this were set, writing to the cgroups.procs file will fail with Erno 16 (device or resource busy)
             if components.peek().is_some() {
-                Self::write_controllers(&current_path, &controllers)?;
+                Self::enable_controllers(&current_path, &controllers);
             }
         }
 
-        common::write_cgroup_file(self.full_path.join(CGROUP_PROCS), pid)?;
-        Ok(())
+        self.attach_pid(pid)
     }
 
-    /// Writes a list of controllers to the `{path}/cgroup.subtree_control` file
-    fn write_controllers(path: &Path, controllers: &[String]) -> Result<(), WrappedIoError> {
-        for controller in controllers {
-            common::write_cgroup_file_str(path.join(CGROUP_SUBTREE_CONTROL), controller)?;
+    fn attach_pid(&self, pid: Pid) -> Result<(), V2ManagerError> {
+        // when we encounter an expected write error in delegated cgroups
+        // we log and continue rather than error out hard
+        match common::write_cgroup_file(self.full_path.join(CGROUP_PROCS), pid) {
+            Ok(()) => Ok(()),
+            Err(err) if self.rootless && Self::is_permission_error(&err) => {
+                tracing::debug!(
+                    "rootless cgroup: cannot move process into {:?}: {err}; \
+                     leaving process in its parent cgroup",
+                    self.full_path
+                );
+                Ok(())
+            }
+            Err(err) => Err(err.into()),
         }
+    }
 
-        Ok(())
+    // best-effort enabling of `controllers` in `{path}/cgroup.subtree_control`.
+    // Writing an already-enabled controller is idempotent in cgroup v2, so we
+    // simply attempt to write each one and ignore errors.
+    // See https://github.com/youki-dev/youki/issues/3597#issuecomment-4749947856
+    fn enable_controllers(path: &Path, controllers: &[String]) {
+        for controller in controllers {
+            if let Err(err) =
+                common::write_cgroup_file_str(path.join(CGROUP_SUBTREE_CONTROL), controller)
+            {
+                tracing::debug!(
+                    "could not enable {controller} in {path:?}/{CGROUP_SUBTREE_CONTROL}: {err}; \
+                     a limit requiring it will fail when applied"
+                );
+            }
+        }
     }
 
     pub fn any(self) -> AnyCgroupManager {
@@ -147,8 +207,7 @@ impl CgroupManager for Manager {
 
     fn add_task(&self, pid: Pid) -> Result<(), Self::Error> {
         if self.full_path.exists() {
-            common::write_cgroup_file(self.full_path.join(CGROUP_PROCS), pid)?;
-            return Ok(());
+            return self.attach_pid(pid);
         }
         self.create_unified_cgroup(pid)?;
         Ok(())
@@ -167,7 +226,7 @@ impl CgroupManager for Manager {
         }
 
         #[cfg(feature = "cgroupsv2_devices")]
-        Devices::apply(controller_opt, &self.cgroup_path)?;
+        Devices::apply(controller_opt, &self.full_path)?;
 
         for pseudoctlr in PSEUDO_CONTROLLER_TYPES {
             if let PseudoControllerType::Unified = pseudoctlr {

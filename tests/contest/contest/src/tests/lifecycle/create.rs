@@ -2,7 +2,7 @@ use std::io;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use crate::utils::get_runtime_path;
 

@@ -17,14 +17,14 @@ pub mod prog {
     use std::os::unix::io::RawFd;
     use std::ptr;
 
-    use libbpf_sys::{bpf_insn, BPF_CGROUP_DEVICE, BPF_F_ALLOW_MULTI, BPF_PROG_TYPE_CGROUP_DEVICE};
+    use libbpf_sys::{BPF_CGROUP_DEVICE, BPF_F_ALLOW_MULTI, BPF_PROG_TYPE_CGROUP_DEVICE, bpf_insn};
     #[cfg(not(test))]
     use libbpf_sys::{
         bpf_prog_attach, bpf_prog_detach2, bpf_prog_get_fd_by_id, bpf_prog_load, bpf_prog_query,
     };
     #[cfg(not(test))]
     use libc::setrlimit;
-    use libc::{rlimit, ENOSPC, RLIMIT_MEMLOCK};
+    use libc::{ENOSPC, RLIMIT_MEMLOCK, rlimit};
 
     use super::ProgramInfo;
     // TODO: consider use of #[mockall_double]
@@ -41,6 +41,7 @@ pub mod prog {
         let insns_cnt = insns.len() / std::mem::size_of::<bpf_insn>();
         let insns = insns as *const _ as *const bpf_insn;
         let mut opts = libbpf_sys::bpf_prog_load_opts {
+            sz: std::mem::size_of::<libbpf_sys::bpf_prog_load_opts>() as libbpf_sys::size_t,
             kern_version: 0,
             log_buf: ptr::null_mut::<::std::os::raw::c_char>(),
             log_size: 0,
@@ -153,7 +154,7 @@ pub mod prog {
 
 #[cfg(test)]
 mod tests {
-    use errno::{set_errno, Errno};
+    use errno::{Errno, set_errno};
     use libc::{ENOSPC, ENOSYS};
     use serial_test::serial;
 

@@ -7,11 +7,14 @@ use user_ns::UserNamespaceConfig;
 
 use super::builder::ContainerBuilder;
 use super::builder_impl::ContainerBuilderImpl;
+use super::mount_validation::validate_idmapped_mounts;
 use super::{Container, ContainerStatus};
 use crate::config::YoukiConfig;
 use crate::error::{ErrInvalidSpec, LibcontainerError, MissingSpecError};
 use crate::notify_socket::NOTIFY_FILE;
 use crate::process::args::ContainerType;
+use crate::syscall::syscall::create_syscall;
+use crate::validator::Validator;
 use crate::{apparmor, tty, user_ns, utils};
 
 // Builder that can be used to configure the properties of a new container
@@ -61,9 +64,21 @@ impl InitContainerBuilder {
         self
     }
 
+    /// Overrides the OCI bundle path for the container
+    ///                                                                                                                                                                             
+    /// Replaces the bundle set by [`ContainerBuilder::as_init`].  
+    pub fn with_bundle<P: Into<PathBuf>>(mut self, bundle: P) -> Self {
+        self.bundle = bundle.into();
+        self
+    }
+
     /// Creates a new container
     pub fn build(self) -> Result<Container, LibcontainerError> {
         let spec = self.load_spec()?;
+        // validate terminal field against console socket presence before any side effects
+        // (mirrors runc's checkTerminal called at the top of runner.run())
+        self.base.check_terminal(&spec, self.detached)?;
+
         let container_dir = self.create_container_dir()?;
 
         let mut container = self.create_container_state(&container_dir)?;
@@ -116,6 +131,8 @@ impl InitContainerBuilder {
             stdout: self.base.stdout,
             stderr: self.base.stderr,
             as_sibling: self.as_sibling,
+            sub_cgroup_path: None,
+            process_label: None,
         };
 
         builder_impl.create()?;
@@ -169,6 +186,8 @@ impl InitContainerBuilder {
             Err(ErrInvalidSpec::UnsupportedVersion)?;
         }
 
+        Validator::validate_spec(spec)?;
+
         if let Some(process) = spec.process() {
             if let Some(profile) = process.apparmor_profile() {
                 let apparmor_is_enabled = apparmor::is_enabled().map_err(|err| {
@@ -176,31 +195,25 @@ impl InitContainerBuilder {
                     LibcontainerError::OtherIO(err)
                 })?;
                 if !apparmor_is_enabled {
-                    tracing::error!(?profile,
-                        "apparmor profile exists in the spec, but apparmor is not activated on this system");
+                    tracing::error!(
+                        ?profile,
+                        "apparmor profile exists in the spec, but apparmor is not activated on this system"
+                    );
                     Err(ErrInvalidSpec::AppArmorNotEnabled)?;
-                }
-            }
-
-            if let Some(io_priority) = process.io_priority() {
-                let priority = io_priority.priority();
-                let iop_class_res = serde_json::to_string(&io_priority.class());
-                match iop_class_res {
-                    Ok(iop_class) => {
-                        if !(0..=7).contains(&priority) {
-                            tracing::error!(?priority, "io priority '{}' not between 0 and 7 (inclusive), class '{}' not in (IO_PRIO_CLASS_RT,IO_PRIO_CLASS_BE,IO_PRIO_CLASS_IDLE)",priority, iop_class);
-                            Err(ErrInvalidSpec::IoPriority)?;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!(?priority, ?e, "failed to parse io priority class");
-                        Err(ErrInvalidSpec::IoPriority)?;
-                    }
                 }
             }
         }
 
-        utils::validate_spec_for_new_user_ns(spec)?;
+        let syscall = create_syscall();
+
+        if let Some(mounts) = spec.mounts() {
+            utils::validate_mount_options(mounts)?;
+            validate_idmapped_mounts(mounts, spec.linux().as_ref(), &*syscall)?;
+        }
+
+        utils::validate_spec_for_new_user_ns(spec, &*syscall)?;
+        utils::validate_spec_for_net_devices(spec, &*syscall)
+            .map_err(LibcontainerError::NetDevicesError)?;
 
         Ok(())
     }
@@ -215,5 +228,21 @@ impl InitContainerBuilder {
         )?;
         container.save()?;
         Ok(container)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::container::builder::ContainerBuilder;
+    use crate::syscall::syscall::SyscallType;
+
+    #[test]
+    fn test_with_bundle() {
+        let builder = ContainerBuilder::new("test-id".to_owned(), SyscallType::default())
+            .as_init("/original/bundle")
+            .with_bundle("/new/bundle");
+
+        assert_eq!(builder.bundle, PathBuf::from("/new/bundle"));
     }
 }

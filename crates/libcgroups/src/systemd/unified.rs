@@ -3,7 +3,7 @@ use std::num::ParseIntError;
 
 use super::controller::Controller;
 use super::cpu::{self, convert_shares_to_cgroup2};
-use super::cpuset::{self, to_bitmask, BitmaskError};
+use super::cpuset::{self, BitmaskError, to_bitmask};
 use super::dbus_native::serialize::Variant;
 use super::{memory, pids};
 use crate::common::ControllerOpt;
@@ -178,7 +178,7 @@ mod tests {
         .collect();
 
         let mut expected: HashMap<&str, Variant> = HashMap::new();
-        expected.insert(cpu::CPU_WEIGHT, Variant::U64(840));
+        expected.insert(cpu::CPU_WEIGHT, Variant::U64(1204));
         expected.insert(cpuset::ALLOWED_CPUS, Variant::ArrayU64(vec![15u64]));
         expected.insert(cpuset::ALLOWED_NODES, Variant::ArrayU64(vec![15u64]));
         expected.insert(memory::MEMORY_MIN, Variant::U64(100000u64));

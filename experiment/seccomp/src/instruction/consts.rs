@@ -1,4 +1,7 @@
-use std::{mem::offset_of, os::raw::c_int};
+use std::mem::offset_of;
+use std::os::raw::c_int;
+
+use crate::seccomp::SeccompError;
 
 // BPF Instruction classes.
 // See /usr/include/linux/bpf_common.h .
@@ -30,8 +33,13 @@ pub const BPF_JA: u16 = 0x00;
 pub const BPF_JEQ: u16 = 0x10;
 pub const BPF_JGT: u16 = 0x20;
 pub const BPF_JGE: u16 = 0x30;
+pub const BPF_JSET: u16 = 0x40;
 // Test against the value in the K register.
 pub const BPF_K: u16 = 0x00;
+
+// Limitation on the number of jumps for the bpf instruction
+// https://github.com/seccomp/libseccomp/blob/main/src/gen_bpf.c#L104
+pub const BPF_JMP_MAX: usize = 255;
 
 // Return codes for BPF programs.
 // See /usr/include/linux/seccomp.h .
@@ -50,6 +58,22 @@ pub const SECCOMP_RET_USER_NOTIF: u32 = 0x7fc00000;
 pub const AUDIT_ARCH_X86_64: u32 = 62 | 0x8000_0000 | 0x4000_0000;
 pub const AUDIT_ARCH_AARCH64: u32 = 183 | 0x8000_0000 | 0x4000_0000;
 
+// See /arch/x86/include/uapi/asm/unistd.h
+pub const X32_SYSCALL_BIT: u32 = 0x4000_0000;
+
+// Comparison operators
+// See libseccomp/include/seccomp.h.in
+#[derive(Debug, PartialEq, Clone)]
+pub enum SeccompCompareOp {
+    NotEqual = 1,
+    LessThan,
+    LessOrEqual,
+    Equal,
+    GreaterOrEqual,
+    GreaterThan,
+    MaskedEqual,
+}
+
 // ```c
 // struct seccomp_data {
 //     int nr;
@@ -67,6 +91,10 @@ struct SeccompData {
     args: [u64; 6],
 }
 
+pub const fn seccomp_data_nr_offset() -> u8 {
+    offset_of!(SeccompData, nr) as u8
+}
+
 pub const fn seccomp_data_arch_offset() -> u8 {
     offset_of!(SeccompData, arch) as u8
 }
@@ -75,8 +103,11 @@ pub const fn seccomp_data_arg_size() -> u8 {
     8
 }
 
-pub const fn seccomp_data_args_offset() -> u8 {
-    offset_of!(SeccompData, args) as u8
+pub const fn seccomp_data_args_offset(index: u8) -> Result<u8, SeccompError> {
+    match index {
+        0..=5 => Ok((offset_of!(SeccompData, args) as u8) + (index * 8)),
+        _ => Err(SeccompError::InvalidArgumentSize),
+    }
 }
 
 pub const SECCOMP_IOC_MAGIC: u8 = b'!';
@@ -102,7 +133,12 @@ mod tests {
     #[test]
     fn test_seccomp_data_args_offset() {
         if cfg!(target_arch = "x86_64") {
-            assert_eq!(seccomp_data_args_offset(), 16);
+            assert_eq!(seccomp_data_args_offset(0).unwrap(), 16);
+            assert_eq!(seccomp_data_args_offset(1).unwrap(), 16 + 8);
+            assert_eq!(seccomp_data_args_offset(2).unwrap(), 16 + 16);
+            assert_eq!(seccomp_data_args_offset(3).unwrap(), 16 + 24);
+            assert_eq!(seccomp_data_args_offset(4).unwrap(), 16 + 32);
+            assert_eq!(seccomp_data_args_offset(5).unwrap(), 16 + 40);
         }
     }
 }

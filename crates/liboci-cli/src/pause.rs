@@ -1,8 +1,9 @@
-use clap::Parser;
+use clap::Args;
 
 /// Suspend the processes within the container
-#[derive(Parser, Debug)]
+#[derive(Args, Debug)]
 pub struct Pause {
-    #[clap(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
+    /// Container identifier
+    #[arg(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
     pub container_id: String,
 }

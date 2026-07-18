@@ -43,14 +43,14 @@ impl Pids {
 #[cfg(test)]
 mod tests {
 
-    use anyhow::{anyhow, Context, Result};
+    use anyhow::{Context, Result, anyhow};
     use oci_spec::runtime::{LinuxPidsBuilder, LinuxResources, LinuxResourcesBuilder};
 
     use super::super::dbus_native::serialize::DbusSerialize;
     use super::*;
     use crate::recast;
 
-    fn setup(resources: &LinuxResources) -> (ControllerOpt, HashMap<&str, Variant>) {
+    fn setup(resources: &LinuxResources) -> (ControllerOpt<'_>, HashMap<&str, Variant>) {
         let properties = HashMap::new();
         let options = ControllerOpt {
             resources,

@@ -5,10 +5,10 @@ use nix::unistd;
 use oci_spec::runtime::LinuxCpu;
 use unistd::Pid;
 
+use super::ControllerType;
 use super::controller::Controller;
 use super::util::{self, V1MountPointError};
-use super::ControllerType;
-use crate::common::{self, ControllerOpt, WrapIoResult, WrappedIoError, CGROUP_PROCS};
+use crate::common::{self, CGROUP_PROCS, ControllerOpt, WrapIoResult, WrappedIoError};
 
 const CGROUP_CPUSET_CPUS: &str = "cpuset.cpus";
 const CGROUP_CPUSET_MEMS: &str = "cpuset.mems";

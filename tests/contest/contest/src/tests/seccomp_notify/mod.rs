@@ -2,13 +2,13 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use oci_spec::runtime::{
     Arch, LinuxBuilder, LinuxSeccompAction, LinuxSeccompBuilder, LinuxSyscallBuilder, SpecBuilder,
 };
 use test_framework::{Test, TestGroup, TestResult};
 
-use crate::utils::{get_runtime_path, test_outside_container};
+use crate::utils::test_outside_container;
 
 mod seccomp_agent;
 
@@ -41,11 +41,13 @@ fn test_seccomp_notify() -> Result<()> {
                         .architectures(vec![Arch::ScmpArchX86_64])
                         .listener_path(&seccomp_listener_path)
                         .listener_metadata(seccomp_meta)
-                        .syscalls(vec![LinuxSyscallBuilder::default()
-                            .names(vec![String::from("getcwd")])
-                            .action(LinuxSeccompAction::ScmpActNotify)
-                            .build()
-                            .unwrap()])
+                        .syscalls(vec![
+                            LinuxSyscallBuilder::default()
+                                .names(vec![String::from("getcwd")])
+                                .action(LinuxSeccompAction::ScmpActNotify)
+                                .build()
+                                .unwrap(),
+                        ])
                         .build()
                         .unwrap(),
                 )
@@ -80,15 +82,15 @@ fn test_seccomp_notify() -> Result<()> {
             None => return TestResult::Failed(anyhow!("state command returned error")),
         };
 
-        if state.id != container_process_state.state.id {
+        if state.id != *container_process_state.state().id() {
             return TestResult::Failed(anyhow!("container id doesn't match"));
         }
 
-        if state.pid.unwrap() != container_process_state.pid {
+        if state.pid.unwrap() != *container_process_state.pid() {
             return TestResult::Failed(anyhow!("container process id doesn't match"));
         }
 
-        if SECCOMP_METADATA != container_process_state.metadata {
+        if SECCOMP_METADATA != container_process_state.metadata().as_deref().unwrap_or("") {
             return TestResult::Failed(anyhow!("seccomp listener metadata doesn't match"));
         }
 
@@ -107,17 +109,9 @@ fn test_seccomp_notify() -> Result<()> {
 pub fn get_seccomp_notify_test() -> TestGroup {
     let seccomp_notify_test = Test::new(
         "seccomp_notify",
-        Box::new(|| {
-            let runtime = get_runtime_path();
-            // runc doesn't support seccomp notify yet
-            if runtime.ends_with("runc") {
-                return TestResult::Skipped;
-            }
-
-            match test_seccomp_notify() {
-                Ok(_) => TestResult::Passed,
-                Err(err) => TestResult::Failed(err),
-            }
+        Box::new(|| match test_seccomp_notify() {
+            Ok(_) => TestResult::Passed,
+            Err(err) => TestResult::Failed(err),
         }),
     );
     let mut tg = TestGroup::new("seccomp_notify");

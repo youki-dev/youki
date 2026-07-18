@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use oci_spec::runtime::{
     LinuxBuilder, LinuxHugepageLimitBuilder, LinuxResourcesBuilder, Spec, SpecBuilder,
 };
-use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
+use test_framework::{ConditionalTest, TestGroup, TestResult, test_result};
 
 use crate::utils::test_outside_container;
 use crate::utils::test_utils::check_container_created;
@@ -33,11 +33,13 @@ fn make_hugetlb_spec(page_size: &str, limit: i64) -> Spec {
             LinuxBuilder::default()
                 .resources(
                     LinuxResourcesBuilder::default()
-                        .hugepage_limits(vec![LinuxHugepageLimitBuilder::default()
-                            .page_size(page_size.to_owned())
-                            .limit(limit)
-                            .build()
-                            .expect("could not build")])
+                        .hugepage_limits(vec![
+                            LinuxHugepageLimitBuilder::default()
+                                .page_size(page_size.to_owned())
+                                .limit(limit)
+                                .build()
+                                .expect("could not build"),
+                        ])
                         .build()
                         .unwrap(),
                 )

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use libcontainer::utils::{create_dir_all_with_mode, rootless_required};
 use nix::libc;
 use nix::sys::stat::Mode;
@@ -40,12 +40,12 @@ pub fn determine(
         return Ok(path);
     }
 
-    if let Ok(path) = std::env::var("HOME") {
-        if let Ok(resolved) = fs::canonicalize(path) {
-            let run_dir = resolved.join(".youki/run");
-            if create_dir_all_with_mode(&run_dir, uid, Mode::S_IRWXU).is_ok() {
-                return Ok(run_dir);
-            }
+    if let Ok(path) = std::env::var("HOME")
+        && let Ok(resolved) = fs::canonicalize(path)
+    {
+        let run_dir = resolved.join(".youki/run");
+        if create_dir_all_with_mode(&run_dir, uid, Mode::S_IRWXU).is_ok() {
+            return Ok(run_dir);
         }
     }
 
@@ -150,18 +150,18 @@ mod tests {
 
     #[test]
     fn test_determine_root_path_rootless() -> Result<()> {
-        std::env::set_var("YOUKI_USE_ROOTLESS", "true");
+        unsafe { std::env::set_var("YOUKI_USE_ROOTLESS", "true") };
 
         let syscall = create_syscall();
 
         // XDG_RUNTIME_DIR
         let tmp = tempfile::tempdir()?;
         let xdg_dir = tmp.path().join("xdg_runtime");
-        std::env::set_var("XDG_RUNTIME_DIR", &xdg_dir);
+        unsafe { std::env::set_var("XDG_RUNTIME_DIR", &xdg_dir) };
         let path = determine(None, &*syscall).context("failed with $XDG_RUNTIME_DIR path")?;
         assert_eq!(path, xdg_dir.join("youki"));
         assert!(path.exists());
-        std::env::remove_var("XDG_RUNTIME_DIR");
+        unsafe { std::env::remove_var("XDG_RUNTIME_DIR") };
 
         // Default rootless location
         let uid = syscall.get_uid().as_raw();
@@ -189,11 +189,11 @@ mod tests {
         let tmp = tempfile::tempdir()?;
         let home_path = tmp.path().join("youki_home");
         fs::create_dir_all(&home_path).context("failed to create fake home path")?;
-        std::env::set_var("HOME", &home_path);
+        unsafe { std::env::set_var("HOME", &home_path) };
         let path = determine(None, &*syscall).context("failed with $HOME path")?;
         assert_eq!(path, home_path.join(".youki/run"));
         assert!(path.exists());
-        std::env::remove_var("HOME");
+        unsafe { std::env::remove_var("HOME") };
 
         // Use /tmp dir
         let uid = syscall.get_uid().as_raw();

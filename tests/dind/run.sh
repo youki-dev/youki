@@ -3,11 +3,15 @@ set -e
 
 ROOT=$(git rev-parse --show-toplevel)
 
+# Pin the DinD image to a known-working Docker version for CI reproducibility.
+#
+# Docker 29.5 enables time namespaces by default, which youki does not
+# support yet. Do not move past Docker 29.4 until time namespace support is added.
 docker run --privileged -dq \
   --name youki-test-dind \
   -v $ROOT/youki:/usr/bin/youki \
   -v $ROOT/tests/dind/daemon.json:/etc/docker/daemon.json \
-  docker:dind > /dev/null
+  docker:29.4-dind > /dev/null
 
 trap "docker rm -f youki-test-dind > /dev/null" EXIT
 

@@ -8,6 +8,10 @@ updates:
     allow:
       - dependency-type: direct
     groups:
+      wasmtime:
+        patterns:
+          - "wasmtime"
+          - "wasi-common"
       patch:
         update-types: 
         - patch

@@ -18,6 +18,8 @@ pub enum SyscallError {
     IO(#[from] std::io::Error),
     #[error("failed to set capabilities: {0}")]
     SetCaps(#[from] caps::errors::CapsError),
+    #[error(transparent)]
+    Pathrs(#[from] pathrs::error::Error),
 }
 
 type Result<T> = std::result::Result<T, SyscallError>;

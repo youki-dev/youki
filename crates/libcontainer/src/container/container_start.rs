@@ -1,10 +1,8 @@
-use nix::sys::signal;
-
 use super::{Container, ContainerStatus};
 use crate::config::YoukiConfig;
 use crate::error::LibcontainerError;
 use crate::hooks;
-use crate::notify_socket::{NotifySocket, NOTIFY_FILE};
+use crate::notify_socket::{NOTIFY_FILE, NotifySocket};
 
 impl Container {
     /// Starts a previously created container
@@ -32,7 +30,7 @@ impl Container {
 
         if !self.can_start() {
             tracing::error!(status = ?self.status(), id = ?self.id(), "cannot start container due to incorrect state");
-            return Err(LibcontainerError::IncorrectStatus);
+            return Err(LibcontainerError::IncorrectStatus(self.status()));
         }
 
         let config = YoukiConfig::load(&self.root).map_err(|err| {
@@ -43,19 +41,6 @@ impl Container {
             );
             err
         })?;
-        if let Some(hooks) = config.hooks.as_ref() {
-            // While prestart is marked as deprecated in the OCI spec, the docker and integration test still
-            // uses it.
-            #[allow(deprecated)]
-            hooks::run_hooks(hooks.prestart().as_ref(), Some(self), None).map_err(|err| {
-                tracing::error!("failed to run pre start hooks: {}", err);
-                // In the case where prestart hook fails, the runtime must
-                // stop the container before generating an error and exiting.
-                let _ = self.kill(signal::Signal::SIGKILL, true);
-
-                err
-            })?;
-        }
 
         let mut notify_socket = NotifySocket::new(self.root.join(NOTIFY_FILE));
         notify_socket.notify_container_start()?;
@@ -69,12 +54,17 @@ impl Container {
         // Run post start hooks. It runs after the container process is started.
         // It is called in the runtime namespace.
         if let Some(hooks) = config.hooks.as_ref() {
-            hooks::run_hooks(hooks.poststart().as_ref(), Some(self), Some(&self.root)).map_err(
-                |err| {
-                    tracing::error!("failed to run post start hooks: {}", err);
-                    err
-                },
-            )?;
+            hooks::run_hooks(
+                hooks.poststart().as_ref(),
+                Some(&self.state),
+                Some(&self.root),
+                None,
+                None,
+            )
+            .map_err(|err| {
+                tracing::error!("failed to run post start hooks: {}", err);
+                err
+            })?;
         }
 
         Ok(())

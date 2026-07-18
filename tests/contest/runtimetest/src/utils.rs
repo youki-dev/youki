@@ -1,11 +1,11 @@
 use std::fs;
-use std::fs::{metadata, symlink_metadata, OpenOptions};
+use std::fs::{OpenOptions, symlink_metadata};
 use std::io::Read;
-use std::os::unix::prelude::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use nix::sys::stat::{stat, SFlag};
+use nix::sys::stat::{SFlag, stat};
+use procfs::process::Process;
 
 // It means the file or directory is readable
 type Readable = bool;
@@ -67,13 +67,10 @@ pub fn test_read_access<P: AsRef<Path>>(path: P) -> Result<Readable, std::io::Er
         return test_dir_read_access(path);
     }
 
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        format!(
-            "cannot test read access for {:?}, has mode {mode:x}",
-            path_ref
-        ),
-    ))
+    Err(std::io::Error::other(format!(
+        "cannot test read access for {:?}, has mode {mode:x}",
+        path_ref
+    )))
 }
 
 fn test_file_write_access(path: &str) -> Result<(), std::io::Error> {
@@ -100,10 +97,9 @@ pub fn test_write_access(path: &str) -> Result<(), std::io::Error> {
         return test_dir_write_access(path);
     }
 
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        format!("cannot test write access for {path:?}, has mode {mode:x}"),
-    ))
+    Err(std::io::Error::other(format!(
+        "cannot test write access for {path:?}, has mode {mode:x}"
+    )))
 }
 
 pub fn test_file_executable(path: &str) -> Result<(), std::io::Error> {
@@ -114,10 +110,9 @@ pub fn test_file_executable(path: &str) -> Result<(), std::io::Error> {
         return Ok(());
     }
 
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        format!("{path:?} is directory, so cannot execute"),
-    ))
+    Err(std::io::Error::other(format!(
+        "{path:?} is directory, so cannot execute"
+    )))
 }
 
 pub fn test_dir_update_access_time(path: &str) -> Result<(), std::io::Error> {
@@ -134,12 +129,39 @@ pub fn test_dir_update_access_time(path: &str) -> Result<(), std::io::Error> {
     let rest = metadata.accessed();
     let second_access_time = rest.unwrap();
     if first_access_time == second_access_time {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("cannot update access time for path {path:?}"),
-        ));
+        return Err(std::io::Error::other(format!(
+            "cannot update access time for path {path:?}"
+        )));
     }
     Ok(())
+}
+
+pub fn assert_atime_mode(path: &str, expected: &str) -> Result<(), std::io::Error> {
+    match atime_mode_of(path) {
+        Some(actual) if actual == expected => Ok(()),
+        Some(actual) => Err(std::io::Error::other(format!(
+            "expected atime mode '{expected}' at {path}, got '{actual}'"
+        ))),
+        None => Err(std::io::Error::other(format!("mount {path} not found"))),
+    }
+}
+
+fn atime_mode_of(path: &str) -> Option<String> {
+    let mounts = Process::myself().ok()?.mountinfo().ok()?;
+    for m in mounts {
+        if m.mount_point.to_str() != Some(path) {
+            continue;
+        }
+        let mode = if m.mount_options.contains_key("noatime") {
+            "noatime"
+        } else if m.mount_options.contains_key("relatime") {
+            "relatime"
+        } else {
+            "strictatime"
+        };
+        return Some(mode.to_string());
+    }
+    None
 }
 
 pub fn test_dir_not_update_access_time(path: &str) -> Result<(), std::io::Error> {
@@ -156,267 +178,51 @@ pub fn test_dir_not_update_access_time(path: &str) -> Result<(), std::io::Error>
     let rest = metadata.accessed();
     let second_access_time = rest.unwrap();
     if first_access_time != second_access_time {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("cannot update access time for path {path:?}"),
-        ));
+        return Err(std::io::Error::other(format!(
+            "cannot update access time for path {path:?}"
+        )));
     }
     Ok(())
 }
 
 pub fn test_device_access(path: &str) -> Result<(), std::io::Error> {
-    let _ = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(PathBuf::from(path).join("null"))?;
+    OpenOptions::new().read(true).open(path)?;
     Ok(())
 }
 
-pub fn test_device_unaccess(path: &str) -> Result<(), std::io::Error> {
-    let _ = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(PathBuf::from(path).join("null"))?;
-    Ok(())
+pub fn test_mount_rnosymfollow_option(dir: &str) -> Result<(), std::io::Error> {
+    let link = format!("{}/link", dir);
+
+    let md = symlink_metadata(&link)?;
+    if !md.file_type().is_symlink() {
+        return Err(std::io::Error::other("link is not a symlink"));
+    }
+
+    match fs::metadata(&link) {
+        Ok(_) => Err(std::io::Error::other(
+            "expected ELOOP (nosymfollow), but symlink was followed",
+        )),
+        Err(e) if e.raw_os_error() == Some(libc::ELOOP) => Ok(()),
+        Err(e) => Err(std::io::Error::other(format!(
+            "expected ELOOP, but got: {e}"
+        ))),
+    }
 }
 
-// https://man7.org/linux/man-pages/man2/mount_setattr.2.html
-// When a file is accessed via this mount, update the
-// file's last access time (atime) only if the current
-// value of atime is less than or equal to the file's
-// last modification time (mtime) or last status
-// change time (ctime).
-// case:
-// 1. create test.txt file, get one atime
-// 2. cat a.txt, get two atime; check atime whether update, conditions are met atime less than or equal mtime or ctime
-// 3. cat a.txt, get three atime, check now two atime whether equal three atime
-pub fn test_mount_releatime_option(path: &str) -> Result<(), std::io::Error> {
-    let test_file_path = PathBuf::from(path).join("test.txt");
-    Command::new("touch")
-        .arg(test_file_path.to_str().unwrap())
-        .output()?;
-    let one_metadata = fs::metadata(test_file_path.clone())?;
-    std::thread::sleep(std::time::Duration::from_millis(1000));
+pub fn test_mount_rsymfollow_option(dir: &str) -> Result<(), std::io::Error> {
+    let link = format!("{}/link", dir);
 
-    // execute cat command to update access time
-    Command::new("cat")
-        .arg(test_file_path.to_str().unwrap())
-        .output()
-        .expect("execute cat command error");
-    let two_metadata = fs::metadata(test_file_path.clone())?;
-
-    if one_metadata.atime() == two_metadata.atime() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!(
-                "not update access time for file {:?}",
-                test_file_path.to_str()
-            ),
-        ));
+    let md = symlink_metadata(&link)?;
+    if !md.file_type().is_symlink() {
+        return Err(std::io::Error::other("link is not a symlink"));
     }
 
-    // execute cat command to update access time
-    std::thread::sleep(std::time::Duration::from_millis(1000));
-    Command::new("cat")
-        .arg(test_file_path.to_str().unwrap())
-        .output()
-        .expect("execute cat command error");
-    let three_metadata = fs::metadata(test_file_path.clone())?;
-    if two_metadata.atime() != three_metadata.atime() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("update access time for file {:?}", test_file_path.to_str()),
-        ));
-    }
-
-    Ok(())
-}
-
-// case: because filesystem having relatime option
-// 1. create test.txt file, get one atime
-// 2. cat a.txt, get two atime; check atime whether update
-// 3. cat a.txt, get three atime, check now two atime whether equal three atime
-pub fn test_mount_noreleatime_option(path: &str) -> Result<(), std::io::Error> {
-    let test_file_path = PathBuf::from(path).join("noreleatime.txt");
-    Command::new("touch")
-        .arg(test_file_path.to_str().unwrap())
-        .output()?;
-    let one_metadata = fs::metadata(test_file_path.clone())?;
-
-    std::thread::sleep(std::time::Duration::from_millis(1000));
-    // execute cat command to update access time
-    Command::new("cat")
-        .arg(test_file_path.to_str().unwrap())
-        .output()
-        .expect("execute cat command error");
-    let two_metadata = fs::metadata(test_file_path.clone())?;
-
-    if one_metadata.atime() == two_metadata.atime() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!(
-                "not update access time for file {:?}",
-                test_file_path.to_str()
-            ),
-        ));
-    }
-
-    // execute cat command to update access time
-    std::thread::sleep(std::time::Duration::from_millis(1000));
-    Command::new("cat")
-        .arg(test_file_path.to_str().unwrap())
-        .output()
-        .expect("execute cat command error");
-    let three_metadata = fs::metadata(test_file_path.clone())?;
-
-    if two_metadata.atime() != three_metadata.atime() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("update access time for file {:?}", test_file_path.to_str()),
-        ));
-    }
-    Ok(())
-}
-
-// Do not update access times for (all types of) files on this mount.
-// case:
-// 1. touch rnoatime.txt file, get atime
-// 2. cat rnoatime.txt, check atime whether update, if update return error, else return Ok
-pub fn test_mount_rnoatime_option(path: &str) -> Result<(), std::io::Error> {
-    let test_file_path = PathBuf::from(path).join("rnoatime.txt");
-    Command::new("touch")
-        .arg(test_file_path.to_str().unwrap())
-        .output()?;
-    let one_metadata = fs::metadata(test_file_path.clone())?;
-
-    std::thread::sleep(std::time::Duration::from_millis(1000));
-
-    // execute cat command to update access time
-    Command::new("cat")
-        .arg(test_file_path.to_str().unwrap())
-        .output()
-        .expect("execute cat command error");
-    let two_metadata = fs::metadata(test_file_path.clone())?;
-
-    if one_metadata.atime() != two_metadata.atime() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!(
-                "update access time for file {:?}, expected not update",
-                test_file_path.to_str()
-            ),
-        ));
-    }
-    Ok(())
-}
-
-// Always update the last access time (atime) when files are accessed on this mount.
-pub fn test_mount_rstrictatime_option(path: &str) -> Result<(), std::io::Error> {
-    let test_file_path = PathBuf::from(path).join("rstrictatime.txt");
-    Command::new("touch")
-        .arg(test_file_path.to_str().unwrap())
-        .output()?;
-    let one_metadata = fs::metadata(test_file_path.clone())?;
-
-    std::thread::sleep(std::time::Duration::from_millis(1000));
-    // execute cat command to update access time
-    Command::new("cat")
-        .arg(test_file_path.to_str().unwrap())
-        .output()
-        .expect("execute cat command error");
-    let two_metadata = fs::metadata(test_file_path.clone())?;
-
-    if one_metadata.atime() == two_metadata.atime() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!(
-                "not update access time for file {:?}",
-                test_file_path.to_str()
-            ),
-        ));
-    }
-
-    // execute cat command to update access time
-    std::thread::sleep(std::time::Duration::from_millis(1000));
-    Command::new("cat")
-        .arg(test_file_path.to_str().unwrap())
-        .output()
-        .expect("execute cat command error");
-    let three_metadata = fs::metadata(test_file_path.clone())?;
-
-    if two_metadata.atime() == three_metadata.atime() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("update access time for file {:?}", test_file_path.to_str()),
-        ));
-    }
-    Ok(())
-}
-
-pub fn test_mount_rnosymfollow_option(path: &str) -> Result<(), std::io::Error> {
-    let path = format!("{}/{}", path, "link");
-    let metadata = match symlink_metadata(path.clone()) {
-        Ok(metadata) => metadata,
-        Err(e) => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("get file symlink_metadata err {path:?}, {e}"),
-            ));
+    match fs::metadata(&link) {
+        Ok(_) => Ok(()),
+        Err(e) if e.raw_os_error() == Some(libc::ELOOP) => {
+            Err(std::io::Error::other(format!("unexpected ELOOP: {e}")))
         }
-    };
-    // check symbolic is followed
-    if metadata.file_type().is_symlink() && metadata.mode() & 0o777 == 0o777 {
-        Ok(())
-    } else {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("get file symlink_metadata err {path:?}"),
-        ))
+        // Any error other than ELOOP indicates that nosymfollow is not being enforced, so we consider the result OK.
+        Err(_) => Ok(()),
     }
-}
-
-pub fn test_mount_rsymfollow_option(path: &str) -> Result<(), std::io::Error> {
-    let path = format!("{}/{}", path, "link");
-    let metadata = match symlink_metadata(path.clone()) {
-        Ok(metadata) => metadata,
-        Err(e) => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("get file symlink_metadata err {path:?}, {e}"),
-            ));
-        }
-    };
-    // check symbolic is followed
-    if metadata.file_type().is_symlink() && metadata.mode() & 0o777 == 0o777 {
-        Ok(())
-    } else {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("get file symlink_metadata err {path:?}"),
-        ))
-    }
-}
-
-pub fn test_mount_rsuid_option(path: &str) -> Result<(), std::io::Error> {
-    let path = PathBuf::from(path).join("file");
-
-    let metadata = match metadata(path.clone()) {
-        Ok(metadata) => metadata,
-        Err(e) => {
-            return Err(std::io::Error::new(std::io::ErrorKind::Other, e));
-        }
-    };
-    // check suid and sgid
-    let suid = metadata.mode() & 0o4000 == 0o4000;
-    let sgid = metadata.mode() & 0o2000 == 0o2000;
-
-    if suid && sgid {
-        return Ok(());
-    }
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        format!("rsuid error {path:?}"),
-    ))
 }

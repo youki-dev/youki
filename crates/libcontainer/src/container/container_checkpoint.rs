@@ -1,15 +1,20 @@
-use std::fs::{self, File};
-use std::io::Write;
+use std::fs::{DirBuilder, File, read_link};
+use std::io::{ErrorKind, Write};
+use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::io::AsRawFd;
 
 use libcgroups::common::CgroupSetup::{Hybrid, Legacy};
 #[cfg(feature = "v1")]
 use libcgroups::common::DEFAULT_CGROUP_ROOT;
-use oci_spec::runtime::Spec;
+use oci_spec::runtime::{LinuxNamespaceType, Spec};
 
+use super::container_criu::{
+    CRIU_VERSION_MINIMUM, check_criu_version, handle_checkpointing_external_namespaces,
+};
 use super::{Container, ContainerStatus};
 use crate::container::container::CheckpointOptions;
 use crate::error::LibcontainerError;
+use crate::rootfs::utils::is_bind;
 
 const CRIU_CHECKPOINT_LOG_FILE: &str = "dump.log";
 const DESCRIPTORS_JSON: &str = "descriptors.json";
@@ -25,11 +30,22 @@ impl Container {
         self.refresh_status()?;
 
         // can_pause() checks if the container is running. That also works for
-        // checkpoitning. is_running() would make more sense here, but let's
+        // checkpointing. is_running() would make more sense here, but let's
         // just reuse existing functions.
         if !self.can_pause() {
             tracing::error!(status = ?self.status(), id = ?self.id(), "cannot checkpoint container because it is not running");
-            return Err(LibcontainerError::IncorrectStatus);
+            return Err(LibcontainerError::IncorrectStatus(self.status()));
+        }
+
+        // Require CRIU >= 3.15.0, matching crun's LIBCRIU_MIN_VERSION requirement.
+        check_criu_version(CRIU_VERSION_MINIMUM)?;
+
+        // Create checkpoint image directory if it doesn't exist (mode 0o700 like crun).
+        if let Err(err) = DirBuilder::new().mode(0o700).create(&opts.image_path) {
+            if err.kind() != ErrorKind::AlreadyExists {
+                tracing::error!(path = ?opts.image_path, ?err, "failed to create checkpoint directory");
+                return Err(LibcontainerError::OtherIO(err));
+            }
         }
 
         let mut criu = rust_criu::Criu::new().map_err(|e| {
@@ -47,57 +63,62 @@ impl Container {
         let spec = Spec::load(source_spec_path)?;
         let mounts = spec.mounts().clone();
         for m in mounts.unwrap_or_default() {
-            match m.typ().as_deref() {
-                Some("bind") => {
-                    let dest = m
-                        .destination()
-                        .clone()
-                        .into_os_string()
-                        .into_string()
-                        .expect("failed to convert mount destination");
-                    criu.set_external_mount(dest.clone(), dest);
-                }
-                Some("cgroup") => {
-                    match libcgroups::common::get_cgroup_setup()? {
-                        // For v1 it is necessary to list all cgroup mounts as external mounts
-                        Legacy | Hybrid => {
-                            #[cfg(not(feature = "v1"))]
-                            panic!("libcontainer can't run in a Legacy or Hybrid cgroup setup without the v1 feature");
-                            #[cfg(feature = "v1")]
-                            for mp in libcgroups::v1::util::list_subsystem_mount_points().map_err(
-                                |err| {
-                                    tracing::error!(?err, "failed to get subsystem mount points");
-                                    LibcontainerError::OtherCgroup(err.to_string())
-                                },
-                            )? {
-                                let cgroup_mount = mp
-                                    .clone()
-                                    .into_os_string()
-                                    .into_string()
-                                    .expect("failed to convert mount point");
-                                if cgroup_mount.starts_with(DEFAULT_CGROUP_ROOT) {
-                                    criu.set_external_mount(cgroup_mount.clone(), cgroup_mount);
-                                }
+            if is_bind(&m) {
+                let dest = m
+                    .destination()
+                    .clone()
+                    .into_os_string()
+                    .into_string()
+                    .expect("failed to convert mount destination");
+                criu.set_external_mount(dest.clone(), dest);
+            } else if m.typ().as_deref() == Some("cgroup") {
+                match libcgroups::common::get_cgroup_setup()? {
+                    // For v1 it is necessary to list all cgroup mounts as external mounts
+                    Legacy | Hybrid => {
+                        #[cfg(not(feature = "v1"))]
+                        panic!(
+                            "libcontainer can't run in a Legacy or Hybrid cgroup setup without the v1 feature"
+                        );
+                        #[cfg(feature = "v1")]
+                        for mp in
+                            libcgroups::v1::util::list_subsystem_mount_points().map_err(|err| {
+                                tracing::error!(?err, "failed to get subsystem mount points");
+                                LibcontainerError::OtherCgroup(err.to_string())
+                            })?
+                        {
+                            let cgroup_mount = mp
+                                .clone()
+                                .into_os_string()
+                                .into_string()
+                                .expect("failed to convert mount point");
+                            if cgroup_mount.starts_with(DEFAULT_CGROUP_ROOT) {
+                                criu.set_external_mount(cgroup_mount.clone(), cgroup_mount);
                             }
                         }
-                        _ => (),
                     }
+                    _ => (),
                 }
-                _ => (),
             }
         }
 
-        let directory = std::fs::File::open(&opts.image_path).map_err(|err| {
-            tracing::error!(path = ?opts.image_path, ?err, "failed to open criu image directory");
+        let directory = File::open(&opts.image_path).map_err(|err| {
+            tracing::error!(path = ?opts.image_path, ?err, "failed to open checkpoint directory");
             LibcontainerError::OtherIO(err)
         })?;
         criu.set_images_dir_fd(directory.as_raw_fd());
 
         // It seems to be necessary to be defined outside of 'if' to
         // keep the FD open until CRIU uses it.
-        let work_dir: std::fs::File;
+        let work_dir: File;
         if let Some(wp) = &opts.work_path {
-            work_dir = std::fs::File::open(wp).map_err(LibcontainerError::OtherIO)?;
+            // Create work directory if it doesn't exist (mode 0o700 like crun).
+            if let Err(err) = DirBuilder::new().mode(0o700).create(wp) {
+                if err.kind() != ErrorKind::AlreadyExists {
+                    tracing::error!(path = ?wp, ?err, "failed to create work directory");
+                    return Err(LibcontainerError::OtherIO(err));
+                }
+            }
+            work_dir = File::open(wp).map_err(LibcontainerError::OtherIO)?;
             criu.set_work_dir_fd(work_dir.as_raw_fd());
         }
 
@@ -111,7 +132,7 @@ impl Container {
         // Remember original stdin, stdout, stderr for container restore.
         let mut descriptors = Vec::new();
         for n in 0..3 {
-            let link_path = match fs::read_link(format!("/proc/{pid}/fd/{n}")) {
+            let link_path = match read_link(format!("/proc/{pid}/fd/{n}")) {
                 // it should not have any non utf-8 or non os safe path,
                 // as we are reading from os , so ok to unwrap
                 Ok(lp) => lp.into_os_string().into_string().unwrap(),
@@ -146,6 +167,32 @@ impl Container {
                 .into_string()
                 .unwrap(),
         );
+        criu.cgroups_mode(opts.manage_cgroups_mode.clone());
+        criu.set_link_remap(opts.link_remap);
+
+        // Register network and PID namespaces as external to CRIU.
+        //
+        // Both namespaces are created by the container runtime (e.g. Podman) on
+        // the host side before the container process starts, so CRIU must not
+        // try to save or recreate them itself.
+        //
+        // Network namespace: CRIU would otherwise save the full network
+        // configuration (ifaddr, route, iptables, netdev, ...) and attempt to
+        // recreate the veth pair on restore. That fails with "Unknown peer net
+        // namespace" because the peer end lives in the host namespace which
+        // CRIU cannot see. Marking it external tells CRIU to store only a
+        // netns reference (netns-*.img) and inherit the existing namespace fd
+        // on restore via --inherit-fd.
+        //
+        // PID namespace: similarly created by the runtime via clone(CLONE_NEWPID).
+        // Without external registration CRIU would create a new PID namespace
+        // on restore, causing PID reassignment and breaking rst_sibling-based
+        // restore where the restored process must be a sibling of the runtime
+        // process inside the same existing PID namespace.
+        //
+        // This follows runc's handleCheckpointingExternalNamespaces.
+        handle_checkpointing_external_namespaces(&mut criu, &spec, LinuxNamespaceType::Network)?;
+        handle_checkpointing_external_namespaces(&mut criu, &spec, LinuxNamespaceType::Pid)?;
 
         criu.dump().map_err(|err| {
             tracing::error!(?err, id = ?self.id(), logfile = ?opts.image_path.join(CRIU_CHECKPOINT_LOG_FILE), "checkpointing container failed");
@@ -153,7 +200,12 @@ impl Container {
         })?;
 
         if !opts.leave_running {
+            // Set status to Stopped first so delete() can proceed without force.
             self.set_status(ContainerStatus::Stopped).save()?;
+            // Remove cgroups, run poststop hooks, and delete the container state
+            // directory, matching runc's behavior where a checkpoint without
+            // --leave-running fully removes the container from runtime state.
+            self.delete(false)?;
         }
 
         tracing::debug!("container {} checkpointed", self.id());

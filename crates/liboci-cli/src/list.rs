@@ -1,13 +1,13 @@
-use clap::Parser;
+use clap::Args;
 
 /// List created containers
-#[derive(Parser, Debug)]
+#[derive(Args, Debug)]
 pub struct List {
     /// Specify the format (default or table)
-    #[clap(long, default_value = "table")]
+    #[arg(long, default_value = "table")]
     pub format: String,
 
     /// Only display container IDs
-    #[clap(long, short)]
+    #[arg(long, short)]
     pub quiet: bool,
 }

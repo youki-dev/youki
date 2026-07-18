@@ -1,6 +1,6 @@
-use nix::sched::{sched_getaffinity, sched_setaffinity, CpuSet};
+use nix::sched::{CpuSet, sched_getaffinity, sched_setaffinity};
 use nix::unistd::Pid;
-use tracing::{enabled, Level};
+use tracing::{Level, enabled};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CPUAffinityError {

@@ -1,12 +1,12 @@
 use std::fs;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use oci_spec::runtime::{ExecCPUAffinityBuilder, ProcessBuilder, Spec, SpecBuilder};
 use regex::Regex;
-use serde_json::{json, Value};
-use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
+use serde_json::{Value, json};
+use test_framework::{Test, TestGroup, TestResult, test_result};
 
-use crate::utils::{exec_container, is_runtime_runc, start_container, test_outside_container};
+use crate::utils::{exec_container, start_container, test_outside_container};
 
 fn create_spec(initial: Option<&str>, fin: Option<&str>) -> Result<Spec> {
     let mut builder = ExecCPUAffinityBuilder::default();
@@ -52,10 +52,11 @@ fn test_cpu_affinity_only_initial_set_from_process_json() -> TestResult {
             return TestResult::Failed(anyhow!("failed to write process.json: {}", e));
         }
 
-        let (_stdout, stderr) = match exec_container(id, dir, &["/bin/true"], Some(&process_path)) {
-            Ok(output) => output,
-            Err(e) => return TestResult::Failed(e),
-        };
+        let (_stdout, stderr) =
+            match exec_container(id, dir, &["/bin/true"], Some(&process_path), &[]) {
+                Ok(output) => output,
+                Err(e) => return TestResult::Failed(e),
+            };
 
         let mask = affinity_mask_from_str(process_affinity_initial);
         let pattern = format!(r".*affinity: 0x{:x}", mask);
@@ -100,6 +101,7 @@ fn test_cpu_affinity_initial_and_final_set_from_process_json() -> TestResult {
             dir,
             &["grep", "Cpus_allowed_list", "/proc/self/status"],
             Some(&process_path),
+            &[],
         ) {
             Ok(output) => output,
             Err(e) => return TestResult::Failed(e),
@@ -142,6 +144,7 @@ fn test_cpu_affinity_from_config_json() -> TestResult {
             dir,
             &["grep", "Cpus_allowed_list", "/proc/self/status"],
             None,
+            &[],
         )
         .expect("exec failed");
 
@@ -163,26 +166,19 @@ fn test_cpu_affinity_from_config_json() -> TestResult {
     })
 }
 
-// In runc, `exec_cpu_affinity` is introduced in version 1.3.0.
-// Since the current CI uses an older version of runc, `exec_cpu_affinity` is not available and the test will be skipped.
-// youki/.github/workflows/integration_tests_validation.yaml:95
-// https://github.com/opencontainers/runc/releases/tag/v1.3.0-rc.1
 pub fn get_exec_cpu_affinity_test() -> TestGroup {
     let mut exec_cpu_affinity_test_group = TestGroup::new("exec_cpu_affinity");
 
-    let test_cpu_affinity_only_initial_set_from_process_json = ConditionalTest::new(
+    let test_cpu_affinity_only_initial_set_from_process_json = Test::new(
         "test_cpu_affinity_only_initial_set_from_process_json",
-        Box::new(|| !is_runtime_runc()),
         Box::new(test_cpu_affinity_only_initial_set_from_process_json),
     );
-    let test_cpu_affinity_initial_and_final_set_from_process_json = ConditionalTest::new(
+    let test_cpu_affinity_initial_and_final_set_from_process_json = Test::new(
         "test_cpu_affinity_initial_and_final_set_from_process_json",
-        Box::new(|| !is_runtime_runc()),
         Box::new(test_cpu_affinity_initial_and_final_set_from_process_json),
     );
-    let test_cpu_affinity_from_config_json = ConditionalTest::new(
+    let test_cpu_affinity_from_config_json = Test::new(
         "test_cpu_affinity_from_config_json",
-        Box::new(|| !is_runtime_runc()),
         Box::new(test_cpu_affinity_from_config_json),
     );
     exec_cpu_affinity_test_group.add(vec![

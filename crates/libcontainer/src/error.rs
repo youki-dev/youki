@@ -1,3 +1,5 @@
+use crate::container::ContainerStatus;
+
 #[derive(Debug, thiserror::Error)]
 pub enum MissingSpecError {
     #[error("missing process in spec")]
@@ -12,8 +14,8 @@ pub enum MissingSpecError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum LibcontainerError {
-    #[error("failed to perform operation due to incorrect container status")]
-    IncorrectStatus,
+    #[error("failed operation due to incompatible container status: `{0}`")]
+    IncorrectStatus(ContainerStatus),
     #[error("container already exists")]
     Exist,
     #[error("container state directory does not exist")]
@@ -30,7 +32,7 @@ pub enum LibcontainerError {
     InvalidID(#[from] ErrInvalidID),
     #[error(transparent)]
     MissingSpec(#[from] MissingSpecError),
-    #[error("invalid runtime spec")]
+    #[error(transparent)]
     InvalidSpec(#[from] ErrInvalidSpec),
 
     // Errors from submodules and other errors
@@ -64,6 +66,12 @@ pub enum LibcontainerError {
     Checkpoint(#[from] crate::container::CheckpointError),
     #[error[transparent]]
     CreateContainerError(#[from] CreateContainerError),
+    #[error(transparent)]
+    NetDevicesError(#[from] crate::utils::NetDevicesError),
+    #[error(transparent)]
+    NetworkError(#[from] crate::network::NetworkError),
+    #[error(transparent)]
+    IntelRdt(#[from] crate::process::intel_rdt::IntelRdtError),
 
     // Catch all errors that are not covered by the above
     #[error("syscall error")]
@@ -96,8 +104,42 @@ pub enum ErrInvalidSpec {
     AppArmorNotEnabled,
     #[error("invalid io priority or class.")]
     IoPriority,
-    #[error("invalid scheduler config for process")]
-    Scheduler,
+    #[error("invalid scheduler config for process: {0}")]
+    Scheduler(String),
+    #[error("cannot allocate tty if youki will detach without setting console socket")]
+    ConsoleSocketRequired,
+    #[error("cannot use console socket if youki will not detach or allocate tty")]
+    InvalidConsoleSocket,
+    #[error("idmapped mount requires bind mount")]
+    MountIdmapNonBind,
+    #[error("idmapped mount requires uid/gid mappings or a usable user namespace")]
+    MountIdmapMissingMappings,
+    #[error("idmapped mount is not supported")]
+    MountIdmapUnsupported,
+    #[error("idmapped mounts are not supported in rootless containers")]
+    MountIdmapRootless,
+    #[error("invalid netns path: {0}")]
+    InvalidNetNsPath(String),
+    #[error("unable to set hostname without a private UTS namespace")]
+    HostnameWithoutUTS,
+    #[error("unable to set domainname without a private UTS namespace")]
+    DomainnameWithoutUTS,
+    #[error("user namespace mappings specified, but user namespace isn't enabled in the config")]
+    UserMappingsWithoutNamespace,
+    #[error("unable to restrict sys entries without a private MNT namespace")]
+    SysEntriesWithoutMntNamespace,
+    #[error("sysctl {0} is not allowed in the hosts ipc namespace")]
+    SysctlNotAllowedInHostIpc(String),
+    #[error("sysctl {0} not allowed in host network namespace")]
+    SysctlNotAllowedInHostNet(String),
+    #[error("sysctl {0} is not allowed as it conflicts with the OCI {1} field")]
+    SysctlConflictsWithOci(String, String),
+    #[error("setting ucounts without a user namespace not allowed: {0}")]
+    SysctlNotAllowedInHostUser(String),
+    #[error("sysctl {0} is not in a separate kernel namespace")]
+    SysctlNotInSeparateNamespace(String),
+    #[error("invalid intelRdt.closID (must not contain '.', '..', or '/')")]
+    InvalidIntelRdtClosId,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -147,6 +189,32 @@ mod tests {
             "failed to create container: non default cgroup root not supported. \
          error during cleanup: container id can't be empty",
             msg
+        );
+    }
+    #[test]
+    fn test_libcontainer_error_msg() {
+        use crate::container::ContainerStatus::*;
+        use crate::error::LibcontainerError::IncorrectStatus;
+
+        assert_eq!(
+            "failed operation due to incompatible container status: `Creating`",
+            format!("{}", IncorrectStatus(Creating))
+        );
+        assert_eq!(
+            "failed operation due to incompatible container status: `Created`",
+            format!("{}", IncorrectStatus(Created))
+        );
+        assert_eq!(
+            "failed operation due to incompatible container status: `Stopped`",
+            format!("{}", IncorrectStatus(Stopped))
+        );
+        assert_eq!(
+            "failed operation due to incompatible container status: `Running`",
+            format!("{}", IncorrectStatus(Running))
+        );
+        assert_eq!(
+            "failed operation due to incompatible container status: `Paused`",
+            format!("{}", IncorrectStatus(Paused))
         );
     }
 }

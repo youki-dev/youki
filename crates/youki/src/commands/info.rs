@@ -5,13 +5,13 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::Args;
 #[cfg(feature = "v2")]
 use libcgroups::{common::CgroupSetup, v2::controller_type::ControllerType};
 use libcontainer::user_ns;
 use procfs::{CpuInfo, Current, Meminfo};
 /// Show information about the system
-#[derive(Parser, Debug)]
+#[derive(Args, Debug)]
 pub struct Info {}
 
 pub fn info(_: Info) -> Result<()> {
@@ -26,10 +26,28 @@ pub fn info(_: Info) -> Result<()> {
     Ok(())
 }
 
-/// print Version of Youki
+/// Prints the version of youki in a format compatible with `runc --version` and Moby.
+///
+/// See:
+/// - <https://github.com/opencontainers/runc/blob/v1.4.0/main.go#L37-L51>
+/// - <https://github.com/moby/moby/blob/65cc84abc522a564699bb171ca54ea1857256d10/daemon/info_unix.go#L280>
 pub fn print_youki() {
-    println!("{:<18}{}", "Version", env!("CARGO_PKG_VERSION"));
-    println!("{:<18}{}", "Commit", env!("VERGEN_GIT_SHA"));
+    println!("youki version: {}", env!("CARGO_PKG_VERSION"));
+    println!(
+        "commit: {}-{}",
+        env!("CARGO_PKG_VERSION"),
+        env!("VERGEN_GIT_SHA")
+    );
+    println!("spec: {}", oci_spec::runtime::VERSION);
+    println!(
+        "rustc: {}",
+        option_env!("VERGEN_RUSTC_SEMVER").unwrap_or("unknown")
+    );
+    #[cfg(feature = "seccomp")]
+    println!(
+        "libseccomp: {}",
+        option_env!("LIBSECCOMP_VERSION").unwrap_or("unknown")
+    );
 }
 
 /// Print Kernel Release, Version and Architecture
@@ -97,8 +115,8 @@ fn try_read_os_from<P: AsRef<Path>>(path: P) -> Option<String> {
 fn find_parameter<'a>(content: &'a str, param_name: &str) -> Option<&'a str> {
     content
         .lines()
-        .find(|l| l.starts_with(param_name))
-        .and_then(|l| l.split_terminator('=').last())
+        .filter_map(|l| l.split_once('='))
+        .find_map(|(key, value)| (key == param_name).then_some(value))
 }
 
 /// Print Hardware information of system
@@ -157,29 +175,27 @@ pub fn print_cgroup_v2_controllers() {
     let cgroup_setup = libcgroups::common::get_cgroup_setup();
     let unified = libcgroups::v2::util::get_unified_mount_point();
 
-    if let Ok(cgroup_setup) = cgroup_setup {
-        if let Ok(unified) = &unified {
-            if matches!(cgroup_setup, CgroupSetup::Hybrid | CgroupSetup::Unified) {
-                if let Ok(controllers) = libcgroups::v2::util::get_available_controllers(unified) {
-                    println!("CGroup v2 controllers");
-                    let active_controllers: HashSet<ControllerType> =
-                        controllers.into_iter().collect();
-                    for controller in libcgroups::v2::controller_type::CONTROLLER_TYPES {
-                        let status = if active_controllers.contains(controller) {
-                            "attached"
-                        } else {
-                            "detached"
-                        };
+    if let Ok(cgroup_setup) = cgroup_setup
+        && let Ok(unified) = &unified
+        && matches!(cgroup_setup, CgroupSetup::Hybrid | CgroupSetup::Unified)
+    {
+        if let Ok(controllers) = libcgroups::v2::util::get_available_controllers(unified) {
+            println!("CGroup v2 controllers");
+            let active_controllers: HashSet<ControllerType> = controllers.into_iter().collect();
+            for controller in libcgroups::v2::controller_type::CONTROLLER_TYPES {
+                let status = if active_controllers.contains(controller) {
+                    "attached"
+                } else {
+                    "detached"
+                };
 
-                        println!("  {:<16}{}", controller.to_string(), status);
-                    }
-                }
-
-                if let Some(config) = read_kernel_config() {
-                    let display = FeatureDisplay::with_status("device", "attached", "detached");
-                    print_feature_status(&config, "CONFIG_CGROUP_BPF", display);
-                }
+                println!("  {:<16}{}", controller.to_string(), status);
             }
+        }
+
+        if let Some(config) = read_kernel_config() {
+            let display = FeatureDisplay::with_status("device", "attached", "detached");
+            print_feature_status(&config, "CONFIG_CGROUP_BPF", display);
         }
     }
 }
@@ -208,7 +224,7 @@ pub fn print_namespaces() {
             }
         } else {
             println!("{:<18}UNKNOWN", "Namespaces");
-            // we don't return as  we can atleast try and see if anything is enabled
+            // we don't return as  we can at least try and see if anything is enabled
         }
 
         // mount namespace is always enabled if namespaces are enabled
@@ -296,5 +312,24 @@ impl<'a> FeatureDisplay<'a> {
             enabled,
             disabled,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_parameter_matches_exact_key() {
+        let content = "NAME_SUFFIX=wrong\nNAME=right\n";
+
+        assert_eq!(find_parameter(content, "NAME"), Some("right"));
+    }
+
+    #[test]
+    fn find_parameter_keeps_equals_signs_in_value() {
+        let content = "PRETTY_NAME=\"Foo=Bar\"\n";
+
+        assert_eq!(find_parameter(content, "PRETTY_NAME"), Some("\"Foo=Bar\""));
     }
 }

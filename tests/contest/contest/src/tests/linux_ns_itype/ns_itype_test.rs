@@ -40,7 +40,7 @@ fn get_test(test_name: &'static str) -> Test {
                     return TestResult::Failed(anyhow!(
                         "error in resolving host namespaces : {}",
                         e
-                    ))
+                    ));
                 }
             };
             let spec = get_spec();

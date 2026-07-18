@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use super::controller::Controller;
 use crate::common::{self, ControllerOpt, WrappedIoError};
-use crate::stats::{parse_flat_keyed_data, CpuUsage, ParseFlatKeyedDataError, StatsProvider};
+use crate::stats::{CpuUsage, ParseFlatKeyedDataError, StatsProvider, parse_flat_keyed_data};
 
 // Contains user mode and kernel mode cpu consumption
 const CGROUP_CPUACCT_STAT: &str = "cpuacct.stat";

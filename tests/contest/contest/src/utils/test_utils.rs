@@ -2,21 +2,33 @@
 //! Similar to https://github.com/opencontainers/runtime-tools/blob/master/validation/util/test.go
 use std::collections::HashMap;
 use std::ffi::OsStr;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread::sleep;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Context, Result};
-use nix::mount::{umount2, MntFlags};
+use anyhow::{Context, Result, anyhow, bail};
+use nix::mount::{MntFlags, umount2};
 use oci_spec::runtime::{LinuxNamespaceType, Spec};
 use serde::{Deserialize, Serialize};
-use test_framework::{test_result, TestResult};
+use test_framework::{TestResult, test_result};
+use thiserror::Error;
 
 use super::{generate_uuid, get_runtime_path, get_runtimetest_path, prepare_bundle, set_config};
 
 const SLEEP_TIME: Duration = Duration::from_millis(150);
 pub const CGROUP_ROOT: &str = "/sys/fs/cgroup";
+
+#[derive(Error, Debug)]
+pub enum ContainerStateError {
+    #[error("Failed to parse lifecycle status")]
+    ParseLifecycleStatus(#[source] serde_json::Error),
+    #[error("Container does not exist")]
+    ContainerNotFound,
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -34,6 +46,23 @@ pub struct State {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub creator: Option<u32>,
     pub use_systemd: Option<bool>,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum LifecycleStatus {
+    Creating,
+    Created,
+    Running,
+    Stopped,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum WaitTarget {
+    Status(LifecycleStatus),
+    // the state after the container is deleted
+    // this state isn't in the runtime spec, but is useful for tests that wait for deletion
+    Deleted,
 }
 
 #[derive(Debug)]
@@ -95,10 +124,15 @@ pub fn create_container<P: AsRef<Path>>(
 
 /// Sends a kill command to the given container process
 pub fn kill_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
+    kill_container_with_signal(id, dir, "9")
+}
+
+/// Sends a kill command with the given signal to the container process
+pub fn kill_container_with_signal<P: AsRef<Path>>(id: &str, dir: P, signal: &str) -> Result<Child> {
     let res = runtime_command(dir)
         .arg("kill")
         .arg(id)
-        .arg("9")
+        .arg(signal)
         .spawn()
         .context("could not kill container")?;
     Ok(res)
@@ -127,12 +161,170 @@ pub fn get_state<P: AsRef<Path>>(id: &str, dir: P) -> Result<(String, String)> {
     Ok((stdout, stderr))
 }
 
+/// Get the container status as a LifecycleStatus
+pub fn get_container_status<P: AsRef<Path>>(
+    id: &str,
+    dir: P,
+) -> Result<LifecycleStatus, ContainerStateError> {
+    let (stdout, stderr) = get_state(id, &dir).map_err(|e| {
+        if e.to_string().contains("does not exist") {
+            ContainerStateError::ContainerNotFound
+        } else {
+            ContainerStateError::Other(e)
+        }
+    })?;
+
+    if stderr.contains("does not exist") {
+        return Err(ContainerStateError::ContainerNotFound);
+    }
+
+    if stderr.contains("Error") || stderr.contains("error") {
+        return Err(ContainerStateError::Other(anyhow!(
+            "Error :\nstdout : {}\nstderr : {}",
+            stdout,
+            stderr
+        )));
+    }
+
+    let value = serde_json::from_str::<serde_json::Value>(&stdout).map_err(|err| {
+        ContainerStateError::Other(anyhow!(
+            "Failed to parse state output as JSON: {} - {}",
+            stdout,
+            err
+        ))
+    })?;
+
+    let status = value.get("status").ok_or_else(|| {
+        ContainerStateError::Other(anyhow!(
+            "Failed to extract status from state output: {}",
+            stdout
+        ))
+    })?;
+
+    serde_json::from_value::<LifecycleStatus>(status.clone())
+        .map_err(ContainerStateError::ParseLifecycleStatus)
+}
+
+/// Check if a container matches the expected wait target
+///
+/// Returns `true` if the container state matches the expected target, `false` otherwise.
+/// When `WaitTarget::Deleted` is specified, returns `true` if the container does not exist.
+pub fn is_in_state<P: AsRef<Path>>(
+    id: &str,
+    dir: P,
+    expected_target: WaitTarget,
+) -> Result<bool, ContainerStateError> {
+    match (get_container_status(id, &dir), expected_target) {
+        (Ok(status), WaitTarget::Status(expected_status)) => Ok(status == expected_status),
+        (Ok(_), WaitTarget::Deleted) => Ok(false),
+        (Err(ContainerStateError::ContainerNotFound), WaitTarget::Deleted) => Ok(true),
+        (Err(ContainerStateError::ContainerNotFound), WaitTarget::Status(_)) => Ok(false),
+        (Err(e), _) => Err(e),
+    }
+}
+
+/// Wait for a container to reach a specific wait target with timeout
+pub fn wait_for_state<P: AsRef<Path>>(
+    id: &str,
+    dir: P,
+    expected_target: WaitTarget,
+    timeout: Duration,
+    poll_interval: Duration,
+) -> Result<()> {
+    let start = std::time::Instant::now();
+    let deadline = start + timeout;
+
+    while std::time::Instant::now() < deadline {
+        match is_in_state(id, &dir, expected_target) {
+            Ok(true) => return Ok(()),
+            Ok(false) | Err(ContainerStateError::ParseLifecycleStatus(_)) => {
+                std::thread::sleep(poll_interval)
+            }
+            Err(e) => {
+                return Err(anyhow::Error::from(e).context(format!(
+                    "Failed to wait for container {} to reach {:?} target",
+                    id, expected_target
+                )));
+            }
+        }
+    }
+
+    bail!(
+        "Timed out waiting for container {} to reach {:?} target",
+        id,
+        expected_target
+    )
+}
+
+pub fn get_container_pid<P: AsRef<Path>>(id: &str, dir: P) -> Result<i32> {
+    let (stdout, _) = get_state(id, &dir)?;
+    let value = serde_json::from_str::<serde_json::Value>(&stdout)
+        .map_err(|e| anyhow!("Failed to parse state output as JSON: {stdout} - {e}"))?;
+
+    let pid = value
+        .get("pid")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| anyhow!("Failed to extract pid from state output: {stdout}"))?;
+
+    Ok(pid as i32)
+}
+
 pub fn start_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
     let res = runtime_command(dir)
         .arg("start")
         .arg(id)
         .spawn()
         .context("could not start container")?;
+    Ok(res)
+}
+
+pub fn pause_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
+    let res = runtime_command(dir)
+        .arg("pause")
+        .arg(id)
+        .spawn()
+        .context("could not pause container")?;
+    Ok(res)
+}
+
+pub fn update_container<P: AsRef<Path>>(id: &str, dir: P, args: &[&str]) -> Result<Child> {
+    let res = runtime_command(dir)
+        .arg("update")
+        .args(args)
+        .arg(id)
+        .spawn()
+        .context("could not update container")?;
+    Ok(res)
+}
+
+pub fn update_container_with_stdin<P: AsRef<Path>>(
+    id: &str,
+    dir: P,
+    args: &[&str],
+    stdin_data: &str,
+) -> Result<Child> {
+    let mut child = runtime_command(dir)
+        .arg("update")
+        .args(args)
+        .arg(id)
+        .stdin(Stdio::piped())
+        .spawn()
+        .context("could not update container")?;
+    child
+        .stdin
+        .take()
+        .expect("stdin was piped")
+        .write_all(stdin_data.as_bytes())
+        .context("failed to write to stdin")?;
+    Ok(child)
+}
+
+pub fn resume_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
+    let res = runtime_command(dir)
+        .arg("resume")
+        .arg(id)
+        .spawn()
+        .context("could not resume container")?;
     Ok(res)
 }
 
@@ -157,10 +349,7 @@ pub fn test_outside_container(
     let options = CreateOptions::default();
     let create_result = create_container(&id_str, &bundle, &options).unwrap().wait();
     let (out, err) = get_state(&id_str, &bundle).unwrap();
-    let state: Option<State> = match serde_json::from_str(&out) {
-        Ok(v) => Some(v),
-        Err(_) => None,
-    };
+    let state: Option<State> = serde_json::from_str(&out).ok();
     let data = ContainerData {
         id: id.to_string(),
         state,
@@ -175,11 +364,12 @@ pub fn test_outside_container(
     // is no mount namespace in the spec's namespaces, and if there is no mount namespace,
     // we manually unmount the rootfs so tmpdir deletion can succeed and cleanup is done.
     let ns = spec.linux().as_ref().and_then(|l| l.namespaces().clone());
-    if let Some(ns) = ns {
-        if !ns.into_iter().any(|n| n.typ() == LinuxNamespaceType::Mount) {
-            umount2(&bundle.path().join("bundle/rootfs"), MntFlags::MNT_DETACH).unwrap();
-        }
+    if let Some(ns) = ns
+        && !ns.iter().any(|n| n.typ() == LinuxNamespaceType::Mount)
+    {
+        umount2(&bundle.path().join("bundle/rootfs"), MntFlags::MNT_DETACH).unwrap();
     }
+
     kill_container(&id_str, &bundle).unwrap().wait().unwrap();
     delete_container(&id_str, &bundle).unwrap().wait().unwrap();
     test_result
@@ -275,10 +465,20 @@ pub fn test_inside_container(
 
     let state: State = match serde_json::from_str(&out) {
         Ok(v) => v,
-        Err(e) => return TestResult::Failed(anyhow!("error in parsing state of container after start in test_inside_container : stdout : {}, parse error : {}",out,e)),
+        Err(e) => {
+            return TestResult::Failed(anyhow!(
+                "error in parsing state of container after start in test_inside_container : stdout : {}, parse error : {}",
+                out,
+                e
+            ));
+        }
     };
     if state.status != "stopped" {
-        return TestResult::Failed(anyhow!("error : unexpected container status in test_inside_runtime : expected stopped, got {}, container state : {:?}",state.status,state));
+        return TestResult::Failed(anyhow!(
+            "error : unexpected container status in test_inside_runtime : expected stopped, got {}, container state : {:?}",
+            state.status,
+            state
+        ));
     }
     kill_container(&id_str, &bundle).unwrap().wait().unwrap();
     delete_container(&id_str, &bundle).unwrap().wait().unwrap();
@@ -328,12 +528,253 @@ pub fn check_container_created(data: &ContainerData) -> Result<()> {
     }
 }
 
-pub fn exec_container<P: AsRef<Path>>(
+/// Wait until a container reaches `Running` state (10 s timeout).
+pub fn wait_container_running<P: AsRef<Path>>(id: &str, dir: P) -> Result<()> {
+    wait_for_state(
+        id,
+        dir,
+        WaitTarget::Status(LifecycleStatus::Running),
+        Duration::from_secs(10),
+        Duration::from_millis(100),
+    )
+}
+
+pub fn handle_console_socket(stream: std::os::unix::net::UnixStream) {
+    std::thread::spawn(move || {
+        use std::io::{IoSliceMut, Read};
+        use std::os::unix::io::AsRawFd;
+
+        use nix::sys::socket::{ControlMessageOwned, MsgFlags, recvmsg};
+
+        let mut buf = [0u8; 4096];
+        let mut iov = [IoSliceMut::new(&mut buf)];
+        let mut cmsg_space = nix::cmsg_space!([std::os::unix::io::RawFd; 1]);
+        let fd = stream.as_raw_fd();
+
+        if let Ok(msg) = recvmsg::<()>(fd, &mut iov, Some(&mut cmsg_space), MsgFlags::empty())
+            && let Ok(cmsgs) = msg.cmsgs()
+        {
+            for cmsg in cmsgs {
+                if let ControlMessageOwned::ScmRights(_) = cmsg {
+                    // Keep the PTY master open by waiting for the stream to close
+                    let mut buf = [0u8; 1024];
+                    let mut stream_mut = &stream;
+                    while let Ok(n) = stream_mut.read(&mut buf) {
+                        if n == 0 {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// Checkpoint a running container into `image_dir`.
+///
+/// * `global_args` are passed before the `checkpoint` subcommand (e.g., `&["--debug"]`).
+/// * `checkpoint_args` are passed after the standard checkpoint options (e.g., `&["--pre-dump"]`).
+///
+/// This function automatically asserts that the checkpoint command succeeds. For scenarios
+/// where you expect the command to fail, use `try_checkpoint_container` instead.
+pub fn checkpoint_container(
+    bundle_path: &Path,
+    id: &str,
+    image_dir: &Path,
+    work_dir: Option<&Path>,
+    checkpoint_args: &[&str],
+    global_args: &[&str],
+) -> Result<()> {
+    let output = try_checkpoint_container(
+        bundle_path,
+        id,
+        image_dir,
+        work_dir,
+        checkpoint_args,
+        global_args,
+    )?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        bail!(
+            "checkpoint failed ({}): stdout={stdout}, stderr={stderr}",
+            output.status,
+        );
+    }
+
+    if !image_dir.join("inventory.img").exists() {
+        bail!("checkpoint incomplete: {image_dir:?}/inventory.img missing");
+    }
+
+    Ok(())
+}
+
+pub fn build_checkpoint_command(
+    bundle_path: &Path,
+    id: &str,
+    image_dir: &Path,
+    work_dir: Option<&Path>,
+    checkpoint_args: &[&str],
+    global_args: &[&str],
+) -> Command {
+    let mut command = Command::new(get_runtime_path());
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    for a in global_args {
+        command.arg(a);
+    }
+
+    command.arg("--root").arg(bundle_path.join("runtime"));
+    command.arg("checkpoint").arg("--image-path").arg(image_dir);
+
+    if let Some(wp) = work_dir {
+        command.arg("--work-path").arg(wp);
+    }
+
+    for a in checkpoint_args {
+        command.arg(a);
+    }
+
+    command.arg(id);
+    command
+}
+
+/// Executes the checkpoint command and returns the raw `Output`.
+///
+/// Unlike `checkpoint_container`, this function does NOT automatically fail the test
+/// if the command exits with an error status. It should be used when you explicitly
+/// need to test negative scenarios (e.g., verifying that a checkpoint fails with a
+/// specific stderr message). For happy-path tests, prefer using `checkpoint_container`.
+pub fn try_checkpoint_container(
+    bundle_path: &Path,
+    id: &str,
+    image_dir: &Path,
+    work_dir: Option<&Path>,
+    checkpoint_args: &[&str],
+    global_args: &[&str],
+) -> Result<std::process::Output> {
+    build_checkpoint_command(
+        bundle_path,
+        id,
+        image_dir,
+        work_dir,
+        checkpoint_args,
+        global_args,
+    )
+    .spawn()
+    .context("failed to spawn checkpoint")?
+    .wait_with_output()
+    .context("failed to wait for checkpoint")
+}
+
+/// Restore a checkpointed container from `image_dir` using `restore -d`.
+/// `global_args` are runtime-level arguments passed before the subcommand (e.g., `youki --debug restore`).
+/// `restore_args` are subcommand-level arguments passed after the subcommand (e.g., `youki restore --tcp-established`).
+pub fn restore_container(
+    bundle_path: &Path,
+    id: &str,
+    image_dir: &Path,
+    work_dir: Option<&Path>,
+    restore_args: &[&str],
+    global_args: &[&str],
+) -> Result<()> {
+    let stderr_file = tempfile::NamedTempFile::new().context("failed to create temp file")?;
+
+    let mut args: Vec<std::ffi::OsString> = global_args.iter().map(Into::into).collect();
+    args.extend(["--root".into(), bundle_path.join("runtime").into()]);
+    args.extend(["restore".into(), "-d".into()]);
+    args.extend(["--bundle".into(), bundle_path.join("bundle").into()]);
+    args.extend(["--image-path".into(), image_dir.into()]);
+    if let Some(wp) = work_dir {
+        args.extend(["--work-path".into(), wp.into()]);
+    }
+    for arg in restore_args {
+        args.push(arg.into());
+    }
+
+    let config_path = bundle_path.join("bundle").join("config.json");
+    let config_path = if config_path.exists() {
+        config_path
+    } else {
+        bundle_path.join("config.json")
+    };
+
+    let is_terminal = if config_path.exists() {
+        oci_spec::runtime::Spec::load(&config_path)
+            .ok()
+            .and_then(|spec| {
+                spec.process()
+                    .as_ref()
+                    .map(|p| p.terminal().unwrap_or(false))
+            })
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    let mut listener = None;
+    if is_terminal {
+        let socket_path = bundle_path.join(format!("restore-console-{}.sock", id));
+        if socket_path.exists() {
+            std::fs::remove_file(&socket_path).context("failed to remove exists socket file")?;
+        }
+        let l = std::os::unix::net::UnixListener::bind(&socket_path)?;
+        listener = Some(l);
+        args.extend(["--console-socket".into(), socket_path.into()]);
+    }
+
+    args.push(id.into());
+
+    let mut child = Command::new(get_runtime_path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(stderr_file.reopen().context("failed to reopen temp file")?)
+        .args(&args)
+        .spawn()
+        .context("failed to spawn restore")?;
+
+    if let Some(l) = listener {
+        let (stream, _) = l.accept()?;
+        handle_console_socket(stream);
+    }
+
+    let status = child.wait().context("failed to wait for restore")?;
+
+    if !status.success() {
+        let stderr = std::fs::read_to_string(stderr_file.path()).unwrap_or_default();
+        bail!("restore failed ({}): {}", status, stderr);
+    }
+
+    Ok(())
+}
+
+/// Returns true if CRIU is installed on the host.
+pub fn criu_installed() -> bool {
+    which::which("criu").is_ok()
+}
+
+/// Returns true if the installed CRIU supports the given feature.
+pub fn criu_has_feature(feature: &str) -> bool {
+    Command::new(which::which("criu").unwrap())
+        .arg("check")
+        .arg("--feature")
+        .arg(feature)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+pub fn build_exec_command<P: AsRef<Path>>(
     id: &str,
     dir: P,
     args: &[impl AsRef<OsStr>],
     process_path: Option<&Path>,
-) -> Result<(String, String)> {
+    env: &[(&str, &str)],
+) -> Command {
     let mut command = runtime_command(&dir);
     command.arg("--debug").arg("exec");
 
@@ -341,11 +782,45 @@ pub fn exec_container<P: AsRef<Path>>(
         command.arg("--process").arg(path);
     }
 
-    command.arg(id);
+    for (k, v) in env {
+        command.arg("--env").arg(format!("{k}={v}"));
+    }
 
     if process_path.is_none() {
-        command.args(args);
+        let mut opts = vec![];
+        let mut cmd = vec![];
+        let mut saw_cmd = false;
+
+        for a in args {
+            let s = a.as_ref();
+            if !s.is_empty() && s.to_string_lossy().starts_with("--") && !saw_cmd {
+                opts.push(s.to_owned());
+            } else {
+                saw_cmd = true;
+                cmd.push(s.to_owned());
+            }
+        }
+
+        command.args(&opts);
+        command.arg(id);
+        if !cmd.is_empty() {
+            command.args(&cmd);
+        }
+    } else {
+        command.arg(id);
     }
+
+    command
+}
+
+pub fn exec_container<P: AsRef<Path>>(
+    id: &str,
+    dir: P,
+    args: &[impl AsRef<OsStr>],
+    process_path: Option<&Path>,
+    env: &[(&str, &str)],
+) -> Result<(String, String)> {
+    let mut command = build_exec_command(id, dir, args, process_path, env);
 
     let output = command.output().context("failed to run exec")?;
 

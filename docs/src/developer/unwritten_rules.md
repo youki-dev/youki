@@ -8,11 +8,11 @@ This is the place to write down rules or conventions that were discussed in PRs,
 
 Youki currently uses [anyhow](https://www.crates.io/crates/anyhow) library to deal with errors occurring during its execution. So wherever you use fallible actions, or functions that can return `Result`, make sure you attach enough information with the errors so that error logs can be useful for debugging later. For example, if you are reading a file, or parsing something and the operation does not succeed, you can add the path from which you attempted to read the file, or the string that you attempted to parse.
 
-Also for the error messages, we follow the convention all small-case letters and no period at the end, as discussed in [this PR](https://github.com/containers/youki/issues/313). Whenever you write error messages, please follow this convention to keep them uniform.
+Also for the error messages, we follow the convention all small-case letters and no period at the end, as discussed in [this PR](https://github.com/youki-dev/youki/issues/313). Whenever you write error messages, please follow this convention to keep them uniform.
 
 #### Logs
 
-youki uses [log](https://crates.io/crates/log) crate to log information while running. Whenever adding code to interact with system or kernel features or such, make sure to add debug logs so that if youki crashes, you can trace the errors and zero-in on the reasons using logs.
+youki uses the [tracing](https://crates.io/crates/tracing) crate for logging at runtime. When adding code that interacts with system or kernel features, please add logs at an appropriate level. Use `tracing::debug!` for information useful during debugging, `tracing::trace!` for very verbose details, and `tracing::error!` when reporting an actual error. These logs help trace failures and narrow down their causes.
 
 #### Comments
 

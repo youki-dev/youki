@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use serde_json::Value;
 
 use crate::utils::get_state;
@@ -35,10 +35,10 @@ pub fn get_container_status(project_path: &Path, id: &str) -> Result<String> {
                 // Parse JSON to extract status
                 match serde_json::from_str::<Value>(&stdout) {
                     Ok(value) => {
-                        if let Some(status) = value.get("status") {
-                            if let Some(status_str) = status.as_str() {
-                                return Ok(status_str.to_string());
-                            }
+                        if let Some(status) = value.get("status")
+                            && let Some(status_str) = status.as_str()
+                        {
+                            return Ok(status_str.to_string());
                         }
                         bail!("Failed to extract status from state output: {}", stdout)
                     }

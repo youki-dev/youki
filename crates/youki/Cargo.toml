@@ -1,13 +1,13 @@
 [package]
 name = "youki"
-version = "0.5.5" # MARK: Version
+version = "0.6.0" # MARK: Version
 description = "A container runtime written in Rust"
 license = "Apache-2.0"
-repository = "https://github.com/containers/youki"
+repository = "https://github.com/youki-dev/youki"
 homepage = "https://youki-dev.github.io/youki/"
 readme = "../../README.md"
 authors = ["youki team"]
-edition = "2021"
+edition = "2024"
 build = "build.rs"
 keywords = ["youki", "container"]
 
@@ -22,38 +22,38 @@ wasm-wasmer = ["wasmer", "wasmer-wasix"]
 wasm-wasmedge = ["wasmedge-sdk/standalone", "wasmedge-sdk/static"]
 wasm-wasmtime = ["wasmtime", "wasi-common"]
 
-[dependencies.clap]
-version = "4.1.6"
-default-features = false
-features = ["std", "suggestions", "derive", "cargo", "help", "usage", "error-context"]
-
 [dependencies]
-anyhow = "1.0.99"
-chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
-libcgroups = { path = "../libcgroups", default-features = false, version = "0.5.5" } # MARK: Version
-libcontainer = { path = "../libcontainer", default-features = false, version = "0.5.5" } # MARK: Version
-liboci-cli = { path = "../liboci-cli", version = "0.5.5" } # MARK: Version
-nix = "0.29.0"
-pentacle = "1.1.0"
-procfs = "0.17.0"
-serde_json = "1.0"
-tabwriter = "1"
-clap_complete = "4.1.3"
-caps = "0.5.5"
-wasmer = { version = "4.0.0", optional = true }
-wasmer-wasix = { version = "0.9.0", optional = true }
-wasmedge-sdk = { version = "0.14.0", optional = true }
-wasmtime = { version = "31.0.0", optional = true }
-wasi-common = { version = "31.0.0", optional = true }
-tracing = { version = "0.1.41", features = ["attributes"] }
-tracing-subscriber = { version = "0.3.19", features = ["json", "env-filter"] }
-tracing-journald = "0.3.1"
+clap = { workspace = true, features = ["std", "suggestions", "derive", "cargo", "help", "usage", "error-context"] }
+anyhow = { workspace = true }
+chrono = { workspace = true, features = ["clock", "serde"] }
+libcgroups = { path = "../libcgroups", default-features = false, version = "0.6.0" } # MARK: Version
+libcontainer = { path = "../libcontainer", default-features = false, version = "0.6.0" } # MARK: Version
+liboci-cli = { workspace = true }
+nix = { workspace = true }
+pentacle = { workspace = true }
+procfs = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+tabwriter = { workspace = true }
+clap_complete = { workspace = true }
+caps = { workspace = true }
+wasmer = { workspace = true, features = ["sys", "singlepass"], optional = true }
+wasmer-wasix = { workspace = true, optional = true }
+wasmedge-sdk = { workspace = true, optional = true }
+wasmtime = { workspace = true, optional = true }
+wasi-common = { workspace = true, optional = true }
+tracing = { workspace = true, features = ["attributes"] }
+tracing-subscriber = { workspace = true, features = ["json", "env-filter"] }
+tracing-journald = { workspace = true }
+oci-spec = { workspace = true }
+rust-criu = { workspace = true }
 
 [dev-dependencies]
-serial_test = "3.1.1"
-tempfile = "3"
-scopeguard = "1.2.0"
+serial_test = { workspace = true }
+tempfile = { workspace = true }
+scopeguard = { workspace = true }
 
 [build-dependencies]
-anyhow = "1.0.99"
-vergen-gitcl = { version = "1.0.8", features = ["build"] }
+anyhow = { workspace = true }
+vergen-gitcl = { workspace = true, features = ["build", "rustc"] }
+pkg-config = { workspace = true }

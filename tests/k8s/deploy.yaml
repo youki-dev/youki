@@ -1,9 +1,3 @@
-apiVersion: node.k8s.io/v1
-kind: RuntimeClass
-metadata:
-  name: youki
-handler: youki
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:

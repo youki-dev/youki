@@ -4,29 +4,46 @@ mod utils;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use contest::logger;
 use test_framework::TestManager;
 use tests::cgroups;
 
+use crate::tests::checkpoint_restore::get_checkpoint_restore_tests;
+use crate::tests::create_runtime::get_create_runtime_tests;
 use crate::tests::delete::get_delete_test;
 use crate::tests::devices::get_devices_test;
 use crate::tests::domainname::get_domainname_tests;
 use crate::tests::example::get_example_test;
+use crate::tests::exec::get_exec_test;
 use crate::tests::exec_cpu_affinity::get_exec_cpu_affinity_test;
+use crate::tests::exec_env::get_exec_env_test;
 use crate::tests::fd_control::get_fd_control_test;
-use crate::tests::hooks::get_hooks_tests;
+use crate::tests::hooks::{get_hooks_tests, get_start_container_env_tests};
 use crate::tests::hostname::get_hostname_test;
 use crate::tests::intel_rdt::get_intel_rdt_test;
 use crate::tests::io_priority::get_io_priority_test;
 use crate::tests::kill::get_kill_test;
+use crate::tests::kill_no_effect::get_kill_no_effect_test;
+use crate::tests::killsig::get_killsig_test;
 use crate::tests::lifecycle::{ContainerCreate, ContainerLifecycle};
 use crate::tests::linux_masked_paths::get_linux_masked_paths_tests;
 use crate::tests::linux_ns_itype::get_ns_itype_tests;
+use crate::tests::memory_policy::get_linux_memory_policy_tests;
+use crate::tests::misc_props::get_misc_props_test;
 use crate::tests::mounts_recursive::get_mounts_recursive_test;
+use crate::tests::net_devices::get_net_devices_test;
 use crate::tests::no_pivot::get_no_pivot_test;
+use crate::tests::personality::get_personality_test;
 use crate::tests::pidfile::get_pidfile_test;
+use crate::tests::poststart::get_poststart_tests;
+use crate::tests::poststart_fail::get_poststart_fail_tests;
+use crate::tests::poststop::get_poststop_tests;
+use crate::tests::poststop_fail::get_poststop_fail_tests;
+use crate::tests::prestart::get_prestart_tests;
+use crate::tests::prestart_fail::get_prestart_fail_tests;
 use crate::tests::process::get_process_test;
+use crate::tests::process_capabilities_bounding::get_process_capabilities_bounding_test;
 use crate::tests::process_capabilities_fail::get_process_capabilities_fail_test;
 use crate::tests::process_oom_score_adj::get_process_oom_score_adj_test;
 use crate::tests::process_rlimits::get_process_rlimits_test;
@@ -42,20 +59,21 @@ use crate::tests::seccomp_notify::get_seccomp_notify_test;
 use crate::tests::sysctl::get_sysctl_test;
 use crate::tests::tlb::get_tlb_test;
 use crate::tests::uid_mappings::get_uid_mappings_test;
+use crate::tests::update::get_update_test;
 use crate::utils::support::{set_runtime_path, set_runtimetest_path};
 
 #[derive(Parser, Debug)]
-#[clap(version = "0.0.1", author = "youki team")]
+#[command(version = "0.0.1", author = "youki team")]
 struct Opts {
     /// Enables debug output
-    #[clap(short, long)]
+    #[arg(short, long)]
     debug: bool,
 
-    #[clap(subcommand)]
+    #[command(subcommand)]
     command: SubCommand,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Subcommand, Debug)]
 enum SubCommand {
     /// run the integration tests
     Run(Run),
@@ -66,15 +84,15 @@ enum SubCommand {
 #[derive(Parser, Debug)]
 struct Run {
     /// Path for the container runtime to be tested
-    #[clap(long)]
+    #[arg(long)]
     runtime: PathBuf,
     /// Path for the runtimetest binary, which will be used to run tests inside the container
-    #[clap(long)]
+    #[arg(long)]
     runtimetest: PathBuf,
     /// Selected tests to be run, format should be
     /// space separated groups, eg
     /// -t group1::test1,test3 group2 group3::test5
-    #[clap(short, long, num_args(1..), value_delimiter = ' ')]
+    #[arg(short, long, num_args(1..), value_delimiter = ' ')]
     tests: Option<Vec<String>>,
 }
 
@@ -112,6 +130,14 @@ fn main() -> Result<()> {
     let pidfile = get_pidfile_test();
     let ns_itype = get_ns_itype_tests();
     let hooks = get_hooks_tests();
+    let start_container_env = get_start_container_env_tests();
+    let poststart = get_poststart_tests();
+    let poststop = get_poststop_tests();
+    let poststart_fail = get_poststart_fail_tests();
+    let poststop_fail = get_poststop_fail_tests();
+    let prestart = get_prestart_tests();
+    let create_runtime = get_create_runtime_tests();
+    let prestart_fail = get_prestart_fail_tests();
     let cgroup_v1_pids = cgroups::pids::get_test_group();
     let cgroup_v1_cpu = cgroups::cpu::v1::get_test_group();
     let cgroup_v2_cpu = cgroups::cpu::v2::get_test_group();
@@ -123,11 +149,13 @@ fn main() -> Result<()> {
     let seccomp_notify = get_seccomp_notify_test();
     let ro_paths = get_ro_paths_test();
     let hostname = get_hostname_test();
+    let misc_props = get_misc_props_test();
     let mounts_recursive = get_mounts_recursive_test();
     let domainname = get_domainname_tests();
     let intel_rdt = get_intel_rdt_test();
     let sysctl = get_sysctl_test();
     let scheduler = get_scheduler_test();
+    let memory_policy = get_linux_memory_policy_tests();
     let io_priority_test = get_io_priority_test();
     let delete = get_delete_test();
     let devices = get_devices_test();
@@ -140,12 +168,21 @@ fn main() -> Result<()> {
     let process_oom_score_adj = get_process_oom_score_adj_test();
     let fd_control = get_fd_control_test();
     let kill = get_kill_test();
+    let kill_no_effect = get_kill_no_effect_test();
+    let killsig = get_killsig_test();
     let masked_paths = get_linux_masked_paths_tests();
     let rootfs_propagation = get_rootfs_propagation_test();
     let process_capabilities_fail = get_process_capabilities_fail_test();
+    let process_capabilities_bounding = get_process_capabilities_bounding_test();
     let uid_mappings = get_uid_mappings_test();
     let exec_cpu_affinity = get_exec_cpu_affinity_test();
+    let exec_env = get_exec_env_test();
+    let exec = get_exec_test();
+    let personality = get_personality_test();
     let prohibit_symlink = get_prohibit_symlink_test();
+    let net_devices = get_net_devices_test();
+    let checkpoint_restore = get_checkpoint_restore_tests();
+    let update = get_update_test();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -153,6 +190,14 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(pidfile));
     tm.add_test_group(Box::new(ns_itype));
     tm.add_test_group(Box::new(hooks));
+    tm.add_test_group(Box::new(start_container_env));
+    tm.add_test_group(Box::new(poststart));
+    tm.add_test_group(Box::new(poststart_fail));
+    tm.add_test_group(Box::new(poststop));
+    tm.add_test_group(Box::new(poststop_fail));
+    tm.add_test_group(Box::new(prestart));
+    tm.add_test_group(Box::new(create_runtime));
+    tm.add_test_group(Box::new(prestart_fail));
     tm.add_test_group(Box::new(cgroup_v1_pids));
     tm.add_test_group(Box::new(cgroup_v1_cpu));
     tm.add_test_group(Box::new(cgroup_v2_cpu));
@@ -164,11 +209,13 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(seccomp_notify));
     tm.add_test_group(Box::new(ro_paths));
     tm.add_test_group(Box::new(hostname));
+    tm.add_test_group(Box::new(misc_props));
     tm.add_test_group(Box::new(mounts_recursive));
     tm.add_test_group(Box::new(domainname));
     tm.add_test_group(Box::new(intel_rdt));
     tm.add_test_group(Box::new(sysctl));
     tm.add_test_group(Box::new(scheduler));
+    tm.add_test_group(Box::new(memory_policy));
     tm.add_test_group(Box::new(delete));
     tm.add_test_group(Box::new(devices));
     tm.add_test_group(Box::new(root_readonly));
@@ -181,13 +228,21 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(process_oom_score_adj));
     tm.add_test_group(Box::new(fd_control));
     tm.add_test_group(Box::new(kill));
+    tm.add_test_group(Box::new(kill_no_effect));
+    tm.add_test_group(Box::new(killsig));
     tm.add_test_group(Box::new(rootfs_propagation));
+    tm.add_test_group(Box::new(net_devices));
     tm.add_test_group(Box::new(process_capabilities_fail));
+    tm.add_test_group(Box::new(process_capabilities_bounding));
     tm.add_test_group(Box::new(uid_mappings));
     tm.add_test_group(Box::new(exec_cpu_affinity));
+    tm.add_test_group(Box::new(exec_env));
+    tm.add_test_group(Box::new(exec));
+    tm.add_test_group(Box::new(personality));
     tm.add_test_group(Box::new(prohibit_symlink));
-
     tm.add_test_group(Box::new(io_priority_test));
+    tm.add_test_group(Box::new(checkpoint_restore));
+    tm.add_test_group(Box::new(update));
     tm.add_cleanup(Box::new(cgroups::cleanup_v1));
     tm.add_cleanup(Box::new(cgroups::cleanup_v2));
 

@@ -29,7 +29,7 @@ impl Container {
 
         if !self.can_pause() {
             tracing::error!(status = ?self.status(), id = ?self.id(), "cannot pause container");
-            return Err(LibcontainerError::IncorrectStatus);
+            return Err(LibcontainerError::IncorrectStatus(self.status()));
         }
 
         let cmanager =

@@ -29,11 +29,13 @@ fn seccomp_test() -> TestResult {
     let spec = create_spec(
         LinuxSeccompBuilder::default()
             .default_action(LinuxSeccompAction::ScmpActAllow)
-            .syscalls(vec![LinuxSyscallBuilder::default()
-                .names(vec![String::from("getcwd")])
-                .action(LinuxSeccompAction::ScmpActErrno)
-                .build()
-                .unwrap()])
+            .syscalls(vec![
+                LinuxSyscallBuilder::default()
+                    .names(vec![String::from("getcwd")])
+                    .action(LinuxSeccompAction::ScmpActErrno)
+                    .build()
+                    .unwrap(),
+            ])
             .build()
             .unwrap(),
     );

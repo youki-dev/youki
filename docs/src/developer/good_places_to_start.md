@@ -2,7 +2,7 @@
 
 First of all, welcome to youki! Hope you have fun while developing and contributing :)
 
-This lists some of the known places that are long-running and would be useful for beginners. But as the things under development can change any time, the best place to check are the issues on the [GitHub repo](https://github.com/containers/youki/issues). You can find issues with labels `good first issue` or `help wanted` and start working on them.
+This lists some of the known places that are long-running and would be useful for beginners. But as the things under development can change any time, the best place to check are the issues on the [GitHub repo](https://github.com/youki-dev/youki/issues). You can find issues with labels `good first issue` or `help wanted` and start working on them.
 
 You can also search for `TODO` or `FIXME` comments in the source, and try working on them, but not all of them are easy places to start, and some of them can be particularly tricky to fix.
 
@@ -20,4 +20,4 @@ If you don't know much about container runtime or low level system working, then
 
 You can find more detailed information about this in the `integration_test` crate, but in brief, we currently use [OCI-runtime-tools](https://github.com/opencontainers/runtime-tools) provided integration tests to validate that youki is OCI spec compliant. But those are written in Go, which makes the developer depend on two language env to compile youki and test it. These tests also have some issues which makes them hard to use on some system setups.
 
-Thus we are porting those test to Rust, so that it can be a Rust implementation of OCI-runtime integration tests, as well as be easy to run on local systems for testing. If you know Go and Rust this can be a great place to start. Check out the [tracking issue](https://github.com/containers/youki/issues/361).
+Thus we are porting those test to Rust, so that it can be a Rust implementation of OCI-runtime integration tests, as well as be easy to run on local systems for testing. If you know Go and Rust this can be a great place to start. Check out the [tracking issue](https://github.com/youki-dev/youki/issues/361).

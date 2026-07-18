@@ -1,7 +1,7 @@
 # SELinux for Youki
 
 This is an experimental project to create a SELinux library in Rust.
-Ref: https://github.com/containers/youki/issues/2718.  
+Ref: https://github.com/youki-dev/youki/issues/2718.  
 Reimplementation of [opencontainers/selinux](https://github.com/opencontainers/selinux) in Rust.  
 
 ## Requirements

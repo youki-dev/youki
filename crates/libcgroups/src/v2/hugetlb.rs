@@ -6,10 +6,10 @@ use oci_spec::runtime::LinuxHugepageLimit;
 
 use super::controller::Controller;
 use crate::common::{
-    self, read_cgroup_file, ControllerOpt, EitherError, MustBePowerOfTwo, WrappedIoError,
+    self, ControllerOpt, EitherError, MustBePowerOfTwo, WrappedIoError, read_cgroup_file,
 };
 use crate::stats::{
-    parse_single_value, supported_page_sizes, HugeTlbStats, StatsProvider, SupportedPageSizesError,
+    HugeTlbStats, StatsProvider, SupportedPageSizesError, parse_single_value, supported_page_sizes,
 };
 
 #[derive(thiserror::Error, Debug)]
@@ -87,7 +87,7 @@ impl HugeTlb {
                 return Err(V2HugeTlbControllerError::MalformedPageSize {
                     page_size: page_size_raw,
                     err: EitherError::Left(err),
-                })
+                });
             }
         };
         if !Self::is_power_of_two(page_size) {

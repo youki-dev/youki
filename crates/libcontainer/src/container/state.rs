@@ -7,6 +7,11 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
+use oci_spec::OciSpecError;
+use oci_spec::runtime::{
+    ContainerState as OciContainerState, State as OciState, StateBuilder as OciStateBuilder,
+    VERSION as OCI_RUNTIME_VERSION,
+};
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
@@ -114,8 +119,19 @@ pub struct State {
     pub creator: Option<u32>,
     // Specifies if systemd should be used to manage cgroups
     pub use_systemd: bool,
+    // DEPRECATED: Keep for backwards compatibility with older state.json files.
+    // Use `intel_rdt_dir` instead.
     // Specifies if the Intel RDT subdirectory needs be cleaned up.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub clean_up_intel_rdt_subdirectory: Option<bool>,
+    // Specifies the Intel RDT subdirectory path that needs to be cleaned up.
+    pub intel_rdt_dir: Option<PathBuf>,
+    /// Indicates the dedicated monitoring group subdirectory (`mon_groups/<container_id>`)
+    /// within the resctrl filesystem that needs to be cleaned up.
+    /// As per OCI runtime-spec v1.3.0, if `enable_monitoring` is true, the runtime MUST
+    /// create this group and MUST remove it when the container is deleted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub intel_rdt_monitoring_dir: Option<PathBuf>,
 }
 
 impl State {
@@ -128,7 +144,7 @@ impl State {
         bundle: PathBuf,
     ) -> Self {
         Self {
-            oci_version: "v1.0.2".to_string(),
+            oci_version: OCI_RUNTIME_VERSION.to_string(),
             id: container_id.to_string(),
             status,
             pid,
@@ -138,6 +154,8 @@ impl State {
             creator: None,
             use_systemd: false,
             clean_up_intel_rdt_subdirectory: None,
+            intel_rdt_dir: None,
+            intel_rdt_monitoring_dir: None,
         }
     }
 
@@ -233,6 +251,63 @@ impl State {
     }
 }
 
+/// Error type for state conversion failures.
+#[derive(Debug, thiserror::Error)]
+pub enum StateConversionError {
+    #[error("failed to build OCI state: {0}")]
+    OciStateBuild(#[from] OciSpecError),
+    #[error("invalid container status for OCI conversion: {0}")]
+    InvalidStatus(ContainerStatus),
+}
+
+/// Convert internal State to OCI-compliant State (by reference, cloning necessary fields).
+///
+/// Based on runc's implementation:
+/// https://github.com/opencontainers/runc/blob/v2.2.1/libcontainer/container_linux.go#L961
+impl TryFrom<&State> for OciState {
+    type Error = StateConversionError;
+
+    fn try_from(state: &State) -> std::result::Result<Self, Self::Error> {
+        let status = OciContainerState::try_from(state.status)?;
+
+        let mut builder = OciStateBuilder::default()
+            .version(state.oci_version.clone())
+            .id(state.id.clone())
+            .status(status)
+            .bundle(state.bundle.clone());
+
+        // Preserve None vs empty map distinction per OCI spec
+        if let Some(annotations) = &state.annotations {
+            builder = builder.annotations(annotations.clone());
+        }
+        if let Some(pid) = state.pid {
+            builder = builder.pid(pid);
+        }
+
+        Ok(builder.build()?)
+    }
+}
+
+impl TryFrom<ContainerStatus> for OciContainerState {
+    type Error = StateConversionError;
+
+    fn try_from(status: ContainerStatus) -> std::result::Result<Self, Self::Error> {
+        match status {
+            ContainerStatus::Creating => Ok(OciContainerState::Creating),
+            ContainerStatus::Created => Ok(OciContainerState::Created),
+            ContainerStatus::Running => Ok(OciContainerState::Running),
+            ContainerStatus::Stopped => Ok(OciContainerState::Stopped),
+            // Paused is not defined in the OCI spec.
+            ContainerStatus::Paused => Err(StateConversionError::InvalidStatus(status)),
+        }
+    }
+}
+
+/// Deprecated: Use [`oci_spec::runtime::ContainerProcessState`] instead.
+#[deprecated(
+    since = "0.6.0",
+    note = "Use oci_spec::runtime::ContainerProcessState instead"
+)]
 #[derive(Serialize, Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ContainerProcessState {

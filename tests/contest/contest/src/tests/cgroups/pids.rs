@@ -1,12 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use oci_spec::runtime::{LinuxBuilder, LinuxPidsBuilder, LinuxResourcesBuilder, Spec, SpecBuilder};
-use test_framework::{test_result, ConditionalTest, TestGroup, TestResult};
+use test_framework::{ConditionalTest, TestGroup, TestResult, test_result};
 
 use crate::utils::test_outside_container;
-use crate::utils::test_utils::{check_container_created, CGROUP_ROOT};
+use crate::utils::test_utils::{CGROUP_ROOT, check_container_created};
 
 // SPEC: The runtime spec does not specify what the behavior should be if the limit is
 // zero or negative. We assume that the number of pids should be unlimited in this case.

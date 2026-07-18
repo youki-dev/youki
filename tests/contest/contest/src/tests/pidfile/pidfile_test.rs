@@ -5,8 +5,8 @@ use test_framework::{Test, TestGroup, TestResult};
 use uuid::Uuid;
 
 use crate::utils::{
-    create_container, delete_container, generate_uuid, get_state, kill_container, prepare_bundle,
-    CreateOptions, State,
+    CreateOptions, State, create_container, delete_container, generate_uuid, get_state,
+    kill_container, prepare_bundle,
 };
 
 #[inline]

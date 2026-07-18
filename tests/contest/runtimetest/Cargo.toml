@@ -1,12 +1,16 @@
 [package]
 name = "runtimetest"
 version = "0.0.1"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
-oci-spec = { version = "0.8.2", features = ["runtime"] }
-nix = "0.29.0"
-anyhow = "1.0"
-libc = "0.2.175" # TODO (YJDoc2) upgrade to latest
-nc = "0.9.6"
-tempfile = "3"
+oci-spec = { workspace = true }
+nix = { workspace = true }
+anyhow = { workspace = true }
+libc = { workspace = true } # TODO (YJDoc2) upgrade to latest
+nc = { workspace = true }
+tempfile = { workspace = true }
+netlink-packet-route = { workspace = true }
+netlink-packet-core = { workspace = true }
+netlink-sys = { workspace = true }
+procfs = { workspace = true }

@@ -6,7 +6,7 @@ use libcontainer::syscall::syscall::SyscallType;
 use liboci_cli::Run;
 use nix::sys::signal::{self, kill};
 use nix::sys::signalfd::SigSet;
-use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
+use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
 use nix::unistd::Pid;
 
 use crate::workload::executor::default_executor;

@@ -1,6 +1,5 @@
 [book]
-authors = ["Yashodhan Joshi"]
+authors = ["Youki Contributors"]
 language = "en"
-multilingual = false
 src = "src"
 title = "Youki User and Developer Documentation"

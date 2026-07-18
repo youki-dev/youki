@@ -7,64 +7,52 @@ mod rootpath;
 mod workload;
 
 use anyhow::{Context, Result};
-use clap::{crate_version, CommandFactory, Parser};
+use clap::{Args, CommandFactory, Parser, Subcommand};
 use libcontainer::syscall::syscall::create_syscall;
 use liboci_cli::{CommonCmd, GlobalOpts, StandardCmd};
 
 use crate::commands::info;
 
 // Additional options that are not defined in OCI runtime-spec, but are used by Youki.
-#[derive(Parser, Debug)]
+#[derive(Args, Debug)]
 struct YoukiExtendOpts {
     /// Enable logging to systemd-journald
-    #[clap(long)]
+    #[arg(long)]
     pub systemd_log: bool,
     /// set the log level (default is 'error')
-    #[clap(long)]
+    #[arg(long)]
     pub log_level: Option<String>,
-}
-
-/// output Youki version in Moby compatible format
-#[macro_export]
-macro_rules! youki_version {
-    // For compatibility with Moby, match format here:
-    // https://github.com/moby/moby/blob/65cc84abc522a564699bb171ca54ea1857256d10/daemon/info_unix.go#L280
-    () => {
-        concat!(
-            "version ",
-            crate_version!(),
-            "\ncommit: ",
-            crate_version!(),
-            "-0-",
-            env!("VERGEN_GIT_SHA")
-        )
-    };
 }
 
 // High-level commandline option definition
 // This takes global options as well as individual commands as specified in [OCI runtime-spec](https://github.com/opencontainers/runtime-spec/blob/master/runtime.md)
 // Also check [runc commandline documentation](https://github.com/opencontainers/runc/blob/master/man/runc.8.md) for more explanation
 #[derive(Parser, Debug)]
-#[clap(version = youki_version!(), author = env!("CARGO_PKG_AUTHORS"))]
+#[command(author = env!("CARGO_PKG_AUTHORS"))]
+#[command(version, disable_version_flag = true)]
 struct Opts {
-    #[clap(flatten)]
+    #[command(flatten)]
     global: GlobalOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     youki_extend: YoukiExtendOpts,
 
-    #[clap(subcommand)]
-    subcmd: SubCommand,
+    #[command(subcommand)]
+    subcmd: Option<YoukiSubCommand>,
+
+    /// Display youki version and commit hash
+    #[arg(short, long)]
+    version: bool,
 }
 
 // Subcommands accepted by Youki, confirming with [OCI runtime-spec](https://github.com/opencontainers/runtime-spec/blob/master/runtime.md)
 // Also for a short information, check [runc commandline documentation](https://github.com/opencontainers/runc/blob/master/man/runc.8.md)
-#[derive(Parser, Debug)]
-enum SubCommand {
+#[derive(Subcommand, Debug)]
+enum YoukiSubCommand {
     // Standard and common commands handled by the liboci_cli crate
-    #[clap(flatten)]
+    #[command(flatten)]
     Standard(Box<liboci_cli::StandardCmd>),
-    #[clap(flatten)]
+    #[command(flatten)]
     Common(Box<liboci_cli::CommonCmd>),
 
     // Youki specific extensions
@@ -88,6 +76,11 @@ fn main() -> Result<()> {
     pentacle::ensure_sealed().context("failed to seal /proc/self/exe")?;
 
     let opts = Opts::parse();
+    if opts.version {
+        info::print_youki();
+        return Ok(());
+    }
+
     let mut app = Opts::command();
     let syscall = create_syscall();
 
@@ -106,7 +99,7 @@ fn main() -> Result<()> {
     let systemd_cgroup = opts.global.systemd_cgroup;
 
     let cmd_result = match opts.subcmd {
-        SubCommand::Standard(cmd) => match *cmd {
+        Some(YoukiSubCommand::Standard(cmd)) => match *cmd {
             StandardCmd::Create(create) => {
                 commands::create::create(create, root_path, systemd_cgroup)
             }
@@ -115,7 +108,7 @@ fn main() -> Result<()> {
             StandardCmd::Delete(delete) => commands::delete::delete(delete, root_path),
             StandardCmd::State(state) => commands::state::state(state, root_path),
         },
-        SubCommand::Common(cmd) => match *cmd {
+        Some(YoukiSubCommand::Common(cmd)) => match *cmd {
             CommonCmd::Checkpointt(checkpoint) => {
                 commands::checkpoint::checkpoint(checkpoint, root_path)
             }
@@ -124,7 +117,6 @@ fn main() -> Result<()> {
                 Ok(exit_code) => std::process::exit(exit_code),
                 Err(e) => {
                     tracing::error!("error in executing command: {:?}", e);
-                    eprintln!("exec failed : {e}");
                     std::process::exit(-1);
                 }
             },
@@ -137,7 +129,6 @@ fn main() -> Result<()> {
                 Ok(exit_code) => std::process::exit(exit_code),
                 Err(e) => {
                     tracing::error!("error in executing command: {:?}", e);
-                    eprintln!("run failed : {e}");
                     std::process::exit(-1);
                 }
             },
@@ -145,15 +136,17 @@ fn main() -> Result<()> {
             CommonCmd::Update(update) => commands::update::update(update, root_path),
         },
 
-        SubCommand::Info(info) => commands::info::info(info),
-        SubCommand::Completion(completion) => {
+        Some(YoukiSubCommand::Info(info)) => commands::info::info(info),
+        Some(YoukiSubCommand::Completion(completion)) => {
             commands::completion::completion(completion, &mut app)
         }
+        None => app
+            .print_help()
+            .map_err(|e| anyhow::anyhow!("failed to print help: {e}")),
     };
 
     if let Err(ref e) = cmd_result {
         tracing::error!("error in executing command: {:?}", e);
-        eprintln!("error in executing command: {:?}", e);
     }
     cmd_result
 }

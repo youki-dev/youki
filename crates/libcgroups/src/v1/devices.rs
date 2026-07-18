@@ -3,7 +3,7 @@ use std::path::Path;
 use oci_spec::runtime::LinuxDeviceCgroup;
 
 use super::controller::Controller;
-use crate::common::{self, default_allow_devices, default_devices, ControllerOpt, WrappedIoError};
+use crate::common::{self, ControllerOpt, WrappedIoError, default_allow_devices, default_devices};
 
 pub struct Devices {}
 

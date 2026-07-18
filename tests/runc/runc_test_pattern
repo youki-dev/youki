@@ -1,0 +1,301 @@
+[skip]runc run no capability
+[skip]runc run with unknown capability
+[skip]runc run with new privileges
+[skip]runc run with some capabilities
+[skip]runc exec --cap
+[skip]runc exec --cap [ambient is set from spec]
+[skip]runc run [ambient caps not set in inheritable result in a warning]
+[skip]runc exec (cgroup v2, ro cgroupfs, new cgroupns) does not chown cgroup # skip test requires systemd
+[skip]runc exec (cgroup v2, rw cgroupfs, inherit cgroupns) does not chown cgroup # skip test requires systemd
+[skip]runc exec (cgroup v2, rw cgroupfs, new cgroupns) does chown cgroup # skip test requires systemd
+runc create (no limits + no cgrouppath + no permission) succeeds
+[skip]runc create (rootless + no limits + cgrouppath + no permission) fails with permission error # skip test requires rootless
+[skip]runc create (rootless + limits + no cgrouppath + no permission) fails with informative error # skip test requires rootless
+[skip]runc create (limits + cgrouppath + permission on the cgroup dir) succeeds
+runc exec (limits + cgrouppath + permission on the cgroup dir) succeeds
+[skip]runc exec (cgroup v2 + init process in non-root cgroup) succeeds
+[skip]runc run (cgroup v1 + unified resources should fail) # skip test requires cgroups_v1
+[skip]runc run (blkio weight)
+[skip]runc run (per-device io weight for bfq) # skip BFQ scheduler not available
+[skip]runc run (per-device multiple iops via unified)
+runc run (cpu.idle)
+[skip]runc run (hugetlb limits)
+[skip]runc run (cgroup v2 resources.unified only)
+[skip]runc run (cgroup v2 resources.unified swap)
+runc run (cgroup v2 resources.unified override)
+[skip]runc run (cgroupv2 mount inside container)
+[skip]runc exec (cgroup v1+hybrid joins correct cgroup) # skip test requires cgroups_hybrid
+[skip]runc exec should refuse a paused container
+[skip]runc exec --ignore-paused
+[skip]runc run/create should error for a non-empty cgroup
+[skip]runc run/create should refuse pre-existing frozen cgroup # This test hangs when running with Youki
+[skip]checkpoint and restore # skip test requires criu
+[skip]checkpoint and restore (bind mount, destination is symlink) # skip test requires criu
+[skip]checkpoint and restore (with --debug) # skip test requires criu
+[skip]checkpoint and restore (cgroupns) # skip test requires criu
+[skip]checkpoint --pre-dump (bad --parent-path) # skip test requires criu
+[skip]checkpoint --pre-dump and restore # skip test requires criu
+[skip]checkpoint --lazy-pages and restore # skip test requires criu
+[skip]checkpoint and restore in external network namespace # skip test requires criu
+[skip]checkpoint and restore with container specific CRIU config # skip test requires criu
+[skip]checkpoint and restore with nested bind mounts # skip test requires criu
+[skip]checkpoint then restore into a different cgroup (via --manage-cgroups-mode ignore) # skip test requires criu
+[skip]checkpoint/restore and exec # skip test requires criu
+[skip]runc exec [CPU affinity, only initial set from process.json]
+[skip]runc exec [CPU affinity, initial and final set from process.json]
+[skip]runc exec [CPU affinity, initial and final set from config.json]
+runc create
+[skip]runc create exec
+runc create --pid-file
+runc create --pid-file with new CWD
+runc create [shared pidns + rootless]
+runc exec --user with no access to cwd
+[skip]runc create sets up user before chdir to cwd if needed # skip test requires rootless
+runc create can chdir if runc has access
+[skip]global --debug
+[skip]global --debug to --log
+[skip]global --debug to --log --log-format 'text'
+[skip]global --debug to --log --log-format 'json'
+[skip]runc delete
+runc delete --force
+runc delete --force ignore not exist
+runc delete [host pidns + init gone]
+runc delete --force [host pidns + init gone]
+runc delete --force [paused container]
+[skip]runc delete --force in cgroupv1 with subcgroups # skip test requires cgroups_v1
+[skip]runc delete --force in cgroupv2 with subcgroups
+[skip]runc delete removes failed systemd unit # skip requires systemd >= v244
+[skip]runc run [redundant default /dev/tty]
+runc run [redundant default /dev/ptmx]
+[skip]runc run/update [device cgroup deny]
+[skip]runc run [device cgroup allow rw char device]
+[skip]runc run [device cgroup allow rm block device]
+[skip]runc exec vs systemctl daemon-reload # skip test requires systemd
+[skip]runc run [devices vs systemd NeedDaemonReload] # skip requires systemd >= v230
+non-empty HOME env is used
+[skip]empty HOME env var is overridden
+[skip]empty HOME env var is overridden with multiple overrides
+[skip]env var HOME is set only once # This test hangs when running with Youki
+env var override is set only once
+env var override
+[skip]env var with new-line is honored
+[skip]events --stats
+[skip]events --stats with psi data # This test hangs when running with Youki
+[skip]events --interval default # This test hangs when running with Youki
+[skip]events --interval 1s
+[skip]events --interval 100ms
+[skip]events oom # This test hangs when running with Youki
+runc exec
+[skip]runc exec [exit codes] # This test hangs when running with Youki
+runc exec --pid-file
+runc exec --pid-file with new CWD
+[skip]runc exec ls -la
+runc exec ls -la with --cwd
+runc exec --env
+[skip]runc exec --user
+runc exec --user vs /dev/null ownership
+[skip]runc exec --additional-gids
+[skip]runc exec --preserve-fds
+[skip]runc --debug exec
+[skip]runc --debug --log exec
+[skip]runc exec --cgroup sub-cgroups [v1] # skip test requires cgroups_v1
+[skip]runc exec --cgroup subcgroup [v2]
+[skip]runc exec [execve error]
+[skip]runc exec check default home
+[skip]runc -h
+[skip]runc command -h
+[skip]runc foo -h
+[skip]runc create [second createRuntime hook fails]
+[skip]runc create [hook fails]
+[skip]runc run [hook fails]
+[skip]runc run [startContainer hook should inherit process environment]
+runc run [hook's argv is preserved]
+[skip]runc run (hooks library tests)
+runc run [host mount ns + hooks]
+[skip]simple idmap mount [userns]
+[skip]simple idmap mount [no userns]
+[skip]write to an idmap mount [userns] # This test hangs when running with Youki
+[skip]write to an idmap mount [no userns]
+[skip]idmap mount with propagation flag [userns]
+[skip]idmap mount with relative path [userns]
+[skip]idmap mount with bind mount [userns]
+[skip]idmap mount with bind mount [no userns]
+[skip]two idmap mounts (same mapping) with two bind mounts [userns]
+[skip]same idmap mount (different mappings) [userns]
+[skip]same idmap mount (different mappings) [no userns]
+[skip]multiple idmap mounts (different mappings) [userns]
+[skip]multiple idmap mounts (different mappings) [no userns]
+[skip]idmap mount (complicated mapping) [userns] # This test hangs when running with Youki
+[skip]idmap mount (complicated mapping) [no userns]
+[skip]idmap mount (non-recursive idmap) [userns]
+[skip]idmap mount (non-recursive idmap) [no userns]
+[skip]idmap mount (idmap flag) [userns]
+[skip]idmap mount (idmap flag) [no userns]
+[skip]idmap mount (ridmap flag) [userns]
+[skip]idmap mount (ridmap flag) [no userns]
+[skip]idmap mount (idmap flag, implied mapping) [userns]
+[skip]idmap mount (ridmap flag, implied mapping) [userns]
+[skip]idmap mount (idmap flag, implied mapping, userns join) [userns]
+[skip]ioprio_set is applied to process group
+[skip]kill detached busybox
+[skip]kill KILL [host pidns]
+[skip]kill KILL [host pidns + init gone]
+kill KILL [shared pidns]
+[skip]list
+[skip]mask paths [file]
+[skip]mask paths [directory]
+[skip]mask paths [prohibit symlink /proc]
+[skip]mask paths [prohibit symlink /sys]
+[skip]runc run [tmpcopyup]
+[skip]runc run [bind mount] # This test hangs when running with Youki
+runc run [ro tmpfs mount]
+[skip]runc run [ro /dev mount]
+runc run [tmpfs mount with absolute symlink]
+[skip]runc run [/proc is a symlink]
+runc run [setgid / + mkdirall]
+runc run [ro /sys/fs/cgroup mounts]
+[skip]runc run [ro /sys/fs/cgroup mounts + cgroupns]
+[skip]runc run [mount order, container bind-mount source]
+[skip]runc run [mount order, container bind-mount source] (userns)
+[skip]runc run [mount order, container idmap source]
+[skip]runc run [mount order, container idmap source] (userns)
+runc run [rootfsPropagation shared]
+[skip]runc run [rbind,ro mount is read-only but not recursively]
+runc run [rbind,rro mount is recursively read-only]
+runc run [rbind,ro,rro mount is recursively read-only too]
+runc run [mount(8)-like behaviour: --bind with no options]
+[skip]runc run [mount(8)-unlike behaviour: --bind with clearing flag]
+[skip]runc run [implied-rw bind mount of a ro fuse sshfs mount]
+[skip]runc run [explicit-rw bind mount of a ro fuse sshfs mount]
+[skip]runc run [dev,exec,suid,atime bind mount of a nodev,nosuid,noexec,noatime fuse sshfs mount]
+[skip]runc run [ro bind mount of a nodev,nosuid,noexec fuse sshfs mount]
+[skip]runc run [ro,symfollow bind mount of a rw,nodev,nosymfollow fuse sshfs mount]
+[skip]runc run [ro,noexec bind mount of a nosuid,noatime fuse sshfs mount]
+[skip]runc run [bind mount {no,rel,strict}atime semantics]
+runc run --no-pivot must not expose bare /proc
+runc pause and resume
+runc pause and resume with nonexist container
+[skip]runc run personality for i686
+[skip]runc run personality with exec for i686
+runc run personality for x86_64
+[skip]runc run personality with exec for x86_64
+[skip]runc create [ --pidfd-socket ] 
+[skip]runc run [ --pidfd-socket ] 
+[skip]runc exec [ --pidfd-socket ] [cgroups_v1]  # skip test requires cgroups_v1
+[skip]runc exec [ --pidfd-socket ] [cgroups_v2] 
+ps
+ps -f json
+[skip]ps -e -x
+ps after the container stopped
+[skip]runc run with RLIMIT_NOFILE(The same as system's hard value)
+runc run with RLIMIT_NOFILE(Bigger than system's hard value)
+runc run with RLIMIT_NOFILE(Smaller than system's hard value)
+[skip]runc exec with RLIMIT_NOFILE(The same as system's hard value)
+[skip]runc exec with RLIMIT_NOFILE(Bigger than system's hard value)
+[skip]runc exec with RLIMIT_NOFILE(Smaller than system's hard value)
+global --root
+runc run
+[skip]runc run --keep
+[skip]runc run --keep (check cgroup exists)
+runc run [hostname domainname]
+[skip]runc run with tmpfs
+[skip]runc run with tmpfs perms
+[skip]runc run [/proc/self/exe clone]
+[skip]runc run [joining existing container namespaces]
+[skip]runc run [execve error]
+runc run check default home
+[skip]scheduler is applied
+[skip]scheduler vs cpus
+[skip]runc run [seccomp] (SCMP_ACT_NOTIFY old kernel) # skip requires kernel < 5.6
+[skip]runc run [seccomp] (SCMP_ACT_NOTIFY noNewPrivileges false)
+runc run [seccomp] (SCMP_ACT_NOTIFY noNewPrivileges true)
+[skip]runc exec [seccomp] (SCMP_ACT_NOTIFY noNewPrivileges false)
+[skip]runc exec [seccomp] (SCMP_ACT_NOTIFY noNewPrivileges true)
+[skip]runc run [seccomp] (SCMP_ACT_NOTIFY important syscalls noNewPrivileges false)
+runc run [seccomp] (SCMP_ACT_NOTIFY important syscalls noNewPrivileges true)
+runc run [seccomp] (ignore listener path if no notify act)
+runc run [seccomp] (SCMP_ACT_NOTIFY empty listener path and notify act)
+runc run [seccomp] (SCMP_ACT_NOTIFY wrong listener path)
+runc run [seccomp] (SCMP_ACT_NOTIFY wrong abstract listener path)
+[skip]runc run [seccomp] (SCMP_ACT_NOTIFY kill seccompagent)
+[skip]runc run [seccomp] (SCMP_ACT_NOTIFY no seccompagent)
+[skip]runc run [seccomp] (SCMP_ACT_NOTIFY error chmod)
+runc run [seccomp] (SCMP_ACT_NOTIFY write)
+runc run [seccomp] (SCMP_ACT_NOTIFY startContainer hook)
+runc run [seccomp] (SCMP_ACT_NOTIFY example config)
+[skip]runc run [seccomp -ENOSYS handling]
+runc run [seccomp defaultErrnoRet=ENXIO]
+[skip]runc run [seccomp] (SCMP_ACT_ERRNO default)
+[skip]runc run [seccomp] (SCMP_ACT_ERRNO explicit errno)
+[skip]runc run [seccomp] (SECCOMP_FILTER_FLAG_*)
+runc run [seccomp] (SCMP_ACT_KILL)
+[skip]runc run [seccomp] (startContainer hook)
+[skip]runc run (no selinux label) # skip requires SELinux enabled
+[skip]runc run (custom selinux label) # skip requires SELinux enabled
+[skip]runc run (session keyring security label) # skip requires SELinux enabled
+[skip]runc exec (session keyring security label) # skip requires SELinux enabled
+[skip]runc run (session keyring security label + userns) # skip requires SELinux enabled
+[skip]runc exec (session keyring security label + userns) # skip requires SELinux enabled
+spec generation cwd
+spec generation --bundle
+spec validator
+runc start
+runc run detached
+runc run detached ({u,g}id != 0)
+runc run detached --pid-file
+runc run detached --pid-file with new CWD
+runc run
+runc run ({u,g}id != 0)
+[skip]runc run as user with no exec bit but CAP_DAC_OVERRIDE set
+runc run with rootfs set to .
+runc run --pid-file
+runc run [rootless with host pidns]
+runc run [redundant seccomp rules]
+state (kill + delete)
+state (pause + resume)
+runc run [timens offsets with no timens]
+[skip]runc run [timens with no offsets]
+[skip]runc run [simple timens]
+[skip]runc exec [simple timens]
+[skip]runc run [simple timens + userns]
+[skip]runc run [stdin not a tty]
+[skip]runc run [tty ptsname]
+[skip]runc run [tty owner]
+[skip]runc run [tty owner] ({u,g}id != 0)
+[skip]runc exec [stdin not a tty]
+[skip]runc exec [tty ptsname]
+[skip]runc exec [tty owner]
+[skip]runc exec [tty owner] ({u,g}id != 0)
+[skip]runc exec [tty consolesize]
+runc create [terminal=false]
+runc run [terminal=false]
+runc run -d [terminal=false]
+[skip]umask
+[skip]update cgroup v1/v2 common limits
+[skip]update cgroup cpu limits
+[skip]cpu burst
+set cpu period with no quota
+[skip]set cpu period with no quota (invalid period)
+set cpu quota with no period
+[skip]update cpu period with no previous period/quota set
+[skip]update cpu quota with no previous period/quota set
+[skip]update cpu period in a pod cgroup with pod limit set # skip test requires cgroups_v1
+[skip]update cgroup cpu.idle
+[skip]update cgroup cpu.idle via systemd v252+ # skip requires systemd >= v252
+update cgroup v2 resources via unified map
+update cpuset parameters via resources.CPU
+update cpuset parameters via v2 unified map
+[skip]update cpuset cpus range via v2 unified map # skip test requires systemd
+[skip]update rt period and runtime # skip test requires cgroups_v1
+update devices [minimal transition rules]
+update paused container
+[skip]update memory vs CheckBeforeUpdate
+userns with simple mount
+[skip]userns with 2 inaccessible mounts
+[skip]userns with inaccessible mount + exec
+[skip]userns with bind mount before a cgroupfs mount # skip test requires cgroups_v1
+[skip]userns join other container userns
+[skip]userns join other container userns[selinux enabled] # skip requires SELinux enabled and in enforcing mode
+[skip]userns join other container userns [bind-mounted nsfd]
+[skip]userns join external namespaces [wrong userns owner]
+[skip]runc version

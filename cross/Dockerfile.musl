@@ -1,29 +1,52 @@
 ARG CROSS_BASE_IMAGE
+
+FROM alpine:3.18 AS apk-anywhere
+RUN mkdir -p /alpine/lib /alpine/sbin /alpine/etc/apk && \
+    cp /sbin/apk                /alpine/sbin/apk && \
+    cp /lib/libcrypto.so.3      /alpine/lib/ && \
+    cp /lib/libz.so.1           /alpine/lib/ && \
+    cp /lib/libapk.so.*         /alpine/lib/ && \
+    cp /lib/libssl.so.3         /alpine/lib/ && \
+    cp /lib/ld-musl-*           /alpine/lib/ && \
+    cp /etc/apk/repositories    /alpine/etc/apk/
+
 FROM $CROSS_BASE_IMAGE
 
-COPY --from=jorgeprendes420/apk-anywhere / /
-ENV MARCH=${CROSS_CMAKE_SYSTEM_PROCESSOR}
-RUN apk-init ${MARCH} ${CROSS_SYSROOT}
+COPY --from=apk-anywhere /alpine/ /alpine/
+COPY --from=apk-anywhere /etc/ssl /etc/ssl
 
-RUN apk-${MARCH} add \
-    # dependencies required to build libsecccomp-rs
-    libseccomp-static libseccomp-dev \
-    # dependencies required to build libbpf-sys
-    libelf-static elfutils-dev \
-    zlib-dev zlib-static \
-    # dependencies to build wasmedge-sys
-    g++ zstd-static
+# Use CROSS_CMAKE_SYSTEM_PROCESSOR (provided by cross-rs base image) to
+# initialize apk for the target architecture, then install musl static
+# libraries into CROSS_SYSROOT.
+RUN MARCH="${CROSS_CMAKE_SYSTEM_PROCESSOR}" && \
+    LOADER=$(find /alpine/lib/ -name 'ld-musl-*') && \
+    ROOT="/apk-${MARCH}" && \
+    mkdir -p "${ROOT}/etc/apk/keys" "${ROOT}/etc/apk/protected_paths.d" \
+             "${CROSS_SYSROOT}/lib" "${CROSS_SYSROOT}/include" "${ROOT}/usr" && \
+    echo "${MARCH}" > "${ROOT}/etc/apk/arch" && \
+    cp /alpine/etc/apk/repositories "${ROOT}/etc/apk/" && \
+    ln -s "${CROSS_SYSROOT}/lib" "${ROOT}/usr/lib" && \
+    ln -s "${CROSS_SYSROOT}/lib" "${ROOT}/lib" && \
+    ln -s "${CROSS_SYSROOT}/include" "${ROOT}/usr/include" && \
+    LD_LIBRARY_PATH="/alpine/lib/" "${LOADER}" -- /alpine/sbin/apk \
+        add --no-cache --initdb -p "${ROOT}" --allow-untrusted alpine-keys && \
+    LD_LIBRARY_PATH="/alpine/lib/" "${LOADER}" -- /alpine/sbin/apk \
+        --root "${ROOT}" add --no-cache \
+        libseccomp-static libseccomp-dev \
+        libelf-static elfutils-dev \
+        zlib-dev zlib-static \
+        g++ zstd-static && \
+    rm -rf /alpine "${ROOT}"
 
-# configure libsecccomp-rs to use static linking
+# configure libseccomp-rs to use static linking
 ENV LIBSECCOMP_LINK_TYPE="static"
-ENV LIBSECCOMP_LIB_PATH="${CROSS_SYSROOT}/lib"    
+ENV LIBSECCOMP_LIB_PATH="${CROSS_SYSROOT}/lib"
 
 # configure wasmedge-sys to link stdc++ statically
 ENV WASMEDGE_DEP_STDCXX_LINK_TYPE="static"
 ENV WASMEDGE_DEP_STDCXX_LIB_PATH="${CROSS_SYSROOT}/lib"
 
-COPY hack/busctl.sh /bin/busctl
-RUN chmod +x /bin/busctl
+COPY --chmod=755 hack/busctl.sh /bin/busctl
 
 # wasmedge-sys (through llvm) needs some symbols defined in libgcc
 RUN mkdir /.cargo && cat <<'EOF' > /.cargo/config.toml
@@ -32,4 +55,5 @@ rustflags = ["-Clink-arg=-lgcc"]
 EOF
 
 RUN apt-get -y update && \
-    apt-get install -y pkg-config
+    apt-get install -y pkg-config && \
+    rm -rf /var/lib/apt/lists/*

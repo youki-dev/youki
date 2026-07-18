@@ -1,7 +1,7 @@
 //! Contains Basic setup for testing, testable trait and its result type
 use std::fmt::Debug;
 
-use anyhow::{bail, Error, Result};
+use anyhow::{Error, Result, bail};
 
 #[derive(Debug)]
 /// Enum indicating result of the test. This is like an extended std::result,
@@ -10,7 +10,7 @@ pub enum TestResult {
     /// Test was ok
     Passed,
     /// Test needed to be skipped
-    Skipped,
+    Skipped(String),
     /// Test was error
     Failed(Error),
 }

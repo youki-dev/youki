@@ -1,17 +1,19 @@
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
+use libcgroups::common::{CgroupSetup, get_cgroup_setup};
 use libcontainer::oci_spec::runtime::{
-    LinuxBuilder, LinuxIdMappingBuilder, LinuxNamespace, LinuxNamespaceBuilder, LinuxNamespaceType,
-    Mount, Spec,
+    LinuxBuilder, LinuxDeviceCgroupBuilder, LinuxIdMappingBuilder, LinuxNamespace,
+    LinuxNamespaceBuilder, LinuxNamespaceType, Mount, Spec,
 };
 use libcontainer::syscall::syscall::Syscall;
 use serde_json::to_writer_pretty;
 
 pub fn get_default() -> Result<Spec> {
-    Ok(Spec::default())
+    let spec = Spec::default();
+    normalize_spec(spec)
 }
 
 pub fn get_rootless(syscall: &dyn Syscall) -> Result<Spec> {
@@ -36,16 +38,20 @@ pub fn get_rootless(syscall: &dyn Syscall) -> Result<Spec> {
 
     let linux = LinuxBuilder::default()
         .namespaces(namespaces)
-        .uid_mappings(vec![LinuxIdMappingBuilder::default()
-            .host_id(uid)
-            .container_id(0_u32)
-            .size(1_u32)
-            .build()?])
-        .gid_mappings(vec![LinuxIdMappingBuilder::default()
-            .host_id(gid)
-            .container_id(0_u32)
-            .size(1_u32)
-            .build()?])
+        .uid_mappings(vec![
+            LinuxIdMappingBuilder::default()
+                .host_id(uid)
+                .container_id(0_u32)
+                .size(1_u32)
+                .build()?,
+        ])
+        .gid_mappings(vec![
+            LinuxIdMappingBuilder::default()
+                .host_id(gid)
+                .container_id(0_u32)
+                .size(1_u32)
+                .build()?,
+        ])
         .build()?;
 
     // Prepare the mounts
@@ -78,6 +84,35 @@ pub fn get_rootless(syscall: &dyn Syscall) -> Result<Spec> {
 
     let mut spec = get_default()?;
     spec.set_linux(Some(linux)).set_mounts(Some(mounts));
+    normalize_spec(spec)
+}
+
+fn normalize_spec(mut spec: Spec) -> Result<Spec> {
+    if let Some(process) = spec.process_mut()
+        && let Some(mut capabilities) = process.capabilities().clone()
+    {
+        capabilities.set_inheritable(None);
+        capabilities.set_ambient(None);
+        process.set_capabilities(Some(capabilities));
+    }
+
+    if let Some(linux) = spec.linux_mut() {
+        if let Some(resources) = linux.resources_mut() {
+            let default_device = LinuxDeviceCgroupBuilder::default()
+                .allow(false)
+                .access("rwm".to_string())
+                .build()?;
+            resources.set_devices(Some(vec![default_device]));
+        }
+
+        if let Some(namespaces) = linux.namespaces_mut() {
+            let setup = get_cgroup_setup().unwrap_or(CgroupSetup::Legacy);
+            if !matches!(setup, CgroupSetup::Unified) {
+                namespaces.retain(|ns| ns.typ() != LinuxNamespaceType::Cgroup);
+            }
+        }
+    }
+
     Ok(spec)
 }
 
@@ -89,8 +124,16 @@ pub fn spec(args: liboci_cli::Spec, syscall: &dyn Syscall) -> Result<()> {
         get_default()?
     };
 
-    // write data to config.json
-    let file = File::create("config.json")?;
+    let path = match args.bundle {
+        Some(bundle) => bundle.join("config.json"),
+        None => PathBuf::from("config.json"),
+    };
+
+    let file = File::create_new(&path).map_err(|e| match e.kind() {
+        ErrorKind::AlreadyExists => anyhow!("File `config.json` already exists"),
+        _ => anyhow!(e),
+    })?;
+
     let mut writer = BufWriter::new(file);
     to_writer_pretty(&mut writer, &spec)?;
     writer.flush()?;
@@ -108,14 +151,40 @@ mod tests {
     #[test]
     #[serial]
     fn test_spec_json() -> Result<()> {
-        let syscall = create_syscall();
-        let spec = get_rootless(&*syscall)?;
         let tmpdir = tempfile::tempdir().expect("failed to create temp dir");
-        let path = tmpdir.path().join("config.json");
-        let file = File::create(path)?;
-        let mut writer = BufWriter::new(file);
-        to_writer_pretty(&mut writer, &spec)?;
-        writer.flush()?;
+        let args = liboci_cli::Spec {
+            bundle: Some(tmpdir.path().to_path_buf()),
+            rootless: true,
+        };
+        let syscall = create_syscall();
+        spec(args, syscall.as_ref()).expect("failed to run spec subcommand");
+        let config_path = tmpdir.path().join("config.json");
+        assert!(config_path.is_file());
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_spec_json_already_exists() -> Result<()> {
+        let tmpdir = tempfile::tempdir().expect("failed to create temp dir");
+        let args = liboci_cli::Spec {
+            bundle: Some(tmpdir.path().to_path_buf()),
+            rootless: true,
+        };
+        let syscall = create_syscall();
+
+        let config_path = tmpdir.path().join("config.json");
+        File::create(config_path).expect("failed to create initial config.json");
+
+        let result = spec(args, syscall.as_ref());
+        assert!(
+            result.is_err(),
+            "spec subcommand should fail if config.json already exists"
+        );
+
+        let err_msg = result.unwrap_err().to_string();
+        assert_eq!(err_msg, "File `config.json` already exists");
+
         Ok(())
     }
 }

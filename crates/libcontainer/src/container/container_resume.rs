@@ -30,7 +30,7 @@ impl Container {
         // for example, a running process cannot be resumed
         if !self.can_resume() {
             tracing::error!(status = ?self.status(), id = ?self.id(), "cannot resume container");
-            return Err(LibcontainerError::IncorrectStatus);
+            return Err(LibcontainerError::IncorrectStatus(self.status()));
         }
 
         let cmanager =

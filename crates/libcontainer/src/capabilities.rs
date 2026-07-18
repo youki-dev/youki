@@ -135,28 +135,29 @@ pub fn drop_privileges<S: Syscall + ?Sized>(
     cs: &LinuxCapabilities,
     syscall: &S,
 ) -> Result<(), SyscallError> {
-    tracing::debug!("dropping bounding capabilities to {:?}", cs.bounding());
-    if let Some(bounding) = cs.bounding() {
-        syscall.set_capability(CapSet::Bounding, &to_set(bounding))?;
-    }
+    let empty_caps = Default::default();
+    let bounding = cs.bounding().as_ref().unwrap_or(&empty_caps);
+    tracing::debug!("dropping bounding capabilities to {:?}", bounding);
+    syscall.set_capability(CapSet::Bounding, &to_set(bounding))?;
 
     if let Some(effective) = cs.effective() {
+        tracing::debug!("dropping effective capabilities to {:?}", effective);
         syscall.set_capability(CapSet::Effective, &to_set(effective))?;
     }
 
     if let Some(permitted) = cs.permitted() {
+        tracing::debug!("dropping permitted capabilities to {:?}", permitted);
         syscall.set_capability(CapSet::Permitted, &to_set(permitted))?;
     }
 
     if let Some(inheritable) = cs.inheritable() {
+        tracing::debug!("dropping inheritable capabilities to {:?}", inheritable);
         syscall.set_capability(CapSet::Inheritable, &to_set(inheritable))?;
     }
 
     if let Some(ambient) = cs.ambient() {
-        // check specifically for ambient, as those might not always be available
-        if let Err(e) = syscall.set_capability(CapSet::Ambient, &to_set(ambient)) {
-            tracing::warn!("failed to set ambient capabilities: {}", e);
-        }
+        tracing::debug!("dropping ambient capabilities to {:?}", ambient);
+        syscall.set_capability(CapSet::Ambient, &to_set(ambient))?;
     }
 
     Ok(())
@@ -610,8 +611,21 @@ mod tests {
                     (CapSet::Effective, cps.clone()),
                     (CapSet::Permitted, cps.clone()),
                     (CapSet::Inheritable, cps.clone()),
-                    (CapSet::Ambient, cps),
+                    (CapSet::Ambient, cps.clone()),
                 ],
+            },
+            Testcase {
+                name: format!("unset LinuxCapabilities fields with caps: {cps:?}"),
+                input: {
+                    let mut caps = LinuxCapabilities::default();
+                    caps.set_bounding(None)
+                        .set_effective(None)
+                        .set_inheritable(None)
+                        .set_permitted(None)
+                        .set_ambient(None);
+                    caps
+                },
+                want: vec![(CapSet::Bounding, vec![])],
             },
         ];
 

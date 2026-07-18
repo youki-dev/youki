@@ -5,7 +5,7 @@ mod bpf {
     use std::os::unix::io::AsRawFd;
     use std::path::Path;
 
-    use anyhow::{bail, Result};
+    use anyhow::{Result, bail};
     use clap::{Arg, Command};
     use libcgroups::v2::devices::{bpf, emulator, program};
     use nix::fcntl::OFlag;
@@ -94,7 +94,7 @@ mod bpf {
 
 #[cfg(not(feature = "cgroupsv2_devices"))]
 mod bpf {
-    use anyhow::{bail, Result};
+    use anyhow::{Result, bail};
 
     pub fn run() -> Result<()> {
         if !cfg!(feature = "cgroupsv2_devices") {

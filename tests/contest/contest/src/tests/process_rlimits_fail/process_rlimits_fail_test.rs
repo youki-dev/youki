@@ -1,6 +1,6 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use oci_spec::runtime::{PosixRlimitBuilder, PosixRlimitType, ProcessBuilder, Spec, SpecBuilder};
-use test_framework::{test_result, Test, TestGroup, TestResult};
+use test_framework::{Test, TestGroup, TestResult, test_result};
 
 use crate::utils::test_inside_container;
 use crate::utils::test_utils::CreateOptions;

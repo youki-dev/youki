@@ -8,7 +8,7 @@ use super::{Container, ContainerStatus};
 use crate::config::YoukiConfig;
 use crate::error::LibcontainerError;
 use crate::hooks;
-use crate::process::intel_rdt::delete_resctrl_subdirectory;
+use crate::process::intel_rdt::cleanup_intel_rdt;
 
 impl Container {
     /// Deletes the container
@@ -61,7 +61,7 @@ impl Container {
                         status = ?self.status(),
                         "delete requires the container state to be stopped or created",
                     );
-                    return Err(LibcontainerError::IncorrectStatus);
+                    return Err(LibcontainerError::IncorrectStatus(self.status()));
                 }
             }
         }
@@ -69,12 +69,13 @@ impl Container {
         // Once reached here, the container is verified that it can be deleted.
         debug_assert!(self.status().can_delete());
 
-        if let Some(true) = &self.clean_up_intel_rdt_subdirectory() {
-            if let Err(err) = delete_resctrl_subdirectory(self.id()) {
-                tracing::warn!(
-                    "failed to delete resctrl subdirectory due to: {err:?}, continue to delete"
-                );
-            }
+        if let Err(err) = cleanup_intel_rdt(
+            self.intel_rdt_dir().map(|p| p.as_path()),
+            self.intel_rdt_monitoring_dir().map(|p| p.as_path()),
+            self.clean_up_intel_rdt_subdirectory(),
+            self.id(),
+        ) {
+            tracing::warn!("failed to cleanup intel rdt due to: {err:?}, continue to delete");
         }
 
         if self.root.exists() {
@@ -98,12 +99,17 @@ impl Container {
                     })?;
 
                     if let Some(hooks) = config.hooks.as_ref() {
-                        hooks::run_hooks(hooks.poststop().as_ref(), Some(self), None).map_err(
-                            |err| {
-                                tracing::error!(err = ?err, "failed to run post stop hooks");
-                                err
-                            },
-                        )?;
+                        hooks::run_hooks(
+                            hooks.poststop().as_ref(),
+                            Some(&self.state),
+                            None,
+                            None,
+                            None,
+                        )
+                        .map_err(|err| {
+                            tracing::error!(err = ?err, "failed to run post stop hooks");
+                            err
+                        })?;
                     }
                 }
                 Err(err) => {
