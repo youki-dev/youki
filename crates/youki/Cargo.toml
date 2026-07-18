@@ -33,6 +33,7 @@ nix = { workspace = true }
 pentacle = { workspace = true }
 procfs = { workspace = true }
 serde_json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 tabwriter = { workspace = true }
 clap_complete = { workspace = true }
 caps = { workspace = true }

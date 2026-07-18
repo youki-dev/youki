@@ -7331,6 +7331,7 @@ dependencies = [
  "procfs",
  "rust-criu",
  "scopeguard",
+ "serde",
  "serde_json",
  "serial_test",
  "tabwriter",

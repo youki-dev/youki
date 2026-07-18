@@ -3,15 +3,17 @@ use std::io::{BufWriter, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
+use libcgroups::common::{CgroupSetup, get_cgroup_setup};
 use libcontainer::oci_spec::runtime::{
-    LinuxBuilder, LinuxIdMappingBuilder, LinuxNamespace, LinuxNamespaceBuilder, LinuxNamespaceType,
-    Mount, Spec,
+    LinuxBuilder, LinuxDeviceCgroupBuilder, LinuxIdMappingBuilder, LinuxNamespace,
+    LinuxNamespaceBuilder, LinuxNamespaceType, Mount, Spec,
 };
 use libcontainer::syscall::syscall::Syscall;
 use serde_json::to_writer_pretty;
 
 pub fn get_default() -> Result<Spec> {
-    Ok(Spec::default())
+    let spec = Spec::default();
+    normalize_spec(spec)
 }
 
 pub fn get_rootless(syscall: &dyn Syscall) -> Result<Spec> {
@@ -82,6 +84,35 @@ pub fn get_rootless(syscall: &dyn Syscall) -> Result<Spec> {
 
     let mut spec = get_default()?;
     spec.set_linux(Some(linux)).set_mounts(Some(mounts));
+    normalize_spec(spec)
+}
+
+fn normalize_spec(mut spec: Spec) -> Result<Spec> {
+    if let Some(process) = spec.process_mut()
+        && let Some(mut capabilities) = process.capabilities().clone()
+    {
+        capabilities.set_inheritable(None);
+        capabilities.set_ambient(None);
+        process.set_capabilities(Some(capabilities));
+    }
+
+    if let Some(linux) = spec.linux_mut() {
+        if let Some(resources) = linux.resources_mut() {
+            let default_device = LinuxDeviceCgroupBuilder::default()
+                .allow(false)
+                .access("rwm".to_string())
+                .build()?;
+            resources.set_devices(Some(vec![default_device]));
+        }
+
+        if let Some(namespaces) = linux.namespaces_mut() {
+            let setup = get_cgroup_setup().unwrap_or(CgroupSetup::Legacy);
+            if !matches!(setup, CgroupSetup::Unified) {
+                namespaces.retain(|ns| ns.typ() != LinuxNamespaceType::Cgroup);
+            }
+        }
+    }
+
     Ok(spec)
 }
 
