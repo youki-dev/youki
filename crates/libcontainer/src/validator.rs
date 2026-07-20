@@ -1,4 +1,6 @@
 use std::collections::HashSet;
+use std::ffi::OsStr;
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 use nix::sys::stat::stat;
@@ -17,6 +19,60 @@ impl Validator {
         Self::validate_spec_for_scheduler(spec)?;
         Self::validate_spec_for_io_priority(spec)?;
         Self::validate_spec_for_intel_rdt(spec)?;
+        Self::validate_spec_for_mounts(spec)?;
+
+        Ok(())
+    }
+
+    /// Reject mounts whose string fields contain an interior null byte.
+    ///
+    /// Such values are otherwise passed unchanged down to the `mount(2)`
+    /// syscall, where the kernel rejects them with a generic `EINVAL`. Failing
+    /// early during spec validation gives a clear, actionable error that points
+    /// at the offending mount instead of a cryptic syscall failure.
+    fn validate_spec_for_mounts(spec: &Spec) -> Result<(), ErrInvalidSpec> {
+        fn contains_null(s: &OsStr) -> bool {
+            s.as_bytes().contains(&0)
+        }
+
+        fn null_byte_err(field: &str, value: &OsStr) -> ErrInvalidSpec {
+            ErrInvalidSpec::MountContainsNullByte {
+                field: field.to_string(),
+                value: value.to_string_lossy().into_owned(),
+            }
+        }
+
+        let Some(mounts) = spec.mounts() else {
+            return Ok(());
+        };
+
+        for mount in mounts {
+            let destination = mount.destination().as_os_str();
+            if contains_null(destination) {
+                return Err(null_byte_err("destination", destination));
+            }
+
+            if let Some(source) = mount.source() {
+                let source = source.as_os_str();
+                if contains_null(source) {
+                    return Err(null_byte_err("source", source));
+                }
+            }
+
+            if let Some(typ) = mount.typ() {
+                if typ.contains('\0') {
+                    return Err(null_byte_err("type", OsStr::new(typ)));
+                }
+            }
+
+            if let Some(options) = mount.options() {
+                for option in options {
+                    if option.contains('\0') {
+                        return Err(null_byte_err("option", OsStr::new(option)));
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
@@ -291,9 +347,12 @@ impl Validator {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use oci_spec::runtime::{
         IOPriorityClass, LinuxBuilder, LinuxIOPriorityBuilder, LinuxIdMappingBuilder,
-        LinuxIntelRdtBuilder, LinuxNamespaceBuilder, ProcessBuilder, SchedulerBuilder, SpecBuilder,
+        LinuxIntelRdtBuilder, LinuxNamespaceBuilder, MountBuilder, ProcessBuilder,
+        SchedulerBuilder, SpecBuilder,
     };
 
     use super::*;
@@ -833,5 +892,89 @@ mod tests {
             Validator::validate_spec_for_intel_rdt(&spec_traversal_trailing).unwrap_err(),
             ErrInvalidSpec::InvalidIntelRdtClosId
         ));
+    }
+
+    fn spec_with_mount(mount: oci_spec::runtime::Mount) -> Spec {
+        SpecBuilder::default().mounts(vec![mount]).build().unwrap()
+    }
+
+    #[test]
+    fn test_validate_spec_for_mounts_rejects_null_byte_in_option() {
+        let mount = MountBuilder::default()
+            .destination(PathBuf::from("/dev"))
+            .typ("tmpfs")
+            .source(PathBuf::from("tmpfs"))
+            .options(vec!["nosuid".to_string(), "mode=755\0".to_string()])
+            .build()
+            .unwrap();
+        let err = Validator::validate_spec_for_mounts(&spec_with_mount(mount)).unwrap_err();
+        assert!(matches!(
+            err,
+            ErrInvalidSpec::MountContainsNullByte { ref field, .. } if field == "option"
+        ));
+    }
+
+    #[test]
+    fn test_validate_spec_for_mounts_rejects_null_byte_in_destination() {
+        let mount = MountBuilder::default()
+            .destination(PathBuf::from("/dev\0"))
+            .typ("tmpfs")
+            .source(PathBuf::from("tmpfs"))
+            .build()
+            .unwrap();
+        let err = Validator::validate_spec_for_mounts(&spec_with_mount(mount)).unwrap_err();
+        assert!(matches!(
+            err,
+            ErrInvalidSpec::MountContainsNullByte { ref field, .. } if field == "destination"
+        ));
+    }
+
+    #[test]
+    fn test_validate_spec_for_mounts_rejects_null_byte_in_source() {
+        let mount = MountBuilder::default()
+            .destination(PathBuf::from("/mnt"))
+            .typ("bind")
+            .source(PathBuf::from("/src\0"))
+            .options(vec!["bind".to_string()])
+            .build()
+            .unwrap();
+        let err = Validator::validate_spec_for_mounts(&spec_with_mount(mount)).unwrap_err();
+        assert!(matches!(
+            err,
+            ErrInvalidSpec::MountContainsNullByte { ref field, .. } if field == "source"
+        ));
+    }
+
+    #[test]
+    fn test_validate_spec_for_mounts_rejects_null_byte_in_type() {
+        let mount = MountBuilder::default()
+            .destination(PathBuf::from("/dev"))
+            .typ("tmp\0fs")
+            .source(PathBuf::from("tmpfs"))
+            .build()
+            .unwrap();
+        let err = Validator::validate_spec_for_mounts(&spec_with_mount(mount)).unwrap_err();
+        assert!(matches!(
+            err,
+            ErrInvalidSpec::MountContainsNullByte { ref field, .. } if field == "type"
+        ));
+    }
+
+    #[test]
+    fn test_validate_spec_for_mounts_accepts_clean_mounts() {
+        let mount = MountBuilder::default()
+            .destination(PathBuf::from("/dev"))
+            .typ("tmpfs")
+            .source(PathBuf::from("tmpfs"))
+            .options(vec!["nosuid".to_string(), "mode=755".to_string()])
+            .build()
+            .unwrap();
+        assert!(Validator::validate_spec_for_mounts(&spec_with_mount(mount)).is_ok());
+    }
+
+    #[test]
+    fn test_validate_spec_for_mounts_without_mounts_is_ok() {
+        let spec = SpecBuilder::default().build().unwrap();
+        assert!(Validator::validate_spec_for_mounts(&spec).is_ok());
     }
 }
