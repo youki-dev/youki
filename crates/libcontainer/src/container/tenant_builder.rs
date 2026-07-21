@@ -362,7 +362,6 @@ impl TenantContainerBuilder {
         let syscall = create_syscall();
 
         if let Some(mounts) = spec.mounts() {
-            utils::validate_mount_options(mounts)?;
             validate_idmapped_mounts(mounts, spec.linux().as_ref(), &*syscall)?;
         }
 

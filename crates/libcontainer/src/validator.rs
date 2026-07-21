@@ -17,6 +17,30 @@ impl Validator {
         Self::validate_spec_for_scheduler(spec)?;
         Self::validate_spec_for_io_priority(spec)?;
         Self::validate_spec_for_intel_rdt(spec)?;
+        if let Some(mounts) = spec.mounts() {
+            Self::validate_spec_for_mount_options(mounts)?;
+        }
+
+        Ok(())
+    }
+
+    // Validates mount destinations and warns about deprecated relative paths.
+    // Follows the OCI Runtime Spec requirement that mount destinations SHOULD be absolute.
+    // Relative paths are deprecated but still accepted for backward compatibility.
+    fn validate_spec_for_mount_options(
+        mounts: &[oci_spec::runtime::Mount],
+    ) -> Result<(), ErrInvalidSpec> {
+        mounts
+        .iter()
+        .filter(|mount| !mount.destination().is_absolute())
+        .for_each(|mount| {
+            tracing::warn!(
+                "mount destination {:?} is not absolute. \
+                Relative paths are deprecated in OCI Runtime Spec and may not be supported in future versions. \
+                The path will be interpreted as relative to '/'.",
+                mount.destination()
+            );
+        });
 
         Ok(())
     }
