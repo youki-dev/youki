@@ -1,6 +1,8 @@
 use std::collections::HashMap;
-use std::io::IoSlice;
-use std::os::fd::{AsFd, AsRawFd};
+
+use std::io::{IoSlice, IoSliceMut};
+use std::os::fd::{AsRawFd, OwnedFd};
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -42,8 +44,10 @@ pub struct DbusConnection {
     /// Is the socket system level or session specific
     #[allow(dead_code)]
     system: bool,
-    /// socket fd
-    socket: i32,
+    /// Owned socket fd for the connection. Holding an `OwnedFd` (instead of a bare
+    /// `RawFd`) makes ownership explicit and closes the socket automatically when the
+    /// connection is dropped.
+    socket: OwnedFd,
     /// name id assigned by dbus for the connection
     id: Option<String>,
     /// counter for messages
@@ -146,77 +150,22 @@ fn get_actual_uid() -> Result<u32> {
 impl DbusConnection {
     /// Open a new dbus connection to the given address, authenticate, and register with the daemon.
     pub fn new(addr: &str, uid: u32, system: bool) -> Result<Self> {
-        let mut conn = Self::connect(addr, system)?;
-        conn.auth(uid)?;
-        conn.hello()?;
-        Ok(conn)
-    }
-
-    pub fn new_system() -> Result<Self> {
-        // Try the standard system bus first (DBUS_SYSTEM_BUS_ADDRESS or well-known path).
-        // and_then chains address lookup + connection so either failure falls through.
-        let standard = get_system_bus_address().and_then(|addr| Self::new(&addr, 0, true));
-        match standard {
-            Ok(conn) => return Ok(conn),
-            Err(ref e) => tracing::debug!("standard system bus unavailable: {}", e),
-        }
-
-        // Fallback: connect directly to systemd without a dbus daemon (root only).
-        // /run/systemd/private is created by systemd itself and exists even when
-        // dbus-daemon is not installed, e.g. in kind nodes.
-        // Any error from the standard bus (including EACCES) falls through to this path,
-        // matching go-systemd's NewSystemdConnectionContext() behavior.
-        // register() must be skipped because systemd does not implement org.freedesktop.DBus.Hello.
-        if nix::unistd::getuid().is_root() && std::path::Path::new(SYSTEMD_PRIVATE_SOCKET).exists()
-        {
-            tracing::debug!(
-                "falling back to systemd private socket {}",
-                SYSTEMD_PRIVATE_SOCKET
-            );
-            return Self::new_direct(SYSTEMD_PRIVATE_SOCKET, true);
-        }
-
-        Err(DbusError::BusAddressError(
-            "could not connect to system bus or systemd private socket".into(),
-        )
-        .into())
-    }
-
-    pub fn new_session() -> Result<Self> {
-        let addr = get_session_bus_address()?;
-        let uid = get_actual_uid()?;
-        Self::new(&addr, uid, false)
-    }
-
-    /// Create a Unix socket and connect it to the given dbus address.
-    fn connect(addr: &str, system: bool) -> Result<Self> {
-        // NOTE: DbusConnection should own an OwnedFd instead of ManuallyDrop + RawFd
-        // so that fd ownership is explicit and Drop does not need to close manually.
-        // Tracked in https://github.com/youki-dev/youki/issues/3629
-        let socket = std::mem::ManuallyDrop::new(socket::socket(
+        let socket = socket::socket(
             socket::AddressFamily::Unix,
             socket::SockType::Stream,
             socket::SockFlag::empty(),
             None,
-        )?);
-
-        let unix_addr = socket::UnixAddr::new(addr)?;
-        socket::connect(socket.as_raw_fd(), &unix_addr)?;
-
-        // Set SO_RCVTIMEO so that every recv() on this socket times out instead
-        // of blocking indefinitely.  See RECV_TIMEOUT_SECS for rationale.
-        socket::setsockopt(
-            &socket.as_fd(),
-            socket::sockopt::ReceiveTimeout,
-            &TimeVal::new(RECV_TIMEOUT_SECS, 0),
         )?;
 
-        Ok(Self {
-            socket: socket.as_raw_fd(),
+        let addr = socket::UnixAddr::new(addr)?;
+        socket::connect(socket.as_raw_fd(), &addr)?;
+        let dbus = Self {
+            socket,
             msg_ctr: AtomicU32::new(0),
             id: None,
             system,
-        })
+        };
+        Ok(dbus)
     }
 
     /// Perform the dbus SASL AUTH EXTERNAL / BEGIN exchange.
@@ -225,15 +174,19 @@ impl DbusConnection {
         let mut buf = [0; 64];
 
         // dbus connection always start with a 0 byte sent as first thing
-        socket::send(self.socket, &[0], socket::MsgFlags::empty())?;
+        socket::send(self.socket.as_raw_fd(), &[0], socket::MsgFlags::empty())?;
 
         let msg = format!("AUTH EXTERNAL {}\r\n", uid_to_hex_str(uid));
 
         // then we send our auth with uid
-        socket::send(self.socket, msg.as_bytes(), socket::MsgFlags::empty())?;
+        socket::send(
+            self.socket.as_raw_fd(),
+            msg.as_bytes(),
+            socket::MsgFlags::empty(),
+        )?;
 
         // we get the reply and check if all went well or not
-        socket::recv(self.socket, &mut buf, socket::MsgFlags::empty())?;
+        socket::recv(self.socket.as_raw_fd(), &mut buf, socket::MsgFlags::empty())?;
 
         let reply: Vec<u8> = buf.iter().filter(|v| **v != 0).copied().collect();
 
@@ -253,7 +206,7 @@ impl DbusConnection {
         // we can also send AGREE_UNIX_FD before this if we need to deal with sending/receiving
         // fds over the connection, but because youki doesn't need it, we can skip that
         socket::send(
-            self.socket,
+            self.socket.as_raw_fd(),
             "BEGIN\r\n".as_bytes(),
             socket::MsgFlags::empty(),
         )?;
@@ -308,19 +261,33 @@ impl DbusConnection {
         Ok(())
     }
 
-    /// Connect directly to /run/systemd/private without going through a dbus daemon.
-    /// uid is always root (0) because /run/systemd/private is only accessible by root,
-    /// and callers must verify this before calling.
-    fn new_direct(addr: &str, system: bool) -> Result<Self> {
-        // connect() + auth() perform socket setup and AUTH/BEGIN.
-        // hello() is intentionally skipped here because systemd does not implement
-        // org.freedesktop.DBus.Hello.
-        // self.id remains None; send_message already handles None by omitting the Sender header.
-        let mut conn = Self::connect(addr, system)?;
-        conn.auth(0)?;
-        Ok(conn)
-    }
 
+    /// Helper function to get complete message in chunks
+    /// over the socket. This will loop and collect all of the message
+    /// chunks into a single vector
+    /// Helper function to get complete message in chunks
+    /// over the socket. This will loop and collect all of the message
+    /// chunks into a single vector
+    fn receive_complete_response(&self) -> Result<Vec<u8>> {
+        let mut ret = Vec::with_capacity(512);
+        loop {
+            let mut reply: [u8; REPLY_BUF_SIZE] = [0_u8; REPLY_BUF_SIZE];
+            let mut reply_buffer = [IoSliceMut::new(&mut reply[0..])];
+
+            let reply_res = socket::recvmsg::<()>(
+                self.socket.as_raw_fd(),
+                &mut reply_buffer,
+                None,
+                socket::MsgFlags::empty(),
+            )?;
+
+            if reply_res.bytes_received == 0 {
+                break;
+            }
+            ret.extend_from_slice(&reply[0..reply_res.bytes_received]);
+        }
+        Ok(ret)
+    }
     /// Read exactly `buf.len()` bytes from the socket, retrying on EINTR.
     fn read_exact(&self, buf: &mut [u8]) -> Result<()> {
         let mut total = 0;
@@ -397,7 +364,7 @@ impl DbusConnection {
         let serialized = message.serialize();
 
         socket::sendmsg::<()>(
-            self.socket,
+            self.socket.as_raw_fd(),
             &[IoSlice::new(&serialized)],
             &[],
             socket::MsgFlags::empty(),
