@@ -1412,3 +1412,74 @@ pub fn validate_net_devices(spec: &Spec) {
         }
     }
 }
+
+pub fn validate_time_offsets(spec: &Spec) {
+    let linux = spec.linux().as_ref().unwrap();
+    let time_offsets_mapping = linux.time_offsets();
+
+    let (boottime_secs, boottime_nanosecs, monotonic_secs, monotonic_nanosecs) =
+        if let Some(offsets) = time_offsets_mapping {
+            let boottime_values = offsets.get("boottime").unwrap();
+            let boottime_secs = boottime_values.secs().unwrap_or(0);
+            let boottime_nanosecs = boottime_values.nanosecs().unwrap_or(0);
+
+            let monotonic_values = offsets.get("monotonic").unwrap();
+            let monotonic_secs = monotonic_values.secs().unwrap_or(0);
+            let monotonic_nanosecs = monotonic_values.nanosecs().unwrap_or(0);
+
+            (
+                boottime_secs,
+                boottime_nanosecs,
+                monotonic_secs,
+                monotonic_nanosecs,
+            )
+        } else {
+            (0, 0, 0, 0)
+        };
+
+    let actual_offsets = match fs::read_to_string("/proc/self/timens_offsets") {
+        Ok(contents) => contents,
+        Err(e) => {
+            eprintln!("Failed to read /proc/self/timens_offsets: {}", e);
+            return;
+        }
+    };
+
+    for line in actual_offsets.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() != 3 {
+            eprintln!("Invalid time offset format: {line}");
+            continue;
+        }
+
+        let clock_type = parts[0];
+        let actual_secs = match parts[1].parse::<i64>() {
+            Ok(value) => value,
+            Err(e) => {
+                eprintln!("Invalid seconds value in `{line}`: {e}");
+                continue;
+            }
+        };
+
+        let actual_nanosecs = match parts[2].parse::<u32>() {
+            Ok(value) => value,
+            Err(e) => {
+                eprintln!("Invalid nanoseconds value in `{line}`: {e}");
+                continue;
+            }
+        };
+
+        let expected = match clock_type {
+            "monotonic" => Some((monotonic_secs, monotonic_nanosecs)),
+            "boottime" => Some((boottime_secs, boottime_nanosecs)),
+            _ => None,
+        };
+        if let Some((expected_secs, expected_nanosecs)) = expected
+            && (actual_secs != expected_secs || actual_nanosecs != expected_nanosecs)
+        {
+            eprintln!(
+                "Unexpected {clock_type} time offset, expected: {expected_secs} {expected_nanosecs}, found: {actual_secs} {actual_nanosecs}"
+            );
+        }
+    }
+}
