@@ -157,6 +157,7 @@ impl Container {
         criu.set_ext_unix_sk(opts.ext_unix_sk);
         criu.set_shell_job(opts.shell_job);
         criu.set_tcp_established(opts.tcp_established);
+        criu.set_tcp_skip_in_flight(opts.tcp_skip_in_flight);
         criu.set_file_locks(opts.file_locks);
         criu.set_orphan_pts_master(true);
         criu.set_manage_cgroups(true);

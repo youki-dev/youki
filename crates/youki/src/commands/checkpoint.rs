@@ -16,6 +16,7 @@ pub fn checkpoint(args: Checkpoint, root_path: PathBuf) -> Result<()> {
         leave_running: args.leave_running,
         shell_job: args.shell_job,
         tcp_established: args.tcp_established,
+        tcp_skip_in_flight: args.tcp_skip_in_flight,
         work_path: args.work_path,
         manage_cgroups_mode: parse_cgroups_mode(&args.manage_cgroups_mode)?,
         link_remap: args.link_remap,
