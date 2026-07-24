@@ -61,7 +61,7 @@ pub enum StandardCmd {
 // and other runtimes.
 #[derive(Subcommand, Debug)]
 pub enum CommonCmd {
-    Checkpointt(Checkpoint),
+    Checkpoint(Checkpoint),
     Events(Events),
     Exec(Exec),
     Features(Features),
