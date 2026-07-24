@@ -65,6 +65,8 @@ pub enum LibcontainerError {
     #[error[transparent]]
     Checkpoint(#[from] crate::container::CheckpointError),
     #[error[transparent]]
+    Restore(#[from] crate::container::RestoreError),
+    #[error[transparent]]
     CreateContainerError(#[from] CreateContainerError),
     #[error(transparent)]
     NetDevicesError(#[from] crate::utils::NetDevicesError),
