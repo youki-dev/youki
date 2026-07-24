@@ -109,7 +109,7 @@ fn main() -> Result<()> {
             StandardCmd::State(state) => commands::state::state(state, root_path),
         },
         Some(YoukiSubCommand::Common(cmd)) => match *cmd {
-            CommonCmd::Checkpointt(checkpoint) => {
+            CommonCmd::Checkpoint(checkpoint) => {
                 commands::checkpoint::checkpoint(checkpoint, root_path)
             }
             CommonCmd::Events(events) => commands::events::events(events, root_path),

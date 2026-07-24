@@ -117,7 +117,7 @@ fn checkpoint(
         .arg("--root")
         .arg(project_path.join("runtime"))
         .arg(match runtime_path {
-            _ if runtime_path.ends_with("youki") => "checkpointt",
+            _ if runtime_path.ends_with("youki") => "checkpoint",
             _ => "checkpoint",
         })
         .arg("--image-path")
