@@ -2635,7 +2635,7 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "libcgroups"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2661,7 +2661,7 @@ dependencies = [
 
 [[package]]
 name = "libcontainer"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "caps",
@@ -2711,7 +2711,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "liboci-cli"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "clap",
 ]
@@ -7325,7 +7325,7 @@ dependencies = [
 
 [[package]]
 name = "youki"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "caps",
