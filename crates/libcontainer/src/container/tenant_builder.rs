@@ -306,7 +306,7 @@ impl TenantContainerBuilder {
 
         loop {
             let mut buf = [0; 3];
-            match read(read_end.as_raw_fd(), &mut buf).map_err(LibcontainerError::OtherSyscall)? {
+            match read(&read_end, &mut buf).map_err(LibcontainerError::OtherSyscall)? {
                 0 => {
                     if err_str_buf.is_empty() {
                         return Ok(pid);

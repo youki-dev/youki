@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::os::unix::io::AsRawFd;
+use std::os::fd::{BorrowedFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::{env, fs, mem};
 
@@ -9,7 +9,7 @@ use nix::mount::{MntFlags, MsFlags};
 use nix::sched::CloneFlags;
 use nix::sys::stat::Mode;
 use nix::sys::statfs::statfs;
-use nix::unistd::{self, Gid, Uid, close, dup2, setsid};
+use nix::unistd::{self, Gid, Uid, dup2_stderr, dup2_stdin, dup2_stdout, setsid};
 use oci_spec::runtime::{
     IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxNetDevice, LinuxPersonalityDomain,
     LinuxSchedulerFlag, LinuxSchedulerPolicy, Scheduler, Spec, User,
@@ -60,16 +60,17 @@ pub fn container_init_process(
     // If no console socket, set up stdio now
     if args.console_socket.is_none() {
         if let Some(stdin) = args.stdin {
-            dup2(stdin, 0).map_err(InitProcessError::NixOther)?;
-            close(stdin).map_err(InitProcessError::NixOther)?;
+            // dup2 to fd 0, then OwnedFd drop closes the original fd
+            let stdin = unsafe { OwnedFd::from_raw_fd(stdin) };
+            dup2_stdin(&stdin).map_err(InitProcessError::NixOther)?;
         }
         if let Some(stdout) = args.stdout {
-            dup2(stdout, 1).map_err(InitProcessError::NixOther)?;
-            close(stdout).map_err(InitProcessError::NixOther)?;
+            let stdout = unsafe { OwnedFd::from_raw_fd(stdout) };
+            dup2_stdout(&stdout).map_err(InitProcessError::NixOther)?;
         }
         if let Some(stderr) = args.stderr {
-            dup2(stderr, 2).map_err(InitProcessError::NixOther)?;
-            close(stderr).map_err(InitProcessError::NixOther)?;
+            let stderr = unsafe { OwnedFd::from_raw_fd(stderr) };
+            dup2_stderr(&stderr).map_err(InitProcessError::NixOther)?;
         }
     }
 
@@ -667,7 +668,7 @@ fn reopen_dev_null() -> Result<()> {
         tracing::error!(?err, "failed to open /dev/null inside the container");
         InitProcessError::ReopenDevNull(err)
     })?;
-    let dev_null_fstat_info = nix::sys::stat::fstat(dev_null.as_raw_fd()).map_err(|err| {
+    let dev_null_fstat_info = nix::sys::stat::fstat(&dev_null).map_err(|err| {
         tracing::error!(?err, "failed to fstat /dev/null inside the container");
         InitProcessError::NixOther(err)
     })?;
@@ -678,16 +679,30 @@ fn reopen_dev_null() -> Result<()> {
 
     // Check if stdin, stdout or stderr point to /dev/null
     for fd in 0..3 {
-        let fstat_info = nix::sys::stat::fstat(fd).map_err(|err| {
-            tracing::error!(?err, "failed to fstat stdio fd {}", fd);
-            InitProcessError::NixOther(err)
-        })?;
+        let fstat_info =
+            nix::sys::stat::fstat(unsafe { BorrowedFd::borrow_raw(fd) }).map_err(|err| {
+                tracing::error!(?err, "failed to fstat stdio fd {}", fd);
+                InitProcessError::NixOther(err)
+            })?;
 
         if dev_null_fstat_info.st_rdev == fstat_info.st_rdev {
             // This FD points to /dev/null outside of the container.
             // Let's point to /dev/null inside of the container.
-            nix::unistd::dup2(dev_null.as_raw_fd(), fd).map_err(|err| {
-                tracing::error!(?err, "failed to dup2 fd {} to /dev/null", fd);
+            let res = match fd {
+                0 => nix::unistd::dup2_stdin(&dev_null),
+                1 => nix::unistd::dup2_stdout(&dev_null),
+                2 => nix::unistd::dup2_stderr(&dev_null),
+                _ => unreachable!(),
+            };
+
+            // Handle the error in one clean block after the match
+            res.map_err(|err| {
+                let stream = match fd {
+                    0 => "stdin",
+                    1 => "stdout",
+                    _ => "stderr",
+                };
+                tracing::error!(?err, "failed to dup2 {} to /dev/null", stream);
                 InitProcessError::NixOther(err)
             })?;
         }

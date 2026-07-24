@@ -336,7 +336,10 @@ impl LinuxSyscall {
         to_be_cleaned_up_fds.iter().for_each(|&fd| {
             // Intentionally ignore errors here -- the cases where this might fail
             // are basically file descriptors that have already been closed.
-            let _ = fcntl::fcntl(fd, fcntl::F_SETFD(fcntl::FdFlag::FD_CLOEXEC));
+            let _ = fcntl::fcntl(
+                unsafe { BorrowedFd::borrow_raw(fd) },
+                fcntl::F_SETFD(fcntl::FdFlag::FD_CLOEXEC),
+            );
         });
 
         Ok(())
@@ -350,7 +353,7 @@ impl LinuxSyscall {
             OpenFlags::O_DIRECTORY | OpenFlags::O_CLOEXEC,
         )?;
 
-        let fds = Dir::from(dir)?
+        let fds = Dir::from_fd(dir.into())?
             .into_iter()
             .filter_map(|entry| entry.ok())
             .filter_map(|entry| {
@@ -379,34 +382,28 @@ impl Syscall for LinuxSyscall {
     /// Function to set given path as root path inside process
     fn pivot_rootfs(&self, path: &Path) -> Result<()> {
         // open oldroot as directory
-        let oldroot = unsafe {
-            OwnedFd::from_raw_fd(
-                open(
-                    "/",
-                    OFlag::O_DIRECTORY | OFlag::O_PATH | OFlag::O_CLOEXEC,
-                    Mode::empty(),
-                )
-                .inspect_err(|errno| {
-                    tracing::error!(?errno, ?path, "failed to open the old root for pivot root");
-                })?,
-            )
-        };
+        // returns a OwnedFd as of nix v0.31
+        let oldroot = open(
+            "/",
+            OFlag::O_DIRECTORY | OFlag::O_PATH | OFlag::O_CLOEXEC,
+            Mode::empty(),
+        )
+        .inspect_err(|errno| {
+            tracing::error!(?errno, ?path, "failed to open the old root for pivot root");
+        })?;
 
         // open newroot as directory
-        let newroot = unsafe {
-            OwnedFd::from_raw_fd(
-                open(
-                    path,
-                    OFlag::O_DIRECTORY | OFlag::O_PATH | OFlag::O_CLOEXEC,
-                    Mode::empty(),
-                )
-                .inspect_err(|errno| {
-                    tracing::error!(?errno, ?path, "failed to open the new root for pivot root");
-                })?,
-            )
-        };
+        // returns a OwnedFd as of nix v0.31
+        let newroot = open(
+            path,
+            OFlag::O_DIRECTORY | OFlag::O_PATH | OFlag::O_CLOEXEC,
+            Mode::empty(),
+        )
+        .inspect_err(|errno| {
+            tracing::error!(?errno, ?path, "failed to open the new root for pivot root");
+        })?;
 
-        fchdir(newroot.as_raw_fd()).inspect_err(|errno| {
+        fchdir(&newroot).inspect_err(|errno| {
             tracing::error!(?errno, ?newroot, "failed to fchdir to new root");
         })?;
 
@@ -426,7 +423,7 @@ impl Syscall for LinuxSyscall {
         // However, purely for safety, we will fchdir(oldroot) since there isn't
         // really any guarantee from the kernel what /proc/self/cwd will be after a
         // pivot_root(2).
-        fchdir(oldroot.as_raw_fd()).inspect_err(|errno| {
+        fchdir(&oldroot).inspect_err(|errno| {
             tracing::error!(?errno, ?oldroot, "failed to fchdir to old root");
         })?;
 
@@ -660,13 +657,11 @@ impl Syscall for LinuxSyscall {
             SyscallError::Nix(nix::Error::EINVAL)
         })?;
 
-        let parent_fd = unsafe {
-            OwnedFd::from_raw_fd(open(
-                parent,
-                OFlag::O_PATH | OFlag::O_CLOEXEC | OFlag::O_DIRECTORY,
-                Mode::empty(),
-            )?)
-        };
+        let parent_fd = open(
+            parent,
+            OFlag::O_PATH | OFlag::O_CLOEXEC | OFlag::O_DIRECTORY,
+            Mode::empty(),
+        )?;
 
         let open_tree_flags: libc::c_uint = (libc::OPEN_TREE_CLOEXEC as libc::c_uint)
             | (libc::OPEN_TREE_CLONE as libc::c_uint)
@@ -1076,7 +1071,7 @@ mod tests {
         let fd = fcntl::open("/dev/null", fcntl::OFlag::O_RDWR, sys::stat::Mode::empty())?;
         LinuxSyscall::emulate_close_range(0).context("failed to clean up the fds")?;
 
-        let fd_flag = fcntl::fcntl(fd, fcntl::F_GETFD)?;
+        let fd_flag = fcntl::fcntl(&fd, fcntl::F_GETFD)?;
         if (fd_flag & fcntl::FdFlag::FD_CLOEXEC.bits()) == 0 {
             bail!("CLOEXEC flag is not set correctly");
         }
@@ -1094,7 +1089,7 @@ mod tests {
             .close_range(0)
             .context("failed to clean up the fds")?;
 
-        let fd_flag = fcntl::fcntl(fd, fcntl::F_GETFD)?;
+        let fd_flag = fcntl::fcntl(&fd, fcntl::F_GETFD)?;
         if (fd_flag & fcntl::FdFlag::FD_CLOEXEC.bits()) == 0 {
             bail!("CLOEXEC flag is not set correctly");
         }
