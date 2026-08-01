@@ -257,9 +257,13 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<Pid> {
 /// One-shot init-side setup requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InitRequest {
+    /// Indicates that the init process requests execution of the configured runtime hooks.
     Hooks,
+    /// Indicates that the init process is ready for network device setup.
     Network,
+    /// Indicates that the init process has sent a seccomp notify file descriptor.
     Seccomp,
+    /// Indicates that the init process has completed its setup.
     Ready,
 }
 
