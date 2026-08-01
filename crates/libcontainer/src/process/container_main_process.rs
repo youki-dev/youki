@@ -267,6 +267,20 @@ enum InitRequest {
     Ready,
 }
 
+impl TryFrom<&Message> for InitRequest {
+    type Error = channel::ChannelError;
+
+    fn try_from(message: &Message) -> std::result::Result<Self, Self::Error> {
+        match message {
+            Message::HookRequest => Ok(Self::Hooks),
+            Message::SetupNetworkDeviceReady => Ok(Self::Network),
+            Message::SeccompNotify => Ok(Self::Seccomp),
+            Message::InitReady => Ok(Self::Ready),
+            _ => Err(unexpected_init_message(message)),
+        }
+    }
+}
+
 struct InitRequestSequence {
     pending_setups: Vec<InitRequest>,
     // Seccomp must be the last setup request: once the init process applies
@@ -318,13 +332,7 @@ impl InitRequestSequence {
         &mut self,
         message: &Message,
     ) -> std::result::Result<InitRequest, channel::ChannelError> {
-        let received = match message {
-            Message::HookRequest => InitRequest::Hooks,
-            Message::SetupNetworkDeviceReady => InitRequest::Network,
-            Message::SeccompNotify => InitRequest::Seccomp,
-            Message::InitReady => InitRequest::Ready,
-            _ => return Err(unexpected_init_message(message)),
-        };
+        let received = InitRequest::try_from(message)?;
 
         match received {
             InitRequest::Hooks | InitRequest::Network => {
