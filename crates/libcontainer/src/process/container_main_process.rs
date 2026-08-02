@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::fs::File;
 use std::os::fd::AsRawFd;
@@ -255,7 +255,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<Pid> {
 }
 
 /// One-shot init-side setup requests.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum InitRequest {
     /// Indicates that the init process requests execution of the configured runtime hooks.
     Hooks,
@@ -265,6 +265,33 @@ enum InitRequest {
     Seccomp,
     /// Indicates that the init process has completed its setup.
     Ready,
+}
+
+/// Ordering groups for one-shot init requests.
+///
+/// The declaration order is the protocol order. Requests in the same phase
+/// may arrive in any order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum InitPhase {
+    /// Waits for configured hook and network requests. They have no ordering
+    /// dependency and may arrive in either order.
+    Setup,
+    /// Waits for seccomp after setup requests. Once the init process applies
+    /// the filter, its own system calls are subject to the container's seccomp
+    /// policy, so hook and network setup must finish first.
+    Seccomp,
+    /// Waits for the init process to report that setup is complete.
+    Ready,
+}
+
+impl InitRequest {
+    fn phase(self) -> InitPhase {
+        match self {
+            Self::Hooks | Self::Network => InitPhase::Setup,
+            Self::Seccomp => InitPhase::Seccomp,
+            Self::Ready => InitPhase::Ready,
+        }
+    }
 }
 
 impl TryFrom<&Message> for InitRequest {
@@ -282,11 +309,8 @@ impl TryFrom<&Message> for InitRequest {
 }
 
 struct InitRequestSequence {
-    pending_setups: Vec<InitRequest>,
-    // Seccomp must be the last setup request: once the init process applies
-    // the filter, its own syscalls are subject to the container's seccomp
-    // policy, so all other setup must be finished first.
-    pending_seccomp: bool,
+    /// Expected one-shot requests that have not been received yet.
+    pending_requests: HashSet<InitRequest>,
 }
 
 impl InitRequestSequence {
@@ -314,18 +338,19 @@ impl InitRequestSequence {
     }
 
     fn from_requirements(hooks: bool, network: bool, seccomp: bool) -> Self {
-        let mut pending_setups = Vec::new();
+        let mut pending_requests = HashSet::new();
         if hooks {
-            pending_setups.push(InitRequest::Hooks);
+            pending_requests.insert(InitRequest::Hooks);
         }
         if network {
-            pending_setups.push(InitRequest::Network);
+            pending_requests.insert(InitRequest::Network);
         }
+        if seccomp {
+            pending_requests.insert(InitRequest::Seccomp);
+        }
+        pending_requests.insert(InitRequest::Ready);
 
-        Self {
-            pending_setups,
-            pending_seccomp: seccomp,
-        }
+        Self { pending_requests }
     }
 
     fn accept(
@@ -334,30 +359,19 @@ impl InitRequestSequence {
     ) -> std::result::Result<InitRequest, channel::ChannelError> {
         let received = InitRequest::try_from(message)?;
 
-        match received {
-            InitRequest::Hooks | InitRequest::Network => {
-                let Some(position) = self
-                    .pending_setups
-                    .iter()
-                    .position(|request| *request == received)
-                else {
-                    return Err(unexpected_init_message(message));
-                };
-                self.pending_setups.remove(position);
-            }
-            InitRequest::Seccomp => {
-                if !self.pending_setups.is_empty() || !self.pending_seccomp {
-                    return Err(unexpected_init_message(message));
-                }
-                self.pending_seccomp = false;
-            }
-            InitRequest::Ready => {
-                if !self.pending_setups.is_empty() || self.pending_seccomp {
-                    return Err(unexpected_init_message(message));
-                }
-            }
+        if !self.pending_requests.contains(&received) {
+            return Err(unexpected_init_message(message));
         }
 
+        if self
+            .pending_requests
+            .iter()
+            .any(|request| request.phase() < received.phase())
+        {
+            return Err(unexpected_init_message(message));
+        }
+
+        self.pending_requests.remove(&received);
         Ok(received)
     }
 }
