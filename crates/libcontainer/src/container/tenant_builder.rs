@@ -296,7 +296,7 @@ impl TenantContainerBuilder {
             process_label: self.process_label,
         };
 
-        let (pid, pty_master_fd) = builder_impl.create()?;
+        let (pid, foreground_pty_fd) = builder_impl.create()?;
 
         let mut notify_socket = NotifySocket::new(notify_path);
         notify_socket.notify_container_start()?;
@@ -316,7 +316,7 @@ impl TenantContainerBuilder {
             match read(read_end.as_raw_fd(), &mut buf).map_err(LibcontainerError::OtherSyscall)? {
                 0 => {
                     if err_str_buf.is_empty() {
-                        return Ok((pid, pty_master_fd));
+                        return Ok((pid, foreground_pty_fd));
                     } else {
                         return Err(LibcontainerError::Other(
                             String::from_utf8_lossy(&err_str_buf).to_string(),

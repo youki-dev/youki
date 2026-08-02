@@ -18,7 +18,7 @@ use nix::sys::socket::{ControlMessageOwned, MsgFlags, recvmsg};
 use oci_spec::runtime::{BoxBuilder, ProcessBuilder, Spec, SpecBuilder};
 use test_framework::{Test, TestGroup};
 
-use crate::utils::get_runtime_path;
+use crate::utils::test_utils;
 
 fn terminal_spec(command: &str) -> Spec {
     SpecBuilder::default()
@@ -62,11 +62,8 @@ fn console_size_spec(command: &str, height: u64, width: u64) -> Spec {
 }
 
 fn runtime_command(bundle_root: &Path, subcommand: &str) -> Command {
-    let mut command = Command::new(get_runtime_path());
-    command
-        .arg("--root")
-        .arg(bundle_root.join("runtime"))
-        .arg(subcommand);
+    let mut command = test_utils::runtime_command(bundle_root);
+    command.arg(subcommand);
     command
 }
 
@@ -79,11 +76,10 @@ fn run_command(bundle_root: &Path, id: &str) -> Command {
     command
 }
 
-// PTY output uses \r\n (doubled when it crosses two PTYs), so trim trailing \r.
+// The container pty runs with -onlcr (like runc), so at most a single \r\n
+// line ending remains, which str::lines() already strips.
 fn saw_line(stdout: &str, marker: &str) -> bool {
-    stdout
-        .lines()
-        .any(|line| line.trim_end_matches('\r') == marker)
+    stdout.lines().any(|line| line == marker)
 }
 
 // Shell that polls `stty size` (~5s) until `want` appears, then echoes "<marker>=<last size>".
@@ -139,8 +135,14 @@ fn wait_timeout(child: &mut Child, timeout: Duration) -> std::io::Result<ExitSta
             return Ok(status);
         }
         if Instant::now() > deadline {
-            let _ = child.kill();
-            return child.wait();
+            let kill_result = child.kill();
+            let wait_result = child.wait();
+            return Err(std::io::Error::new(
+                ErrorKind::TimedOut,
+                format!(
+                    "child did not exit within {timeout:?}; kill={kill_result:?}; wait={wait_result:?}"
+                ),
+            ));
         }
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -243,6 +245,10 @@ pub fn get_terminal_test() -> TestGroup {
         Box::new(Test::new(
             "terminal_exec_terminal_size",
             Box::new(exec_tests::terminal_exec_terminal_size_test),
+        )),
+        Box::new(Test::new(
+            "terminal_exec_background_process_does_not_block",
+            Box::new(exec_tests::terminal_exec_background_process_does_not_block_test),
         )),
         Box::new(Test::new(
             "terminal_exec_tty_flag",

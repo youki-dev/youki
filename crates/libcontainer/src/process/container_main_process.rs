@@ -171,7 +171,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, Op
 
     let mut sequence =
         InitRequestSequence::new(container_args.container_type, &container_args.spec);
-    let pty_master_fd = loop {
+    let foreground_pty_fd = loop {
         let (msg, fd) = init_main_receiver.recv_init_message()?;
         match sequence.accept(&msg)? {
             InitRequest::Ready => break fd,
@@ -275,7 +275,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, Op
         Err(err) => return Err(ProcessError::WaitIntermediateProcess(err)),
     };
 
-    Ok((init_pid, pty_master_fd))
+    Ok((init_pid, foreground_pty_fd))
 }
 
 /// One-shot init-side setup requests.

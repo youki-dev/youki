@@ -328,7 +328,9 @@ pub fn resume_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
     Ok(res)
 }
 
-fn runtime_command<P: AsRef<Path>>(dir: P) -> Command {
+/// Base command to invoke the runtime under test: `<runtime> --root <dir>/runtime`,
+/// with stdout/stderr piped.
+pub fn runtime_command<P: AsRef<Path>>(dir: P) -> Command {
     let mut command = Command::new(get_runtime_path());
     command
         .stdout(Stdio::piped())

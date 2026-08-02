@@ -192,13 +192,13 @@ impl ContainerBuilderImpl {
             pid_file: self.pid_file.to_owned(),
         };
 
-        let (init_pid, pty_master_fd) = process::container_main_process::container_main_process(
-            &container_args,
-        )
-        .map_err(|err| {
-            tracing::error!("failed to run container process {}", err);
-            LibcontainerError::MainProcess(err)
-        })?;
+        let (init_pid, foreground_pty_fd) =
+            process::container_main_process::container_main_process(&container_args).map_err(
+                |err| {
+                    tracing::error!("failed to run container process {}", err);
+                    LibcontainerError::MainProcess(err)
+                },
+            )?;
 
         let mut intel_rdt_dir = None;
         let mut intel_rdt_monitoring_dir = None;
@@ -222,7 +222,7 @@ impl ContainerBuilderImpl {
                 .save()?;
         }
 
-        Ok((init_pid, pty_master_fd))
+        Ok((init_pid, foreground_pty_fd))
     }
 
     fn cleanup_container(&self) -> Result<(), LibcontainerError> {

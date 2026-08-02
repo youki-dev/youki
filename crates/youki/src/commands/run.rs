@@ -9,7 +9,7 @@ use crate::commands::foreground;
 use crate::workload::executor::default_executor;
 
 pub fn run(args: Run, root_path: PathBuf, systemd_cgroup: bool) -> Result<i32> {
-    let (mut container, pty_master_fd) =
+    let (mut container, foreground_pty_fd) =
         ContainerBuilder::new(args.container_id.clone(), SyscallType::default())
             .with_executor(default_executor())
             .with_pid_file(args.pid_file.as_ref())?
@@ -38,7 +38,8 @@ pub fn run(args: Run, root_path: PathBuf, systemd_cgroup: bool) -> Result<i32> {
         container.pid().is_some(),
         "expects a container init pid in the container state"
     );
-    let foreground_result = foreground::handle_foreground(container.pid().unwrap(), pty_master_fd);
+    let foreground_result =
+        foreground::handle_foreground(container.pid().unwrap(), foreground_pty_fd);
     // execute the destruction action after the container finishes running
     container.delete(true)?;
     // return result

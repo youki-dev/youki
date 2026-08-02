@@ -1,9 +1,12 @@
 use std::fs::File;
-use std::io;
+use std::io::{self, Read, Write};
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use anyhow::{Context, Result};
+use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
+use nix::sys::eventfd::{EfdFlags, EventFd};
 use nix::sys::signal::{self, kill};
 use nix::sys::signalfd::SigSet;
 use nix::sys::termios::{self, Termios};
@@ -41,8 +44,24 @@ impl Drop for RawTerminalGuard {
     }
 }
 
-// Bridge host stdio <-> the container's PTY master; returns the PTY->stdout relay's join handle.
-fn io_bridge(master: OwnedFd) -> Result<JoinHandle<()>> {
+// Owns the PTY output thread and the eventfd used to wake it during foreground shutdown.
+struct OutputRelay {
+    stop: Arc<EventFd>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Drop for OutputRelay {
+    fn drop(&mut self) {
+        let _ = self.stop.arm();
+
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+// Bridge host stdio with the container PTY and return a stoppable output relay.
+fn io_bridge(master: OwnedFd) -> Result<OutputRelay> {
     let master_clone = master
         .try_clone()
         .with_context(|| "failed to duplicate pty master fd")?;
@@ -55,56 +74,134 @@ fn io_bridge(master: OwnedFd) -> Result<JoinHandle<()>> {
         let _ = io::copy(&mut io::stdin(), &mut master_file);
     });
 
-    // PTY master -> host stdout (joined on drop to flush the last bytes).
-    let output = std::thread::spawn(move || {
+    // PTY master -> host stdout. The relay is explicitly stopped and joined on drop.
+    let stop = Arc::new(
+        EventFd::from_flags(EfdFlags::EFD_CLOEXEC)
+            .with_context(|| "failed to create output relay eventfd")?,
+    );
+    let thread_stop = Arc::clone(&stop);
+    let thread = std::thread::spawn(move || {
         let mut master_file = File::from(master_clone);
-        if let Ok(stdout_fd) = io::stdout().as_fd().try_clone_to_owned() {
-            let mut out = File::from(stdout_fd);
-            let _ = io::copy(&mut master_file, &mut out);
-        }
+
+        let Ok(stdout_fd) = io::stdout().as_fd().try_clone_to_owned() else {
+            return;
+        };
+        let mut out = File::from(stdout_fd);
+
+        let _ = relay_output(&mut master_file, &mut out, &thread_stop).map_err(|err| {
+            tracing::warn!(?err, "failed to relay output from pty master to stdout");
+        });
     });
 
-    Ok(output)
+    Ok(OutputRelay {
+        stop,
+        thread: Some(thread),
+    })
+}
+
+// Relay PTY output until the master closes or the owning foreground process requests shutdown.
+fn relay_output(master: &mut File, out: &mut File, stop: &EventFd) -> io::Result<()> {
+    let mut buffer = [0_u8; 8192];
+
+    loop {
+        let (master_events, stop_events) = {
+            let mut fds = [
+                PollFd::new(master.as_fd(), PollFlags::POLLIN),
+                PollFd::new(stop.as_fd(), PollFlags::POLLIN),
+            ];
+
+            poll(&mut fds, PollTimeout::NONE)?;
+
+            (
+                fds[0].revents().unwrap_or(PollFlags::empty()),
+                fds[1].revents().unwrap_or(PollFlags::empty()),
+            )
+        };
+
+        if master_events.intersects(PollFlags::POLLIN | PollFlags::POLLHUP | PollFlags::POLLERR) {
+            match master.read(&mut buffer) {
+                Ok(0) => return Ok(()),
+                Ok(read) => out.write_all(&buffer[..read])?,
+                Err(err) if err.raw_os_error() == Some(libc::EIO) => return Ok(()),
+                Err(err) => return Err(err),
+            }
+        }
+
+        if stop_events.contains(PollFlags::POLLIN) {
+            drain_pending_output(master, out, &mut buffer)?;
+            return Ok(());
+        }
+    }
+}
+
+// Drain output while the PTY master is immediately readable. The zero timeout avoids waiting for
+// a descendant that keeps the PTY slave open after the queued output has been consumed.
+fn drain_pending_output(master: &mut File, out: &mut File, buffer: &mut [u8]) -> io::Result<()> {
+    loop {
+        let master_events = {
+            let mut fds = [PollFd::new(master.as_fd(), PollFlags::POLLIN)];
+
+            poll(&mut fds, PollTimeout::ZERO)?;
+
+            fds[0].revents().unwrap_or(PollFlags::empty())
+        };
+
+        if !master_events.intersects(PollFlags::POLLIN | PollFlags::POLLHUP | PollFlags::POLLERR) {
+            return Ok(());
+        }
+
+        match master.read(buffer) {
+            Ok(0) => return Ok(()),
+            Ok(read) => out.write_all(&buffer[..read])?,
+            Err(err) if err.raw_os_error() == Some(libc::EIO) => return Ok(()),
+            Err(err) => return Err(err),
+        }
+    }
 }
 
 /// Foreground console state. On drop it drains the PTY->stdout relay (so the last output is not
 /// lost) and restores the terminal, so hold it for the whole lifetime — never bind it to `_`.
 struct ConsoleBridge {
     raw: Option<RawTerminalGuard>,
-    output: Option<JoinHandle<()>>,
+    output: Option<OutputRelay>,
     // A dup of the PTY master kept so SIGWINCH can resize the container terminal.
     resize: OwnedFd,
 }
 
 impl ConsoleBridge {
     /// Propagate the host terminal's current window size to the container PTY master.
-    fn resize_to_host(&self) {
+    /// Does nothing when the host stdin is not a TTY (there is no size to propagate).
+    fn resize_to_host(&self) -> Result<()> {
         let stdin = io::stdin();
         if !unistd::isatty(stdin.as_raw_fd()).unwrap_or(false) {
-            return;
+            return Ok(());
         }
 
         let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
         if unsafe { libc::ioctl(stdin.as_raw_fd(), libc::TIOCGWINSZ, &mut ws) } < 0 {
-            return;
+            return Err(io::Error::last_os_error())
+                .with_context(|| "failed to get host terminal size");
         }
-        unsafe { libc::ioctl(self.resize.as_raw_fd(), libc::TIOCSWINSZ, &ws) };
+        if unsafe { libc::ioctl(self.resize.as_raw_fd(), libc::TIOCSWINSZ, &ws) } < 0 {
+            return Err(io::Error::last_os_error())
+                .with_context(|| "failed to set container pty size");
+        }
+
+        Ok(())
     }
 }
 
 impl Drop for ConsoleBridge {
     fn drop(&mut self) {
-        // Restore the terminal first so a stuck relay cannot leave it in raw mode.
+        // Restore the host terminal before waiting for the output relay to finish.
         drop(self.raw.take());
-        // The relay ends when every PTY slave closes (container exit) and the master read hits EIO.
-        if let Some(output) = self.output.take() {
-            let _ = output.join();
-        }
+        // Dropping the relay signals its eventfd, drains queued output, and joins its thread.
+        drop(self.output.take());
     }
 }
 
 /// With a PTY master, raw-mode the host terminal and bridge host stdio <-> the PTY.
-fn attach_console(master: Option<OwnedFd>) -> Result<Option<ConsoleBridge>> {
+fn setup_console_bridge(master: Option<OwnedFd>) -> Result<Option<ConsoleBridge>> {
     match master {
         Some(master) => {
             let raw = RawTerminalGuard::new()?;
@@ -127,7 +224,7 @@ fn attach_console(master: Option<OwnedFd>) -> Result<Option<ConsoleBridge>> {
 // youki main process also forwards most of the signals to the container init
 // process.
 #[tracing::instrument(level = "trace")]
-pub(crate) fn handle_foreground(init_pid: Pid, pty_master_fd: Option<OwnedFd>) -> Result<i32> {
+pub(crate) fn handle_foreground(init_pid: Pid, foreground_pty_fd: Option<OwnedFd>) -> Result<i32> {
     tracing::trace!("waiting for container init process to exit");
 
     // We mask all signals here and forward most of the signals to the container
@@ -138,9 +235,12 @@ pub(crate) fn handle_foreground(init_pid: Pid, pty_master_fd: Option<OwnedFd>) -
         .with_context(|| "failed to call pthread_sigmask")?;
 
     // With a PTY master, raw-mode the host terminal (restored on drop) and bridge stdio.
-    let console = attach_console(pty_master_fd)?;
+    let console = setup_console_bridge(foreground_pty_fd)?;
     if let Some(console) = &console {
-        console.resize_to_host();
+        // Resize failure is not fatal; the container just keeps its default size.
+        let _ = console.resize_to_host().map_err(|err| {
+            tracing::warn!(?err, "failed to resize container terminal");
+        });
     }
 
     if let Some(status) = reap_children(init_pid)? {
@@ -167,7 +267,10 @@ pub(crate) fn handle_foreground(init_pid: Pid, pty_master_fd: Option<OwnedFd>) -
             }
             signal::SIGWINCH => {
                 if let Some(console) = &console {
-                    console.resize_to_host();
+                    // Resize failure is not fatal; the container just keeps its old size.
+                    let _ = console.resize_to_host().map_err(|err| {
+                        tracing::warn!(?err, "failed to resize container terminal");
+                    });
                 }
             }
             signal => {

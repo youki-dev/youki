@@ -110,8 +110,8 @@ impl MainSender {
         Ok(())
     }
 
-    pub fn init_ready(&mut self, pty_master_fd: Option<RawFd>) -> Result<(), ChannelError> {
-        if let Some(fd) = pty_master_fd {
+    pub fn init_ready(&mut self, foreground_pty_fd: Option<RawFd>) -> Result<(), ChannelError> {
+        if let Some(fd) = foreground_pty_fd {
             self.sender
                 .send_fds(Message::InitReady, &[fd.as_raw_fd()])?;
         } else {

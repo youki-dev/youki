@@ -136,11 +136,11 @@ impl InitContainerBuilder {
             process_label: None,
         };
 
-        let (_, pty_master_fd) = builder_impl.create()?;
+        let (_, foreground_pty_fd) = builder_impl.create()?;
 
         container.refresh_state()?;
 
-        Ok((container, pty_master_fd))
+        Ok((container, foreground_pty_fd))
     }
 
     fn create_container_dir(&self) -> Result<PathBuf, LibcontainerError> {

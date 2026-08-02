@@ -153,7 +153,7 @@ pub fn container_init_process(
     // mount=true for init (mount /dev/console), false for exec (already mounted)
     // See: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/standard_init_linux.go
     // See: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/setns_init_linux.go
-    let pty_master_fd = if args.console_socket.is_some() || terminal {
+    let foreground_pty_fd = if args.console_socket.is_some() || terminal {
         let mount_console = matches!(args.container_type, ContainerType::InitContainer);
         match tty::setup_console(
             ctx.syscall.as_ref(),
@@ -445,7 +445,7 @@ pub fn container_init_process(
     // outside the pid namespace should be recorded by the intermediate process
     // already.
     main_sender
-        .init_ready(pty_master_fd.as_ref().map(|fd| fd.as_raw_fd()))
+        .init_ready(foreground_pty_fd.as_ref().map(|fd| fd.as_raw_fd()))
         .map_err(|err| {
             tracing::error!(
                 ?err,

@@ -24,6 +24,7 @@ use nix::pty;
 use nix::sys::socket::{self, UnixAddr};
 use nix::sys::stat::{SFlag, major, minor};
 use nix::sys::statfs::FsType;
+use nix::sys::termios::{self, OutputFlags, SetArg};
 use nix::unistd::{close, dup2};
 
 use crate::syscall::Syscall;
@@ -80,6 +81,8 @@ pub enum TTYError {
     CreateConsoleSocketFd { source: nix::Error },
     #[error("could not create pseudo terminal")]
     CreatePseudoTerminal { source: nix::Error },
+    #[error("failed to clear ONLCR on pty")]
+    ClearOnlcr { source: nix::Error },
     #[error("failed to send pty master")]
     SendPtyMaster { source: nix::Error },
     #[error("could not close console socket")]
@@ -343,8 +346,27 @@ pub fn setup_console(
             close(console_fd).map_err(|err| TTYError::CloseConsoleSocket { source: err })?;
             PtyMaster::SentToSocket
         }
-        None => PtyMaster::Foreground(master),
+        None => {
+            clear_onlcr(&master)?;
+            PtyMaster::Foreground(master)
+        }
     })
+}
+
+/// Clear the ONLCR output flag on the PTY so the container's "\n" is not
+/// rewritten to "\r\n": a not-very-well-known default of Linux unix98 ptys is
+/// that they have +onlcr.
+///
+/// runc does the same for the foreground path only ((*tty).recvtty); for the
+/// console-socket path the receiver of the master owns the termios, so it is
+/// left untouched there.
+///
+/// See: https://github.com/opencontainers/runc/blob/v1.4.0/tty.go
+fn clear_onlcr(pty: &OwnedFd) -> Result<()> {
+    let mut attrs = termios::tcgetattr(pty).map_err(|err| TTYError::ClearOnlcr { source: err })?;
+    attrs.output_flags.remove(OutputFlags::ONLCR);
+    termios::tcsetattr(pty, SetArg::TCSANOW, &attrs)
+        .map_err(|err| TTYError::ClearOnlcr { source: err })
 }
 
 /// Mount PTY slave on /dev/console.
@@ -502,6 +524,23 @@ mod tests {
         dup2(old_stderr, StdIO::Stderr.into())?;
 
         assert!(status.is_ok(), "setup_console failed: {:?}", status);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_clear_onlcr() -> Result<()> {
+        let openpty_result =
+            pty::openpty(None, None).map_err(|e| TTYError::CreatePseudoTerminal { source: e })?;
+
+        // Linux unix98 ptys default to +onlcr.
+        let attrs = termios::tcgetattr(&openpty_result.master)?;
+        assert!(attrs.output_flags.contains(OutputFlags::ONLCR));
+
+        clear_onlcr(&openpty_result.master)?;
+
+        let attrs = termios::tcgetattr(&openpty_result.master)?;
+        assert!(!attrs.output_flags.contains(OutputFlags::ONLCR));
 
         Ok(())
     }

@@ -38,7 +38,10 @@ pub(crate) fn terminal_no_console_socket_test() -> TestResult {
     };
 
     let reader = drain_master(pty.master);
-    let status = wait_timeout(&mut child, Duration::from_secs(30));
+    let status = match wait_timeout(&mut child, Duration::from_secs(30)) {
+        Ok(status) => status,
+        Err(e) => return TestResult::Failed(anyhow!("failed to wait for container: {e:?}")),
+    };
     let output = reader.join().unwrap_or_default();
 
     if saw_line(&output, "NOT_TTY") {
@@ -82,7 +85,10 @@ pub(crate) fn terminal_stdin_bridge_test() -> TestResult {
         return TestResult::Failed(anyhow!("failed to write to the pty: {e:?}"));
     }
 
-    let status = wait_timeout(&mut child, Duration::from_secs(30));
+    let status = match wait_timeout(&mut child, Duration::from_secs(30)) {
+        Ok(status) => status,
+        Err(e) => return TestResult::Failed(anyhow!("failed to wait for container: {e:?}")),
+    };
     let output = reader.join().unwrap_or_default();
     if saw_line(&output, "GOT:hello") {
         TestResult::Passed
@@ -208,7 +214,10 @@ pub(crate) fn terminal_run_sigwinch_test() -> TestResult {
     }
 
     let reader = drain_master(pty.master);
-    let status = wait_timeout(&mut child, Duration::from_secs(30));
+    let status = match wait_timeout(&mut child, Duration::from_secs(30)) {
+        Ok(status) => status,
+        Err(e) => return TestResult::Failed(anyhow!("failed to wait for container: {e:?}")),
+    };
     let output = reader.join().unwrap_or_default();
     if saw_line(&output, "WINCH_SIZE=31 91") {
         TestResult::Passed
@@ -265,7 +274,10 @@ pub(crate) fn terminal_raw_restore_test() -> TestResult {
         Err(e) => return TestResult::Failed(anyhow!("failed to spawn container: {e:?}")),
     };
 
-    let status = wait_timeout(&mut child, Duration::from_secs(30));
+    let status = match wait_timeout(&mut child, Duration::from_secs(30)) {
+        Ok(status) => status,
+        Err(e) => return TestResult::Failed(anyhow!("failed to wait for container: {e:?}")),
+    };
     let term = match termios::tcgetattr(&pty.master) {
         Ok(term) => term,
         Err(e) => return TestResult::Failed(anyhow!("failed to read back termios: {e}")),
@@ -307,7 +319,10 @@ pub(crate) fn terminal_large_output_test() -> TestResult {
     };
 
     let reader = drain_master(pty.master);
-    let status = wait_timeout(&mut child, Duration::from_secs(30));
+    let status = match wait_timeout(&mut child, Duration::from_secs(30)) {
+        Ok(status) => status,
+        Err(e) => return TestResult::Failed(anyhow!("failed to wait for container: {e:?}")),
+    };
     let output = reader.join().unwrap_or_default();
 
     let xs = output.chars().filter(|&c| c == 'x').count();

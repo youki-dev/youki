@@ -66,7 +66,10 @@ pub(crate) fn terminal_exec_no_console_socket_test() -> TestResult {
         };
 
         let reader = drain_master(pty.master);
-        let status = wait_timeout(&mut child, Duration::from_secs(30));
+        let status = match wait_timeout(&mut child, Duration::from_secs(30)) {
+            Ok(status) => status,
+            Err(e) => return TestResult::Failed(anyhow!("failed to wait for exec: {e:?}")),
+        };
         let output = reader.join().unwrap_or_default();
 
         if saw_line(&output, "NOT_TTY") {
@@ -120,7 +123,10 @@ pub(crate) fn terminal_exec_tty_flag_test() -> TestResult {
         };
 
         let reader = drain_master(pty.master);
-        let status = wait_timeout(&mut child, Duration::from_secs(30));
+        let status = match wait_timeout(&mut child, Duration::from_secs(30)) {
+            Ok(status) => status,
+            Err(e) => return TestResult::Failed(anyhow!("failed to wait for exec: {e:?}")),
+        };
         let output = reader.join().unwrap_or_default();
 
         if saw_line(&output, "NOT_TTY") {
@@ -247,6 +253,73 @@ pub(crate) fn terminal_exec_terminal_size_test() -> TestResult {
                 output,
                 status
             ))
+        }
+    })
+}
+
+// Once the exec'd process exits, foreground `youki exec` must return even when a descendant keeps
+// the PTY slave open. Otherwise the PTY-to-stdout relay waits forever and youki never exits.
+pub(crate) fn terminal_exec_background_process_does_not_block_test() -> TestResult {
+    test_outside_container(&sleeper_spec(), &|data| {
+        test_result!(check_container_created(&data));
+        let id = &data.id;
+        let dir = &data.bundle;
+
+        let start = start_container(id, dir).unwrap().wait().unwrap();
+        if !start.success() {
+            return TestResult::Failed(anyhow!("container start failed"));
+        }
+
+        let process_json = json!({
+            "terminal": true,
+            "cwd": "/",
+            // Ignore SIGHUP so the background process survives after its parent shell exits,
+            // while retaining the exec PTY slave on its standard streams.
+            "args": ["sh", "-c", "trap '' HUP; sleep 30 & echo EXEC_DONE"],
+            "env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
+            "user": { "uid": 0, "gid": 0 }
+        });
+        let process_path = dir.join("terminal-background-process.json");
+        if let Err(e) = fs::write(
+            &process_path,
+            serde_json::to_vec_pretty(&process_json).unwrap(),
+        ) {
+            return TestResult::Failed(anyhow!("failed to write process.json: {e}"));
+        }
+
+        let pty = match sized_pty(24, 80) {
+            Ok(pty) => pty,
+            Err(e) => return TestResult::Failed(anyhow!("failed to open test pty: {e}")),
+        };
+        let mut child = match spawn_on_pty(
+            build_exec_command(id, dir, &[OsStr::new("")], Some(&process_path), &[]),
+            pty.slave,
+        ) {
+            Ok(child) => child,
+            Err(e) => return TestResult::Failed(anyhow!("failed to spawn exec: {e:?}")),
+        };
+
+        let reader = drain_master(pty.master);
+        let status = wait_timeout(&mut child, Duration::from_secs(5));
+        let output = reader.join().unwrap_or_default();
+
+        let status = match status {
+            Ok(status) => status,
+            Err(e) => {
+                return TestResult::Failed(anyhow!(
+                    "foreground exec did not exit after its process exited: {e:?}; output={output:?}"
+                ));
+            }
+        };
+        if !status.success() {
+            return TestResult::Failed(anyhow!(
+                "foreground exec failed with status {status:?}: output={output:?}"
+            ));
+        }
+        if saw_line(&output, "EXEC_DONE") {
+            TestResult::Passed
+        } else {
+            TestResult::Failed(anyhow!("missing exec completion marker: output={output:?}"))
         }
     })
 }

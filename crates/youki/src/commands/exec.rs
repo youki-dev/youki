@@ -12,7 +12,7 @@ pub fn exec(args: Exec, root_path: PathBuf) -> Result<i32> {
     let user = args.user.map(|(u, _)| u);
     let group = args.user.and_then(|(_, g)| g);
 
-    let (pid, pty_master_fd) =
+    let (pid, foreground_pty_fd) =
         ContainerBuilder::new(args.container_id.clone(), SyscallType::default())
             .with_executor(default_executor())
             .with_root_path(root_path)?
@@ -45,5 +45,5 @@ pub fn exec(args: Exec, root_path: PathBuf) -> Result<i32> {
         return Ok(0);
     }
 
-    foreground::handle_foreground(pid, pty_master_fd)
+    foreground::handle_foreground(pid, foreground_pty_fd)
 }
