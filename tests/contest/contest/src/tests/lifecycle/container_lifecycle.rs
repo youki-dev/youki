@@ -222,6 +222,14 @@ impl ContainerLifecycle {
         checkpoint::checkpoint_link_remap()
     }
 
+    pub fn checkpoint_tcp_skip_in_flight() -> TestResult {
+        if !criu_installed() {
+            return TestResult::Skipped("CRIU is not installed".to_string());
+        }
+
+        checkpoint::checkpoint_tcp_skip_in_flight()
+    }
+
     pub fn checkpoint_with_external_namespaces() -> TestResult {
         if !criu_installed() {
             return TestResult::Skipped("criu not installed".to_string());
@@ -327,6 +335,10 @@ impl TestableGroup for ContainerLifecycle {
             ),
             ("checkpoint with link-remap", Self::checkpoint_link_remap()),
             (
+                "checkpoint with tcp-skip-in-flight",
+                Self::checkpoint_tcp_skip_in_flight(),
+            ),
+            (
                 "checkpoint with external namespaces",
                 Self::checkpoint_with_external_namespaces(),
             ),
@@ -361,6 +373,10 @@ impl TestableGroup for ContainerLifecycle {
                 "checkpoint_link_remap" => {
                     ret.push(("checkpoint with link-remap", Self::checkpoint_link_remap()))
                 }
+                "checkpoint_tcp_skip_in_flight" => ret.push((
+                    "checkpoint with tcp-skip-in-flight",
+                    Self::checkpoint_tcp_skip_in_flight(),
+                )),
                 "checkpoint_with_external_namespaces" => ret.push((
                     "checkpoint with external namespaces",
                     Self::checkpoint_with_external_namespaces(),
