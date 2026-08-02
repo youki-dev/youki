@@ -105,8 +105,14 @@ pub(crate) fn cgroup_test() -> TestResult {
         .expect("exec failed");
 
         // the init process is now in "/foo", but an exec process can still join "/" because we haven't enabled any domain controller yet
-        exec_container(id, dir, &["grep", "^0::/$", "/proc/self/cgroup"], None, &[])
-            .expect("exec failed");
+        exec_container(
+            id,
+            dir,
+            &["grep", "^0::/foobar$", "/proc/self/cgroup"],
+            None,
+            &[],
+        )
+        .expect("exec failed");
 
         // turn on a domain controller (memory)
         exec_container(
@@ -121,18 +127,19 @@ pub(crate) fn cgroup_test() -> TestResult {
         // TODO: Implement the test cases discussed in
         // https://github.com/youki-dev/youki/pull/3210#discussion_r2554961182.
         // This depends on changes introduced by PR https://github.com/youki-dev/youki/pull/3347.
-        // // an exec process can no longer join "/" after turning on a domain controller. Check that cgroup v2 fallback to init cgroup works
-        // exec_container(
-        //     id,
-        //     dir,
-        //     &[
-        //         "sh",
-        //         "-euc",
-        //         "cat /proc/self/cgroup && grep '^0::/foobar$' /proc/self/cgroup",
-        //     ],
-        //     None,
-        // )
-        // .expect("exec failed");
+        // an exec process can no longer join "/" after turning on a domain controller. Check that cgroup v2 fallback to init cgroup works
+        exec_container(
+            id,
+            dir,
+            &[
+                "sh",
+                "-euc",
+                "cat /proc/self/cgroup && grep '^0::/foobar$' /proc/self/cgroup",
+            ],
+            None,
+            &[],
+        )
+        .expect("exec failed");
 
         TestResult::Passed
     })
