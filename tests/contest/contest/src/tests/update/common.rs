@@ -50,6 +50,7 @@ fn create_spec() -> Result<Spec> {
     Ok(spec)
 }
 
+// "update cgroup v1/v2 common limits"
 pub(crate) fn update_common_limits_test() -> TestResult {
     let spec = test_result!(create_spec());
 

@@ -433,6 +433,158 @@ pub fn checkpoint_link_remap() -> TestResult {
     result
 }
 
+// Polls until the listen socket on `port` has a queued, unaccepted connection,
+// which is the in-flight state.
+fn wait_in_flight(
+    project_path: &Path,
+    id: &str,
+    port: u16,
+    timeout: std::time::Duration,
+) -> Result<(), TestResult> {
+    // The in-flight connection only exists once lo is up. Until then the clients
+    // running inside the container cannot reach 127.0.0.1, so no connection is
+    // established and nothing accumulates in the accept queue for `ss` to report.
+    // The container itself cannot bring lo up because the default spec grants no
+    // NET_ADMIN, so we do it here from the host before polling. `checkpoint` brings
+    // it up again later, but `ip link set up` is idempotent.
+    setup_network_namespace(project_path, id)?;
+
+    let pid = get_container_pid(project_path, id)?;
+    let deadline = std::time::Instant::now() + timeout;
+
+    loop {
+        let output = Command::new("nsenter")
+            .args(["-t", &pid.to_string(), "-n"])
+            .args(["ss", "-Htl", &format!("sport = :{port}")])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| TestResult::Failed(anyhow!("failed to exec ss via nsenter: {e}")))?;
+
+        // second column of `ss` is Recv-Q which is the accepted accept backlog depth.
+        if String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+            line.split_whitespace()
+                .nth(1)
+                .and_then(|recv_q| recv_q.parse::<u32>().ok())
+                .is_some_and(|recv_q| recv_q > 0)
+        }) {
+            return Ok(());
+        }
+
+        if std::time::Instant::now() >= deadline {
+            return Err(TestResult::Failed(anyhow!(
+                "timed out waiting for an in-flight connection on port {port}"
+            )));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+struct ContainerCleanup<'a> {
+    id: &'a str,
+    bundle_path: &'a Path,
+}
+
+impl Drop for ContainerCleanup<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut child) = kill_container(self.id, self.bundle_path) {
+            let _ = child.wait();
+        }
+        if let Ok(mut child) = delete_container(self.id, self.bundle_path) {
+            let _ = child.wait();
+        }
+    }
+}
+
+pub fn checkpoint_tcp_skip_in_flight() -> TestResult {
+    const PORT: u16 = 11111;
+
+    let bundle = match prepare_bundle() {
+        Ok(b) => b,
+        Err(e) => return TestResult::Failed(anyhow!("failed to prepare bundle: {e}")),
+    };
+    let id = generate_uuid().to_string();
+
+    let mut spec = Spec::default();
+    let mut process = spec.process().clone().unwrap_or_default();
+    // We need an unaccepted connection sitting in the listen socket's accept queue at
+    // dump time, because that is the only state `--tcp-skip-in-flight` acts on.
+    // `-c` caps the number of simultaneously accepted connections, so `tcpsvd -c 0`
+    // never calls accept(). The kernel still completes the handshake for the `nc`
+    // connect, leaving it ESTABLISHED but unaccepted in the accept queue: in-flight.
+    process.set_args(Some(vec![
+        "sh".to_string(),
+        "-c".to_string(),
+        format!(
+            "until ip addr show lo | grep -q 127.0.0.1; do sleep 0.1; done; \
+             tcpsvd -c 0 0.0.0.0 {PORT} sleep 100000 & \
+             sleep 100000 | nc 127.0.0.1 {PORT} & \
+             while true; do sleep 1; done"
+        ),
+    ]));
+    spec.set_process(Some(process));
+
+    if let Err(e) = set_config(&bundle, &spec) {
+        return TestResult::Failed(anyhow!("failed to write config.json: {e}"));
+    }
+
+    let bundle_path = bundle.path();
+
+    let _cleanup = ContainerCleanup {
+        id: &id,
+        bundle_path,
+    };
+
+    if let Err(e) = create::create(bundle_path, &id) {
+        return TestResult::Failed(anyhow!("create container failed: {e}"));
+    }
+
+    if let Err(e) = start::start(bundle_path, &id) {
+        return TestResult::Failed(anyhow!("start container failed: {e}"));
+    }
+
+    if let Err(e) = wait_container_running(&id, bundle_path) {
+        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
+    }
+
+    if let Err(e) = wait_in_flight(bundle_path, &id, PORT, std::time::Duration::from_secs(10)) {
+        return e;
+    }
+
+    let (_image_temp_dir, image_path) = match create_checkpoint_image_dir() {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+
+    let result = checkpoint(
+        bundle_path,
+        &id,
+        &image_path,
+        vec!["--tcp-established", "--tcp-skip-in-flight"],
+        None,
+    );
+    if let TestResult::Failed(_) = &result {
+        return result;
+    }
+
+    let has_tcp_stream_img = match std::fs::read_dir(&image_path) {
+        Ok(entries) => entries
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().starts_with("tcp-stream-")),
+        Err(e) => {
+            return TestResult::Failed(anyhow!("failed to read image dir {image_path:?}: {e}"));
+        }
+    };
+    if has_tcp_stream_img {
+        TestResult::Passed
+    } else {
+        TestResult::Failed(anyhow!(
+            "checkpoint with --tcp-skip-in-flight succeeded but no tcp-stream-*.img \
+             was written to {image_path:?}; the TCP connection state was not dumped"
+        ))
+    }
+}
+
 /// Check that a namespace was treated as external by CRIU.
 /// Fails if `<img_prefix>-*.img` is absent or lacks `ext_key`.
 /// CRIU img files embed protobuf strings as raw UTF-8, so a byte search suffices.

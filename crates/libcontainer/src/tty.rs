@@ -298,7 +298,7 @@ pub fn setup_console(syscall: &dyn Syscall, console_fd: RawFd, mount: bool) -> R
 
     // Mount PTY slave on /dev/console (only for init container)
     if mount {
-        mount_console(syscall, slave)?;
+        mount_console(syscall, slave, Path::new(CONSOLE_PATH))?;
     }
 
     // Send PTY master to console socket
@@ -332,14 +332,13 @@ pub fn setup_console(syscall: &dyn Syscall, console_fd: RawFd, mount: bool) -> R
 /// Uses FD-based mounting to avoid path resolution vulnerabilities (CVE-2025-52565).
 ///
 /// See: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/rootfs_linux.go
-fn mount_console(syscall: &dyn Syscall, slave: &OwnedFd) -> Result<()> {
+fn mount_console(syscall: &dyn Syscall, slave: &OwnedFd, console_path: &Path) -> Result<()> {
     use std::fs::OpenOptions;
-
-    let console_path = Path::new(CONSOLE_PATH);
 
     tracing::debug!(
         slave_fd = slave.as_raw_fd(),
-        "mounting PTY on {CONSOLE_PATH}"
+        "mounting PTY on {}",
+        console_path.display()
     );
 
     // Create /dev/console mount target.
@@ -353,7 +352,7 @@ fn mount_console(syscall: &dyn Syscall, slave: &OwnedFd) -> Result<()> {
         .mode(0o666)
         .open(console_path)
         .map_err(|err| {
-            tracing::error!(?err, "failed to create {CONSOLE_PATH}");
+            tracing::error!(?err, "failed to create {}", console_path.display());
             TTYError::CreateDevConsole { source: err }
         })?;
 
@@ -363,14 +362,16 @@ fn mount_console(syscall: &dyn Syscall, slave: &OwnedFd) -> Result<()> {
         tracing::error!(
             ?err,
             slave_fd = slave.as_raw_fd(),
-            "failed to bind mount pty on {CONSOLE_PATH}"
+            "failed to bind mount pty on {}",
+            console_path.display()
         );
         TTYError::MountConsole { source: err }
     })?;
 
     tracing::debug!(
         slave_fd = slave.as_raw_fd(),
-        "mounted PTY on {CONSOLE_PATH}"
+        "mounted PTY on {}",
+        console_path.display()
     );
     Ok(())
 }
@@ -445,6 +446,11 @@ mod tests {
     #[test]
     #[serial]
     fn test_setup_console() -> Result<()> {
+        // This test fails when run in WSL2.
+        // When it calls openpty() in setup_console() which opens /dev/ptmx, it must be on a real devpts mount.
+        // On native Ubuntu system, /dev/ptmx is a symlink to /dev/pts/ptmx, so the master is devpts-backed (with proper magic number).
+        // But on WSL2, /dev/ptmx is a real char device node living directly on /dev, which is devtmpfs (different magic number, shared with tmpfs).
+        // Therefore you may skip this test if you are WSL2 user.
         use crate::syscall::syscall::create_syscall;
 
         let testdir = tempfile::tempdir()?;
@@ -554,5 +560,28 @@ mod tests {
                 reason
             );
         }
+    }
+
+    #[test]
+    fn test_mount_console() {
+        use tempfile::{tempdir, tempfile};
+
+        use crate::syscall::test::TestHelperSyscall;
+
+        // Define necessary variables
+        let syscall = TestHelperSyscall::default();
+        let tmp = tempdir().unwrap();
+        let test_console_path = tmp.path().join("console");
+        let slave = OwnedFd::from(tempfile().unwrap());
+        mount_console(&syscall, &slave, &test_console_path).unwrap();
+        assert!(test_console_path.exists());
+
+        // Fetch MountFromFdArgs records to check if slave mounted once
+        let calls = syscall.get_mount_from_fd_args();
+        assert_eq!(calls.len(), 1);
+
+        // Check the mount target contains test_console_path
+        assert_eq!(calls[0].target, test_console_path);
+        assert_eq!(calls[0].fd, slave.as_raw_fd());
     }
 }

@@ -25,6 +25,7 @@ use crate::tests::intel_rdt::get_intel_rdt_test;
 use crate::tests::io_priority::get_io_priority_test;
 use crate::tests::kill::get_kill_test;
 use crate::tests::kill_no_effect::get_kill_no_effect_test;
+use crate::tests::killsig::get_killsig_test;
 use crate::tests::lifecycle::{ContainerCreate, ContainerLifecycle};
 use crate::tests::linux_masked_paths::get_linux_masked_paths_tests;
 use crate::tests::linux_ns_itype::get_ns_itype_tests;
@@ -56,6 +57,7 @@ use crate::tests::scheduler::get_scheduler_test;
 use crate::tests::seccomp::get_seccomp_test;
 use crate::tests::seccomp_notify::get_seccomp_notify_test;
 use crate::tests::sysctl::get_sysctl_test;
+use crate::tests::time_ns::get_time_ns_test;
 use crate::tests::tlb::get_tlb_test;
 use crate::tests::uid_mappings::get_uid_mappings_test;
 use crate::tests::update::get_update_test;
@@ -168,6 +170,7 @@ fn main() -> Result<()> {
     let fd_control = get_fd_control_test();
     let kill = get_kill_test();
     let kill_no_effect = get_kill_no_effect_test();
+    let killsig = get_killsig_test();
     let masked_paths = get_linux_masked_paths_tests();
     let rootfs_propagation = get_rootfs_propagation_test();
     let process_capabilities_fail = get_process_capabilities_fail_test();
@@ -181,6 +184,7 @@ fn main() -> Result<()> {
     let net_devices = get_net_devices_test();
     let checkpoint_restore = get_checkpoint_restore_tests();
     let update = get_update_test();
+    let time_ns = get_time_ns_test();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -227,6 +231,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(fd_control));
     tm.add_test_group(Box::new(kill));
     tm.add_test_group(Box::new(kill_no_effect));
+    tm.add_test_group(Box::new(killsig));
     tm.add_test_group(Box::new(rootfs_propagation));
     tm.add_test_group(Box::new(net_devices));
     tm.add_test_group(Box::new(process_capabilities_fail));
@@ -240,6 +245,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(io_priority_test));
     tm.add_test_group(Box::new(checkpoint_restore));
     tm.add_test_group(Box::new(update));
+    tm.add_test_group(Box::new(time_ns));
     tm.add_cleanup(Box::new(cgroups::cleanup_v1));
     tm.add_cleanup(Box::new(cgroups::cleanup_v2));
 

@@ -664,4 +664,33 @@ mod tests {
         let result = validate_spec_for_net_devices(&spec, &*syscall);
         assert!(result.is_ok());
     }
+
+    #[test]
+    fn test_verify_inode_propagation() {
+        // check if the closure is called and return Ok
+        let file = tempfile::tempfile().unwrap();
+        let fd = OwnedFd::from(file);
+        let called = std::cell::Cell::new(false);
+
+        let result = verify_inode(&fd, |stat, _| {
+            called.set(true);
+            assert_ne!(stat.st_ino, 0); // verify fd refers a proper inode
+            Ok(())
+        });
+        assert!(result.is_ok());
+        assert!(called.get());
+    }
+
+    #[test]
+    fn test_verify_inode_verification_error() {
+        let file = tempfile::tempfile().unwrap();
+        let fd = OwnedFd::from(file);
+
+        let result = verify_inode(&fd, |_, _| {
+            Err(VerifyInodeError::Verification("error".into()))
+        });
+        assert!(
+            matches!(result, Err(VerifyInodeError::Verification(error_message)) if error_message == "error")
+        )
+    }
 }

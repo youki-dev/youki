@@ -22,9 +22,9 @@ pub struct Checkpoint {
     /// Allow open tcp connections
     #[arg(long)]
     pub tcp_established: bool,
-    // TODO: Skip in-flight tcp connections
-    // #[arg(long)]
-    // pub tcp_skip_in_flight: bool,
+    /// Skip in-flight tcp connections
+    #[arg(long)]
+    pub tcp_skip_in_flight: bool,
     /// Allow one to link unlinked files back when possible
     #[arg(long)]
     pub link_remap: bool,

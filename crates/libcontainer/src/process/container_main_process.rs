@@ -127,6 +127,32 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<Pid> {
         inter_sender.mapping_written()?;
     }
 
+    // If creating a container with time namespace and offsets are specified,
+    // the intermediate process will ask the main process to write the time offsets.
+    container_args
+        .spec
+        .linux()
+        .as_ref()
+        .and_then(build_timens_offsets)
+        .map(|time_offsets| -> Result<()> {
+            // This must be done from the parent process since CAP_SYS_TIME is required.
+            intermediate_main_receiver.wait_for_time_offset_request()?;
+            tracing::debug!("write time offsets for pid {intermediate_pid:?}: '{time_offsets}'");
+            std::fs::write(
+                format!("/proc/{intermediate_pid}/timens_offsets"),
+                &time_offsets,
+            )
+            .map_err(|err| {
+                tracing::error!(
+                    "failed to write timens_offsets for pid {intermediate_pid:?}: {err}"
+                );
+                ProcessError::SyscallOther(SyscallError::IO(err))
+            })?;
+            inter_sender.time_offsets_written()?;
+            Ok(())
+        })
+        .transpose()?;
+
     // At this point, we don't need to send any message to intermediate process anymore,
     // so we want to close this sender at the earliest point.
     inter_sender.close().map_err(|err| {
@@ -469,6 +495,37 @@ fn setup_mapping(config: &UserNamespaceConfig, pid: Pid) -> Result<()> {
     Ok(())
 }
 
+/// Builds the payload to write to the kernel's `/proc/<pid>/timens_offsets`
+/// from the spec's `timeOffsets`.
+fn build_timens_offsets(linux: &Linux) -> Option<String> {
+    let offsets = linux.time_offsets().as_ref()?;
+    if offsets.is_empty() {
+        return None;
+    }
+    let time_ns = linux
+        .namespaces()
+        .as_ref()?
+        .iter()
+        .find(|ns| ns.typ() == LinuxNamespaceType::Time)?;
+    // Only set offsets when creating a new time namespace (no path to join).
+    if time_ns.path().is_some() {
+        return None;
+    }
+    Some(
+        offsets
+            .iter()
+            .map(|(clock_type, offset)| {
+                format!(
+                    "{clock_type} {} {}",
+                    offset.secs().unwrap_or(0),
+                    offset.nanosecs().unwrap_or(0)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
 /// Moves configured network devices from the host to the container's network namespace.
 /// This runs after the init process has joined its namespace, then transfers each
 /// configured device while preserving network addresses.
@@ -530,7 +587,6 @@ fn handle_setup_network_device(
         })
         .collect::<Result<HashMap<String, Vec<crate::network::cidr::CidrAddress>>>>()?;
     init_sender.move_network_device(addrs_map)?;
-
     Ok(())
 }
 
