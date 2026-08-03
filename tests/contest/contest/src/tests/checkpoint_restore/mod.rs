@@ -1531,6 +1531,81 @@ fn checkpoint_and_restore_with_link_remap() -> TestResult {
     }
 }
 
+fn checkpoint_and_restore_empty_net_ns() -> TestResult {
+    let ctx = match setup_cr_test(|_, _| {}) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    if let Err(e) = ctx.start() {
+        return e;
+    }
+
+    let id = &ctx.id;
+    let bundle = &ctx.bundle;
+    let image_dir = &ctx.image_dir;
+    let work_dir = &ctx.work_dir;
+
+    if let Err(e) = checkpoint_container(
+        bundle.path(),
+        id,
+        image_dir,
+        Some(work_dir),
+        &["--empty-ns", "network"],
+        &[],
+    ) {
+        return TestResult::Failed(anyhow!("checkpoint with --empty-ns network failed: {e}"));
+    }
+
+    // netdev-<id>.img holds the network devices of a dumped namespace
+    match std::fs::read_dir(image_dir) {
+        Ok(entries) => {
+            let netdev_img = entries.flatten().find(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                name.starts_with("netdev-") && name.ends_with(".img")
+            });
+            if let Some(entry) = netdev_img {
+                return TestResult::Failed(anyhow!(
+                    "{:?} was written: the network namespace was dumped although it must be emptied",
+                    entry.path()
+                ));
+            }
+        }
+        Err(e) => return TestResult::Failed(anyhow!("failed to read image-dir: {e}")),
+    }
+
+    if let Err(e) = wait_for_state(
+        id,
+        bundle,
+        WaitTarget::Deleted,
+        Duration::from_secs(5),
+        Duration::from_millis(100),
+    ) {
+        return TestResult::Failed(anyhow!(
+            "container state still accessible after checkpoint: {e}"
+        ));
+    }
+
+    if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
+        return TestResult::Failed(anyhow!("restore failed: {e}"));
+    }
+
+    if let Err(e) = wait_for_state(
+        id,
+        bundle,
+        WaitTarget::Status(LifecycleStatus::Running),
+        Duration::from_secs(10),
+        Duration::from_millis(100),
+    ) {
+        return TestResult::Failed(anyhow!("not running after restore: {e}"));
+    }
+
+    if let Err(e) = ping_container(bundle.path()) {
+        return TestResult::Failed(anyhow!("ping container failed after restore: {e}"));
+    }
+
+    TestResult::Passed
+}
+
 pub fn get_checkpoint_restore_tests() -> TestGroup {
     let mut tg = TestGroup::new("checkpoint_restore");
     // Run sequentially: CRIU uses global kernel resources and parallel
@@ -1598,6 +1673,10 @@ pub fn get_checkpoint_restore_tests() -> TestGroup {
     tg.add(vec![Box::new(cr_test!(
         "checkpoint_and_restore_with_link_remap",
         checkpoint_and_restore_with_link_remap
+    ))]);
+    tg.add(vec![Box::new(cr_test!(
+        "checkpoint_and_restore_empty_net_ns",
+        checkpoint_and_restore_empty_net_ns
     ))]);
     tg
 }
