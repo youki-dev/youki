@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use libc::IFNAMSIZ;
 use nix::sys::stat::stat;
 use oci_spec::runtime::{LinuxNamespaceType, LinuxSchedulerPolicy, Spec};
 
@@ -9,7 +10,7 @@ use crate::error::ErrInvalidSpec;
 pub struct Validator;
 
 impl Validator {
-    pub fn validate_spec(spec: &Spec) -> Result<(), ErrInvalidSpec> {
+    pub fn validate_spec(spec: &Spec, is_rootless: bool) -> Result<(), ErrInvalidSpec> {
         Self::validate_spec_for_uts_namespace(spec)?;
         Self::validate_spec_for_new_user_ns(spec)?;
         Self::validate_spec_for_mnt_namespace(spec)?;
@@ -20,6 +21,71 @@ impl Validator {
         Self::validate_spec_for_time_namespace(spec)?;
         if let Some(mounts) = spec.mounts() {
             Self::validate_spec_for_mount_options(mounts)?;
+        }
+        Self::validate_spec_for_net_devices(spec, is_rootless)?;
+
+        Ok(())
+    }
+
+    // https://elixir.bootlin.com/linux/v6.12/source/net/core/dev.c#L1066
+    fn dev_valid_name(name: &str) -> bool {
+        if name.is_empty() || name.len() >= IFNAMSIZ {
+            return false;
+        }
+        if name.eq(".") || name.eq("..") {
+            return false;
+        }
+
+        for c in name.chars() {
+            if c == '/' || c == ':' || c.is_whitespace() {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    // check if given spec is valid for netDevices
+    fn validate_spec_for_net_devices(spec: &Spec, is_rootless: bool) -> Result<(), ErrInvalidSpec> {
+        let Some(devices) = spec.linux().as_ref().and_then(|l| l.net_devices().as_ref()) else {
+            return Ok(());
+        };
+
+        if devices.is_empty() {
+            return Ok(());
+        }
+
+        let has_net_namespace = spec
+            .linux()
+            .as_ref()
+            .and_then(|l| l.namespaces().as_ref())
+            .is_some_and(|namespaces| {
+                namespaces
+                    .iter()
+                    .any(|ns| ns.typ() == LinuxNamespaceType::Network)
+            });
+
+        if !has_net_namespace {
+            return Err(ErrInvalidSpec::NetDevicesNoNetNamespace);
+        }
+
+        if is_rootless {
+            return Err(ErrInvalidSpec::NetDevicesRootlessNotSupported);
+        }
+
+        for (name, net_dev) in devices {
+            if !Validator::dev_valid_name(name) {
+                return Err(ErrInvalidSpec::NetDevicesInvalidDeviceName(
+                    name.to_string(),
+                ));
+            }
+            if let Some(dev_name) = net_dev.name() {
+                if !Validator::dev_valid_name(dev_name) {
+                    return Err(ErrInvalidSpec::NetDevicesInvalidDeviceName(
+                        dev_name.to_string(),
+                    ));
+                }
+            }
         }
 
         Ok(())
@@ -336,12 +402,19 @@ impl Validator {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    use nix::unistd::{Gid, Uid};
     use oci_spec::runtime::{
         IOPriorityClass, LinuxBuilder, LinuxIOPriorityBuilder, LinuxIdMappingBuilder,
-        LinuxIntelRdtBuilder, LinuxNamespaceBuilder, ProcessBuilder, SchedulerBuilder, SpecBuilder,
+        LinuxIntelRdtBuilder, LinuxNamespaceBuilder, LinuxNetDevice, ProcessBuilder,
+        SchedulerBuilder, SpecBuilder,
     };
 
     use super::*;
+    use crate::syscall::syscall::create_syscall;
+    use crate::utils::rootless_required;
 
     #[test]
     fn test_validate_spec_for_uts_namespace() {
@@ -960,5 +1033,107 @@ mod tests {
             .build()
             .unwrap();
         assert!(Validator::validate_spec_for_time_namespace(&spec_no_offsets).is_ok());
+    }
+
+    #[test]
+    fn test_dev_valid_name() {
+        assert!(!Validator::dev_valid_name(""));
+
+        let long_name = "a".repeat(IFNAMSIZ + 1);
+        assert!(!Validator::dev_valid_name(&long_name));
+
+        // The kernel rejects interface names whose length is >= IFNAMSIZ (16 bytes),
+        // therefore valid names must be at most IFNAMSIZ - 1 (15 bytes).
+        // https://elixir.bootlin.com/linux/v6.12/source/net/core/dev.c#L1066
+        let over_length_name = "a".repeat(IFNAMSIZ);
+        assert!(!Validator::dev_valid_name(&over_length_name));
+
+        let valid_name = "a".repeat(IFNAMSIZ - 1);
+        assert!(Validator::dev_valid_name(&valid_name));
+
+        assert!(!Validator::dev_valid_name("."));
+        assert!(!Validator::dev_valid_name(".."));
+
+        assert!(!Validator::dev_valid_name("/: "));
+        assert!(!Validator::dev_valid_name("eth0/: "));
+
+        assert!(Validator::dev_valid_name("eth0"));
+        assert!(Validator::dev_valid_name("veth123"));
+        assert!(Validator::dev_valid_name("abc.def"));
+    }
+
+    #[test]
+    fn test_net_devices_none() {
+        let spec = Spec::default();
+        let syscall = create_syscall();
+        syscall.set_id(Uid::from_raw(0), Gid::from_raw(0)).unwrap();
+        let result =
+            Validator::validate_spec_for_net_devices(&spec, rootless_required(&*syscall).unwrap());
+        assert!(result.is_ok());
+    }
+
+    fn build_spec_with_ns_and_devices(include_net_ns: bool, devices: Vec<(&str, &str)>) -> Spec {
+        let mut namespaces = vec![];
+        if include_net_ns {
+            namespaces.push(
+                LinuxNamespaceBuilder::default()
+                    .typ(LinuxNamespaceType::Network)
+                    .path(PathBuf::from("/dev/net"))
+                    .build()
+                    .unwrap(),
+            );
+        }
+
+        let net_devices: HashMap<String, LinuxNetDevice> = devices
+            .into_iter()
+            .map(|(key, val)| {
+                (
+                    key.into(),
+                    LinuxNetDevice::default().set_name(Some(val.into())).clone(),
+                )
+            })
+            .collect();
+        let linux = LinuxBuilder::default()
+            .namespaces(namespaces)
+            .net_devices(net_devices)
+            .build()
+            .unwrap();
+
+        SpecBuilder::default().linux(linux).build().unwrap()
+    }
+
+    #[test]
+    fn test_missing_net_namespace() {
+        let spec = build_spec_with_ns_and_devices(false, vec![]);
+        let syscall = create_syscall();
+        let err =
+            Validator::validate_spec_for_net_devices(&spec, rootless_required(&*syscall).unwrap())
+                .unwrap_err();
+        assert!(matches!(err, ErrInvalidSpec::NetDevicesNoNetNamespace));
+    }
+
+    #[test]
+    fn test_invalid_device_name() {
+        let spec = build_spec_with_ns_and_devices(true, vec![("eth0", "/:invalid")]);
+        let syscall = create_syscall();
+        syscall.set_id(Uid::from_raw(0), Gid::from_raw(0)).unwrap();
+        let err =
+            Validator::validate_spec_for_net_devices(&spec, rootless_required(&*syscall).unwrap())
+                .unwrap_err();
+        if let ErrInvalidSpec::NetDevicesInvalidDeviceName(name) = err {
+            assert_eq!(name, "/:invalid");
+        } else {
+            panic!("Expected InvalidDeviceName error");
+        }
+    }
+
+    #[test]
+    fn test_valid_config() {
+        let spec = build_spec_with_ns_and_devices(true, vec![("eth0", "eth0_container")]);
+        let syscall = create_syscall();
+        syscall.set_id(Uid::from_raw(0), Gid::from_raw(0)).unwrap();
+        let result =
+            Validator::validate_spec_for_net_devices(&spec, rootless_required(&*syscall).unwrap());
+        assert!(result.is_ok());
     }
 }

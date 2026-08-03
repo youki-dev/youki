@@ -8,13 +8,12 @@ use std::os::unix::fs::DirBuilderExt;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
-use libc::IFNAMSIZ;
 use nix::sys::stat::{Mode, fstat};
 use nix::sys::statfs::{Statfs, fstatfs};
 use nix::unistd::{Uid, User};
-use oci_spec::runtime::{LinuxNamespaceType, Spec};
+use oci_spec::runtime::Spec;
 
-use crate::error::{LibcontainerError, MissingSpecError};
+use crate::error::LibcontainerError;
 use crate::syscall::syscall::Syscall;
 use crate::user_ns::UserNamespaceConfig;
 
@@ -319,92 +318,9 @@ where
     unreachable!("retry loop completed without returning a result.");
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum NetDevicesError {
-    #[error("unable to move network devices without a NET namespace")]
-    NoNetNamespace,
-    #[error("network devices are not supported in rootless containers")]
-    RootlessNotSupported,
-    #[error("invalid network device name: {0}")]
-    InvalidDeviceName(String),
-    #[error(transparent)]
-    IO(#[from] std::io::Error),
-    #[error(transparent)]
-    Spec(#[from] MissingSpecError),
-}
-
-// check if given spec is valid for netDevices
-pub fn validate_spec_for_net_devices(
-    spec: &Spec,
-    syscall: &dyn Syscall,
-) -> Result<(), NetDevicesError> {
-    let linux = spec
-        .linux()
-        .as_ref()
-        .ok_or(NetDevicesError::Spec(MissingSpecError::Linux))?;
-
-    if linux.net_devices().is_none() {
-        return Ok(());
-    }
-
-    let has_net_namespace = match linux.namespaces() {
-        Some(namespaces) => namespaces
-            .iter()
-            .any(|ns| ns.typ() == LinuxNamespaceType::Network),
-        None => false,
-    };
-
-    if !has_net_namespace {
-        return Err(NetDevicesError::NoNetNamespace);
-    }
-
-    let is_rootless = rootless_required(syscall).map_err(NetDevicesError::IO)?;
-    if is_rootless {
-        return Err(NetDevicesError::RootlessNotSupported);
-    }
-
-    if let Some(devices) = linux.net_devices() {
-        devices.iter().try_for_each(|(name, net_dev)| {
-            if !dev_valid_name(name) {
-                return Err(NetDevicesError::InvalidDeviceName(name.into()));
-            }
-            if let Some(dev_name) = net_dev.name() {
-                if !dev_valid_name(dev_name) {
-                    return Err(NetDevicesError::InvalidDeviceName(dev_name.into()));
-                }
-            }
-            Ok(())
-        })?;
-    }
-
-    Ok(())
-}
-
-// https://elixir.bootlin.com/linux/v6.12/source/net/core/dev.c#L1066
-fn dev_valid_name(name: &str) -> bool {
-    if name.is_empty() || name.len() >= IFNAMSIZ {
-        return false;
-    }
-    if name.eq(".") || name.eq("..") {
-        return false;
-    }
-
-    for c in name.chars() {
-        if c == '/' || c == ':' || c.is_whitespace() {
-            return false;
-        }
-    }
-
-    true
-}
-
 #[cfg(test)]
 mod tests {
-    use core::panic;
-
     use anyhow::{Result, bail};
-    use nix::unistd::Gid;
-    use oci_spec::runtime::{LinuxBuilder, LinuxNamespaceBuilder, LinuxNetDevice, SpecBuilder};
     use serial_test::serial;
 
     use super::*;
@@ -546,102 +462,6 @@ mod tests {
             assert!(validate_spec_for_new_user_ns(&rootless_spec, &*syscall).is_ok());
             Ok(())
         })
-    }
-
-    #[test]
-    fn test_dev_valid_name() {
-        assert!(!dev_valid_name(""));
-
-        let long_name = "a".repeat(IFNAMSIZ + 1);
-        assert!(!dev_valid_name(&long_name));
-
-        // The kernel rejects interface names whose length is >= IFNAMSIZ (16 bytes),
-        // therefore valid names must be at most IFNAMSIZ - 1 (15 bytes).
-        // https://elixir.bootlin.com/linux/v6.12/source/net/core/dev.c#L1066
-        let over_length_name = "a".repeat(IFNAMSIZ);
-        assert!(!dev_valid_name(&over_length_name));
-
-        let valid_name = "a".repeat(IFNAMSIZ - 1);
-        assert!(dev_valid_name(&valid_name));
-
-        assert!(!dev_valid_name("."));
-        assert!(!dev_valid_name(".."));
-
-        assert!(!dev_valid_name("/: "));
-        assert!(!dev_valid_name("eth0/: "));
-
-        assert!(dev_valid_name("eth0"));
-        assert!(dev_valid_name("veth123"));
-        assert!(dev_valid_name("abc.def"));
-    }
-
-    fn build_spec_with_ns_and_devices(include_net_ns: bool, devices: Vec<(&str, &str)>) -> Spec {
-        let mut namespaces = vec![];
-        if include_net_ns {
-            namespaces.push(
-                LinuxNamespaceBuilder::default()
-                    .typ(LinuxNamespaceType::Network)
-                    .path(PathBuf::from("/dev/net"))
-                    .build()
-                    .unwrap(),
-            );
-        }
-
-        let net_devices: HashMap<String, LinuxNetDevice> = devices
-            .into_iter()
-            .map(|(key, val)| {
-                (
-                    key.into(),
-                    LinuxNetDevice::default().set_name(Some(val.into())).clone(),
-                )
-            })
-            .collect();
-        let linux = LinuxBuilder::default()
-            .namespaces(namespaces)
-            .net_devices(net_devices)
-            .build()
-            .unwrap();
-
-        SpecBuilder::default().linux(linux).build().unwrap()
-    }
-
-    #[test]
-    fn test_net_devices_none() {
-        let spec = Spec::default();
-        let syscall = create_syscall();
-        syscall.set_id(Uid::from_raw(0), Gid::from_raw(0)).unwrap();
-        let result = validate_spec_for_net_devices(&spec, &*syscall);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_missing_net_namespace() {
-        let spec = build_spec_with_ns_and_devices(false, vec![]);
-        let syscall = create_syscall();
-        let err = validate_spec_for_net_devices(&spec, &*syscall).unwrap_err();
-        assert!(matches!(err, NetDevicesError::NoNetNamespace));
-    }
-
-    #[test]
-    fn test_invalid_device_name() {
-        let spec = build_spec_with_ns_and_devices(true, vec![("eth0", "/:invalid")]);
-        let syscall = create_syscall();
-        syscall.set_id(Uid::from_raw(0), Gid::from_raw(0)).unwrap();
-        let err = validate_spec_for_net_devices(&spec, &*syscall).unwrap_err();
-        if let NetDevicesError::InvalidDeviceName(name) = err {
-            assert_eq!(name, "/:invalid");
-        } else {
-            panic!("Expected InvalidDeviceName error");
-        }
-    }
-
-    #[test]
-    fn test_valid_config() {
-        let spec = build_spec_with_ns_and_devices(true, vec![("eth0", "eth0_container")]);
-        let syscall = create_syscall();
-        syscall.set_id(Uid::from_raw(0), Gid::from_raw(0)).unwrap();
-        let result = validate_spec_for_net_devices(&spec, &*syscall);
-        assert!(result.is_ok());
     }
 
     #[test]

@@ -67,8 +67,6 @@ pub enum LibcontainerError {
     #[error[transparent]]
     CreateContainerError(#[from] CreateContainerError),
     #[error(transparent)]
-    NetDevicesError(#[from] crate::utils::NetDevicesError),
-    #[error(transparent)]
     NetworkError(#[from] crate::network::NetworkError),
     #[error(transparent)]
     IntelRdt(#[from] crate::process::intel_rdt::IntelRdtError),
@@ -146,6 +144,14 @@ pub enum ErrInvalidSpec {
         "time namespace enabled, but both namespace path and time offsets specified -- you may only provide one"
     )]
     TimeOffsetsWithPath,
+    #[error("unable to move network devices without a NET namespace")]
+    NetDevicesNoNetNamespace,
+    #[error("network devices are not supported in rootless containers")]
+    NetDevicesRootlessNotSupported,
+    #[error("invalid network device name: {0}")]
+    NetDevicesInvalidDeviceName(String),
+    #[error(transparent)]
+    IO(#[from] std::io::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
