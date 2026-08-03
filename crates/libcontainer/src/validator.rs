@@ -1104,7 +1104,7 @@ mod tests {
 
     #[test]
     fn test_missing_net_namespace() {
-        let spec = build_spec_with_ns_and_devices(false, vec![]);
+        let spec = build_spec_with_ns_and_devices(false, vec![("eth0", "eth0_container")]);
         let syscall = create_syscall();
         let err =
             Validator::validate_spec_for_net_devices(&spec, rootless_required(&*syscall).unwrap())
