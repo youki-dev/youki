@@ -367,8 +367,6 @@ impl TenantContainerBuilder {
             validate_idmapped_mounts(mounts, spec.linux().as_ref(), &*syscall)?;
         }
 
-        utils::validate_spec_for_new_user_ns(spec, &*syscall)?;
-
         Ok(())
     }
 

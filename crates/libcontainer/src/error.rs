@@ -24,8 +24,6 @@ pub enum LibcontainerError {
     InvalidInput(String),
     #[error("requires at least one executors")]
     NoExecutors,
-    #[error("rootless container requires valid user namespace definition")]
-    NoUserNamespace,
 
     // Invalid inputs
     #[error(transparent)]
@@ -152,6 +150,8 @@ pub enum ErrInvalidSpec {
     NetDevicesInvalidDeviceName(String),
     #[error(transparent)]
     IO(#[from] std::io::Error),
+    #[error("rootless container requires valid user namespace definition")]
+    NoUserNamespace,
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -6,13 +6,13 @@ use nix::sys::stat::stat;
 use oci_spec::runtime::{LinuxNamespaceType, LinuxSchedulerPolicy, Spec};
 
 use crate::error::ErrInvalidSpec;
+use crate::utils::is_in_new_userns;
 
 pub struct Validator;
 
 impl Validator {
     pub fn validate_spec(spec: &Spec, is_rootless: bool) -> Result<(), ErrInvalidSpec> {
         Self::validate_spec_for_uts_namespace(spec)?;
-        Self::validate_spec_for_new_user_ns(spec)?;
         Self::validate_spec_for_mnt_namespace(spec)?;
         Self::validate_spec_for_sysctl(spec)?;
         Self::validate_spec_for_scheduler(spec)?;
@@ -23,6 +23,7 @@ impl Validator {
             Self::validate_spec_for_mount_options(mounts)?;
         }
         Self::validate_spec_for_net_devices(spec, is_rootless)?;
+        Self::validate_spec_for_new_user_ns(spec, is_rootless)?;
 
         Ok(())
     }
@@ -135,7 +136,8 @@ impl Validator {
         Ok(())
     }
 
-    fn validate_spec_for_new_user_ns(spec: &Spec) -> Result<(), ErrInvalidSpec> {
+    // checks if given spec is valid for current user namespace setup
+    fn validate_spec_for_new_user_ns(spec: &Spec, is_rootless: bool) -> Result<(), ErrInvalidSpec> {
         let has_user_namespace = spec
             .linux()
             .as_ref()
@@ -159,6 +161,17 @@ impl Validator {
             if has_uid_mappings || has_gid_mappings {
                 return Err(ErrInvalidSpec::UserMappingsWithoutNamespace);
             }
+        }
+
+        let in_user_ns = is_in_new_userns().map_err(ErrInvalidSpec::IO)?;
+        // In case of rootless, there are 2 possible cases :
+        // we have a new user ns specified in the spec
+        // or the youki is launched in a new user ns (this is how podman does it)
+        // So here, we check if rootless is required,
+        // but we are neither in a new user ns nor a new user ns is specified in spec
+        // then it is an error
+        if is_rootless && !in_user_ns && !has_user_namespace {
+            return Err(ErrInvalidSpec::NoUserNamespace);
         }
 
         Ok(())
@@ -411,9 +424,11 @@ mod tests {
         LinuxIntelRdtBuilder, LinuxNamespaceBuilder, LinuxNetDevice, ProcessBuilder,
         SchedulerBuilder, SpecBuilder,
     };
+    use serial_test::serial;
 
     use super::*;
     use crate::syscall::syscall::create_syscall;
+    use crate::test_utils;
     use crate::utils::rootless_required;
 
     #[test]
@@ -488,10 +503,73 @@ mod tests {
             )
             .build()
             .unwrap();
+        let syscall = create_syscall();
         assert!(matches!(
-            Validator::validate_spec_for_new_user_ns(&spec_with_mappings_no_ns).unwrap_err(),
+            Validator::validate_spec_for_new_user_ns(
+                &spec_with_mappings_no_ns,
+                rootless_required(&*syscall).unwrap(),
+            )
+            .unwrap_err(),
             ErrInvalidSpec::UserMappingsWithoutNamespace
         ));
+    }
+
+    // the following test is marked as serial because
+    // we are doing unshare of user ns and fork, so better to run in serial,
+    #[test]
+    #[serial]
+    fn test_userns_spec_validation() -> Result<(), test_utils::TestError> {
+        use nix::sched::{CloneFlags, unshare};
+        let syscall = create_syscall();
+        // default rootful spec
+        let rootful_spec = Spec::default();
+        // as we are not in a user ns, and spec does not have user ns
+        // we should get error here
+        assert!(
+            Validator::validate_spec_for_new_user_ns(
+                &rootful_spec,
+                rootless_required(&*syscall).unwrap(),
+            )
+            .is_err()
+        );
+
+        let rootless_spec = Spec::rootless(1000, 1000);
+        // because the spec contains user ns info, we should not get error
+        assert!(
+            Validator::validate_spec_for_new_user_ns(
+                &rootless_spec,
+                rootless_required(&*syscall).unwrap(),
+            )
+            .is_ok()
+        );
+
+        test_utils::test_in_child_process(|| {
+            unshare(CloneFlags::CLONE_NEWUSER).unwrap();
+            // here we are in a new user namespace
+            let rootful_spec = Spec::default();
+            let syscall = create_syscall();
+            // because we are already in a new user ns, it is fine if spec
+            // does not have user ns, and because the test is running as
+            // non root
+            assert!(
+                Validator::validate_spec_for_new_user_ns(
+                    &rootful_spec,
+                    rootless_required(&*syscall).unwrap(),
+                )
+                .is_ok()
+            );
+
+            let rootless_spec = Spec::rootless(1000, 1000);
+            // following should succeed irrespective if we're in user ns or not
+            assert!(
+                Validator::validate_spec_for_new_user_ns(
+                    &rootless_spec,
+                    rootless_required(&*syscall).unwrap(),
+                )
+                .is_ok()
+            );
+            Ok(())
+        })
     }
 
     #[test]
