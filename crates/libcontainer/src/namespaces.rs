@@ -8,6 +8,7 @@
 //! Cgroup (Resource limits, execution priority etc.)
 
 use std::collections;
+use std::os::unix::io::AsRawFd;
 
 use nix::sched::CloneFlags;
 use nix::sys::stat;
@@ -112,7 +113,7 @@ impl Namespaces {
                         tracing::error!(?err, ?namespace, "failed to open namespace file");
                     })?;
                 self.command
-                    .set_ns(fd, get_clone_flag(namespace.typ())?)
+                    .set_ns(fd.as_raw_fd(), get_clone_flag(namespace.typ())?)
                     .map_err(|err| {
                         tracing::error!(?err, ?namespace, "failed to set namespace");
                         err
