@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.7.1](https://github.com/youki-dev/youki/compare/v0.7.0...v0.7.1) - 2026-08-02
+
+### 💪 Improvements
+- feat(checkpoint): Added support for the --tcp-skip-in-flight option by @donkomura in https://github.com/youki-dev/youki/pull/3650
+
 ## [v0.7.0](https://github.com/youki-dev/youki/compare/v0.6.0...v0.7.0) - 2026-07-23
 
 ### 💪 Improvements
