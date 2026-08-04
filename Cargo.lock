@@ -7328,6 +7328,7 @@ dependencies = [
  "serial_test",
  "tabwriter",
  "tempfile",
+ "tokio",
  "tracing",
  "tracing-journald",
  "tracing-subscriber",

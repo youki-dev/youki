@@ -18,7 +18,7 @@ v1 = ["libcgroups/v1", "libcontainer/v1"]
 cgroupsv2_devices = ["libcgroups/cgroupsv2_devices", "libcontainer/cgroupsv2_devices"]
 seccomp = ["libcontainer/libseccomp"]
 
-wasm-wasmer = ["wasmer", "wasmer-wasix"]
+wasm-wasmer = ["wasmer", "wasmer-wasix", "tokio"]
 wasm-wasmedge = ["wasmedge-sdk/standalone", "wasmedge-sdk/static"]
 wasm-wasmtime = ["wasmtime", "wasi-common"]
 
@@ -37,6 +37,7 @@ serde = { workspace = true, features = ["derive"] }
 tabwriter = { workspace = true }
 clap_complete = { workspace = true }
 caps = { workspace = true }
+tokio = { workspace = true, optional = true }
 wasmer = { workspace = true, features = ["sys", "singlepass"], optional = true }
 wasmer-wasix = { workspace = true, optional = true }
 wasmedge-sdk = { workspace = true, optional = true }
