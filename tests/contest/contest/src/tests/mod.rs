@@ -1,6 +1,7 @@
 pub mod cgroups;
 pub mod checkpoint_restore;
 pub mod create_runtime;
+pub mod create_runtime_fail;
 pub mod delete;
 pub mod devices;
 pub mod domainname;
