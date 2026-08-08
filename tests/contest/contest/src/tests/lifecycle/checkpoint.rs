@@ -55,11 +55,13 @@ fn get_container_pid(project_path: &Path, id: &str) -> Result<i32, TestResult> {
     Ok(state.pid.unwrap_or(-1))
 }
 
-// CRIU requires a minimal network setup in the network namespace
-fn setup_network_namespace(project_path: &Path, id: &str) -> Result<(), TestResult> {
+fn bring_up_loopback(project_path: &Path, id: &str) -> Result<(), TestResult> {
     let pid = get_container_pid(project_path, id)?;
 
-    if let Err(e) = Command::new("nsenter")
+    // CRIU requires a minimal network setup in the network namespace, so this
+    // brings `lo` up. The container cannot do that itself because the default
+    // contest spec grants no NET_ADMIN, hence entering the netns from the host.
+    let output = match Command::new("nsenter")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .arg("-t")
@@ -70,9 +72,19 @@ fn setup_network_namespace(project_path: &Path, id: &str) -> Result<(), TestResu
         .expect("failed to exec ip")
         .wait_with_output()
     {
+        Ok(o) => o,
+        Err(e) => {
+            return Err(TestResult::Failed(anyhow!(
+                "error setting up network namespace {}",
+                e
+            )));
+        }
+    };
+
+    if !output.status.success() {
         return Err(TestResult::Failed(anyhow!(
-            "error setting up network namespace {}",
-            e
+            "failed to bring up loopback in network namespace: {}",
+            String::from_utf8_lossy(&output.stderr)
         )));
     }
 
@@ -97,10 +109,6 @@ fn checkpoint(
         Ok(p) => p,
         Err(e) => return e,
     };
-
-    if let Err(e) = setup_network_namespace(project_path, id) {
-        return e;
-    }
 
     let leave_running = args.contains(&"--leave-running");
 
@@ -224,6 +232,10 @@ fn create_checkpoint_image_dir() -> Result<(tempfile::TempDir, std::path::PathBu
 }
 
 pub fn checkpoint_leave_running_work_path_tmp(project_path: &Path, id: &str) -> TestResult {
+    if let Err(e) = bring_up_loopback(project_path, id) {
+        return e;
+    }
+
     let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
         Ok(v) => v,
         Err(e) => return e,
@@ -239,6 +251,10 @@ pub fn checkpoint_leave_running_work_path_tmp(project_path: &Path, id: &str) -> 
 }
 
 pub fn checkpoint_leave_running(project_path: &Path, id: &str) -> TestResult {
+    if let Err(e) = bring_up_loopback(project_path, id) {
+        return e;
+    }
+
     let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
         Ok(v) => v,
         Err(e) => return e,
@@ -248,6 +264,10 @@ pub fn checkpoint_leave_running(project_path: &Path, id: &str) -> TestResult {
 }
 
 pub fn checkpoint_manage_cgroups_mode_ignore(project_path: &Path, id: &str) -> TestResult {
+    if let Err(e) = bring_up_loopback(project_path, id) {
+        return e;
+    }
+
     let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
         Ok(v) => v,
         Err(e) => return e,
@@ -290,6 +310,10 @@ pub fn checkpoint_manage_cgroups_mode_ignore(project_path: &Path, id: &str) -> T
 }
 
 pub fn checkpoint_manage_cgroups_mode_soft(project_path: &Path, id: &str) -> TestResult {
+    if let Err(e) = bring_up_loopback(project_path, id) {
+        return e;
+    }
+
     let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
         Ok(v) => v,
         Err(e) => return e,
@@ -402,6 +426,11 @@ pub fn checkpoint_link_remap() -> TestResult {
         return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
     }
 
+    if let Err(e) = bring_up_loopback(bundle_path, &id) {
+        cleanup();
+        return e;
+    }
+
     let (_image_temp_dir, image_path) = match create_checkpoint_image_dir() {
         Ok(v) => v,
         Err(e) => {
@@ -435,20 +464,14 @@ pub fn checkpoint_link_remap() -> TestResult {
 
 // Polls until the listen socket on `port` has a queued, unaccepted connection,
 // which is the in-flight state.
+//
+// Requires lo to be up
 fn wait_in_flight(
     project_path: &Path,
     id: &str,
     port: u16,
     timeout: std::time::Duration,
 ) -> Result<(), TestResult> {
-    // The in-flight connection only exists once lo is up. Until then the clients
-    // running inside the container cannot reach 127.0.0.1, so no connection is
-    // established and nothing accumulates in the accept queue for `ss` to report.
-    // The container itself cannot bring lo up because the default spec grants no
-    // NET_ADMIN, so we do it here from the host before polling. `checkpoint` brings
-    // it up again later, but `ip link set up` is idempotent.
-    setup_network_namespace(project_path, id)?;
-
     let pid = get_container_pid(project_path, id)?;
     let deadline = std::time::Instant::now() + timeout;
 
@@ -547,6 +570,12 @@ pub fn checkpoint_tcp_skip_in_flight() -> TestResult {
         return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
     }
 
+    if let Err(e) = bring_up_loopback(bundle_path, &id) {
+        return e;
+    }
+
+    // The container only starts `tcpsvd` and `nc` once lo is up, so we have to
+    // wait for the connection to reach the accept queue before dumping.
     if let Err(e) = wait_in_flight(bundle_path, &id, PORT, std::time::Duration::from_secs(10)) {
         return e;
     }
@@ -633,6 +662,10 @@ pub fn check_external_pidns(checkpoint_dir: &Path) -> Result<(), TestResult> {
 /// Checkpoint a container started with external network and PID namespaces.
 /// Verifies that CRIU recorded both namespaces as external.
 pub fn checkpoint_with_external_namespaces(project_path: &Path, id: &str) -> TestResult {
+    if let Err(e) = bring_up_loopback(project_path, id) {
+        return e;
+    }
+
     let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
         Ok(v) => v,
         Err(e) => return e,
