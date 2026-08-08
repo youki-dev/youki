@@ -130,5 +130,6 @@ for case in "${test_cases[@]}"; do
     cat $logfile
     exit 1
   fi
+  echo "Passed $case"
   sleep 1
 done
