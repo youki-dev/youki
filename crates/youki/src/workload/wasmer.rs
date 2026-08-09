@@ -1,9 +1,11 @@
 use std::error::Error;
+use std::sync::Arc;
 
 use libcontainer::oci_spec::runtime::Spec;
 use libcontainer::workload::{EMPTY, Executor, ExecutorError, ExecutorValidationError};
 use wasmer::{Instance, Module, Store};
-use wasmer_wasix::{WasiEnv, WasiError};
+use wasmer_wasix::runtime::task_manager::tokio::TokioTaskManager;
+use wasmer_wasix::{PluggableRuntime, WasiEnv, WasiError};
 
 const EXECUTOR_NAME: &str = "wasmer";
 
@@ -43,6 +45,18 @@ impl Executor for WasmerExecutor {
             return Err(ExecutorError::InvalidArg);
         }
 
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| {
+                ExecutorError::Other(format!("could not create tokio runtime: {}", err))
+            })?;
+        let handle = rt.handle().clone();
+        let _guard = handle.enter();
+
+        let task_manager = TokioTaskManager::new(rt);
+        let runtime = PluggableRuntime::new(Arc::new(task_manager));
+
         let mut store = Store::default();
         let module = Module::from_file(&store, &args[0]).map_err(|err| {
             tracing::error!(err = ?err, file = ?args[0], "could not load wasm module from file");
@@ -52,6 +66,7 @@ impl Executor for WasmerExecutor {
         let mut wasi_env = WasiEnv::builder("youki_wasm_app")
             .args(args.iter().skip(1))
             .envs(env)
+            .runtime(Arc::new(runtime))
             .finalize(&mut store)
             .map_err(|err| ExecutorError::Other(format!("could not create wasi env: {}", err)))?;
 
