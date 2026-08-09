@@ -19,8 +19,8 @@ pub struct Update {
     pub cpu_period: Option<u64>,
 
     /// Set CPU usage limit within a given period (in microseconds)
-    #[arg(long)]
-    pub cpu_quota: Option<u64>,
+    #[arg(long, allow_hyphen_values = true)]
+    pub cpu_quota: Option<i64>,
 
     /// Set CPU realtime period to be used for hardcapping (in microseconds)
     #[arg(long)]
