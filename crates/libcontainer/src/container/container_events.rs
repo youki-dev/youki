@@ -29,6 +29,13 @@ impl Container {
     /// # }
     /// ```
     pub fn events(&mut self, interval: Duration, stats: bool) -> Result<(), LibcontainerError> {
+        if !stats && interval.is_zero() {
+            tracing::error!(id = ?self.id(), "stats collection interval must be greater than 0");
+            return Err(LibcontainerError::InvalidInput(
+                "duration interval must be greater than 0".into(),
+            ));
+        }
+
         self.refresh_status()?;
         if !self.state.status.eq(&ContainerStatus::Running) {
             tracing::error!(id = ?self.id(), status = ?self.state.status, "container is not running");
