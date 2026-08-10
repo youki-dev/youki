@@ -94,6 +94,9 @@ pub(crate) fn cgroup_test() -> TestResult {
             return TestResult::Failed(anyhow!("container start failed"));
         }
 
+        exec_container(id, dir, &["grep", "^0::/$", "/proc/self/cgroup"], None, &[])
+            .expect("exec failed");
+
         // move init to a sub-cgroup, and check it was moved
         exec_container(
             id,
@@ -134,11 +137,7 @@ pub(crate) fn cgroup_test() -> TestResult {
         exec_container(
             id,
             dir,
-            &[
-                "sh",
-                "-euc",
-                "cat /proc/self/cgroup && grep '^0::/foobar$' /proc/self/cgroup",
-            ],
+            &["grep", "^0::/foobar$", "/proc/self/cgroup"],
             None,
             &[],
         )
