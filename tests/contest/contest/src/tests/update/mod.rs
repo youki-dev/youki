@@ -72,6 +72,12 @@ pub fn get_update_test() -> TestGroup {
         Box::new(common::update_common_limits_test),
     );
 
+    let update_cpu_limits_test = ConditionalTest::new(
+        "update_cpu_limits_test",
+        Box::new(can_run_update),
+        Box::new(cpu::update_cpu_limits_test),
+    );
+
     let update_pids_limit_test = ConditionalTest::new(
         "update_pids_limit_test",
         Box::new(can_run_update),
@@ -122,6 +128,7 @@ pub fn get_update_test() -> TestGroup {
 
     test_group.add(vec![
         Box::new(update_cgroup_v2_common_limits_test),
+        Box::new(update_cpu_limits_test),
         Box::new(update_pids_limit_test),
         Box::new(cpu_burst_test),
         Box::new(set_cpu_period_without_quota_test),
