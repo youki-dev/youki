@@ -268,26 +268,6 @@ pub fn rootless_required(syscall: &dyn Syscall) -> Result<bool, std::io::Error> 
     is_in_new_userns()
 }
 
-// /// checks if given spec is valid for current user namespace setup
-// pub fn validate_spec_for_new_user_ns(
-//     spec: &Spec,
-//     syscall: &dyn Syscall,
-// ) -> Result<(), LibcontainerError> {
-//     let config = UserNamespaceConfig::new(spec)?;
-//     let in_user_ns = is_in_new_userns().map_err(LibcontainerError::OtherIO)?;
-//     let is_rootless_required = rootless_required(syscall).map_err(LibcontainerError::OtherIO)?;
-//     // In case of rootless, there are 2 possible cases :
-//     // we have a new user ns specified in the spec
-//     // or the youki is launched in a new user ns (this is how podman does it)
-//     // So here, we check if rootless is required,
-//     // but we are neither in a new user ns nor a new user ns is specified in spec
-//     // then it is an error
-//     if is_rootless_required && !in_user_ns && config.is_none() {
-//         return Err(LibcontainerError::NoUserNamespace);
-//     }
-//     Ok(())
-// }
-
 // Generic retry function with delay and policy.
 // Retries the operation `op` up to `attempts` times if it fails.
 // Waits for `delay` duration between retries.
