@@ -201,6 +201,8 @@ impl Manager {
         let mut destructured_path: CgroupsPath = cgroups_path.as_path().try_into()?;
         ensure_parent_unit(&mut destructured_path, use_system);
 
+        let sub_cgroup = Self::extract_sub_cgroup(&mut destructured_path.name);
+
         // EAGAIN from a recv() that timed out via SO_RCVTIMEO (set in dbus::connect()).
         let is_eagain = |e: &SystemdManagerError| {
             matches!(
@@ -262,7 +264,6 @@ impl Manager {
 
             // Step 2 — initial method calls to discover the cgroup path.
             // On EAGAIN, client is dropped here and the next iteration reconnects.
-            let sub_cgroup = Self::extract_sub_cgroup(&mut destructured_path.name);
             match Self::construct_cgroups_path(&destructured_path, &client, &sub_cgroup) {
                 Ok((cgroups_path, delegation_boundary)) => {
                     let full_path = root_path.join_safely(&cgroups_path)?;
