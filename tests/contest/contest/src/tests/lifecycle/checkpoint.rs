@@ -58,9 +58,11 @@ fn get_container_pid(project_path: &Path, id: &str) -> Result<i32, TestResult> {
 fn bring_up_loopback(project_path: &Path, id: &str) -> Result<(), TestResult> {
     let pid = get_container_pid(project_path, id)?;
 
-    // CRIU requires a minimal network setup in the network namespace, so this
-    // brings `lo` up. The container cannot do that itself because the default
-    // contest spec grants no NET_ADMIN, hence entering the netns from the host.
+    // Brings `lo` up so the container can talk to itself over 127.0.0.1. Only
+    // tests that actually use the loopback need this; the CRIU dump itself does
+    // not require `lo` to be up. The container cannot bring it up itself because
+    // the default contest spec grants no NET_ADMIN, hence entering the netns
+    // from the host.
     let output = match Command::new("nsenter")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -232,10 +234,6 @@ fn create_checkpoint_image_dir() -> Result<(tempfile::TempDir, std::path::PathBu
 }
 
 pub fn checkpoint_leave_running_work_path_tmp(project_path: &Path, id: &str) -> TestResult {
-    if let Err(e) = bring_up_loopback(project_path, id) {
-        return e;
-    }
-
     let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
         Ok(v) => v,
         Err(e) => return e,
@@ -251,10 +249,6 @@ pub fn checkpoint_leave_running_work_path_tmp(project_path: &Path, id: &str) -> 
 }
 
 pub fn checkpoint_leave_running(project_path: &Path, id: &str) -> TestResult {
-    if let Err(e) = bring_up_loopback(project_path, id) {
-        return e;
-    }
-
     let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
         Ok(v) => v,
         Err(e) => return e,
@@ -264,10 +258,6 @@ pub fn checkpoint_leave_running(project_path: &Path, id: &str) -> TestResult {
 }
 
 pub fn checkpoint_manage_cgroups_mode_ignore(project_path: &Path, id: &str) -> TestResult {
-    if let Err(e) = bring_up_loopback(project_path, id) {
-        return e;
-    }
-
     let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
         Ok(v) => v,
         Err(e) => return e,
@@ -310,10 +300,6 @@ pub fn checkpoint_manage_cgroups_mode_ignore(project_path: &Path, id: &str) -> T
 }
 
 pub fn checkpoint_manage_cgroups_mode_soft(project_path: &Path, id: &str) -> TestResult {
-    if let Err(e) = bring_up_loopback(project_path, id) {
-        return e;
-    }
-
     let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
         Ok(v) => v,
         Err(e) => return e,
@@ -424,11 +410,6 @@ pub fn checkpoint_link_remap() -> TestResult {
     if let Err(e) = wait_container_running(&id, bundle_path) {
         cleanup();
         return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
-    }
-
-    if let Err(e) = bring_up_loopback(bundle_path, &id) {
-        cleanup();
-        return e;
     }
 
     let (_image_temp_dir, image_path) = match create_checkpoint_image_dir() {
@@ -662,10 +643,6 @@ pub fn check_external_pidns(checkpoint_dir: &Path) -> Result<(), TestResult> {
 /// Checkpoint a container started with external network and PID namespaces.
 /// Verifies that CRIU recorded both namespaces as external.
 pub fn checkpoint_with_external_namespaces(project_path: &Path, id: &str) -> TestResult {
-    if let Err(e) = bring_up_loopback(project_path, id) {
-        return e;
-    }
-
     let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
         Ok(v) => v,
         Err(e) => return e,
