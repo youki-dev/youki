@@ -201,7 +201,8 @@ impl Manager {
         let mut destructured_path: CgroupsPath = cgroups_path.as_path().try_into()?;
         ensure_parent_unit(&mut destructured_path, use_system);
 
-        let sub_cgroup = Self::extract_sub_cgroup(&mut destructured_path.name);
+        let (name, sub_cgroup) = Self::extract_sub_cgroup(&destructured_path.name);
+        destructured_path.name = name;
 
         // EAGAIN from a recv() that timed out via SO_RCVTIMEO (set in dbus::connect()).
         let is_eagain = |e: &SystemdManagerError| {
@@ -316,16 +317,20 @@ impl Manager {
     }
 
     // If the provided unit `name` contains a sub-cgroup suffix, split it off and
-    // return that suffix as a separate cgroup path.
-    // The original `name` is mutated in-place to keep only the base unit name.
+    // return it as a separate cgroup path along with the base unit name.
     //
     // Example: "{id}/sub/init" becomes:
-    //   - name: "{id}"
-    //   - returned sub-cgroup: "/sub/init"
-    fn extract_sub_cgroup(name: &mut String) -> String {
-        name.find("/")
-            .map(|separator_index| name.split_off(separator_index))
-            .unwrap_or_default()
+    //   - base name: "{id}"
+    //   - sub-cgroup: "/sub/init"
+    fn extract_sub_cgroup(name: &str) -> (String, String) {
+        name.find('/')
+            .map(|separator_index| {
+                (
+                    name[..separator_index].to_owned(),
+                    name[separator_index..].to_owned(),
+                )
+            })
+            .unwrap_or_else(|| (name.to_owned(), String::new()))
     }
 
     /// get_unit_name returns the unit (scope) name from the path provided by the user
@@ -686,8 +691,7 @@ mod tests {
         ];
 
         for case in cases {
-            let mut name = case.name.to_owned();
-            let sub_cgroup = Manager::extract_sub_cgroup(&mut name);
+            let (name, sub_cgroup) = Manager::extract_sub_cgroup(case.name);
             assert_eq!(name, case.expected_name, "name mismatch for {}", case.name);
             assert_eq!(
                 sub_cgroup, case.expected_sub_cgroup,
