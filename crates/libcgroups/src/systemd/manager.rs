@@ -201,8 +201,9 @@ impl Manager {
         let mut destructured_path: CgroupsPath = cgroups_path.as_path().try_into()?;
         ensure_parent_unit(&mut destructured_path, use_system);
 
-        let (name, sub_cgroup) = Self::extract_sub_cgroup(&destructured_path.name);
-        destructured_path.name = name;
+        let (name, sub_cgroup) = Self::split_sub_cgroup(&destructured_path.name);
+        let sub_cgroup = sub_cgroup.to_owned();
+        destructured_path.name = name.to_owned();
 
         // EAGAIN from a recv() that timed out via SO_RCVTIMEO (set in dbus::connect()).
         let is_eagain = |e: &SystemdManagerError| {
@@ -316,21 +317,16 @@ impl Manager {
         .into())
     }
 
-    // If the provided unit `name` contains a sub-cgroup suffix, split it off and
-    // return it as a separate cgroup path along with the base unit name.
-    //
+    // split_sub_cgroup splits the unit `name` into the base unit name and the
+    // sub-cgroup suffix.
     // Example: "{id}/sub/init" becomes:
     //   - base name: "{id}"
     //   - sub-cgroup: "/sub/init"
-    fn extract_sub_cgroup(name: &str) -> (String, String) {
-        name.find('/')
-            .map(|separator_index| {
-                (
-                    name[..separator_index].to_owned(),
-                    name[separator_index..].to_owned(),
-                )
-            })
-            .unwrap_or_else(|| (name.to_owned(), String::new()))
+    fn split_sub_cgroup(name: &str) -> (&str, &str) {
+        match name.find('/') {
+            Some(i) => name.split_at(i),
+            None => (name, ""),
+        }
     }
 
     /// get_unit_name returns the unit (scope) name from the path provided by the user
@@ -661,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn test_separate_sub_cgroup() {
+    fn test_split_sub_cgroup() {
         struct Case {
             name: &'static str,
             expected_name: &'static str,
@@ -691,7 +687,7 @@ mod tests {
         ];
 
         for case in cases {
-            let (name, sub_cgroup) = Manager::extract_sub_cgroup(case.name);
+            let (name, sub_cgroup) = Manager::split_sub_cgroup(case.name);
             assert_eq!(name, case.expected_name, "name mismatch for {}", case.name);
             assert_eq!(
                 sub_cgroup, case.expected_sub_cgroup,
