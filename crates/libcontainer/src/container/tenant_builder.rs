@@ -9,6 +9,7 @@ use std::rc::Rc;
 use std::str::FromStr;
 
 use caps::Capability;
+use libcgroups::common::CgroupSetup;
 use nix::fcntl::OFlag;
 use nix::unistd::{Pid, pipe2, read};
 use oci_spec::runtime::{
@@ -137,6 +138,11 @@ fn get_capabilities(
 
 // Only works for cgroup v2
 fn get_init_proc_sub_cgroup(container: &Container, spec: &Spec) -> Option<String> {
+    match libcgroups::common::get_cgroup_setup() {
+        Ok(CgroupSetup::Unified) => {}
+        Ok(_) | Err(_) => return None,
+    }
+
     let container_id = container.id();
     let init_pid = container.pid()?.as_raw() as u32;
 
