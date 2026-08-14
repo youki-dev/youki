@@ -54,6 +54,15 @@ fn build_cpu(args: &Update) -> Result<Option<LinuxCpu>> {
     if let Some(v) = args.cpu_share {
         builder = builder.shares(v);
     }
+    if let Some(v) = args.cpu_burst {
+        builder = builder.burst(v);
+    }
+    if let Some(v) = args.cpu_idle {
+        if v != 0 && v != 1 {
+            anyhow::bail!("invalid value for --cpu-idle: {v} (expected 0 or 1)");
+        }
+        builder = builder.idle(v);
+    }
 
     let cpu = builder.build()?;
     let empty = LinuxCpuBuilder::default()
@@ -75,6 +84,8 @@ mod tests {
             cpu_rt_period: None,
             cpu_rt_runtime: None,
             cpu_share: None,
+            cpu_burst: None,
+            cpu_idle: None,
             cpuset_cpus: None,
             cpuset_mems: None,
             memory: None,
@@ -121,5 +132,36 @@ mod tests {
         };
         let cpu = build_cpu(&args).unwrap().unwrap();
         assert_eq!(cpu.shares(), Some(100));
+    }
+
+    #[test]
+    fn build_cpu_sets_burst() {
+        let args = Update {
+            cpu_burst: Some(500000),
+            ..base_args()
+        };
+        let cpu = build_cpu(&args).unwrap().unwrap();
+        assert_eq!(cpu.burst(), Some(500000));
+    }
+
+    #[test]
+    fn build_cpu_sets_idle() {
+        for idle in [0, 1] {
+            let args = Update {
+                cpu_idle: Some(idle),
+                ..base_args()
+            };
+            let cpu = build_cpu(&args).unwrap().unwrap();
+            assert_eq!(cpu.idle(), Some(idle));
+        }
+    }
+
+    #[test]
+    fn build_cpu_rejects_invalid_idle() {
+        let args = Update {
+            cpu_idle: Some(2),
+            ..base_args()
+        };
+        assert!(build_cpu(&args).is_err());
     }
 }

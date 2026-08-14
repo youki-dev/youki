@@ -34,6 +34,14 @@ pub struct Update {
     #[arg(long)]
     pub cpu_share: Option<u64>,
 
+    /// Set CPU burst limit within a given period (in microseconds)
+    #[arg(long)]
+    pub cpu_burst: Option<u64>,
+
+    /// Set cgroup SCHED_IDLE or not. 0: default behavior, 1: SCHED_IDLE.
+    #[arg(long)]
+    pub cpu_idle: Option<i64>,
+
     /// Set CPU(s) to use. The list can contain commas and ranges. For example: 0-3,7
     #[arg(long)]
     pub cpuset_cpus: Option<String>,
