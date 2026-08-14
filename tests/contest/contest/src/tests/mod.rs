@@ -1,4 +1,5 @@
 pub mod cgroups;
+pub mod checkpoint;
 pub mod checkpoint_restore;
 pub mod create_runtime;
 pub mod delete;

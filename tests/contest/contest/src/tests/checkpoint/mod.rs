@@ -1,15 +1,152 @@
 use std::path::Path;
-use std::process::{Command, Stdio};
-
+use std::process::{Child, Command, Stdio};
+use std::thread::sleep;
+use std::time::Duration;
 use anyhow::{Result, anyhow};
-use oci_spec::runtime::{MountBuilder, Spec};
-use test_framework::TestResult;
-
-use super::{create, get_result_from_output, start};
-use crate::utils::{
-    State, delete_container, generate_uuid, get_runtime_path, kill_container, prepare_bundle,
-    set_config, wait_container_running,
+use oci_spec::runtime::{
+    LinuxNamespaceBuilder, LinuxNamespaceType, MountBuilder, Spec,
 };
+use test_framework::{ConditionalTest, TestGroup, TestResult};
+use crate::utils::{
+    CreateOptions, State, create_container, criu_installed, delete_container, generate_uuid,
+    get_runtime_path, kill_container, prepare_bundle, set_config, start_container,
+    wait_container_running,
+};
+
+fn can_run() -> bool {
+    criu_installed()
+}
+
+struct CheckpointTestContext {
+    id: String,
+    bundle: tempfile::TempDir,
+}
+
+impl CheckpointTestContext {
+    fn new() -> Result<Self, TestResult> {
+        let bundle = prepare_bundle()
+            .map_err(|e| TestResult::Failed(anyhow!("failed to prepare bundle: {e}")))?;
+
+        Ok(Self {
+            id: generate_uuid().to_string(),
+            bundle,
+        })
+    }
+
+    fn bundle_path(&self) -> &Path {
+        self.bundle.path()
+    }
+
+    fn create(&self) -> TestResult {
+        let status = match create_container(
+            &self.id,
+            self.bundle_path(),
+            &CreateOptions::default(),
+        ) {
+            Ok(mut child) => match child.wait() {
+                Ok(status) => status,
+                Err(e) => {
+                    return TestResult::Failed(anyhow!(
+                        "create command could not be waited on: {e}"
+                    ));
+                }
+            },
+            Err(e) => {
+                return TestResult::Failed(anyhow!(
+                    "create command could not be started: {e}"
+                ));
+            }
+        };
+
+        if status.success() {
+            TestResult::Passed
+        } else {
+            TestResult::Failed(anyhow!(
+                "created exited unsuccessfully ({status})"
+            ))
+        }
+    }
+
+    fn start(&self) -> TestResult {
+        run_child(
+            start_container(
+                &self.id,
+                self.bundle_path()
+            ),
+            "start"
+        )
+    }
+
+    fn create_and_start(&self) -> TestResult {
+        let result = self.create();
+        if !matches!(result, TestResult::Passed) {
+            return  result;
+        }
+
+        let result = self.start();
+        if !matches!(result, TestResult::Passed) {
+            return result;
+        }
+
+        match wait_container_running(&self.id, self.bundle_path()) {
+            Ok(()) => TestResult::Passed,
+            Err(e) => TestResult::Failed(anyhow!(
+                "container did not reach running state: {e}"
+            )),
+        }
+    }
+
+    fn set_spec(&self, spec: &Spec) -> TestResult {
+        match set_config(&self.bundle, spec) {
+            Ok(()) => TestResult::Passed,
+            Err(e) => TestResult::Failed(anyhow!(
+                "failed to write config.json: {e}"
+            )),
+        }
+    }
+}
+
+impl Drop for CheckpointTestContext {
+    fn drop(&mut self) {
+        if let Ok(mut child) = kill_container(&self.id, self.bundle_path()) {
+            let _ = child.wait();
+        }
+
+        sleep(Duration::from_millis(100));
+
+        if let Ok(mut child) = delete_container(&self.id, self.bundle_path()) {
+            let _ = child.wait();
+        }
+    }
+}
+
+fn run_child(child: Result<Child>, action: &str) -> TestResult {
+    let output = match child {
+        Ok(child) => match child.wait_with_output() {
+            Ok(output) => output,
+            Err(e) => {
+                return TestResult::Failed(anyhow!(
+                    "{action} command could not be waited on: {e}"
+                ));
+            }
+        },
+        Err(e) => {
+            return  TestResult::Failed(anyhow!(
+                "{action} commnd could not be started: {e}"
+            ));
+        }
+    };
+
+    if output.status.success() {
+        TestResult::Passed
+    } else {
+        TestResult::Failed(anyhow!(
+            "{action} exited unsuccessfully ({})\nstderr: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
 
 // Simple function to figure out the PID of the first container process
 fn get_container_pid(project_path: &Path, id: &str) -> Result<i32, TestResult> {
@@ -130,8 +267,21 @@ fn checkpoint(
         .expect("failed to execute checkpoint command")
         .wait_with_output();
 
-    if let Err(e) = get_result_from_output(checkpoint) {
-        return TestResult::Failed(anyhow::anyhow!("failed to execute checkpoint command: {e}"));
+    let output = match checkpoint {
+        Ok(output) => output,
+        Err(e) => {
+            return TestResult::Failed(anyhow!(
+                "failed to execute checkpoint command: {e}"
+            ));
+        }
+    };
+
+    if !output.status.success() {
+        return TestResult::Failed(anyhow!(
+            "checkpoint command exited unsuccessfully ({})\nstderr: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr),
+        ));
     }
 
     // Check for complete checkpoint
@@ -223,7 +373,7 @@ fn create_checkpoint_image_dir() -> Result<(tempfile::TempDir, std::path::PathBu
     Ok((temp_dir, image_path))
 }
 
-pub fn checkpoint_leave_running_work_path_tmp(project_path: &Path, id: &str) -> TestResult {
+fn checkpoint_leave_running_work_path_tmp_impl(project_path: &Path, id: &str) -> TestResult {
     let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
         Ok(v) => v,
         Err(e) => return e,
@@ -238,7 +388,7 @@ pub fn checkpoint_leave_running_work_path_tmp(project_path: &Path, id: &str) -> 
     )
 }
 
-pub fn checkpoint_leave_running(project_path: &Path, id: &str) -> TestResult {
+fn checkpoint_leave_running_impl(project_path: &Path, id: &str) -> TestResult {
     let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
         Ok(v) => v,
         Err(e) => return e,
@@ -247,7 +397,7 @@ pub fn checkpoint_leave_running(project_path: &Path, id: &str) -> TestResult {
     checkpoint(project_path, id, &image_path, vec!["--leave-running"], None)
 }
 
-pub fn checkpoint_manage_cgroups_mode_ignore(project_path: &Path, id: &str) -> TestResult {
+fn checkpoint_manage_cgroups_mode_ignore_impl(project_path: &Path, id: &str) -> TestResult {
     let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
         Ok(v) => v,
         Err(e) => return e,
@@ -289,7 +439,7 @@ pub fn checkpoint_manage_cgroups_mode_ignore(project_path: &Path, id: &str) -> T
     TestResult::Passed
 }
 
-pub fn checkpoint_manage_cgroups_mode_soft(project_path: &Path, id: &str) -> TestResult {
+fn checkpoint_manage_cgroups_mode_soft_impl(project_path: &Path, id: &str) -> TestResult {
     let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
         Ok(v) => v,
         Err(e) => return e,
@@ -361,76 +511,58 @@ fn link_remap_spec() -> Result<Spec, TestResult> {
     Ok(spec)
 }
 
-pub fn checkpoint_link_remap() -> TestResult {
-    let bundle = match prepare_bundle() {
-        Ok(b) => b,
-        Err(e) => return TestResult::Failed(anyhow!("failed to prepare bundle: {e}")),
-    };
-    let id = generate_uuid().to_string();
-
+fn checkpoint_link_remap(ctx: &CheckpointTestContext) -> TestResult {
     let spec = match link_remap_spec() {
-        Ok(s) => s,
+        Ok(spec) => spec,
         Err(e) => return e,
     };
-    if let Err(e) = set_config(&bundle, &spec) {
-        return TestResult::Failed(anyhow!("failed to write config.json: {e}"));
-    }
 
-    let bundle_path = bundle.path();
-
-    let cleanup = || {
-        if let Ok(mut child) = kill_container(&id, bundle_path) {
-            let _ = child.wait();
-        }
-        if let Ok(mut child) = delete_container(&id, bundle_path) {
-            let _ = child.wait();
-        }
-    };
-
-    if let Err(e) = create::create(bundle_path, &id) {
-        cleanup();
-        return TestResult::Failed(anyhow!("create container failed: {e}"));
-    }
-
-    if let Err(e) = start::start(bundle_path, &id) {
-        cleanup();
-        return TestResult::Failed(anyhow!("start container failed: {e}"));
-    }
-
-    if let Err(e) = wait_container_running(&id, bundle_path) {
-        cleanup();
-        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
-    }
-
-    let (_image_temp_dir, image_path) = match create_checkpoint_image_dir() {
-        Ok(v) => v,
-        Err(e) => {
-            cleanup();
-            return e;
-        }
-    };
-
-    let result = checkpoint(bundle_path, &id, &image_path, vec!["--link-remap"], None);
-    if let TestResult::Failed(_) = &result {
-        cleanup();
+    let result = ctx.set_spec(&spec);
+    if !matches!(result, TestResult::Passed) {
         return result;
     }
 
+    let result = ctx.create_and_start();
+    if !matches!(result, TestResult::Passed) {
+        return result;
+    }
+
+    let (_image_temp_dir, image_path) = match create_checkpoint_image_dir() {
+        Ok(value) => value,
+        Err(e) => return e,
+    };
+
+    let result = checkpoint(
+        ctx.bundle_path(),
+        &ctx.id,
+        &image_path,
+        vec!["--link-remap"],
+        None,
+    );
+    if !matches!(result, TestResult::Passed) {
+        return result;
+    }
     // youki cannot restore, so instead verify CRIU recorded the link-remap into
     // the image: dumping the open-but-unlinked file with --link-remap creates
     // remap-fpath.img (a remap entry with the `linked` flag set).
     let remap_img = image_path.join("remap-fpath.img");
-    let result = if remap_img.exists() {
+    if remap_img.exists() {
         TestResult::Passed
     } else {
         TestResult::Failed(anyhow!(
-            "expected remap-fpath.img to be created in the checkpoint image with --link-remap, \
-             but it is missing at {remap_img:?}"
+            "expected remap-fpath.img to be created in the checkpoint image with \
+            --link-remap, but it is missing at {remap_img:?}"
         ))
+    }
+}
+
+fn checkpoint_link_remap_test() -> TestResult {
+    let ctx = match CheckpointTestContext::new() {
+        Ok(ctx) => ctx,
+        Err(e) => return e,
     };
 
-    cleanup();
-    result
+    checkpoint_link_remap(&ctx)
 }
 
 // Polls until the listen socket on `port` has a queued, unaccepted connection,
@@ -480,109 +612,87 @@ fn wait_in_flight(
     }
 }
 
-struct ContainerCleanup<'a> {
-    id: &'a str,
-    bundle_path: &'a Path,
-}
-
-impl Drop for ContainerCleanup<'_> {
-    fn drop(&mut self) {
-        if let Ok(mut child) = kill_container(self.id, self.bundle_path) {
-            let _ = child.wait();
-        }
-        if let Ok(mut child) = delete_container(self.id, self.bundle_path) {
-            let _ = child.wait();
-        }
-    }
-}
-
-pub fn checkpoint_tcp_skip_in_flight() -> TestResult {
+fn checkpoint_tcp_skip_in_flight(ctx: &CheckpointTestContext) -> TestResult {
     const PORT: u16 = 11111;
-
-    let bundle = match prepare_bundle() {
-        Ok(b) => b,
-        Err(e) => return TestResult::Failed(anyhow!("failed to prepare bundle: {e}")),
-    };
-    let id = generate_uuid().to_string();
 
     let mut spec = Spec::default();
     let mut process = spec.process().clone().unwrap_or_default();
-    // We need an unaccepted connection sitting in the listen socket's accept queue at
-    // dump time, because that is the only state `--tcp-skip-in-flight` acts on.
-    // `-c` caps the number of simultaneously accepted connections, so `tcpsvd -c 0`
-    // never calls accept(). The kernel still completes the handshake for the `nc`
-    // connect, leaving it ESTABLISHED but unaccepted in the accept queue: in-flight.
+
     process.set_args(Some(vec![
         "sh".to_string(),
         "-c".to_string(),
         format!(
             "until ip addr show lo | grep -q 127.0.0.1; do sleep 0.1; done; \
-             tcpsvd -c 0 0.0.0.0 {PORT} sleep 100000 & \
-             sleep 100000 | nc 127.0.0.1 {PORT} & \
-             while true; do sleep 1; done"
+            tcpsvd -c 0 0.0.0.0 {PORT} sleep 100000 & \
+            sleep 100000 | nc 127.0.0.1 {PORT} & \
+            while true; do sleep 1; done"
         ),
     ]));
     spec.set_process(Some(process));
 
-    if let Err(e) = set_config(&bundle, &spec) {
-        return TestResult::Failed(anyhow!("failed to write config.json: {e}"));
+    let result = ctx.set_spec(&spec);
+    if !matches!(result, TestResult::Passed) {
+        return result;
     }
 
-    let bundle_path = bundle.path();
-
-    let _cleanup = ContainerCleanup {
-        id: &id,
-        bundle_path,
-    };
-
-    if let Err(e) = create::create(bundle_path, &id) {
-        return TestResult::Failed(anyhow!("create container failed: {e}"));
+    let result = ctx.create_and_start();
+    if !matches!(result, TestResult::Passed) {
+        return result;
     }
 
-    if let Err(e) = start::start(bundle_path, &id) {
-        return TestResult::Failed(anyhow!("start container failed: {e}"));
-    }
-
-    if let Err(e) = wait_container_running(&id, bundle_path) {
-        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
-    }
-
-    if let Err(e) = wait_in_flight(bundle_path, &id, PORT, std::time::Duration::from_secs(10)) {
+    if let Err(e) = wait_in_flight(
+        ctx.bundle_path(),
+        &ctx.id,
+        PORT,
+        Duration::from_secs(10),
+    ) {
         return e;
     }
 
     let (_image_temp_dir, image_path) = match create_checkpoint_image_dir() {
-        Ok(v) => v,
+        Ok(value) => value,
         Err(e) => return e,
     };
 
     let result = checkpoint(
-        bundle_path,
-        &id,
+        ctx.bundle_path(),
+        &ctx.id,
         &image_path,
         vec!["--tcp-established", "--tcp-skip-in-flight"],
         None,
     );
-    if let TestResult::Failed(_) = &result {
+    if !matches!(result, TestResult::Passed) {
         return result;
     }
 
     let has_tcp_stream_img = match std::fs::read_dir(&image_path) {
         Ok(entries) => entries
             .flatten()
-            .any(|e| e.file_name().to_string_lossy().starts_with("tcp-stream-")),
+            .any(|entry| entry.file_name().to_string_lossy().starts_with("tcp-stream-")),
         Err(e) => {
-            return TestResult::Failed(anyhow!("failed to read image dir {image_path:?}: {e}"));
+            return TestResult::Failed(anyhow!(
+                "failed to read image dir {image_path:?}: {e}"
+            ));
         }
     };
+
     if has_tcp_stream_img {
         TestResult::Passed
     } else {
         TestResult::Failed(anyhow!(
             "checkpoint with --tcp-skip-in-flight succeeded but no tcp-stream-*.img \
-             was written to {image_path:?}; the TCP connection state was not dumped"
+            was written to {image_path:?}; the TCP connection state was not dumped"
         ))
     }
+}
+
+fn checkpoint_tcp_skip_in_flight_test() -> TestResult {
+    let ctx = match CheckpointTestContext::new() {
+        Ok(ctx) => ctx,
+        Err(e) => return e,
+    };
+
+    checkpoint_tcp_skip_in_flight(&ctx)
 }
 
 /// Check that a namespace was treated as external by CRIU.
@@ -632,7 +742,7 @@ pub fn check_external_pidns(checkpoint_dir: &Path) -> Result<(), TestResult> {
 
 /// Checkpoint a container started with external network and PID namespaces.
 /// Verifies that CRIU recorded both namespaces as external.
-pub fn checkpoint_with_external_namespaces(project_path: &Path, id: &str) -> TestResult {
+fn checkpoint_with_external_namespaces_impl(project_path: &Path, id: &str) -> TestResult {
     let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
         Ok(v) => v,
         Err(e) => return e,
@@ -652,4 +762,209 @@ pub fn checkpoint_with_external_namespaces(project_path: &Path, id: &str) -> Tes
     }
 
     TestResult::Passed
+}
+
+fn checkpoint_leave_running() -> TestResult {
+    let ctx = match CheckpointTestContext::new() {
+        Ok(ctx) => ctx,
+        Err(e) => return e,
+    };
+
+    let result = ctx.create_and_start();
+    if !matches!(result, TestResult::Passed) {
+        return result;
+    }
+
+    checkpoint_leave_running_impl(ctx.bundle_path(), &ctx.id)
+}
+
+fn checkpoint_leave_running_work_path_tmp() -> TestResult {
+    let ctx = match CheckpointTestContext::new() {
+        Ok(ctx) => ctx,
+        Err(e) => return e,
+    };
+
+    let result = ctx.create_and_start();
+    if !matches!(result, TestResult::Passed) {
+        return result;
+    }
+
+    checkpoint_leave_running_work_path_tmp_impl(ctx.bundle_path(), &ctx.id)
+}
+
+fn checkpoint_manage_cgroups_mode_ignore() -> TestResult {
+    let ctx = match CheckpointTestContext::new() {
+        Ok(ctx) => ctx,
+        Err(e) => return e,
+    };
+
+    let result = ctx.create_and_start();
+    if !matches!(result, TestResult::Passed) {
+        return result;
+    }
+
+    checkpoint_manage_cgroups_mode_ignore_impl(ctx.bundle_path(), &ctx.id)
+}
+
+fn checkpoint_manage_cgroups_mode_soft() -> TestResult {
+    let ctx = match CheckpointTestContext::new() {
+        Ok(ctx) => ctx,
+        Err(e) => return e,
+    };
+
+    let result = ctx.create_and_start();
+    if !matches!(result, TestResult::Passed) {
+        return result;
+    }
+
+    checkpoint_manage_cgroups_mode_soft_impl(ctx.bundle_path(), &ctx.id)
+}
+
+/// RAII guard that deletes a named network namespace on drop.
+struct NetnsGuard(String);
+
+impl NetnsGuard {
+    fn new(name: &str) -> Result<Self, anyhow::Error> {
+        let out = Command::new("ip").args(["netns", "add", name]).output()?;
+        if !out.status.success() {
+            anyhow::bail!(
+                "ip netns add {} failed: {}",
+                name,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        Ok(Self(name.to_string()))
+    }
+}
+
+impl Drop for NetnsGuard {
+    fn drop(&mut self) {
+        let _ = Command::new("ip").args(["netns", "del", &self.0]).output();
+    }
+}
+
+/// Build a spec that places the container in the given external netns and pidns.
+/// Other namespaces retain the defaults from the bundle's config.json.
+fn build_external_ns_spec(
+    project_path: &Path,
+    netns_path: &str,
+    pidns_path: &str,
+) -> Result<Spec, anyhow::Error> {
+    let spec_path = project_path.join("bundle").join("config.json");
+    let mut spec = Spec::load(spec_path)?;
+
+    let mut namespaces = spec
+        .linux()
+        .as_ref()
+        .and_then(|l| l.namespaces().as_ref())
+        .cloned()
+        .unwrap_or_default();
+
+    // Replace or add network namespace with external path
+    namespaces.retain(|ns| ns.typ() != LinuxNamespaceType::Network);
+    namespaces.push(
+        LinuxNamespaceBuilder::default()
+            .typ(LinuxNamespaceType::Network)
+            .path(netns_path)
+            .build()?,
+    );
+
+    // Replace or add PID namespace with external path
+    namespaces.retain(|ns| ns.typ() != LinuxNamespaceType::Pid);
+    namespaces.push(
+        LinuxNamespaceBuilder::default()
+            .typ(LinuxNamespaceType::Pid)
+            .path(pidns_path)
+            .build()?,
+    );
+
+    let linux = spec.linux().as_ref().cloned().unwrap_or_default();
+    let mut linux = linux;
+    linux.set_namespaces(Some(namespaces));
+    spec.set_linux(Some(linux));
+
+    Ok(spec)
+}
+
+fn checkpoint_with_external_namespaces() -> TestResult {
+    let ctx = match CheckpointTestContext::new() {
+        Ok(ctx) => ctx,
+        Err(e) => return e,
+    };
+
+    let netns_name = format!("youki_ckpt_{}", &ctx.id[..8]);
+    let _netns_guard = match NetnsGuard::new(&netns_name) {
+        Ok(guard) => guard,
+        Err(_) => return TestResult::Skipped("ip netns unavailable".to_string()),
+    };
+
+    let netns_path = format!("/var/run/netns/{netns_name}");
+    let spec = match build_external_ns_spec(
+        ctx.bundle_path(),
+        &netns_path,
+        "/proc/self/ns/pid",
+    ) {
+        Ok(spec) => spec,
+        Err(e) => {
+            return TestResult::Failed(anyhow!(
+                "failed to build spec with external namespaces: {e}"
+            ));
+        }
+    };
+
+    let result = ctx.set_spec(&spec);
+    if !matches!(result, TestResult::Passed) {
+        return  result;
+    }
+
+    let result = ctx.create_and_start();
+    if !matches!(result, TestResult::Passed) {
+        return result;
+    }
+
+    checkpoint_with_external_namespaces_impl(ctx.bundle_path(), &ctx.id)
+}
+
+pub fn get_checkpoint_tests() -> TestGroup {
+    let mut tg = TestGroup::new("checkpoint");
+    tg.set_nonparallel();
+
+    macro_rules! checkpoint_test {
+        ($name:expr, $function:expr) => {
+            ConditionalTest::new($name, Box::new(can_run), Box::new($function))
+        };
+    }
+
+    tg.add(vec![
+        Box::new(checkpoint_test!(
+            "checkpoint_leave_running_work_path_tmp",
+            checkpoint_leave_running_work_path_tmp
+        )),
+        Box::new(checkpoint_test!(
+            "checkpoint_leave_running",
+            checkpoint_leave_running
+        )),
+        Box::new(checkpoint_test!(
+            "checkpoint_manage_cgroups_mode_ignore",
+            checkpoint_manage_cgroups_mode_ignore
+        )),
+        Box::new(checkpoint_test!(
+            "checkpoint_manage_cgroups_mode_soft",
+            checkpoint_manage_cgroups_mode_soft
+        )),
+        Box::new(checkpoint_test!(
+            "checkpoint_link_remap",
+            checkpoint_link_remap_test
+        )),
+        Box::new(checkpoint_test!(
+            "checkpoint_tcp_skip_in_flight",
+            checkpoint_tcp_skip_in_flight_test
+        )),
+        Box::new(checkpoint_test!(
+            "checkpoint_with_external_namespaces",
+            checkpoint_with_external_namespaces
+        )),
+    ]);
+
+    tg
 }
