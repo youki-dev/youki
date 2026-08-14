@@ -6,9 +6,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use contest::logger;
+use contest::tests::checkpoint;
 use test_framework::TestManager;
 use tests::cgroups;
 
+use crate::tests::checkpoint::get_checkpoint_tests;
 use crate::tests::checkpoint_restore::get_checkpoint_restore_tests;
 use crate::tests::create_runtime::get_create_runtime_tests;
 use crate::tests::delete::get_delete_test;
@@ -182,6 +184,7 @@ fn main() -> Result<()> {
     let personality = get_personality_test();
     let prohibit_symlink = get_prohibit_symlink_test();
     let net_devices = get_net_devices_test();
+    let checkpoint = get_checkpoint_tests();
     let checkpoint_restore = get_checkpoint_restore_tests();
     let update = get_update_test();
     let time_ns = get_time_ns_test();
@@ -243,6 +246,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(personality));
     tm.add_test_group(Box::new(prohibit_symlink));
     tm.add_test_group(Box::new(io_priority_test));
+    tm.add_test_group(Box::new(checkpoint));
     tm.add_test_group(Box::new(checkpoint_restore));
     tm.add_test_group(Box::new(update));
     tm.add_test_group(Box::new(time_ns));
