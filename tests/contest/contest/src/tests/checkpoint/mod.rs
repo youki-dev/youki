@@ -38,14 +38,33 @@ impl CheckpointTestContext {
     }
 
     fn create(&self) -> TestResult {
-        run_child(
-            create_container(
-                &self.id,
-                self.bundle_path(),
-                &CreateOptions::default(),
-            ),
-            "create",
-        )
+        let status = match create_container(
+            &self.id,
+            self.bundle_path(),
+            &CreateOptions::default(),
+        ) {
+            Ok(mut child) => match child.wait() {
+                Ok(status) => status,
+                Err(e) => {
+                    return TestResult::Failed(anyhow!(
+                        "create command could not be waited on: {e}"
+                    ));
+                }
+            },
+            Err(e) => {
+                return TestResult::Failed(anyhow!(
+                    "create command could not be started: {e}"
+                ));
+            }
+        };
+
+        if status.success() {
+            TestResult::Passed
+        } else {
+            TestResult::Failed(anyhow!(
+                "created exited unsuccessfully ({status})"
+            ))
+        }
     }
 
     fn start(&self) -> TestResult {
