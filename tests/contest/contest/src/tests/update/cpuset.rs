@@ -37,6 +37,65 @@ fn create_spec(cgroup_name: &str, resources: Option<LinuxResources>) -> Result<S
     Ok(spec)
 }
 
+// "update cgroup v2 resources via unified map"
+pub(crate) fn update_cgroup_v2_resources_via_unified_map_test() -> TestResult {
+    const CGROUP_NAME: &str = "update_cgroup_v2_resources_via_unified_map";
+
+    let unified = HashMap::from([
+        ("cpu.max".to_string(), "500000 1000000".to_string()),
+        ("cpu.weight".to_string(), "17".to_string()),
+        ("pids.max".to_string(), "20".to_string()),
+    ]);
+    let resources = test_result!(
+        LinuxResourcesBuilder::default()
+            .unified(unified)
+            .build()
+            .context("failed to build resources spec")
+    );
+    let spec = test_result!(create_spec(CGROUP_NAME, Some(resources)));
+
+    test_outside_container(&spec, &|data| {
+        test_result!(check_container_created(&data));
+
+        let id = &data.id;
+        let dir = &data.bundle;
+        let start_result = start_container(id, dir).unwrap().wait().unwrap();
+        if !start_result.success() {
+            return TestResult::Failed(anyhow!("container start failed"));
+        }
+
+        // Check that initial values were properly set
+        let cgroup_path = Path::new("/sys/fs/cgroup/runtime-test").join(CGROUP_NAME);
+        test_result!(check_cgroup_value(
+            &cgroup_path,
+            "cpu.max",
+            "500000 1000000"
+        ));
+        test_result!(check_cgroup_value(&cgroup_path, "cpu.weight", "17"));
+        test_result!(check_cgroup_value(&cgroup_path, "pids.max", "20"));
+
+        // set cpu.max, cpu.weight, and pids.max via v2 unified map in JSON format
+        let json = serde_json::json!({
+            "unified": {
+                "cpu.max": "max 100000",
+                "cpu.weight": "16",
+                "pids.max": "10"
+            }
+        })
+        .to_string();
+        update_container_with_stdin(id, dir, &["-r", "-"], &json)
+            .unwrap()
+            .wait()
+            .unwrap();
+
+        test_result!(check_cgroup_value(&cgroup_path, "cpu.max", "max 100000"));
+        test_result!(check_cgroup_value(&cgroup_path, "cpu.weight", "16"));
+        test_result!(check_cgroup_value(&cgroup_path, "pids.max", "10"));
+
+        TestResult::Passed
+    })
+}
+
 // "update cpuset parameters via resources.CPU"
 pub(crate) fn update_cpuset_parameters_via_resources_cpu_test() -> TestResult {
     const CGROUP_NAME: &str = "update_cpuset_parameters_via_resources_cpu";

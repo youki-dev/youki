@@ -164,6 +164,12 @@ pub fn get_update_test() -> TestGroup {
         Box::new(cpu::update_cgroup_cpu_idle_test),
     );
 
+    let update_cgroup_v2_resources_via_unified_map_test = ConditionalTest::new(
+        "update_cgroup_v2_resources_via_unified_map_test",
+        Box::new(can_run),
+        Box::new(cpuset::update_cgroup_v2_resources_via_unified_map_test),
+    );
+
     let update_cpuset_parameters_via_resources_cpu_test = ConditionalTest::new(
         "update_cpuset_parameters_via_resources_cpu_test",
         Box::new(can_run_cpuset_update),
@@ -192,6 +198,7 @@ pub fn get_update_test() -> TestGroup {
         Box::new(update_cpu_period_without_previous_limits_test),
         Box::new(update_cpu_quota_without_previous_limits_test),
         Box::new(update_cgroup_cpu_idle_test),
+        Box::new(update_cgroup_v2_resources_via_unified_map_test),
         Box::new(update_cpuset_parameters_via_resources_cpu_test),
         Box::new(update_cpuset_parameters_via_v2_unified_map_test),
         Box::new(update_cpuset_cpus_range_via_v2_unified_map_test),
