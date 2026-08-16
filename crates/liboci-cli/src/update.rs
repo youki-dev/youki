@@ -55,7 +55,7 @@ pub struct Update {
     pub memory_swap: Option<i64>,
 
     /// Set the maximum number of processes allowed in the container
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     pub pids_limit: Option<i64>,
 
     /// Set the value for Intel RDT/CAT L3 cache schema.
