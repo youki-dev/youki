@@ -13,6 +13,8 @@ pub enum V2UnifiedError {
         subsystem: String,
         err: WrappedIoError,
     },
+    #[error("unified resource {filename} must be a file name (no slashes)")]
+    InvalidFilename { filename: String },
 }
 
 pub struct Unified {}
@@ -37,6 +39,11 @@ impl Unified {
     ) -> Result<(), V2UnifiedError> {
         tracing::debug!("Apply unified cgroup config");
         for (cgroup_file, value) in unified {
+            if cgroup_file.contains('/') {
+                return Err(V2UnifiedError::InvalidFilename {
+                    filename: cgroup_file.into(),
+                });
+            }
             if let Err(err) = common::write_cgroup_file_str(cgroup_path.join(cgroup_file), value) {
                 let (subsystem, _) = cgroup_file.split_once('.').unwrap_or((cgroup_file, ""));
 
@@ -175,5 +182,38 @@ mod tests {
 
         // assert
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_set_unified_slash_in_key() {
+        // arrange
+        let tmp = tempfile::tempdir().unwrap();
+
+        let unified = {
+            let mut u = HashMap::new();
+            u.insert("/memory/max".to_owned(), "100000".to_owned());
+            u
+        };
+
+        let resources = LinuxResourcesBuilder::default()
+            .unified(unified)
+            .build()
+            .unwrap();
+
+        let controller_opt = ControllerOpt {
+            resources: &resources,
+            freezer_state: None,
+            oom_score_adj: None,
+            disable_oom_killer: false,
+        };
+
+        // act
+        let result = Unified::apply(&controller_opt, tmp.path(), vec![]);
+
+        // assert
+        assert!(matches!(
+            result,
+            Err(V2UnifiedError::InvalidFilename { .. })
+        ));
     }
 }
