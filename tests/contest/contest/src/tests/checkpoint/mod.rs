@@ -132,7 +132,7 @@ fn run_child(child: Result<Child>, action: &str) -> TestResult {
         },
         Err(e) => {
             return  TestResult::Failed(anyhow!(
-                "{action} commnd could not be started: {e}"
+                "{action} command could not be started: {e}"
             ));
         }
     };
