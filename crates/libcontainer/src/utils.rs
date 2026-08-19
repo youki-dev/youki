@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::fs::{self, DirBuilder, File};
-use std::os::fd::{AsRawFd, OwnedFd};
+use std::os::fd::OwnedFd;
 use std::os::linux::fs::MetadataExt;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Component, Path, PathBuf};
@@ -216,7 +216,7 @@ pub fn verify_inode<F>(fd: &OwnedFd, verify: F) -> Result<(), VerifyInodeError>
 where
     F: FnOnce(&libc::stat, &Statfs) -> Result<(), VerifyInodeError>,
 {
-    let stat = fstat(fd.as_raw_fd())?;
+    let stat = fstat(fd)?;
     let fs_stat = fstatfs(fd)?;
     verify(&stat, &fs_stat)
 }

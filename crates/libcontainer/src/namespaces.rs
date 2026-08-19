@@ -8,10 +8,11 @@
 //! Cgroup (Resource limits, execution priority etc.)
 
 use std::collections;
+use std::os::unix::io::AsRawFd;
 
+use nix::fcntl;
 use nix::sched::CloneFlags;
 use nix::sys::stat;
-use nix::{fcntl, unistd};
 use oci_spec::runtime::{LinuxNamespace, LinuxNamespaceType};
 
 use crate::syscall::Syscall;
@@ -112,14 +113,11 @@ impl Namespaces {
                         tracing::error!(?err, ?namespace, "failed to open namespace file");
                     })?;
                 self.command
-                    .set_ns(fd, get_clone_flag(namespace.typ())?)
+                    .set_ns(fd.as_raw_fd(), get_clone_flag(namespace.typ())?)
                     .map_err(|err| {
                         tracing::error!(?err, ?namespace, "failed to set namespace");
                         err
                     })?;
-                unistd::close(fd).inspect_err(|err| {
-                    tracing::error!(?err, ?namespace, "failed to close namespace file");
-                })?;
             }
             None => {
                 self.command

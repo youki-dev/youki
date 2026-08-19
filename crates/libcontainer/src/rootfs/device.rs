@@ -1,4 +1,4 @@
-use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::io::OwnedFd;
 use std::path::{Path, PathBuf};
 
 use libc;
@@ -30,13 +30,12 @@ pub enum DeviceError {
 type Result<T> = std::result::Result<T, DeviceError>;
 
 pub(crate) fn open_device_fd(dev_path: &Path) -> nix::Result<(OwnedFd, FileStat)> {
-    let fd = open(
+    let owned = open(
         dev_path,
         OFlag::O_PATH | OFlag::O_CLOEXEC,
         Mode::from_bits_truncate(0o000),
     )?;
-    let owned = unsafe { OwnedFd::from_raw_fd(fd) };
-    let stat = fstat(owned.as_raw_fd())?;
+    let stat = fstat(&owned)?;
     Ok((owned, stat))
 }
 
