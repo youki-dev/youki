@@ -14,3 +14,4 @@ netlink-packet-route = { workspace = true }
 netlink-packet-core = { workspace = true }
 netlink-sys = { workspace = true }
 procfs = { workspace = true }
+caps = { workspace = true }

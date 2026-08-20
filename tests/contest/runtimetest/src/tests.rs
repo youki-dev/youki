@@ -7,6 +7,7 @@ use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::Path;
 
 use anyhow::{Result, bail};
+use caps::CapSet;
 use netlink_packet_core::{NLM_F_DUMP, NLM_F_REQUEST, NetlinkMessage, NetlinkPayload};
 use netlink_packet_route::RouteNetlinkMessage;
 use netlink_packet_route::address::AddressMessage;
@@ -23,8 +24,8 @@ use nix::unistd::{Gid, Uid, getcwd, getgid, getgroups, getuid};
 use oci_spec::runtime::IOPriorityClass::{self, IoprioClassBe, IoprioClassIdle, IoprioClassRt};
 use oci_spec::runtime::MemoryPolicyFlagType::*;
 use oci_spec::runtime::{
-    LinuxDevice, LinuxDeviceType, LinuxIdMapping, LinuxSchedulerPolicy, MemoryPolicyModeType,
-    PosixRlimit, PosixRlimitType, Spec,
+    Capability, LinuxDevice, LinuxDeviceType, LinuxIdMapping, LinuxSchedulerPolicy,
+    MemoryPolicyModeType, PosixRlimit, PosixRlimitType, Spec,
 };
 use tempfile::Builder;
 
@@ -879,6 +880,54 @@ pub fn validate_process_capabilities_bounding_unset(_spec: &Spec) {
                 "expected {label} to be all zeros when bounding is unset and other caps are empty, got: {actual}"
             );
         }
+    }
+}
+
+fn spec_capabilities(
+    caps: Option<&std::collections::HashSet<Capability>>,
+    supported: &caps::CapsHashSet,
+) -> caps::CapsHashSet {
+    caps.into_iter()
+        .flat_map(|set| set.iter())
+        .filter_map(|cap| format!("CAP_{cap}").parse().ok())
+        .filter(|cap| supported.contains(cap))
+        .collect()
+}
+
+fn validate_capability_set(
+    name: &str,
+    configured: Option<&std::collections::HashSet<Capability>>,
+    set: CapSet,
+    supported: &caps::CapsHashSet,
+) {
+    let expected = spec_capabilities(configured, supported);
+    match caps::read(None, set) {
+        Ok(actual) if actual == expected => {}
+        Ok(actual) => {
+            eprintln!("unexpected {name} capabilities: {actual:?}, expected {expected:?}")
+        }
+        Err(e) => eprintln!("failed to read {name} capabilities: {e}"),
+    }
+}
+
+pub fn validate_process_capabilities(spec: &Spec) {
+    let Some(process) = spec.process().as_ref() else {
+        return eprintln!("process not set in spec");
+    };
+    let Some(config) = process.capabilities().as_ref() else {
+        return eprintln!("process.capabilities not set in spec");
+    };
+    let supported = caps::runtime::procfs_all_supported(None)
+        .unwrap_or_else(|_| caps::runtime::thread_all_supported());
+
+    for (name, configured, set) in [
+        ("inheritable", config.inheritable(), CapSet::Inheritable),
+        ("permitted", config.permitted(), CapSet::Permitted),
+        ("effective", config.effective(), CapSet::Effective),
+        ("bounding", config.bounding(), CapSet::Bounding),
+        ("ambient", config.ambient(), CapSet::Ambient),
+    ] {
+        validate_capability_set(name, configured.as_ref(), set, &supported);
     }
 }
 
