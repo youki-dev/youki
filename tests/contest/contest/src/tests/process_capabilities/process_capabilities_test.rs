@@ -8,7 +8,7 @@ use test_framework::{Test, TestGroup, TestResult, test_result};
 use crate::utils::test_inside_container;
 use crate::utils::test_utils::CreateOptions;
 
-// Grant every capability supported by the running host
+// Grant every capability supported by the caps crate
 fn all_capabilities() -> Capabilities {
     caps::all().into_iter().map(Capability::from_cap).collect()
 }
