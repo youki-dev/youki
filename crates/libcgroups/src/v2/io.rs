@@ -112,7 +112,8 @@ impl Io {
         if v == 0 {
             return 0;
         }
-        1 + (v.saturating_sub(10)) * 9999 / 990
+        // Widen before multiplying because the intermediate value may exceed u16.
+        (1 + (u32::from(v) - 10) * 9999 / 990) as u16
     }
 
     fn io_max_path(path: &Path) -> PathBuf {

@@ -1,3 +1,4 @@
+mod blkio;
 mod common;
 mod cpu;
 mod cpuset;
@@ -107,6 +108,22 @@ fn can_run_cpuset_range_update() -> bool {
     can_run_cpuset() && cpu_count() > 8
 }
 
+fn can_run_blkio_update() -> bool {
+    if !is_cgroup_v2() {
+        return false;
+    }
+
+    let controllers_result = libcgroups::v2::util::get_available_controllers(DEFAULT_CGROUP_ROOT);
+    if controllers_result.is_err() {
+        return false;
+    }
+
+    controllers_result
+        .unwrap()
+        .into_iter()
+        .any(|controller| controller == ControllerType::Io)
+}
+
 pub fn get_update_test() -> TestGroup {
     let mut test_group = TestGroup::new("update");
 
@@ -126,6 +143,12 @@ pub fn get_update_test() -> TestGroup {
         "update_pids_limit_test",
         Box::new(can_run_update),
         Box::new(pids_limit::update_pids_limit_test),
+    );
+
+    let update_blkio_weight_test = ConditionalTest::new(
+        "update_blkio_weight_test",
+        Box::new(can_run_blkio_update),
+        Box::new(blkio::update_blkio_weight_test),
     );
 
     let cpu_burst_test = ConditionalTest::new(
@@ -198,6 +221,7 @@ pub fn get_update_test() -> TestGroup {
         Box::new(update_cgroup_v2_common_limits_test),
         Box::new(update_cpu_limits_test),
         Box::new(update_pids_limit_test),
+        Box::new(update_blkio_weight_test),
         Box::new(cpu_burst_test),
         Box::new(set_cpu_period_without_quota_test),
         Box::new(set_cpu_period_without_quota_invalid_test),
