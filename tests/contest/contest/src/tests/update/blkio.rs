@@ -51,8 +51,8 @@ fn check_blkio_weight(cgroup_path: &Path, weight: u16) -> Result<()> {
         )
     };
 
-    let content = fs::read_to_string(&path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
+    let content =
+        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
     if !content.split_whitespace().any(|token| token == expected) {
         bail!(
             "{}: expected weight {}, got {:?}",
