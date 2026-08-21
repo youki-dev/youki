@@ -43,15 +43,15 @@ pub struct Update {
     pub cpuset_mems: Option<String>,
 
     /// Set memory limit to num bytes.
-    #[arg(long)]
-    pub memory: Option<u64>,
+    #[arg(long, allow_hyphen_values = true)]
+    pub memory: Option<i64>,
 
     /// Set memory reservation (or soft limit) to num bytes.
-    #[arg(long)]
-    pub memory_reservation: Option<u64>,
+    #[arg(long, allow_hyphen_values = true)]
+    pub memory_reservation: Option<i64>,
 
     /// Set total memory + swap usage to num bytes. Use -1 to unset the limit (i.e. use unlimited swap).
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     pub memory_swap: Option<i64>,
 
     /// Set the maximum number of processes allowed in the container
