@@ -7,7 +7,7 @@ use oci_spec::runtime::{
 };
 use test_framework::{TestResult, test_result};
 
-use super::{check_cgroup_value, update_container_and_wait};
+use super::update_container_and_wait;
 use crate::utils::test_utils::check_container_created;
 use crate::utils::{
     start_container, test_outside_container, update_container, update_container_with_stdin,
@@ -38,30 +38,31 @@ fn convert_blkio_weight_to_io_weight(weight: u16) -> u64 {
     1 + (u64::from(weight) - 10) * 9999 / 990
 }
 
+// Both files may prefix the default weight with "default" and may contain
+// per-device entries, so match the expected numeric value among the tokens.
 fn check_blkio_weight(cgroup_path: &Path, weight: u16) -> Result<()> {
     let bfq_path = cgroup_path.join("io.bfq.weight");
-    if bfq_path.exists() {
-        let content = fs::read_to_string(&bfq_path)
-            .with_context(|| format!("failed to read {}", bfq_path.display()))?;
-        if !content
-            .split_whitespace()
-            .any(|token| token == weight.to_string())
-        {
-            bail!(
-                "{}: expected weight {}, got {:?}",
-                bfq_path.display(),
-                weight,
-                content
-            );
-        }
-        Ok(())
+    let (path, expected) = if bfq_path.exists() {
+        (bfq_path, weight.to_string())
     } else {
-        check_cgroup_value(
-            cgroup_path,
-            "io.weight",
-            &convert_blkio_weight_to_io_weight(weight).to_string(),
+        (
+            cgroup_path.join("io.weight"),
+            convert_blkio_weight_to_io_weight(weight).to_string(),
         )
+    };
+
+    let content = fs::read_to_string(&path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    if !content.split_whitespace().any(|token| token == expected) {
+        bail!(
+            "{}: expected weight {}, got {:?}",
+            path.display(),
+            expected,
+            content
+        );
     }
+
+    Ok(())
 }
 
 fn expect_update_failure(id: &str, dir: &Path, weight: &str) -> Result<()> {
