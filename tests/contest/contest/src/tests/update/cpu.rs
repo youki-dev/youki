@@ -228,7 +228,12 @@ pub(crate) fn cpu_burst_test() -> TestResult {
         test_result!(check_cgroup_value(&cgroup_path, "cpu.max.burst", "500000"));
 
         // Ensure a memory-only update does not reset cpu.max.burst.
-        test_result!(update_container_and_wait(id, dir, &["--memory", "100M"]));
+        // 100MiB in bytes: youki's --memory has no unit-suffix parsing yet.
+        test_result!(update_container_and_wait(
+            id,
+            dir,
+            &["--memory", "104857600"]
+        ));
         test_result!(check_cgroup_value(&cgroup_path, "cpu.max.burst", "500000"));
 
         test_result!(update_container_and_wait(

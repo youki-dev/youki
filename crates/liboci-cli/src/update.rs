@@ -19,8 +19,8 @@ pub struct Update {
     pub cpu_period: Option<u64>,
 
     /// Set CPU usage limit within a given period (in microseconds)
-    #[arg(long)]
-    pub cpu_quota: Option<u64>,
+    #[arg(long, allow_hyphen_values = true)]
+    pub cpu_quota: Option<i64>,
 
     /// Set CPU realtime period to be used for hardcapping (in microseconds)
     #[arg(long)]
@@ -33,6 +33,14 @@ pub struct Update {
     /// Set CPU shares (relative weight vs. other containers)
     #[arg(long)]
     pub cpu_share: Option<u64>,
+
+    /// Set CPU burst limit within a given period (in microseconds)
+    #[arg(long)]
+    pub cpu_burst: Option<u64>,
+
+    /// Set cgroup SCHED_IDLE or not. 0: default behavior, 1: SCHED_IDLE.
+    #[arg(long)]
+    pub cpu_idle: Option<i64>,
 
     /// Set CPU(s) to use. The list can contain commas and ranges. For example: 0-3,7
     #[arg(long)]
