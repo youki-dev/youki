@@ -392,6 +392,7 @@ impl Mount {
             flags: MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
             data: vec![data.into_owned()],
             rec_attr: None,
+            propagation_flags: vec![],
         };
 
         self.mount_into_container(
@@ -800,6 +801,48 @@ impl Mount {
                 }
                 Err(e) => return Err(e.into()),
             }
+        }
+
+        self.apply_mount_propagation(
+            rootfs,
+            container_dest,
+            &mount_option_config.propagation_flags,
+        )?;
+
+        Ok(())
+    }
+
+    fn apply_mount_propagation(
+        &self,
+        rootfs: &Path,
+        container_dest: &Path,
+        propagation_flags: &[MsFlags],
+    ) -> Result<()> {
+        if propagation_flags.is_empty() {
+            return Ok(());
+        }
+
+        let root = Root::open(rootfs)?;
+        let dest: OwnedFd = root.resolve(container_dest)?.into();
+
+        for flags in propagation_flags {
+            let mut setattr_flags = linux::AT_EMPTY_PATH;
+            if flags.contains(MsFlags::MS_REC) {
+                setattr_flags |= linux::AT_RECURSIVE;
+            }
+            let mount_attr = linux::MountAttr {
+                attr_set: 0,
+                attr_clr: 0,
+                propagation: (*flags & !MsFlags::MS_REC).bits(),
+                userns_fd: 0,
+            };
+            self.syscall.mount_setattr(
+                dest.as_fd(),
+                Path::new(""),
+                setattr_flags,
+                &mount_attr,
+                mem::size_of::<linux::MountAttr>(),
+            )?;
         }
 
         Ok(())
@@ -1422,6 +1465,7 @@ mod tests {
             flags,
             data: vec![],
             rec_attr: None,
+            propagation_flags: vec![],
         };
         mounter
             .mount_cgroup_v2(&spec_cgroup_mount, &mount_opts, &mount_option_config)
