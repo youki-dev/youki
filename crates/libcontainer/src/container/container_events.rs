@@ -24,7 +24,7 @@ impl Container {
     /// .as_init("/var/run/docker/bundle")
     /// .build()?;
     ///
-    /// container.events(Duration::from_secs(5000), false)?;
+    /// container.events(Duration::from_secs(5), false)?;
     /// # Ok(())
     /// # }
     /// ```
