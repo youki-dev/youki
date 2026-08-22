@@ -31,6 +31,7 @@ use crate::tests::linux_masked_paths::get_linux_masked_paths_tests;
 use crate::tests::linux_ns_itype::get_ns_itype_tests;
 use crate::tests::memory_policy::get_linux_memory_policy_tests;
 use crate::tests::misc_props::get_misc_props_test;
+use crate::tests::mount_propagation::get_mount_propagation_test;
 use crate::tests::mounts_recursive::get_mounts_recursive_test;
 use crate::tests::net_devices::get_net_devices_test;
 use crate::tests::no_pivot::get_no_pivot_test;
@@ -152,6 +153,7 @@ fn main() -> Result<()> {
     let ro_paths = get_ro_paths_test();
     let hostname = get_hostname_test();
     let misc_props = get_misc_props_test();
+    let mount_propagation = get_mount_propagation_test();
     let mounts_recursive = get_mounts_recursive_test();
     let domainname = get_domainname_tests();
     let intel_rdt = get_intel_rdt_test();
@@ -214,6 +216,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(ro_paths));
     tm.add_test_group(Box::new(hostname));
     tm.add_test_group(Box::new(misc_props));
+    tm.add_test_group(Box::new(mount_propagation));
     tm.add_test_group(Box::new(mounts_recursive));
     tm.add_test_group(Box::new(domainname));
     tm.add_test_group(Box::new(intel_rdt));

@@ -27,6 +27,7 @@ use oci_spec::runtime::{
     Capability, LinuxDevice, LinuxDeviceType, LinuxIdMapping, LinuxSchedulerPolicy,
     MemoryPolicyModeType, PosixRlimit, PosixRlimitType, Spec,
 };
+use procfs::process::{MountInfo, MountOptFields, Process};
 use tempfile::Builder;
 
 use crate::utils::{
@@ -1529,6 +1530,138 @@ pub fn validate_time_offsets(spec: &Spec) {
             eprintln!(
                 "Unexpected {clock_type} time offset, expected: {expected_secs} {expected_nanosecs}, found: {actual_secs} {actual_nanosecs}"
             );
+        }
+    }
+}
+
+pub fn validate_mount_propagation(spec: &Spec) {
+    let Some(mounts) = spec.mounts() else {
+        eprintln!("Error: mounts are not set in spec");
+        return;
+    };
+
+    let mountinfo: Vec<MountInfo> = match Process::myself().and_then(|p| p.mountinfo()) {
+        std::result::Result::Ok(mi) => mi.into_iter().collect(),
+        Err(e) => {
+            eprintln!("Error: failed to read mountinfo: {e}");
+            return;
+        }
+    };
+    let find = |path: &Path| mountinfo.iter().find(|m| m.mount_point == path);
+    let has_shared = |m: &MountInfo| {
+        m.opt_fields
+            .iter()
+            .any(|f| matches!(f, MountOptFields::Shared(_)))
+    };
+    let has_master = |m: &MountInfo| {
+        m.opt_fields
+            .iter()
+            .any(|f| matches!(f, MountOptFields::Master(_)))
+    };
+    let has_unbindable = |m: &MountInfo| {
+        m.opt_fields
+            .iter()
+            .any(|f| matches!(f, MountOptFields::Unbindable))
+    };
+
+    for mount in mounts {
+        let Some(options) = mount.options() else {
+            continue;
+        };
+        let Some(propagation) = options.iter().find(|o| {
+            matches!(
+                o.as_str(),
+                "shared"
+                    | "rshared"
+                    | "slave"
+                    | "rslave"
+                    | "private"
+                    | "rprivate"
+                    | "unbindable"
+                    | "runbindable"
+            )
+        }) else {
+            continue;
+        };
+
+        let dest = mount.destination();
+        let Some(top) = find(dest) else {
+            eprintln!("Error: mount {dest:?} not found in mountinfo");
+            continue;
+        };
+        let sub = find(&dest.join("sub"));
+
+        match propagation.as_str() {
+            "shared" | "rshared" => {
+                if !has_shared(top) {
+                    eprintln!(
+                        "Error: expected {dest:?} to be shared, got optional fields {:?}",
+                        top.opt_fields
+                    );
+                }
+                if let Some(sub) = sub {
+                    let expect_sub_shared = propagation == "rshared";
+                    if has_shared(sub) != expect_sub_shared {
+                        eprintln!(
+                            "Error: expected submount shared to be {expect_sub_shared} for {propagation}, got optional fields {:?}",
+                            sub.opt_fields
+                        );
+                    }
+                }
+            }
+            "slave" | "rslave" => {
+                if !has_master(top) || has_shared(top) {
+                    eprintln!(
+                        "Error: expected {dest:?} to be a slave, got optional fields {:?}",
+                        top.opt_fields
+                    );
+                }
+                if propagation == "rslave"
+                    && let Some(sub) = sub
+                    && (!has_master(sub) || has_shared(sub))
+                {
+                    eprintln!(
+                        "Error: expected submount to be a slave for rslave, got optional fields {:?}",
+                        sub.opt_fields
+                    );
+                }
+            }
+            "private" | "rprivate" => {
+                if has_shared(top) || has_master(top) || has_unbindable(top) {
+                    eprintln!(
+                        "Error: expected {dest:?} to be private, got optional fields {:?}",
+                        top.opt_fields
+                    );
+                }
+                if let Some(sub) = sub {
+                    let sub_private = !has_shared(sub) && !has_master(sub) && !has_unbindable(sub);
+                    let expect_sub_private = propagation == "rprivate";
+                    if sub_private != expect_sub_private {
+                        eprintln!(
+                            "Error: expected submount private to be {expect_sub_private} for {propagation}, got optional fields {:?}",
+                            sub.opt_fields
+                        );
+                    }
+                }
+            }
+            "unbindable" | "runbindable" => {
+                if !has_unbindable(top) {
+                    eprintln!(
+                        "Error: expected {dest:?} to be unbindable, got optional fields {:?}",
+                        top.opt_fields
+                    );
+                }
+                if let Some(sub) = sub {
+                    let expect_sub_unbindable = propagation == "runbindable";
+                    if has_unbindable(sub) != expect_sub_unbindable {
+                        eprintln!(
+                            "Error: expected submount unbindable to be {expect_sub_unbindable} for {propagation}, got optional fields {:?}",
+                            sub.opt_fields
+                        );
+                    }
+                }
+            }
+            _ => unreachable!(),
         }
     }
 }
