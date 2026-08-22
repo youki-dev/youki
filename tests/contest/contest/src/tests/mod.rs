@@ -47,6 +47,7 @@ pub mod rootfs_propagation;
 pub mod scheduler;
 pub mod seccomp;
 pub mod seccomp_notify;
+pub mod state;
 pub mod sysctl;
 pub mod time_ns;
 pub mod tlb;
