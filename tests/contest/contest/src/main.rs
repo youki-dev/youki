@@ -43,6 +43,7 @@ use crate::tests::poststop_fail::get_poststop_fail_tests;
 use crate::tests::prestart::get_prestart_tests;
 use crate::tests::prestart_fail::get_prestart_fail_tests;
 use crate::tests::process::get_process_test;
+use crate::tests::process_capabilities::get_process_capabilities_test;
 use crate::tests::process_capabilities_bounding::get_process_capabilities_bounding_test;
 use crate::tests::process_capabilities_fail::get_process_capabilities_fail_test;
 use crate::tests::process_oom_score_adj::get_process_oom_score_adj_test;
@@ -162,6 +163,7 @@ fn main() -> Result<()> {
     let devices = get_devices_test();
     let root_readonly = get_root_readonly_test();
     let process = get_process_test();
+    let process_capabilities = get_process_capabilities_test();
     let process_user = get_process_user_test();
     let process_rlimtis = get_process_rlimits_test();
     let process_rlimits_fail = get_process_rlimits_fail_test();
@@ -222,6 +224,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(devices));
     tm.add_test_group(Box::new(root_readonly));
     tm.add_test_group(Box::new(process));
+    tm.add_test_group(Box::new(process_capabilities));
     tm.add_test_group(Box::new(process_user));
     tm.add_test_group(Box::new(process_rlimtis));
     tm.add_test_group(Box::new(process_rlimits_fail));
