@@ -263,6 +263,14 @@ fn verify_pty_slave(slave: &OwnedFd) -> Result<()> {
     })
 }
 
+/// Send a PTY master fd to the console socket via SCM_RIGHTS.
+pub fn send_pty_master(console_fd: RawFd, master_fd: RawFd) -> nix::Result<usize> {
+    let iov = [IoSlice::new(PTMX_PATH)];
+    let fds = [master_fd];
+    let cmsg = socket::ControlMessage::ScmRights(&fds);
+    socket::sendmsg::<UnixAddr>(console_fd, &iov, &[cmsg], socket::MsgFlags::empty(), None)
+}
+
 /// Setup console AFTER pivot_root.
 ///
 /// This function should be called AFTER pivot_root. This follows runc's approach:
@@ -302,11 +310,7 @@ pub fn setup_console(syscall: &dyn Syscall, console_fd: RawFd, mount: bool) -> R
     }
 
     // Send PTY master to console socket
-    let pty_name: &[u8] = PTMX_PATH;
-    let iov = [IoSlice::new(pty_name)];
-    let fds = [master.as_raw_fd()];
-    let cmsg = socket::ControlMessage::ScmRights(&fds);
-    socket::sendmsg::<UnixAddr>(console_fd, &iov, &[cmsg], socket::MsgFlags::empty(), None)
+    send_pty_master(console_fd, master.as_raw_fd())
         .map_err(|err| TTYError::SendPtyMaster { source: err })?;
 
     // Set controlling terminal
