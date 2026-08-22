@@ -170,6 +170,11 @@ impl Container {
         );
         criu.cgroups_mode(opts.manage_cgroups_mode.clone());
         criu.set_link_remap(opts.link_remap);
+        // youki does not manage network devices, so external dependencies such as the
+        // host side of a veth pair cannot be described to CRIU. Dumping them makes
+        // restore fail with "Unknown peer net namespace", so runc sets this unconditionally.
+        // See: https://github.com/opencontainers/runc/commit/8187fb740c202f5d29f1717bb933143c10dae8a1
+        criu.set_empty_net_ns(opts.empty_net_ns);
 
         // Register network and PID namespaces as external to CRIU.
         //

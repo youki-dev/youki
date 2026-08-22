@@ -51,9 +51,9 @@ pub struct Checkpoint {
     // pub pre_dump: bool,
     #[arg(long, default_value = "soft", value_parser = clap::builder::PossibleValuesParser::new(["ignore", "full", "strict", "soft"]))]
     pub manage_cgroups_mode: String,
-    // TODO: Checkpoint a namespace, but don't save its properties
-    // #[arg(long)]
-    // pub empty_ns: bool,
+    // Checkpoint a namespace, but don't save its properties
+    #[arg(long, default_value = "network", value_parser = clap::builder::PossibleValuesParser::new(["network"]))]
+    pub empty_ns: String,
     // TODO: Enable auto-deduplication
     // #[arg(long)]
     // pub auto_dedup: bool,
