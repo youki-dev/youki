@@ -328,7 +328,9 @@ pub fn resume_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
     Ok(res)
 }
 
-fn runtime_command<P: AsRef<Path>>(dir: P) -> Command {
+/// Base command to invoke the runtime under test: `<runtime> --root <dir>/runtime`,
+/// with stdout/stderr piped.
+pub fn runtime_command<P: AsRef<Path>>(dir: P) -> Command {
     let mut command = Command::new(get_runtime_path());
     command
         .stdout(Stdio::piped())
@@ -807,6 +809,13 @@ pub fn build_exec_command<P: AsRef<Path>>(
             command.args(&cmd);
         }
     } else {
+        // With --process, only pass through flags (the process.json holds the command).
+        for a in args {
+            let s = a.as_ref();
+            if !s.is_empty() && s.to_string_lossy().starts_with("--") {
+                command.arg(s);
+            }
+        }
         command.arg(id);
     }
 
