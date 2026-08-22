@@ -1,6 +1,6 @@
 use std::process::{Command, Output};
 
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use test_framework::{Test, TestGroup, TestResult};
 
 use crate::tests::lifecycle::ContainerLifecycle;
@@ -47,8 +47,8 @@ fn state_nonexistent_container() -> TestResult {
 fn state_created_container() -> TestResult {
     let container = ContainerLifecycle::new();
 
-    if !matches!(container.create(), TestResult::Passed) {
-        return TestResult::Failed(anyhow!("failed to create container"));
+    if let TestResult::Failed(err) = container.create() {
+        return TestResult::Failed(err.context("failed to create container"));
     }
 
     let result = match run_state(&container, Some(container.get_id())) {
