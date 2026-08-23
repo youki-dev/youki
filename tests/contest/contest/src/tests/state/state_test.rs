@@ -1,6 +1,6 @@
 use std::process::{Command, Output};
 
-use anyhow::{Context, anyhow};
+use anyhow::anyhow;
 use test_framework::{Test, TestGroup, TestResult};
 
 use crate::tests::lifecycle::ContainerLifecycle;
