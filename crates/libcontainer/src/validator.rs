@@ -99,16 +99,16 @@ impl Validator {
         mounts: &[oci_spec::runtime::Mount],
     ) -> Result<(), ErrInvalidSpec> {
         mounts
-        .iter()
-        .filter(|mount| !mount.destination().is_absolute())
-        .for_each(|mount| {
-            tracing::warn!(
-                "mount destination {:?} is not absolute. \
-                Relative paths are deprecated in OCI Runtime Spec and may not be supported in future versions. \
-                The path will be interpreted as relative to '/'.",
-                mount.destination()
-            );
-        });
+          .iter()
+          .filter(|mount| !mount.destination().is_absolute())
+          .for_each(|mount| {
+              tracing::warn!(
+                  "mount destination {:?} is not absolute. \
+                  Relative paths are deprecated in OCI Runtime Spec and may not be supported in future versions. \
+                  The path will be interpreted as relative to '/'.",
+                  mount.destination()
+              );
+          });
         Ok(())
     }
 
