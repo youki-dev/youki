@@ -7,7 +7,6 @@ use user_ns::UserNamespaceConfig;
 
 use super::builder::ContainerBuilder;
 use super::builder_impl::ContainerBuilderImpl;
-use super::mount_validation::validate_idmapped_mounts;
 use super::{Container, ContainerStatus};
 use crate::config::YoukiConfig;
 use crate::error::{ErrInvalidSpec, LibcontainerError, MissingSpecError};
@@ -206,10 +205,6 @@ impl InitContainerBuilder {
                     Err(ErrInvalidSpec::AppArmorNotEnabled)?;
                 }
             }
-        }
-
-        if let Some(mounts) = spec.mounts() {
-            validate_idmapped_mounts(mounts, spec.linux().as_ref(), &*syscall)?;
         }
 
         Ok(())

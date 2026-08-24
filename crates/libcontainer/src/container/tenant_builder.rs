@@ -20,7 +20,6 @@ use procfs::process::Namespace;
 
 use super::Container;
 use super::builder::ContainerBuilder;
-use super::mount_validation::validate_idmapped_mounts;
 use crate::capabilities::CapabilityExt;
 use crate::container::ContainerStatus;
 use crate::container::builder_impl::ContainerBuilderImpl;
@@ -362,10 +361,6 @@ impl TenantContainerBuilder {
             utils::rootless_required(&*syscall).map_err(LibcontainerError::OtherIO)?;
 
         Validator::validate_spec(spec, is_rootless)?;
-
-        if let Some(mounts) = spec.mounts() {
-            validate_idmapped_mounts(mounts, spec.linux().as_ref(), &*syscall)?;
-        }
 
         Ok(())
     }

@@ -5,6 +5,7 @@ use libc::IFNAMSIZ;
 use nix::sys::stat::stat;
 use oci_spec::runtime::{LinuxNamespaceType, LinuxSchedulerPolicy, Spec};
 
+use crate::container::mount_validation::validate_idmapped_mounts;
 use crate::error::ErrInvalidSpec;
 use crate::utils::is_in_new_userns;
 
@@ -21,6 +22,7 @@ impl Validator {
         Self::validate_spec_for_time_namespace(spec)?;
         if let Some(mounts) = spec.mounts() {
             Self::validate_spec_for_mount_options(mounts)?;
+            validate_idmapped_mounts(mounts, spec.linux().as_ref(), is_rootless)?;
         }
         Self::validate_spec_for_net_devices(spec, is_rootless)?;
         Self::validate_spec_for_new_user_ns(spec, is_rootless)?;
