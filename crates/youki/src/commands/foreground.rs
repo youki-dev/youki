@@ -300,7 +300,7 @@ fn reap_children(init_pid: Pid) -> Result<Option<i32>> {
             }
             WaitStatus::Signaled(pid, signal, _) => {
                 if pid.eq(&init_pid) {
-                    return Ok(Some(signal as i32));
+                    return Ok(Some(128 + signal as i32));
                 }
 
                 // Else, some random child process exited, ignoring...
@@ -460,6 +460,45 @@ mod tests {
                 };
             }
         };
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_reap_children_signal_exit_code() -> Result<()> {
+        // Isolate the reaped process from the test harness: P0 runs the test,
+        // P1 calls reap_children, and P2 is terminated by SIGKILL.
+        match unsafe { unistd::fork()? } {
+            unistd::ForkResult::Parent { child } => {
+                assert_eq!(
+                    wait::waitpid(child, None)?,
+                    WaitStatus::Exited(child, 128 + SIGKILL as i32)
+                );
+            }
+            unistd::ForkResult::Child => match unsafe { unistd::fork() } {
+                Ok(unistd::ForkResult::Parent { child }) => {
+                    if kill(child, SIGKILL).is_err() {
+                        std::process::exit(255);
+                    }
+
+                    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                    loop {
+                        match reap_children(child) {
+                            Ok(Some(status)) => std::process::exit(status),
+                            Ok(None) if std::time::Instant::now() < deadline => {
+                                std::thread::sleep(Duration::from_millis(10));
+                            }
+                            _ => std::process::exit(255),
+                        }
+                    }
+                }
+                Ok(unistd::ForkResult::Child) => {
+                    std::thread::sleep(Duration::from_secs(30));
+                    std::process::exit(0);
+                }
+                Err(_) => std::process::exit(255),
+            },
+        }
 
         Ok(())
     }
