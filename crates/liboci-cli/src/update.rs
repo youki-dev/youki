@@ -18,7 +18,8 @@ pub struct Update {
     #[arg(long)]
     pub cpu_period: Option<u64>,
 
-    /// Set CPU usage limit within a given period (in microseconds)
+    /// Set CPU usage limit within a given period (in microseconds).
+    /// Use a negative value to unset the quota.
     #[arg(long, allow_hyphen_values = true)]
     pub cpu_quota: Option<i64>,
 

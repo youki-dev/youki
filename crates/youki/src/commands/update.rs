@@ -58,6 +58,8 @@ fn build_cpu(args: &Update) -> Result<Option<LinuxCpu>> {
         builder = builder.burst(v);
     }
     if let Some(v) = args.cpu_idle {
+        // idle only has meaning as 0/1; reject other values here rather
+        // than rely on kernel EINVAL.
         if v != 0 && v != 1 {
             anyhow::bail!("invalid value for --cpu-idle: {v} (expected 0 or 1)");
         }
@@ -65,10 +67,7 @@ fn build_cpu(args: &Update) -> Result<Option<LinuxCpu>> {
     }
 
     let cpu = builder.build()?;
-    let empty = LinuxCpuBuilder::default()
-        .build()
-        .expect("building an empty LinuxCpu can't fail");
-    Ok((cpu != empty).then_some(cpu))
+    Ok((cpu != LinuxCpu::default()).then_some(cpu))
 }
 
 #[cfg(test)]
@@ -99,69 +98,49 @@ mod tests {
     }
 
     #[test]
-    fn test_build_cpu_none_when_no_flags() {
+    fn none_when_no_flags() {
         let args = base_args();
         assert!(build_cpu(&args).unwrap().is_none());
     }
 
     #[test]
-    fn build_cpu_sets_period() {
-        let args = Update {
-            cpu_period: Some(900000),
-            ..base_args()
-        };
-        let cpu = build_cpu(&args).unwrap().unwrap();
-        assert_eq!(cpu.period(), Some(900000));
-    }
-
-    #[test]
-    fn build_cpu_sets_quota() {
-        let args = Update {
-            cpu_quota: Some(500000),
-            ..base_args()
-        };
-        let cpu = build_cpu(&args).unwrap().unwrap();
-        assert_eq!(cpu.quota(), Some(500000));
-    }
-
-    #[test]
-    fn build_cpu_sets_share() {
-        let args = Update {
-            cpu_share: Some(100),
-            ..base_args()
-        };
-        let cpu = build_cpu(&args).unwrap().unwrap();
-        assert_eq!(cpu.shares(), Some(100));
-    }
-
-    #[test]
-    fn build_cpu_sets_burst() {
-        let args = Update {
-            cpu_burst: Some(500000),
-            ..base_args()
-        };
-        let cpu = build_cpu(&args).unwrap().unwrap();
-        assert_eq!(cpu.burst(), Some(500000));
-    }
-
-    #[test]
-    fn build_cpu_sets_idle() {
+    fn build_cpu_sets_all_fields() {
         for idle in [0, 1] {
             let args = Update {
+                cpu_period: Some(900000),
+                cpu_quota: Some(500000),
+                cpu_share: Some(100),
+                cpu_burst: Some(500000),
                 cpu_idle: Some(idle),
                 ..base_args()
             };
             let cpu = build_cpu(&args).unwrap().unwrap();
+            assert_eq!(cpu.period(), Some(900000));
+            assert_eq!(cpu.quota(), Some(500000));
+            assert_eq!(cpu.shares(), Some(100));
+            assert_eq!(cpu.burst(), Some(500000));
             assert_eq!(cpu.idle(), Some(idle));
         }
     }
 
     #[test]
-    fn build_cpu_rejects_invalid_idle() {
+    fn build_cpu_sets_negative_quota() {
         let args = Update {
-            cpu_idle: Some(2),
+            cpu_quota: Some(-1),
             ..base_args()
         };
-        assert!(build_cpu(&args).is_err());
+        let cpu = build_cpu(&args).unwrap().unwrap();
+        assert_eq!(cpu.quota(), Some(-1));
+    }
+
+    #[test]
+    fn build_cpu_rejects_invalid_idle() {
+        for idle in [-1, 2, 3] {
+            let args = Update {
+                cpu_idle: Some(idle),
+                ..base_args()
+            };
+            assert!(build_cpu(&args).is_err());
+        }
     }
 }
