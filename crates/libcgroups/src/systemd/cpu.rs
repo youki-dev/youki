@@ -1,10 +1,11 @@
 use std::collections::HashMap;
+use std::path::Path;
 
-use oci_spec::runtime::LinuxCpu;
+use oci_spec::runtime::{LinuxCpu, LinuxResources};
 
 use super::controller::Controller;
 use super::dbus_native::serialize::Variant;
-use crate::common::ControllerOpt;
+use crate::common::{self, ControllerOpt, WrappedIoError};
 
 pub const CPU_WEIGHT: &str = "CPUWeight";
 pub const CPU_QUOTA: &str = "CPUQuotaPerSecUSec";
@@ -15,6 +16,8 @@ const MICROSECS_PER_SEC: u64 = 1_000_000;
 pub enum SystemdCpuError {
     #[error("realtime is not supported on systemd v2 yet")]
     RealtimeSystemd,
+    #[error(transparent)]
+    Io(#[from] WrappedIoError),
 }
 
 pub(crate) struct Cpu {}
@@ -84,6 +87,46 @@ impl Cpu {
     fn is_realtime_requested(cpu: &LinuxCpu) -> bool {
         cpu.realtime_period().is_some() || cpu.realtime_runtime().is_some()
     }
+
+    // systemd re-realizes the unit on any property change, so a side the caller
+    // left out has to be carried over from the current cpu.max to survive.
+    pub(super) fn resolve_pair(
+        resources: &LinuxResources,
+        full_path: &Path,
+    ) -> Result<LinuxResources, SystemdCpuError> {
+        let mut resolved = resources.clone();
+        if let Some(cpu) = resolved.cpu_mut() {
+            if cpu.quota().is_none() || cpu.period().is_none() {
+                let (current_quota, current_period) = Self::read_current_cpu_max(full_path)?;
+                if cpu.quota().is_none() {
+                    cpu.set_quota(Some(current_quota));
+                }
+                if cpu.period().is_none() {
+                    cpu.set_period(Some(current_period));
+                }
+            }
+        }
+        Ok(resolved)
+    }
+
+    // Returns the kernel defaults when cpu.max is absent, which is the case on
+    // the first apply at container creation.
+    fn read_current_cpu_max(full_path: &Path) -> Result<(i64, u64), SystemdCpuError> {
+        let content = match common::read_cgroup_file(full_path.join("cpu.max")) {
+            Ok(content) => content,
+            Err(WrappedIoError::Read { err, .. }) if err.kind() == std::io::ErrorKind::NotFound => {
+                return Ok((-1, 100_000));
+            }
+            Err(err) => return Err(err.into()),
+        };
+
+        // "max" parses as an error, which is the unlimited quota we want.
+        let mut parts = content.split_whitespace();
+        let quota = parts.next().and_then(|q| q.parse().ok()).unwrap_or(-1);
+        let period = parts.next().and_then(|p| p.parse().ok()).unwrap_or(100_000);
+
+        Ok((quota, period))
+    }
 }
 
 // Convert CPU shares (cgroup v1) into CPU weight (cgroup v2).
@@ -120,7 +163,7 @@ pub fn convert_shares_to_cgroup2(shares: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use anyhow::{Context, Result};
-    use oci_spec::runtime::LinuxCpuBuilder;
+    use oci_spec::runtime::{LinuxCpuBuilder, LinuxResourcesBuilder};
 
     use super::super::dbus_native::serialize::DbusSerialize;
     use super::*;
@@ -190,6 +233,58 @@ mod tests {
             let val = recast!(cpu_quota, Variant)?;
             assert_eq!(val, Variant::U64(period.1));
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_pair_fills_in_the_side_the_caller_left_out() -> Result<()> {
+        // (cpu.max, requested quota, requested period, expected pair)
+        let cases = [
+            (None, Some(70000i64), None, (70000i64, 100_000u64)),
+            (Some("50000 200000"), Some(70000), None, (70000, 200000)),
+            (Some("50000 200000"), None, Some(300000u64), (50000, 300000)),
+            (Some("max 100000"), None, Some(200000), (-1, 200000)),
+            (Some("50000 200000"), None, None, (50000, 200000)),
+            (None, Some(70000), Some(150000), (70000, 150000)),
+        ];
+
+        for (cpu_max, quota, period, expected) in cases {
+            let tmp = tempfile::tempdir().context("create temp dir")?;
+            if let Some(cpu_max) = cpu_max {
+                crate::test::set_fixture(tmp.path(), "cpu.max", cpu_max)
+                    .context("set cpu.max fixture")?;
+            }
+
+            let mut builder = LinuxCpuBuilder::default();
+            if let Some(quota) = quota {
+                builder = builder.quota(quota);
+            }
+            if let Some(period) = period {
+                builder = builder.period(period);
+            }
+            let resources = LinuxResourcesBuilder::default()
+                .cpu(builder.build().context("build cpu spec")?)
+                .build()
+                .context("build resources")?;
+
+            let resolved = Cpu::resolve_pair(&resources, tmp.path())?;
+            let cpu = resolved.cpu().as_ref().unwrap();
+            assert_eq!((cpu.quota().unwrap(), cpu.period().unwrap()), expected);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_pair_leaves_resources_without_cpu_untouched() -> Result<()> {
+        // the path is never read, since there is no cpu section to resolve.
+        let resources = LinuxResourcesBuilder::default()
+            .build()
+            .context("build resources")?;
+
+        let resolved = Cpu::resolve_pair(&resources, Path::new("/does/not/exist"))?;
+        assert!(resolved.cpu().is_none());
 
         Ok(())
     }

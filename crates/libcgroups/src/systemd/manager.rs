@@ -26,6 +26,8 @@ use crate::stats::Stats;
 use crate::systemd::dbus_native::serialize::Variant;
 use crate::systemd::io::Io;
 use crate::systemd::unified::Unified;
+use crate::v2::controller::Controller as V2Controller;
+use crate::v2::cpu::Cpu as FsCpu;
 use crate::v2::manager::{Manager as FsManager, V2ManagerError};
 
 const CONNECT_MAX_RETRIES: u32 = 7;
@@ -512,10 +514,16 @@ impl CgroupManager for Manager {
         let mut properties: HashMap<&str, Variant> = HashMap::new();
         let systemd_version = self.client.systemd_version()?;
 
+        let resolved_resources = Cpu::resolve_pair(controller_opt.resources, &self.full_path)?;
+        let cpu_controller_opt = ControllerOpt {
+            resources: &resolved_resources,
+            ..controller_opt.clone()
+        };
+
         for controller in CONTROLLER_TYPES {
             match controller {
                 ControllerType::Cpu => {
-                    Cpu::apply(controller_opt, systemd_version, &mut properties)?;
+                    Cpu::apply(&cpu_controller_opt, systemd_version, &mut properties)?;
                 }
 
                 ControllerType::CpuSet => {
@@ -543,6 +551,11 @@ impl CgroupManager for Manager {
             self.client
                 .set_unit_properties(&self.unit_name, &properties)?;
         }
+
+        // systemd has no properties for cpu burst and idle, and it resets the
+        // period to its default whenever the quota is unset.
+        <FsCpu as V2Controller>::apply(&cpu_controller_opt, &self.full_path)
+            .map_err(|err| SystemdManagerError::V2Manager(err.into()))?;
 
         Ok(())
     }
