@@ -97,8 +97,14 @@ impl Cpu {
         if let Some(mut shares) = cpu.shares() {
             shares = Self::convert_shares_to_cgroup2(shares);
             if shares != 0 {
-                // will result in Erno 34 (numerical result out of range) otherwise
-                common::write_cgroup_file(path.join(CGROUP_CPU_WEIGHT), shares)?;
+                // The kernel pins cpu.weight to 0 on an idle cgroup and rejects
+                // any other value, so a weight asked for alongside idle gives way.
+                if cpu.idle() == Some(1) {
+                    tracing::warn!(shares, "ignoring cpu shares because the cgroup is idle");
+                } else {
+                    // will result in Erno 34 (numerical result out of range) otherwise
+                    common::write_cgroup_file(path.join(CGROUP_CPU_WEIGHT), shares)?;
+                }
             }
         }
 
