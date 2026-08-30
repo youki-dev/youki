@@ -2,11 +2,11 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::thread::sleep;
 use std::time::Duration;
+
 use anyhow::{Result, anyhow};
-use oci_spec::runtime::{
-    LinuxNamespaceBuilder, LinuxNamespaceType, MountBuilder, Spec,
-};
+use oci_spec::runtime::{LinuxNamespaceBuilder, LinuxNamespaceType, MountBuilder, Spec};
 use test_framework::{ConditionalTest, TestGroup, TestResult};
+
 use crate::utils::{
     CreateOptions, State, create_container, criu_installed, delete_container, generate_uuid,
     get_runtime_path, kill_container, prepare_bundle, set_config, start_container,
@@ -38,11 +38,8 @@ impl CheckpointTestContext {
     }
 
     fn create(&self) -> TestResult {
-        let status = match create_container(
-            &self.id,
-            self.bundle_path(),
-            &CreateOptions::default(),
-        ) {
+        let status = match create_container(&self.id, self.bundle_path(), &CreateOptions::default())
+        {
             Ok(mut child) => match child.wait() {
                 Ok(status) => status,
                 Err(e) => {
@@ -52,35 +49,25 @@ impl CheckpointTestContext {
                 }
             },
             Err(e) => {
-                return TestResult::Failed(anyhow!(
-                    "create command could not be started: {e}"
-                ));
+                return TestResult::Failed(anyhow!("create command could not be started: {e}"));
             }
         };
 
         if status.success() {
             TestResult::Passed
         } else {
-            TestResult::Failed(anyhow!(
-                "created exited unsuccessfully ({status})"
-            ))
+            TestResult::Failed(anyhow!("created exited unsuccessfully ({status})"))
         }
     }
 
     fn start(&self) -> TestResult {
-        run_child(
-            start_container(
-                &self.id,
-                self.bundle_path()
-            ),
-            "start"
-        )
+        run_child(start_container(&self.id, self.bundle_path()), "start")
     }
 
     fn create_and_start(&self) -> TestResult {
         let result = self.create();
         if !matches!(result, TestResult::Passed) {
-            return  result;
+            return result;
         }
 
         let result = self.start();
@@ -90,18 +77,14 @@ impl CheckpointTestContext {
 
         match wait_container_running(&self.id, self.bundle_path()) {
             Ok(()) => TestResult::Passed,
-            Err(e) => TestResult::Failed(anyhow!(
-                "container did not reach running state: {e}"
-            )),
+            Err(e) => TestResult::Failed(anyhow!("container did not reach running state: {e}")),
         }
     }
 
     fn set_spec(&self, spec: &Spec) -> TestResult {
         match set_config(&self.bundle, spec) {
             Ok(()) => TestResult::Passed,
-            Err(e) => TestResult::Failed(anyhow!(
-                "failed to write config.json: {e}"
-            )),
+            Err(e) => TestResult::Failed(anyhow!("failed to write config.json: {e}")),
         }
     }
 }
@@ -125,15 +108,11 @@ fn run_child(child: Result<Child>, action: &str) -> TestResult {
         Ok(child) => match child.wait_with_output() {
             Ok(output) => output,
             Err(e) => {
-                return TestResult::Failed(anyhow!(
-                    "{action} command could not be waited on: {e}"
-                ));
+                return TestResult::Failed(anyhow!("{action} command could not be waited on: {e}"));
             }
         },
         Err(e) => {
-            return  TestResult::Failed(anyhow!(
-                "{action} command could not be started: {e}"
-            ));
+            return TestResult::Failed(anyhow!("{action} command could not be started: {e}"));
         }
     };
 
@@ -270,9 +249,7 @@ fn checkpoint(
     let output = match checkpoint {
         Ok(output) => output,
         Err(e) => {
-            return TestResult::Failed(anyhow!(
-                "failed to execute checkpoint command: {e}"
-            ));
+            return TestResult::Failed(anyhow!("failed to execute checkpoint command: {e}"));
         }
     };
 
@@ -640,12 +617,7 @@ fn checkpoint_tcp_skip_in_flight(ctx: &CheckpointTestContext) -> TestResult {
         return result;
     }
 
-    if let Err(e) = wait_in_flight(
-        ctx.bundle_path(),
-        &ctx.id,
-        PORT,
-        Duration::from_secs(10),
-    ) {
+    if let Err(e) = wait_in_flight(ctx.bundle_path(), &ctx.id, PORT, Duration::from_secs(10)) {
         return e;
     }
 
@@ -666,13 +638,14 @@ fn checkpoint_tcp_skip_in_flight(ctx: &CheckpointTestContext) -> TestResult {
     }
 
     let has_tcp_stream_img = match std::fs::read_dir(&image_path) {
-        Ok(entries) => entries
-            .flatten()
-            .any(|entry| entry.file_name().to_string_lossy().starts_with("tcp-stream-")),
+        Ok(entries) => entries.flatten().any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("tcp-stream-")
+        }),
         Err(e) => {
-            return TestResult::Failed(anyhow!(
-                "failed to read image dir {image_path:?}: {e}"
-            ));
+            return TestResult::Failed(anyhow!("failed to read image dir {image_path:?}: {e}"));
         }
     };
 
@@ -899,11 +872,7 @@ fn checkpoint_with_external_namespaces() -> TestResult {
     };
 
     let netns_path = format!("/var/run/netns/{netns_name}");
-    let spec = match build_external_ns_spec(
-        ctx.bundle_path(),
-        &netns_path,
-        "/proc/self/ns/pid",
-    ) {
+    let spec = match build_external_ns_spec(ctx.bundle_path(), &netns_path, "/proc/self/ns/pid") {
         Ok(spec) => spec,
         Err(e) => {
             return TestResult::Failed(anyhow!(
@@ -914,7 +883,7 @@ fn checkpoint_with_external_namespaces() -> TestResult {
 
     let result = ctx.set_spec(&spec);
     if !matches!(result, TestResult::Passed) {
-        return  result;
+        return result;
     }
 
     let result = ctx.create_and_start();
