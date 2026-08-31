@@ -92,7 +92,12 @@ impl ContainerBuilderImpl {
 
     fn run_container(&mut self) -> Result<(Pid, Option<OwnedFd>), LibcontainerError> {
         let linux = self.spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
-        let base_cgroups_path = utils::get_cgroup_path(linux.cgroups_path(), &self.container_id);
+        let systemd_cgroup = self.use_systemd || self.user_ns_config.is_some();
+        let base_cgroups_path = utils::get_cgroup_path_for_manager(
+            linux.cgroups_path(),
+            &self.container_id,
+            systemd_cgroup,
+        )?;
         let mut final_cgroups_path = base_cgroups_path;
 
         if let Some(sub_cgroup_path) = &self.sub_cgroup_path
@@ -112,7 +117,7 @@ impl ContainerBuilderImpl {
 
         let cgroup_config = libcgroups::common::CgroupConfig {
             cgroup_path: final_cgroups_path,
-            systemd_cgroup: self.use_systemd || self.user_ns_config.is_some(),
+            systemd_cgroup,
             container_name: self.container_id.to_owned(),
         };
         let process = self
@@ -227,11 +232,16 @@ impl ContainerBuilderImpl {
 
     fn cleanup_container(&self) -> Result<(), LibcontainerError> {
         let linux = self.spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
-        let cgroups_path = utils::get_cgroup_path(linux.cgroups_path(), &self.container_id);
+        let systemd_cgroup = self.use_systemd || self.user_ns_config.is_some();
+        let cgroups_path = utils::get_cgroup_path_for_manager(
+            linux.cgroups_path(),
+            &self.container_id,
+            systemd_cgroup,
+        )?;
         let cmanager =
             libcgroups::common::create_cgroup_manager(libcgroups::common::CgroupConfig {
                 cgroup_path: cgroups_path,
-                systemd_cgroup: self.use_systemd || self.user_ns_config.is_some(),
+                systemd_cgroup,
                 container_name: self.container_id.to_string(),
             })?;
 
