@@ -36,6 +36,8 @@ pub enum ConfigError {
     },
     #[error("missing linux in spec")]
     MissingLinux,
+    #[error("failed to determine the default cgroup path")]
+    CgroupPath(#[from] procfs::ProcError),
 }
 
 type Result<T> = std::result::Result<T, ConfigError>;
@@ -52,16 +54,30 @@ pub struct YoukiConfig {
 }
 
 impl YoukiConfig {
+    /// Creates a config using systemd cgroup semantics for backward compatibility.
     pub fn from_spec(spec: &Spec, container_id: &str) -> Result<Self> {
+        Self::from_spec_with_cgroup_manager(spec, container_id, true)
+    }
+
+    /// Creates a config using the selected cgroup manager's path semantics.
+    ///
+    /// When cgroupfs is selected and the OCI spec does not provide a cgroup path,
+    /// the default is derived from the current process's cgroup.
+    pub(crate) fn from_spec_with_cgroup_manager(
+        spec: &Spec,
+        container_id: &str,
+        systemd_cgroup: bool,
+    ) -> Result<Self> {
         Ok(YoukiConfig {
             hooks: spec.hooks().clone(),
-            cgroup_path: utils::get_cgroup_path(
+            cgroup_path: utils::get_cgroup_path_for_manager(
                 spec.linux()
                     .as_ref()
                     .ok_or(ConfigError::MissingLinux)?
                     .cgroups_path(),
                 container_id,
-            ),
+                systemd_cgroup,
+            )?,
         })
     }
 
