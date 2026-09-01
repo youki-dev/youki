@@ -21,9 +21,9 @@ liboci-cli = { version = "0.7.0", path = "crates/liboci-cli" } # MARK: Version
 libseccomp = "0.4.0"
 mockall = "0.15.0"
 nc = "0.9.8"
-netlink-packet-core = "0.8.1"
-netlink-packet-route = "0.32.1"
-netlink-sys = "0.8.8"
+netlink-packet-core = "0.9.0"
+netlink-packet-route = "0.33.0"
+netlink-sys = "0.9.0"
 nix = "0.29.0"
 num_cpus = "1.17"
 oci-spec = { version = "0.10.0", features = ["runtime"] }
