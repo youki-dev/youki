@@ -16,7 +16,10 @@ keywords = ["youki", "container", "cgroups"]
 default = ["v1", "v2", "systemd"]
 v1 = []
 v2 = []
-systemd = ["v2", "nix/socket", "nix/uio"]
+# The systemd manager attaches the eBPF device filter itself, over the one systemd derives
+# from DeviceAllow, so it cannot be built without it. This makes "systemd cgroupsv2_devices"
+# the same build as "systemd"; scripts/features_test.sh lists only the latter.
+systemd = ["v2", "cgroupsv2_devices", "nix/socket", "nix/uio"]
 cgroupsv2_devices = ["rbpf", "libbpf-sys", "errno", "libc", "nix/dir"]
 
 [dependencies]
