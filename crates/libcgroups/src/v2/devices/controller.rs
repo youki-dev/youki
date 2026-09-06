@@ -44,8 +44,55 @@ impl Controller for Devices {
     }
 }
 
+/// Whether the process sits in a user namespace, told apart the way runc's
+/// userns.RunningInUserNS() does: only the initial namespace maps the whole uid range.
+/// An unreadable map leaves no reason to assume otherwise.
+fn in_user_namespace() -> bool {
+    match std::fs::read_to_string("/proc/self/uid_map") {
+        Ok(content) => !content.contains("4294967295"),
+        Err(_) => false,
+    }
+}
+
+fn grants_full_access(rule: &LinuxDeviceCgroup) -> bool {
+    rule.allow()
+        && rule
+            .access()
+            .as_deref()
+            .is_some_and(|access| ['r', 'w', 'm'].iter().all(|flag| access.contains(*flag)))
+}
+
+/// Whether a filter that would not load can be left off.
+///
+/// bpf(2) is not available in a user namespace, and a container there cannot mknod a device
+/// node or reach a host one anyway, so the missing filter is not what keeps it away from
+/// devices. Outside one the filter is the only thing holding the rules up, so the error
+/// stands unless every rule grants full access and the filter would take nothing away.
+/// Mirrors runc's canSkipEBPFError() (devices/v2.go).
+fn can_skip_ebpf_error(linux_devices: &Option<Vec<LinuxDeviceCgroup>>) -> bool {
+    in_user_namespace()
+        || linux_devices
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .all(grants_full_access)
+}
+
 impl Devices {
     pub fn apply_devices(
+        cgroup_root: &Path,
+        linux_devices: &Option<Vec<LinuxDeviceCgroup>>,
+    ) -> Result<(), DevicesControllerError> {
+        match Self::attach_device_filter(cgroup_root, linux_devices) {
+            Err(err) if can_skip_ebpf_error(linux_devices) => {
+                tracing::warn!("leaving the device filter off, it could not be attached: {err}");
+                Ok(())
+            }
+            result => result,
+        }
+    }
+
+    fn attach_device_filter(
         cgroup_root: &Path,
         linux_devices: &Option<Vec<LinuxDeviceCgroup>>,
     ) -> Result<(), DevicesControllerError> {
@@ -186,5 +233,44 @@ mod tests {
 
         // act
         Devices::apply_devices(tmp.path(), &Some(vec![a_type])).expect("Could not apply devices");
+    }
+}
+
+#[cfg(test)]
+mod skip_tests {
+    use oci_spec::runtime::{LinuxDeviceCgroupBuilder, LinuxDeviceType};
+
+    use super::*;
+
+    fn rule(allow: bool, access: &str) -> LinuxDeviceCgroup {
+        LinuxDeviceCgroupBuilder::default()
+            .typ(LinuxDeviceType::C)
+            .allow(allow)
+            .access(access)
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn test_rules_that_take_nothing_away_can_skip() {
+        assert!(grants_full_access(&rule(true, "rwm")));
+        assert!(!grants_full_access(&rule(true, "rw")));
+        assert!(!grants_full_access(&rule(false, "rwm")));
+    }
+
+    #[test]
+    fn test_a_rule_the_filter_has_to_enforce_cannot_skip() {
+        // Only meaningful outside a user namespace, where the filter is the enforcement.
+        if in_user_namespace() {
+            return;
+        }
+
+        assert!(can_skip_ebpf_error(&None));
+        assert!(can_skip_ebpf_error(&Some(vec![rule(true, "rwm")])));
+        assert!(!can_skip_ebpf_error(&Some(vec![rule(false, "rwm")])));
+        assert!(!can_skip_ebpf_error(&Some(vec![
+            rule(true, "rwm"),
+            rule(true, "r")
+        ])));
     }
 }

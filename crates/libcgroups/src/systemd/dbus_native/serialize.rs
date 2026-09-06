@@ -38,6 +38,8 @@ pub enum Variant {
     ArrayU64(Vec<u64>),
     // a(st)
     ArrayStructU64(Vec<Structure<u64>>),
+    // a(ss)
+    ArrayStructSS(Vec<Structure<String>>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -363,6 +365,9 @@ impl<T: DbusSerialize> DbusSerialize for Vec<T> {
         let length_in_bytes =
             u32::from_le_bytes(buf[*counter..*counter + 4].try_into().unwrap()) as usize;
         *counter += 4;
+        // The elements start at their own alignment, and that padding is in the message even
+        // when the array is empty.
+        align_counter(counter, T::get_alignment());
 
         let end = *counter + length_in_bytes;
 
@@ -462,6 +467,14 @@ impl DbusSerialize for Variant {
                 buf.push(0);
                 s.serialize(buf);
             }
+            Self::ArrayStructSS(s) => {
+                let sub_type = <Vec<Structure<String>>>::get_signature();
+                let signature_length = sub_type.len() as u8;
+                buf.push(signature_length);
+                buf.extend_from_slice(sub_type.as_bytes());
+                buf.push(0);
+                s.serialize(buf);
+            }
         }
     }
     fn deserialize(buf: &[u8], counter: &mut usize) -> Result<Self> {
@@ -487,6 +500,7 @@ impl DbusSerialize for Variant {
         let vec64_signature = <Vec<u64>>::get_signature();
         let u64_signature = u64::get_signature();
         let vec_struct_u64_signature = <Vec<Structure<u64>>>::get_signature();
+        let vec_struct_ss_signature = <Vec<Structure<String>>>::get_signature();
         if signature == string_signature {
             Ok(Self::String(String::deserialize(buf, counter)?))
         } else if signature == bool_signature {
@@ -501,6 +515,10 @@ impl DbusSerialize for Variant {
             Ok(Self::ArrayStructU64(<Vec<Structure<u64>>>::deserialize(
                 buf, counter,
             )?))
+        } else if signature == vec_struct_ss_signature {
+            Ok(Self::ArrayStructSS(<Vec<Structure<String>>>::deserialize(
+                buf, counter,
+            )?))
         } else {
             Err(DbusError::IncompleteImplementation(format!(
                 "unsupported value signature {}",
@@ -508,5 +526,88 @@ impl DbusSerialize for Variant {
             ))
             .into())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn roundtrip(variant: Variant) {
+        let mut buf = Vec::new();
+        variant.serialize(&mut buf);
+        let mut counter = 0;
+        let decoded = Variant::deserialize(&buf, &mut counter).expect("failed to deserialize");
+
+        assert_eq!(decoded, variant);
+        assert_eq!(counter, buf.len(), "did not consume the whole buffer");
+    }
+
+    #[test]
+    fn test_array_struct_ss_roundtrip() {
+        roundtrip(Variant::ArrayStructSS(vec![
+            Structure::new("char-*".to_string(), "rwm".to_string()),
+            Structure::new("/dev/block/8:0".to_string(), "rw".to_string()),
+        ]));
+    }
+
+    #[test]
+    fn test_empty_array_struct_ss_roundtrip() {
+        // The empty list is how a unit's DeviceAllow is cleared.
+        roundtrip(Variant::ArrayStructSS(vec![]));
+    }
+
+    #[test]
+    fn test_array_struct_ss_signature() {
+        assert_eq!(<Vec<Structure<String>>>::get_signature(), "a(ss)");
+    }
+
+    // The array variants the cpuset and io controllers send had no deserialization test of
+    // their own, so nothing caught the alignment the elements of an 8-aligned array start
+    // at, empty or not.
+
+    #[test]
+    fn test_array_u32_roundtrip() {
+        roundtrip(Variant::ArrayU32(vec![26423, 1, 2]));
+        roundtrip(Variant::ArrayU32(vec![]));
+    }
+
+    #[test]
+    fn test_array_u64_roundtrip() {
+        roundtrip(Variant::ArrayU64(vec![15, u64::MAX]));
+        roundtrip(Variant::ArrayU64(vec![]));
+    }
+
+    #[test]
+    fn test_array_struct_u64_roundtrip() {
+        roundtrip(Variant::ArrayStructU64(vec![
+            Structure::new("/dev/sda".to_string(), 1024_u64),
+            Structure::new("/dev/sdb".to_string(), 2048_u64),
+        ]));
+        roundtrip(Variant::ArrayStructU64(vec![]));
+    }
+
+    #[test]
+    fn test_empty_8_aligned_array_keeps_its_element_padding() {
+        // The padding to the element boundary is in the message even with no elements. The
+        // bytes below are what systemd itself sends for these two values.
+        let mut buf = Vec::new();
+        Variant::ArrayStructSS(vec![]).serialize(&mut buf);
+        assert_eq!(
+            buf,
+            // "a(ss)" leaves the counter at 7, so one byte of padding, the length, and
+            // then four more to reach the 8 that "(ss)" starts at.
+            b"\x05a(ss)\0\0\0\0\0\0\0\0\0\0",
+            "expected signature, padding, length, element padding"
+        );
+
+        let mut buf = Vec::new();
+        Variant::ArrayU64(vec![]).serialize(&mut buf);
+        assert_eq!(
+            buf,
+            // "at" is short enough that the length already ends on 8, so no padding here.
+            b"\x02at\0\0\0\0\0",
+            "expected signature and length only"
+        );
     }
 }
