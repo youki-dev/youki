@@ -38,6 +38,8 @@ pub enum Variant {
     ArrayU64(Vec<u64>),
     // a(st)
     ArrayStructU64(Vec<Structure<u64>>),
+    // a(ss)
+    ArrayStructSS(Vec<Structure<String>>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -462,6 +464,14 @@ impl DbusSerialize for Variant {
                 buf.push(0);
                 s.serialize(buf);
             }
+            Self::ArrayStructSS(s) => {
+                let sub_type = <Vec<Structure<String>>>::get_signature();
+                let signature_length = sub_type.len() as u8;
+                buf.push(signature_length);
+                buf.extend_from_slice(sub_type.as_bytes());
+                buf.push(0);
+                s.serialize(buf);
+            }
         }
     }
     fn deserialize(buf: &[u8], counter: &mut usize) -> Result<Self> {
@@ -487,6 +497,7 @@ impl DbusSerialize for Variant {
         let vec64_signature = <Vec<u64>>::get_signature();
         let u64_signature = u64::get_signature();
         let vec_struct_u64_signature = <Vec<Structure<u64>>>::get_signature();
+        let vec_struct_ss_signature = <Vec<Structure<String>>>::get_signature();
         if signature == string_signature {
             Ok(Self::String(String::deserialize(buf, counter)?))
         } else if signature == bool_signature {
@@ -499,6 +510,10 @@ impl DbusSerialize for Variant {
             Ok(Self::U64(u64::deserialize(buf, counter)?))
         } else if signature == vec_struct_u64_signature {
             Ok(Self::ArrayStructU64(<Vec<Structure<u64>>>::deserialize(
+                buf, counter,
+            )?))
+        } else if signature == vec_struct_ss_signature {
+            Ok(Self::ArrayStructSS(<Vec<Structure<String>>>::deserialize(
                 buf, counter,
             )?))
         } else {

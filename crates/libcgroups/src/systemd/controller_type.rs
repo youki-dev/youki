@@ -3,6 +3,7 @@ use std::fmt::Display;
 pub enum ControllerType {
     Cpu,
     CpuSet,
+    Devices,
     Io,
     Memory,
     Pids,
@@ -13,6 +14,7 @@ impl Display for ControllerType {
         let print = match self {
             ControllerType::Cpu => "cpu",
             ControllerType::CpuSet => "cpuset",
+            ControllerType::Devices => "devices",
             ControllerType::Io => "io",
             ControllerType::Memory => "memory",
             ControllerType::Pids => "pids",
@@ -27,6 +29,7 @@ impl AsRef<str> for ControllerType {
         match self {
             ControllerType::Cpu => "cpu",
             ControllerType::CpuSet => "cpuset",
+            ControllerType::Devices => "devices",
             ControllerType::Io => "io",
             ControllerType::Memory => "memory",
             ControllerType::Pids => "pids",
@@ -37,6 +40,7 @@ impl AsRef<str> for ControllerType {
 pub const CONTROLLER_TYPES: &[ControllerType] = &[
     ControllerType::Cpu,
     ControllerType::CpuSet,
+    ControllerType::Devices,
     ControllerType::Io,
     ControllerType::Memory,
     ControllerType::Pids,
