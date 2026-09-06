@@ -693,4 +693,35 @@ mod tests {
             matches!(result, Err(VerifyInodeError::Verification(error_message)) if error_message == "error")
         )
     }
+
+    #[test]
+    fn test_normalize_path() {
+        // This test checks a path normalization method
+
+        let cases = [
+            // ordinary paths
+            ("/a/b/c", "/a/b/c"),
+            ("/a/./b", "/a/b"),
+            ("/a/b/../c", "/a/c"),
+            ("/asd/dfg/../gjoi", "/asd/gjoi"),
+            // paths processed first by components()
+            ("/a/b/", "/a/b"),
+            ("/a//b", "/a/b"),
+            // relative paths
+            ("", ""),
+            (".", ""),
+            ("..", ""),
+            ("../a", "a"),
+            ("a/../../b", "b"),
+            ("./a/b", "a/b"),
+            ("a/b/../..", ""),
+            // root escape check
+            ("/..", "/"),
+            ("/../..", "/"),
+            ("/a/../../b", "/b"),
+        ];
+        for (input, answer) in cases {
+            assert_eq!(Path::new(input).normalize(), Path::new(answer));
+        }
+    }
 }

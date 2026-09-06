@@ -1,9 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::fs::File;
-use std::os::fd::AsRawFd;
-#[cfg(feature = "libseccomp")]
-use std::os::fd::OwnedFd;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::PathBuf;
 
 use nix::sys::wait::{WaitStatus, waitpid};
@@ -54,7 +52,7 @@ pub enum ProcessError {
 
 type Result<T> = std::result::Result<T, ProcessError>;
 
-pub fn container_main_process(container_args: &ContainerArgs) -> Result<Pid> {
+pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, Option<OwnedFd>)> {
     // We use a set of channels to communicate between parent and child process.
     // Each channel is uni-directional. Because we will pass these channel to
     // cloned process, we have to be deligent about closing any unused channel.
@@ -185,7 +183,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<Pid> {
 
     let mut sequence =
         InitRequestSequence::new(container_args.container_type, &container_args.spec);
-    loop {
+    let foreground_pty_fd = loop {
         let (msg, fd) = init_main_receiver.recv_init_message()?;
         match sequence.accept(&msg)? {
             InitRequest::MountFd => {
@@ -194,7 +192,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<Pid> {
                 };
                 handle_mount_fd_request(mount_fd_service.as_ref(), request, &mut init_sender)?;
             }
-            InitRequest::Ready => break,
+            InitRequest::Ready => break fd,
             InitRequest::Hooks => {
                 let hooks = container_args
                     .spec
@@ -241,7 +239,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<Pid> {
                 let _ = fd;
             }
         }
-    }
+    };
 
     // We don't need to send anything to the init process after this point, so
     // close the sender.
@@ -295,7 +293,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<Pid> {
         Err(err) => return Err(ProcessError::WaitIntermediateProcess(err)),
     };
 
-    Ok(init_pid)
+    Ok((init_pid, foreground_pty_fd))
 }
 
 /// Init-side setup requests.

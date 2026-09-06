@@ -57,7 +57,9 @@ use crate::tests::rootfs_propagation::get_rootfs_propagation_test;
 use crate::tests::scheduler::get_scheduler_test;
 use crate::tests::seccomp::get_seccomp_test;
 use crate::tests::seccomp_notify::get_seccomp_notify_test;
+use crate::tests::state::get_state_test;
 use crate::tests::sysctl::get_sysctl_test;
+use crate::tests::terminal::get_terminal_test;
 use crate::tests::time_ns::get_time_ns_test;
 use crate::tests::tlb::get_tlb_test;
 use crate::tests::uid_mappings::get_uid_mappings_test;
@@ -149,6 +151,7 @@ fn main() -> Result<()> {
     let cgroup_v1_relative_network = cgroups::network::relative_network::get_test_group();
     let seccomp = get_seccomp_test();
     let seccomp_notify = get_seccomp_notify_test();
+    let state = get_state_test();
     let ro_paths = get_ro_paths_test();
     let hostname = get_hostname_test();
     let misc_props = get_misc_props_test();
@@ -184,6 +187,7 @@ fn main() -> Result<()> {
     let personality = get_personality_test();
     let prohibit_symlink = get_prohibit_symlink_test();
     let net_devices = get_net_devices_test();
+    let terminal = get_terminal_test();
     let checkpoint_restore = get_checkpoint_restore_tests();
     let update = get_update_test();
     let time_ns = get_time_ns_test();
@@ -211,6 +215,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(cgroup_v1_relative_network));
     tm.add_test_group(Box::new(seccomp));
     tm.add_test_group(Box::new(seccomp_notify));
+    tm.add_test_group(Box::new(state));
     tm.add_test_group(Box::new(ro_paths));
     tm.add_test_group(Box::new(hostname));
     tm.add_test_group(Box::new(misc_props));
@@ -246,6 +251,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(personality));
     tm.add_test_group(Box::new(prohibit_symlink));
     tm.add_test_group(Box::new(io_priority_test));
+    tm.add_test_group(Box::new(terminal));
     tm.add_test_group(Box::new(checkpoint_restore));
     tm.add_test_group(Box::new(update));
     tm.add_test_group(Box::new(time_ns));
