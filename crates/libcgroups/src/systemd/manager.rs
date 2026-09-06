@@ -16,6 +16,7 @@ use super::cpuset::CpuSet;
 use super::dbus_native::client::SystemdClient;
 use super::dbus_native::dbus::DbusConnection;
 use super::dbus_native::utils::SystemdClientError;
+use super::devices::Devices;
 use super::memory::Memory;
 use super::pids::Pids;
 use crate::common::{
@@ -174,6 +175,8 @@ pub enum SystemdManagerError {
     Cpu(#[from] super::cpu::SystemdCpuError),
     #[error("in cpuset controller: {0}")]
     CpuSet(#[from] super::cpuset::SystemdCpuSetError),
+    #[error("in devices controller: {0}")]
+    Devices(#[from] super::devices::SystemdDevicesError),
     #[error("in io controller: {0}")]
     Io(#[from] super::io::SystemdIoError),
     #[error("in memory controller: {0}")]
@@ -546,6 +549,10 @@ impl CgroupManager for Manager {
 
                 ControllerType::CpuSet => {
                     CpuSet::apply(controller_opt, systemd_version, &mut properties)?;
+                }
+
+                ControllerType::Devices => {
+                    Devices::apply(controller_opt, systemd_version, &mut properties)?;
                 }
 
                 ControllerType::Pids => {
