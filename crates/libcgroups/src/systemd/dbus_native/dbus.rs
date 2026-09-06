@@ -32,6 +32,8 @@ const SYSTEMD_PRIVATE_SOCKET: &str = "/run/systemd/private";
 /// This SO_RCVTIMEO approach is youki's equivalent fix.
 const RECV_TIMEOUT_SECS: i64 = 10;
 
+const DEVICE_ALLOW: &str = "DeviceAllow";
+
 /// NOTE that this is meant for a single-threaded use, and concurrent
 /// usage can cause errors, primarily because then the message received over
 /// socket can be out of order and we need to manager buffer and check with message counter
@@ -536,10 +538,21 @@ impl SystemdClient for DbusConnection {
     ) -> Result<()> {
         let proxy = self.create_proxy();
 
-        let props: Vec<Structure<Variant>> = properties
+        let mut props: Vec<Structure<Variant>> = properties
             .iter()
             .map(|(k, v)| Structure::new(k.to_string(), v.clone()))
             .collect();
+
+        // systemd appends to a unit's DeviceAllow list, and an empty array is the only
+        // way to clear it, so without this a second apply() on the same unit could only
+        // widen the list and never take an entry away. Both go in one message because a
+        // unit left between the two would deny everything for as long as that took.
+        if properties.contains_key(DEVICE_ALLOW) {
+            props.insert(
+                0,
+                Structure::new(DEVICE_ALLOW.to_string(), Variant::ArrayStructSS(vec![])),
+            );
+        }
 
         proxy
             .set_unit_properties(unit_name, true, props)
