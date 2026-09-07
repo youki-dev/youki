@@ -5,8 +5,22 @@ KIND_CLUSTER_NAME := 'youki'
 KIND_SYSTEMD_CLUSTER_NAME := 'youki-systemd'
 KIND_DEPLOY_CLUSTER_NAME := 'youki-deploy'
 YOUKI_INSTALLER_IMAGE := 'youki-installer:latest'
+DEV_VM_NAME := 'fedora'
 
 cwd := justfile_directory()
+
+destroy_vm:
+  limactl stop -f {{ DEV_VM_NAME }} && limactl remove {{ DEV_VM_NAME }}
+
+# creates a vm using LimaCTL for youki-development
+create_vm:
+  #!/bin/bash
+
+  ScriptDirectory=$(pwd)/experiment/selinux
+  SourceDirectory=$(pwd)
+  limactl start --progress scripts/vms/fedora.yaml --debug \
+    --param ScriptDirectory="$ScriptDirectory" \
+    --param SourceDirectory="$SourceDirectory"
 
 # build
 
@@ -38,7 +52,7 @@ install:
 # run integration tests
 test-integration: test-oci test-contest
 
-# run all tests except rust-oci 
+# run all tests except rust-oci
 test-all: test-basic test-features test-oci containerd-test # currently not doing rust-oci here
 
 # run basic tests
