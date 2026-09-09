@@ -254,6 +254,18 @@ pub struct PageServer {
     pub port: u16,
 }
 
+/// Restore parameter structure
+pub struct RestoreOptions {
+    pub console_socket: Option<PathBuf>,
+    pub ext_unix_sk: bool,
+    pub file_locks: bool,
+    pub image_path: PathBuf,
+    pub manage_cgroups_mode: rust_criu::CgMode,
+    pub shell_job: bool,
+    pub tcp_established: bool,
+    pub work_path: Option<PathBuf>,
+}
+
 #[cfg(test)]
 mod tests {
     use anyhow::{Context, Result};
