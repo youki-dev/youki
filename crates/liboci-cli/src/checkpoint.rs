@@ -51,8 +51,11 @@ pub struct Checkpoint {
     // pub pre_dump: bool,
     #[arg(long, default_value = "soft", value_parser = clap::builder::PossibleValuesParser::new(["ignore", "full", "strict", "soft"]))]
     pub manage_cgroups_mode: String,
-    // Checkpoint a namespace, but don't save its properties
-    #[arg(long, default_value = "network", value_parser = clap::builder::PossibleValuesParser::new(["network"]))]
+    /// Checkpoint a namespace, but don't save its properties
+    ///
+    /// Only `network` is accepted, and it applies even without this flag: youki does not manage
+    /// network devices, so their external dependencies cannot be described to CRIU.
+    #[arg(long, default_value = "network")]
     pub empty_ns: String,
     // TODO: Enable auto-deduplication
     // #[arg(long)]
