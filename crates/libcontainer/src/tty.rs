@@ -272,6 +272,32 @@ pub enum PtyMaster {
     Foreground(OwnedFd),
 }
 
+/// Connect to `console_socket` and send `master_fd` via SCM_RIGHTS.
+///
+/// This is the path-based variant of [`send_pty_master`] used during container
+/// restore, where the console socket path (not an already-open fd) is available.
+pub(crate) fn send_pty_master_to_socket(
+    console_socket: &std::path::Path,
+    master_fd: RawFd,
+) -> std::result::Result<(), crate::error::LibcontainerError> {
+    use std::os::unix::net::UnixStream;
+    let stream =
+        UnixStream::connect(console_socket).map_err(crate::error::LibcontainerError::OtherIO)?;
+    send_pty_master(stream.as_raw_fd(), master_fd)
+        .map_err(|e| crate::error::LibcontainerError::Other(e.to_string()))
+}
+
+/// Send a PTY master fd to a console socket via SCM_RIGHTS.
+pub(crate) fn send_pty_master(socket_fd: RawFd, master_fd: RawFd) -> Result<()> {
+    let pty_name: &[u8] = PTMX_PATH;
+    let iov = [IoSlice::new(pty_name)];
+    let fds = [master_fd];
+    let cmsg = socket::ControlMessage::ScmRights(&fds);
+    socket::sendmsg::<UnixAddr>(socket_fd, &iov, &[cmsg], socket::MsgFlags::empty(), None)
+        .map_err(|err| TTYError::SendPtyMaster { source: err })?;
+    Ok(())
+}
+
 /// Setup console AFTER pivot_root.
 ///
 /// This function should be called AFTER pivot_root. This follows runc's approach:
@@ -333,15 +359,7 @@ pub fn setup_console(
 
     Ok(match console_fd {
         Some(console_fd) => {
-            // Send PTY master to console socket
-            let pty_name: &[u8] = PTMX_PATH;
-            let iov = [IoSlice::new(pty_name)];
-            let fds = [master.as_raw_fd()];
-            let cmsg = socket::ControlMessage::ScmRights(&fds);
-
-            socket::sendmsg::<UnixAddr>(console_fd, &iov, &[cmsg], socket::MsgFlags::empty(), None)
-                .map_err(|err| TTYError::SendPtyMaster { source: err })?;
-
+            send_pty_master(console_fd, master.as_raw_fd())?;
             // Close console socket
             close(console_fd).map_err(|err| TTYError::CloseConsoleSocket { source: err })?;
             PtyMaster::SentToSocket

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use liboci_cli::Checkpoint;
 
-use crate::commands::load_container;
+use crate::commands::{load_container, parse_cgroups_mode};
 
 const NETWORK_NS: &str = "network";
 
@@ -33,16 +33,6 @@ fn parse_empty_ns(s: &str) -> Result<bool, anyhow::Error> {
     match s {
         NETWORK_NS => Ok(true),
         _ => Err(anyhow::anyhow!("namespace {s:?} is not supported")),
-    }
-}
-
-fn parse_cgroups_mode(s: &str) -> Result<rust_criu::CgMode, anyhow::Error> {
-    match s {
-        "ignore" => Ok(rust_criu::CgMode::IGNORE),
-        "full" => Ok(rust_criu::CgMode::FULL),
-        "strict" => Ok(rust_criu::CgMode::STRICT),
-        "soft" => Ok(rust_criu::CgMode::SOFT),
-        _ => Err(anyhow::anyhow!("invalid manage-cgroups-mode: {s}")),
     }
 }
 
