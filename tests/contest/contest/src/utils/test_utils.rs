@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::io::Write;
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread::sleep;
@@ -541,9 +542,14 @@ pub fn wait_container_running<P: AsRef<Path>>(id: &str, dir: P) -> Result<()> {
     )
 }
 
-pub fn handle_console_socket(stream: std::os::unix::net::UnixStream) {
+/// Blocks until the PTY master fd is received, so it is safe to call
+/// `child.wait()` immediately after.  Hold the returned fds until after the
+/// container is deleted — closing them early sends SIGHUP to the container.
+pub fn handle_console_socket(stream: std::os::unix::net::UnixStream) -> Vec<OwnedFd> {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<OwnedFd>>(1);
     std::thread::spawn(move || {
-        use std::io::{IoSliceMut, Read};
+        use std::io::IoSliceMut;
+        use std::os::fd::FromRawFd;
         use std::os::unix::io::AsRawFd;
 
         use nix::sys::socket::{ControlMessageOwned, MsgFlags, recvmsg};
@@ -553,23 +559,33 @@ pub fn handle_console_socket(stream: std::os::unix::net::UnixStream) {
         let mut cmsg_space = nix::cmsg_space!([std::os::unix::io::RawFd; 1]);
         let fd = stream.as_raw_fd();
 
-        if let Ok(msg) = recvmsg::<()>(fd, &mut iov, Some(&mut cmsg_space), MsgFlags::empty())
-            && let Ok(cmsgs) = msg.cmsgs()
+        let mut owned_fds: Vec<OwnedFd> = Vec::new();
+        // MSG_CMSG_CLOEXEC sets O_CLOEXEC on received fds atomically so that
+        // child processes spawned in subsequent tests do not inherit them.
+        if let Ok(msg) = recvmsg::<()>(
+            fd,
+            &mut iov,
+            Some(&mut cmsg_space),
+            MsgFlags::MSG_CMSG_CLOEXEC,
+        ) && let Ok(cmsgs) = msg.cmsgs()
         {
             for cmsg in cmsgs {
-                if let ControlMessageOwned::ScmRights(_) = cmsg {
-                    // Keep the PTY master open by waiting for the stream to close
-                    let mut buf = [0u8; 1024];
-                    let mut stream_mut = &stream;
-                    while let Ok(n) = stream_mut.read(&mut buf) {
-                        if n == 0 {
-                            break;
-                        }
-                    }
+                if let ControlMessageOwned::ScmRights(fds) = cmsg {
+                    // Convert to OwnedFd so the caller controls the lifetime.
+                    // If nix ever changes ScmRights to Vec<OwnedFd>, this site
+                    // will already be explicit about ownership.
+                    owned_fds.extend(fds.into_iter().map(|raw| {
+                        // SAFETY: raw is a freshly-received fd and we take sole
+                        // ownership here.
+                        unsafe { OwnedFd::from_raw_fd(raw) }
+                    }));
                 }
             }
         }
+        // Send even on error/empty so the receiver never hangs.
+        let _ = tx.send(owned_fds);
     });
+    rx.recv().unwrap_or_default()
 }
 
 /// Checkpoint a running container into `image_dir`.
@@ -680,7 +696,7 @@ pub fn restore_container(
     work_dir: Option<&Path>,
     restore_args: &[&str],
     global_args: &[&str],
-) -> Result<()> {
+) -> Result<Vec<OwnedFd>> {
     let stderr_file = tempfile::NamedTempFile::new().context("failed to create temp file")?;
 
     let mut args: Vec<std::ffi::OsString> = global_args.iter().map(Into::into).collect();
@@ -736,10 +752,14 @@ pub fn restore_container(
         .spawn()
         .context("failed to spawn restore")?;
 
-    if let Some(l) = listener {
-        let (stream, _) = l.accept()?;
-        handle_console_socket(stream);
-    }
+    let pty_fds = match listener {
+        Some(l) => {
+            let (stream, _) = l.accept()?;
+            handle_console_socket(stream)
+        }
+        // is_terminal = false: no PTY fd to receive.
+        None => Vec::new(),
+    };
 
     let status = child.wait().context("failed to wait for restore")?;
 
@@ -748,7 +768,7 @@ pub fn restore_container(
         bail!("restore failed ({}): {}", status, stderr);
     }
 
-    Ok(())
+    Ok(pty_fds)
 }
 
 /// Returns true if CRIU is installed on the host.
