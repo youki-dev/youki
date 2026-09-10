@@ -1,6 +1,6 @@
-mod controller;
+pub(crate) mod controller;
 pub mod controller_type;
-mod cpu;
+pub(crate) mod cpu;
 mod cpuset;
 #[cfg(feature = "cgroupsv2_devices")]
 pub mod devices;

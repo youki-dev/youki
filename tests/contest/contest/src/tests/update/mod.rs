@@ -130,7 +130,7 @@ pub fn get_update_test() -> TestGroup {
 
     let cpu_burst_test = ConditionalTest::new(
         "cpu_burst_test",
-        Box::new(can_run_update),
+        Box::new(can_run),
         Box::new(cpu::cpu_burst_test),
     );
 
@@ -154,19 +154,19 @@ pub fn get_update_test() -> TestGroup {
 
     let update_cpu_period_without_previous_limits_test = ConditionalTest::new(
         "update_cpu_period_without_previous_limits_test",
-        Box::new(can_run_update),
+        Box::new(can_run),
         Box::new(cpu::update_cpu_period_without_previous_limits_test),
     );
 
     let update_cpu_quota_without_previous_limits_test = ConditionalTest::new(
         "update_cpu_quota_without_previous_limits_test",
-        Box::new(can_run_update),
+        Box::new(can_run),
         Box::new(cpu::update_cpu_quota_without_previous_limits_test),
     );
 
     let update_cgroup_cpu_idle_test = ConditionalTest::new(
         "update_cgroup_cpu_idle_test",
-        Box::new(can_run_update),
+        Box::new(can_run),
         Box::new(cpu::update_cgroup_cpu_idle_test),
     );
 
