@@ -13,7 +13,10 @@ use crate::hooks;
 use crate::network::network_device::dev_change_net_namespace;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::fork::{self, CloneCb};
-use crate::process::message::Message;
+use crate::process::idmapped_mount::{
+    IdmappedMountError, MountFdService, mount_fd_service_required,
+};
+use crate::process::message::{Message, MountMsg};
 use crate::process::{channel, container_intermediate_process};
 use crate::syscall::SyscallError;
 use crate::user_ns::UserNamespaceConfig;
@@ -39,6 +42,8 @@ pub enum ProcessError {
     Network(#[from] crate::network::NetworkError),
     #[error("network device setup requested but {0}")]
     NetworkDeviceSetup(&'static str),
+    #[error(transparent)]
+    IdmappedMount(#[from] IdmappedMountError),
     #[error("failed syscall")]
     SyscallOther(#[source] SyscallError),
     #[error("failed hooks {0}")]
@@ -169,11 +174,24 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, Op
         }
     }
 
+    let mount_fd_service =
+        if mount_fd_service_required(container_args.container_type, &container_args.spec) {
+            Some(MountFdService::start(init_pid, container_args.syscall)?)
+        } else {
+            None
+        };
+
     let mut sequence =
         InitRequestSequence::new(container_args.container_type, &container_args.spec);
     let foreground_pty_fd = loop {
         let (msg, fd) = init_main_receiver.recv_init_message()?;
         match sequence.accept(&msg)? {
+            InitRequest::MountFd => {
+                let Message::AskMountFd(request) = msg else {
+                    unreachable!("mount fd request must carry a mount fd payload")
+                };
+                handle_mount_fd_request(mount_fd_service.as_ref(), request, &mut init_sender)?;
+            }
             InitRequest::Ready => break fd,
             InitRequest::Hooks => {
                 let hooks = container_args
@@ -278,9 +296,11 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, Op
     Ok((init_pid, foreground_pty_fd))
 }
 
-/// One-shot init-side setup requests.
+/// Init-side setup requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum InitRequest {
+    /// Requests a detached idmapped mount file descriptor during rootfs setup.
+    MountFd,
     /// Indicates that the init process requests execution of the configured runtime hooks.
     Hooks,
     /// Indicates that the init process is ready for network device setup.
@@ -291,12 +311,14 @@ enum InitRequest {
     Ready,
 }
 
-/// Ordering groups for one-shot init requests.
+/// Ordering groups for init requests.
 ///
 /// The declaration order is the protocol order. Requests in the same phase
 /// may arrive in any order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum InitPhase {
+    /// Accepts any number of mount fd requests while init prepares the rootfs.
+    Mounts,
     /// Waits for configured hook and network requests. They have no ordering
     /// dependency and may arrive in either order.
     Setup,
@@ -311,10 +333,15 @@ enum InitPhase {
 impl InitRequest {
     fn phase(self) -> InitPhase {
         match self {
+            Self::MountFd => InitPhase::Mounts,
             Self::Hooks | Self::Network => InitPhase::Setup,
             Self::Seccomp => InitPhase::Seccomp,
             Self::Ready => InitPhase::Ready,
         }
+    }
+
+    fn is_repeatable(self) -> bool {
+        matches!(self, Self::MountFd)
     }
 }
 
@@ -323,6 +350,7 @@ impl TryFrom<&Message> for InitRequest {
 
     fn try_from(message: &Message) -> std::result::Result<Self, Self::Error> {
         match message {
+            Message::AskMountFd(_) => Ok(Self::MountFd),
             Message::HookRequest => Ok(Self::Hooks),
             Message::SetupNetworkDeviceReady => Ok(Self::Network),
             Message::SeccompNotify => Ok(Self::Seccomp),
@@ -333,12 +361,13 @@ impl TryFrom<&Message> for InitRequest {
 }
 
 struct InitRequestSequence {
-    /// Expected one-shot requests that have not been received yet.
+    /// Expected requests that are still valid in the current protocol phase.
     pending_requests: HashSet<InitRequest>,
 }
 
 impl InitRequestSequence {
     fn new(container_type: ContainerType, spec: &Spec) -> Self {
+        let mount_fd = mount_fd_service_required(container_type, spec);
         let hooks = match container_type {
             ContainerType::InitContainer => spec.hooks().is_some(),
             ContainerType::TenantContainer { .. } => false,
@@ -358,11 +387,14 @@ impl InitRequestSequence {
         #[cfg(not(feature = "libseccomp"))]
         let seccomp = false;
 
-        Self::from_requirements(hooks, network_device, seccomp)
+        Self::from_requirements(mount_fd, hooks, network_device, seccomp)
     }
 
-    fn from_requirements(hooks: bool, network: bool, seccomp: bool) -> Self {
+    fn from_requirements(mount_fd: bool, hooks: bool, network: bool, seccomp: bool) -> Self {
         let mut pending_requests = HashSet::new();
+        if mount_fd {
+            pending_requests.insert(InitRequest::MountFd);
+        }
         if hooks {
             pending_requests.insert(InitRequest::Hooks);
         }
@@ -387,6 +419,11 @@ impl InitRequestSequence {
             return Err(unexpected_init_message(message));
         }
 
+        // Closes repeatable requests. Must run before the check below, which
+        // would otherwise see them as pending and reject everything after.
+        self.pending_requests
+            .retain(|request| !(request.is_repeatable() && request.phase() < received.phase()));
+
         if self
             .pending_requests
             .iter()
@@ -395,7 +432,9 @@ impl InitRequestSequence {
             return Err(unexpected_init_message(message));
         }
 
-        self.pending_requests.remove(&received);
+        if !received.is_repeatable() {
+            self.pending_requests.remove(&received);
+        }
         Ok(received)
     }
 }
@@ -438,6 +477,38 @@ fn handle_hook_request(
 
     init_sender.hook_done()?;
     Ok(())
+}
+
+fn handle_mount_fd_request(
+    service: Option<&MountFdService>,
+    request: MountMsg,
+    init_sender: &mut channel::InitSender,
+) -> Result<()> {
+    // Init blocks until it gets a reply, so answer it even when failing.
+    let Some(service) = service else {
+        if let Err(send_err) =
+            init_sender.send_mount_fd_error("unexpected mount fd request".to_string())
+        {
+            tracing::warn!(?send_err, "failed to send mount fd error to init");
+        }
+        return Err(ProcessError::Channel(
+            channel::ChannelError::UnexpectedInitMessage(Box::new(Message::AskMountFd(request))),
+        ));
+    };
+
+    match service.request_mount_fd(request) {
+        Ok(mount_fd) => {
+            init_sender.send_mount_fd_reply(mount_fd.as_raw_fd())?;
+            // Dropping `mount_fd` is safe: SCM_RIGHTS already duplicated it.
+            Ok(())
+        }
+        Err(err) => {
+            if let Err(send_err) = init_sender.send_mount_fd_error(err.to_string()) {
+                tracing::warn!(?send_err, "failed to send mount fd error to init");
+            }
+            Err(err.into())
+        }
+    }
 }
 
 #[cfg(feature = "libseccomp")]
@@ -600,11 +671,21 @@ mod tests {
 
     use super::*;
     use crate::process::channel::{intermediate_channel, main_channel};
+    use crate::process::message::{MountIdMap, MountIdMapUsernsSource};
+    use crate::syscall::syscall::SyscallType;
     use crate::user_ns::UserNamespaceIDMapper;
+
+    fn mount_fd_request() -> Message {
+        Message::AskMountFd(MountMsg {
+            source: PathBuf::from("/src"),
+            idmap: None,
+            clone_mount_tree_recursively: false,
+        })
+    }
 
     #[test]
     fn init_request_sequence_accepts_requests_in_order() {
-        let mut sequence = InitRequestSequence::from_requirements(true, true, true);
+        let mut sequence = InitRequestSequence::from_requirements(false, true, true, true);
 
         assert_eq!(
             sequence.accept(&Message::HookRequest).unwrap(),
@@ -626,7 +707,7 @@ mod tests {
 
     #[test]
     fn init_request_sequence_accepts_hooks_and_network_in_any_order() {
-        let mut sequence = InitRequestSequence::from_requirements(true, true, true);
+        let mut sequence = InitRequestSequence::from_requirements(false, true, true, true);
 
         assert_eq!(
             sequence.accept(&Message::SetupNetworkDeviceReady).unwrap(),
@@ -648,7 +729,7 @@ mod tests {
 
     #[test]
     fn init_request_sequence_skips_optional_requests() {
-        let mut sequence = InitRequestSequence::from_requirements(false, true, false);
+        let mut sequence = InitRequestSequence::from_requirements(false, false, true, false);
 
         assert_eq!(
             sequence.accept(&Message::SetupNetworkDeviceReady).unwrap(),
@@ -662,7 +743,7 @@ mod tests {
 
     #[test]
     fn init_request_sequence_accepts_ready_when_no_setup_is_required() {
-        let mut sequence = InitRequestSequence::from_requirements(false, false, false);
+        let mut sequence = InitRequestSequence::from_requirements(false, false, false, false);
 
         assert_eq!(
             sequence.accept(&Message::InitReady).unwrap(),
@@ -671,8 +752,46 @@ mod tests {
     }
 
     #[test]
+    fn init_request_sequence_accepts_repeatable_mount_requests() {
+        let mut sequence = InitRequestSequence::from_requirements(true, true, false, false);
+
+        assert_eq!(
+            sequence.accept(&mount_fd_request()).unwrap(),
+            InitRequest::MountFd
+        );
+        assert_eq!(
+            sequence.accept(&mount_fd_request()).unwrap(),
+            InitRequest::MountFd
+        );
+        assert_eq!(
+            sequence.accept(&Message::HookRequest).unwrap(),
+            InitRequest::Hooks
+        );
+
+        let err = sequence.accept(&mount_fd_request()).unwrap_err();
+        assert!(matches!(
+            err,
+            channel::ChannelError::UnexpectedInitMessage(_)
+        ));
+    }
+
+    #[test]
+    fn init_request_sequence_closes_mount_requests_at_ready() {
+        let mut sequence = InitRequestSequence::from_requirements(true, false, false, false);
+
+        assert_eq!(
+            sequence.accept(&mount_fd_request()).unwrap(),
+            InitRequest::MountFd
+        );
+        assert_eq!(
+            sequence.accept(&Message::InitReady).unwrap(),
+            InitRequest::Ready
+        );
+    }
+
+    #[test]
     fn init_request_sequence_rejects_seccomp_while_setup_is_pending() {
-        let mut sequence = InitRequestSequence::from_requirements(true, true, true);
+        let mut sequence = InitRequestSequence::from_requirements(false, true, true, true);
 
         let err = sequence.accept(&Message::SeccompNotify).unwrap_err();
         assert!(matches!(
@@ -683,7 +802,7 @@ mod tests {
 
     #[test]
     fn init_request_sequence_rejects_duplicate_request() {
-        let mut sequence = InitRequestSequence::from_requirements(true, false, false);
+        let mut sequence = InitRequestSequence::from_requirements(false, true, false, false);
         sequence.accept(&Message::HookRequest).unwrap();
 
         let err = sequence.accept(&Message::HookRequest).unwrap_err();
@@ -695,7 +814,7 @@ mod tests {
 
     #[test]
     fn init_request_sequence_rejects_ready_while_setup_is_pending() {
-        let mut sequence = InitRequestSequence::from_requirements(false, true, false);
+        let mut sequence = InitRequestSequence::from_requirements(false, false, true, false);
 
         let err = sequence.accept(&Message::InitReady).unwrap_err();
         assert!(matches!(
@@ -706,7 +825,7 @@ mod tests {
 
     #[test]
     fn init_request_sequence_rejects_ready_while_seccomp_is_pending() {
-        let mut sequence = InitRequestSequence::from_requirements(false, false, true);
+        let mut sequence = InitRequestSequence::from_requirements(false, false, false, true);
 
         let err = sequence.accept(&Message::InitReady).unwrap_err();
         assert!(matches!(
@@ -717,13 +836,70 @@ mod tests {
 
     #[test]
     fn init_request_sequence_rejects_seccomp_when_not_required() {
-        let mut sequence = InitRequestSequence::from_requirements(false, false, false);
+        let mut sequence = InitRequestSequence::from_requirements(false, false, false, false);
 
         let err = sequence.accept(&Message::SeccompNotify).unwrap_err();
         assert!(matches!(
             err,
             channel::ChannelError::UnexpectedInitMessage(_)
         ));
+    }
+
+    #[test]
+    fn handle_mount_fd_request_without_service_is_unexpected() -> Result<()> {
+        let (mut init_sender, mut init_receiver) = channel::init_channel()?;
+        let Message::AskMountFd(request) = mount_fd_request() else {
+            unreachable!()
+        };
+
+        let err = handle_mount_fd_request(None, request, &mut init_sender).unwrap_err();
+        assert!(matches!(
+            err,
+            ProcessError::Channel(channel::ChannelError::UnexpectedInitMessage(_))
+        ));
+        let reply_err = init_receiver.wait_for_mount_fd_reply().unwrap_err();
+        assert!(matches!(reply_err, channel::ChannelError::MountFdError(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn handle_mount_fd_request_forwards_fd_to_init() -> Result<()> {
+        let (mut init_sender, mut init_receiver) = channel::init_channel()?;
+        let service = MountFdService::start(Pid::this(), SyscallType::Test)
+            .map_err(ProcessError::IdmappedMount)?;
+        let request = MountMsg {
+            source: PathBuf::from("/src"),
+            idmap: Some(MountIdMap {
+                userns_source: MountIdMapUsernsSource::ContainerUserns,
+                apply_idmap_recursively: false,
+            }),
+            clone_mount_tree_recursively: false,
+        };
+
+        handle_mount_fd_request(Some(&service), request, &mut init_sender)?;
+
+        let mount_fd = init_receiver.wait_for_mount_fd_reply()?;
+        assert!(mount_fd.as_raw_fd() >= 0);
+        Ok(())
+    }
+
+    #[test]
+    fn handle_mount_fd_request_reports_worker_error_to_init() -> Result<()> {
+        let (mut init_sender, mut init_receiver) = channel::init_channel()?;
+        let service = MountFdService::start(Pid::this(), SyscallType::Test)
+            .map_err(ProcessError::IdmappedMount)?;
+        let Message::AskMountFd(request) = mount_fd_request() else {
+            unreachable!()
+        };
+
+        let err = handle_mount_fd_request(Some(&service), request, &mut init_sender).unwrap_err();
+        assert!(matches!(
+            err,
+            ProcessError::IdmappedMount(IdmappedMountError::InvalidRequest(_))
+        ));
+        let reply_err = init_receiver.wait_for_mount_fd_reply().unwrap_err();
+        assert!(matches!(reply_err, channel::ChannelError::MountFdError(_)));
+        Ok(())
     }
 
     #[test]
