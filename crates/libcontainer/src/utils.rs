@@ -13,6 +13,7 @@ use nix::sys::stat::{Mode, fstat};
 use nix::sys::statfs::{Statfs, fstatfs};
 use nix::unistd::{Uid, User};
 use oci_spec::runtime::{LinuxNamespaceType, Spec};
+use procfs::process::Process;
 
 use crate::error::{LibcontainerError, MissingSpecError};
 use crate::syscall::syscall::Syscall;
@@ -147,11 +148,70 @@ pub fn get_user_home(uid: u32) -> Option<PathBuf> {
     }
 }
 
-/// If None, it will generate a default path for cgroups.
+/// Resolves the cgroup path using systemd semantics when `cgroups_path` is not specified.
 pub fn get_cgroup_path(cgroups_path: &Option<PathBuf>, container_id: &str) -> PathBuf {
-    match cgroups_path {
-        Some(cpath) => cpath.clone(),
-        None => PathBuf::from(format!(":youki:{container_id}")),
+    resolve_cgroup_path(cgroups_path, container_id, true, None)
+}
+
+/// Resolves the cgroup path using the selected cgroup manager's semantics.
+///
+/// # Errors
+///
+/// Returns an error when cgroupfs needs the current process's cgroup to derive
+/// a default path and that process information cannot be read.
+pub(crate) fn get_cgroup_path_for_manager(
+    cgroups_path: &Option<PathBuf>,
+    container_id: &str,
+    systemd_cgroup: bool,
+) -> Result<PathBuf, procfs::ProcError> {
+    if cgroups_path.is_some() || systemd_cgroup {
+        return Ok(resolve_cgroup_path(
+            cgroups_path,
+            container_id,
+            systemd_cgroup,
+            None,
+        ));
+    }
+
+    let current_cgroup = Process::myself()?
+        .cgroups()?
+        .0
+        .into_iter()
+        // A hierarchy ID of zero identifies the unified cgroup v2 entry.
+        .find(|cgroup| cgroup.hierarchy == 0)
+        .map(|cgroup| PathBuf::from(cgroup.pathname));
+
+    Ok(resolve_cgroup_path(
+        cgroups_path,
+        container_id,
+        systemd_cgroup,
+        current_cgroup.as_deref(),
+    ))
+}
+
+fn resolve_cgroup_path(
+    cgroups_path: &Option<PathBuf>,
+    container_id: &str,
+    systemd_cgroup: bool,
+    current_cgroup: Option<&Path>,
+) -> PathBuf {
+    if let Some(cpath) = cgroups_path {
+        return cpath.clone();
+    }
+
+    if systemd_cgroup {
+        return PathBuf::from(format!(":youki:{container_id}"));
+    }
+
+    match current_cgroup {
+        Some(current) => current
+            .parent()
+            .unwrap_or_else(|| Path::new("/"))
+            .join(container_id),
+        // cgroup v1 has no unified hierarchy entry. Use a controller-root-relative
+        // path so the v1 manager can resolve the container ID separately under each
+        // mounted controller hierarchy.
+        None => PathBuf::from(container_id),
     }
 }
 
@@ -462,6 +522,25 @@ mod tests {
         assert_eq!(
             get_cgroup_path(&Some(PathBuf::from("/youki")), cid),
             PathBuf::from("/youki")
+        );
+    }
+
+    #[test]
+    fn test_resolve_default_cgroupfs_path_from_parent_cgroup() {
+        let current =
+            Path::new("/user.slice/user-1000.slice/user@1000.service/user.slice/podman-123.scope");
+
+        assert_eq!(
+            resolve_cgroup_path(&None, "container-id", false, Some(current)),
+            PathBuf::from("/user.slice/user-1000.slice/user@1000.service/user.slice/container-id")
+        );
+        assert_eq!(
+            resolve_cgroup_path(&None, "container-id", false, Some(Path::new("/"))),
+            PathBuf::from("/container-id")
+        );
+        assert_eq!(
+            resolve_cgroup_path(&None, "container-id", false, None),
+            PathBuf::from("container-id")
         );
     }
 
