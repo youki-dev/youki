@@ -21,7 +21,7 @@ struct RawTerminalGuard {
 impl RawTerminalGuard {
     fn new() -> Result<Option<Self>> {
         let stdin = io::stdin();
-        if !unistd::isatty(stdin.as_raw_fd())? {
+        if !unistd::isatty(&stdin)? {
             return Ok(None);
         }
 
@@ -52,7 +52,7 @@ struct OutputRelay {
 
 impl Drop for OutputRelay {
     fn drop(&mut self) {
-        let _ = self.stop.arm();
+        let _ = self.stop.write(1);
 
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
@@ -173,7 +173,7 @@ impl ConsoleBridge {
     /// Does nothing when the host stdin is not a TTY (there is no size to propagate).
     fn resize_to_host(&self) -> Result<()> {
         let stdin = io::stdin();
-        if !unistd::isatty(stdin.as_raw_fd()).unwrap_or(false) {
+        if !unistd::isatty(&stdin).unwrap_or(false) {
             return Ok(());
         }
 

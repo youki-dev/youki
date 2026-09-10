@@ -173,7 +173,7 @@ fn recv_pty_master(listener: &UnixListener) -> Result<OwnedFd> {
 
 // Read the master until EOF or the deadline (the container may stay alive on failure).
 fn read_master_for(master: OwnedFd, timeout: Duration) -> String {
-    let _ = fcntl(master.as_raw_fd(), FcntlArg::F_SETFL(OFlag::O_NONBLOCK));
+    let _ = fcntl(&master, FcntlArg::F_SETFL(OFlag::O_NONBLOCK));
     let mut file = fs::File::from(master);
     let deadline = Instant::now() + timeout;
     let mut buf = Vec::new();
