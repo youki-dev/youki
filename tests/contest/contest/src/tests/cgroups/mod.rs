@@ -7,6 +7,7 @@ use procfs::process::Process;
 pub mod blkio;
 pub mod cpu;
 pub mod memory;
+pub mod memory_v2;
 pub mod network;
 pub mod pids;
 
