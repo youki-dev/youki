@@ -14,14 +14,16 @@ mod container_delete;
 mod container_events;
 mod container_kill;
 mod container_pause;
+mod container_restore;
 mod container_resume;
 mod container_start;
 pub mod init_builder;
 mod mount_validation;
 pub mod state;
 pub mod tenant_builder;
-pub use container::{CheckpointOptions, Container};
+pub use container::{CheckpointOptions, Container, RestoreOptions};
 pub use container_checkpoint::CheckpointError;
+pub use container_restore::RestoreError;
 #[allow(deprecated)]
 pub use state::ContainerProcessState;
 pub use state::{ContainerStatus, State, StateConversionError};

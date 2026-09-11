@@ -3,13 +3,12 @@ use std::io::{ErrorKind, Write};
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::io::AsRawFd;
 
-use libcgroups::common::CgroupSetup::{Hybrid, Legacy};
-#[cfg(feature = "v1")]
-use libcgroups::common::DEFAULT_CGROUP_ROOT;
 use oci_spec::runtime::{LinuxNamespaceType, Spec};
 
 use super::container_criu::{
-    CRIU_VERSION_MINIMUM, check_criu_version, handle_checkpointing_external_namespaces,
+    CRIU_VERSION_MINIMUM, DESCRIPTORS_JSON, check_cgroup_v1_unsupported, check_criu_version,
+    configure_criu_common_options, handle_checkpointing_external_namespaces, open_image_dir,
+    resolve_mount_dest_in_rootfs,
 };
 use super::{Container, ContainerStatus};
 use crate::container::container::CheckpointOptions;
@@ -17,7 +16,6 @@ use crate::error::LibcontainerError;
 use crate::rootfs::utils::is_bind;
 
 const CRIU_CHECKPOINT_LOG_FILE: &str = "dump.log";
-const DESCRIPTORS_JSON: &str = "descriptors.json";
 
 #[derive(thiserror::Error, Debug)]
 pub enum CheckpointError {
@@ -26,6 +24,7 @@ pub enum CheckpointError {
 }
 
 impl Container {
+    /// Checkpoint a running container using CRIU.
     pub fn checkpoint(&mut self, opts: &CheckpointOptions) -> Result<(), LibcontainerError> {
         self.refresh_status()?;
 
@@ -54,6 +53,7 @@ impl Container {
                 e
             )))
         })?;
+
         // We need to tell CRIU that all bind mounts are external. CRIU will fail checkpointing
         // if it does not know that these bind mounts are coming from the outside of the container.
         // This information is needed during restore again. The external location of the bind
@@ -61,6 +61,17 @@ impl Container {
         // information found in 'config.json'.
         let source_spec_path = self.bundle().join("config.json");
         let spec = Spec::load(source_spec_path)?;
+
+        // Determine rootfs path for symlink resolution (mirrors crun's chroot_realpath logic).
+        let rootfs = {
+            let root = spec.root().as_ref().map(|r| r.path().to_path_buf());
+            match root {
+                Some(p) if p.is_absolute() => p,
+                Some(p) => self.bundle().join(p),
+                None => self.bundle().join("rootfs"),
+            }
+        };
+
         let mounts = spec.mounts().clone();
         for m in mounts.unwrap_or_default() {
             if is_bind(&m) {
@@ -70,46 +81,58 @@ impl Container {
                     .into_os_string()
                     .into_string()
                     .expect("failed to convert mount destination");
-                criu.set_external_mount(dest.clone(), dest);
+                // Resolve the destination path through symlinks in rootfs so that the
+                // key we pass to CRIU matches the actual mount point the kernel sees.
+                // When a bind-mount destination is a symlink (e.g. /conf -> /real/conf),
+                // the kernel follows it and the mount appears at the resolved path.
+                let resolved = resolve_mount_dest_in_rootfs(&rootfs, &dest);
+                criu.set_external_mount(resolved.clone(), resolved);
             } else if m.typ().as_deref() == Some("cgroup") {
-                match libcgroups::common::get_cgroup_setup()? {
-                    // For v1 it is necessary to list all cgroup mounts as external mounts
-                    Legacy | Hybrid => {
-                        #[cfg(not(feature = "v1"))]
-                        panic!(
-                            "libcontainer can't run in a Legacy or Hybrid cgroup setup without the v1 feature"
-                        );
-                        #[cfg(feature = "v1")]
-                        for mp in
-                            libcgroups::v1::util::list_subsystem_mount_points().map_err(|err| {
-                                tracing::error!(?err, "failed to get subsystem mount points");
-                                LibcontainerError::OtherCgroup(err.to_string())
-                            })?
-                        {
-                            let cgroup_mount = mp
-                                .clone()
-                                .into_os_string()
-                                .into_string()
-                                .expect("failed to convert mount point");
-                            if cgroup_mount.starts_with(DEFAULT_CGROUP_ROOT) {
-                                criu.set_external_mount(cgroup_mount.clone(), cgroup_mount);
-                            }
-                        }
+                check_cgroup_v1_unsupported("checkpoint")?;
+            }
+        }
+
+        // Register file masked paths as external mounts.
+        //
+        // Masked paths come in two kinds depending on whether the target is a
+        // file or a directory (see OCI runtime spec, process/init/process.rs):
+        //
+        //   - Files:       the OCI runtime bind-mounts /dev/null over them.
+        //                  The new mount has the same underlying device as the
+        //                  /dev tmpfs, so CRIU cannot dump/restore it internally.
+        //                  We must explicitly mark it as external so CRIU records
+        //                  a stable key that restore can reference.
+        //
+        //   - Directories: the OCI runtime overlays a fresh read-only tmpfs.
+        //                  CRIU can dump and restore this autonomously (it just
+        //                  creates a new tmpfs on restore).  Marking it external
+        //                  here would force restore to supply a host-side source,
+        //                  which is unnecessary and error-prone.
+        //
+        // Ref: runc addCriuDumpMount for MaskPaths in criu_linux.go
+        if let Some(linux) = spec.linux() {
+            if let Some(masked_paths) = linux.masked_paths() {
+                for path in masked_paths {
+                    let resolved = resolve_mount_dest_in_rootfs(&rootfs, path);
+                    let rel = resolved.trim_start_matches('/');
+                    let full_path = rootfs.join(rel);
+                    // Only register FILE masked paths; directories are tmpfs and
+                    // CRIU handles them without external mount registration.
+                    if !full_path.exists() || full_path.is_dir() {
+                        continue;
                     }
-                    _ => (),
+                    criu.set_external_mount(resolved.clone(), resolved);
                 }
             }
         }
 
-        let directory = File::open(&opts.image_path).map_err(|err| {
-            tracing::error!(path = ?opts.image_path, ?err, "failed to open checkpoint directory");
-            LibcontainerError::OtherIO(err)
-        })?;
+        let directory = open_image_dir(&opts.image_path)?;
         criu.set_images_dir_fd(directory.as_raw_fd());
 
         // It seems to be necessary to be defined outside of 'if' to
         // keep the FD open until CRIU uses it.
         let work_dir: File;
+        // TODO: fall back to image_path when work_path is not specified
         if let Some(wp) = &opts.work_path {
             // Create work directory if it doesn't exist (mode 0o700 like crun).
             if let Err(err) = DirBuilder::new().mode(0o700).create(wp) {
@@ -151,16 +174,19 @@ impl Container {
         .map_err(LibcontainerError::OtherIO)?;
 
         criu.set_log_file(CRIU_CHECKPOINT_LOG_FILE.to_string());
-        criu.set_log_level(4);
+        configure_criu_common_options(
+            &mut criu,
+            opts.ext_unix_sk,
+            opts.shell_job,
+            opts.tcp_established,
+            opts.file_locks,
+            opts.manage_cgroups_mode.clone(),
+        );
         criu.set_pid(pid);
         criu.set_leave_running(opts.leave_running);
-        criu.set_ext_unix_sk(opts.ext_unix_sk);
-        criu.set_shell_job(opts.shell_job);
-        criu.set_tcp_established(opts.tcp_established);
         criu.set_tcp_skip_in_flight(opts.tcp_skip_in_flight);
-        criu.set_file_locks(opts.file_locks);
-        criu.set_orphan_pts_master(true);
-        criu.set_manage_cgroups(true);
+        // TODO: set freeze cgroup path via criu.set_freeze_cgroup()
+        // TODO: configure network lock method (iptables/nftables/skip) via criu.set_network_lock()
         criu.set_root(
             self.bundle()
                 .clone()
@@ -168,7 +194,6 @@ impl Container {
                 .into_string()
                 .unwrap(),
         );
-        criu.cgroups_mode(opts.manage_cgroups_mode.clone());
         criu.set_link_remap(opts.link_remap);
 
         // Register network and PID namespaces as external to CRIU.

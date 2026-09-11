@@ -62,9 +62,11 @@ pub enum LibcontainerError {
     CgroupCreate(#[from] libcgroups::common::CreateCgroupSetupError),
     #[error(transparent)]
     CgroupGet(#[from] libcgroups::common::GetCgroupSetupError),
-    #[error[transparent]]
+    #[error(transparent)]
     Checkpoint(#[from] crate::container::CheckpointError),
-    #[error[transparent]]
+    #[error(transparent)]
+    Restore(#[from] crate::container::RestoreError),
+    #[error(transparent)]
     CreateContainerError(#[from] CreateContainerError),
     #[error(transparent)]
     NetDevicesError(#[from] crate::utils::NetDevicesError),
