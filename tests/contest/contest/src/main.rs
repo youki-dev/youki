@@ -143,6 +143,7 @@ fn main() -> Result<()> {
     let create_runtime = get_create_runtime_tests();
     let prestart_fail = get_prestart_fail_tests();
     let cgroup_v2_cpu = cgroups::cpu::v2::get_test_group();
+    let cgroup_v2_memory = cgroups::memory::get_test_group();
     let seccomp = get_seccomp_test();
     let seccomp_notify = get_seccomp_notify_test();
     let state = get_state_test();
@@ -201,6 +202,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(create_runtime));
     tm.add_test_group(Box::new(prestart_fail));
     tm.add_test_group(Box::new(cgroup_v2_cpu));
+    tm.add_test_group(Box::new(cgroup_v2_memory));
     tm.add_test_group(Box::new(seccomp));
     tm.add_test_group(Box::new(seccomp_notify));
     tm.add_test_group(Box::new(state));
