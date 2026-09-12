@@ -20,7 +20,6 @@ use procfs::process::Namespace;
 
 use super::Container;
 use super::builder::ContainerBuilder;
-use super::mount_validation::validate_idmapped_mounts;
 use crate::capabilities::CapabilityExt;
 use crate::container::ContainerStatus;
 use crate::container::builder_impl::ContainerBuilderImpl;
@@ -364,18 +363,11 @@ impl TenantContainerBuilder {
             Err(ErrInvalidSpec::UnsupportedVersion)?;
         }
 
-        Validator::validate_spec(spec)?;
-
         let syscall = create_syscall();
+        let is_rootless =
+            utils::rootless_required(&*syscall).map_err(LibcontainerError::OtherIO)?;
 
-        if let Some(mounts) = spec.mounts() {
-            utils::validate_mount_options(mounts)?;
-            validate_idmapped_mounts(mounts, spec.linux().as_ref(), &*syscall)?;
-        }
-
-        utils::validate_spec_for_new_user_ns(spec, &*syscall)?;
-        utils::validate_spec_for_net_devices(spec, &*syscall)
-            .map_err(LibcontainerError::NetDevicesError)?;
+        Validator::validate_spec(spec, is_rootless)?;
 
         Ok(())
     }
