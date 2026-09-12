@@ -70,3 +70,124 @@ pub struct Update {
     #[arg(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
     pub container_id: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser, Debug)]
+    struct TestCli {
+        #[command(flatten)]
+        update: Update,
+    }
+
+    #[test]
+    fn test_parse_memory_positive() {
+        let cli = TestCli::try_parse_from(["test", "--memory", "1048576", "container1"]).unwrap();
+        assert_eq!(cli.update.memory, Some(1048576));
+        assert_eq!(cli.update.container_id, "container1");
+    }
+
+    #[test]
+    fn test_parse_memory_negative() {
+        let cli = TestCli::try_parse_from(["test", "--memory", "-1", "container1"]).unwrap();
+        assert_eq!(cli.update.memory, Some(-1));
+    }
+
+    #[test]
+    fn test_parse_memory_reservation_positive() {
+        let cli = TestCli::try_parse_from(["test", "--memory-reservation", "524288", "container1"])
+            .unwrap();
+        assert_eq!(cli.update.memory_reservation, Some(524288));
+    }
+
+    #[test]
+    fn test_parse_memory_reservation_negative() {
+        let cli =
+            TestCli::try_parse_from(["test", "--memory-reservation", "-1", "container1"]).unwrap();
+        assert_eq!(cli.update.memory_reservation, Some(-1));
+    }
+
+    #[test]
+    fn test_parse_memory_swap_positive() {
+        let cli =
+            TestCli::try_parse_from(["test", "--memory-swap", "2097152", "container1"]).unwrap();
+        assert_eq!(cli.update.memory_swap, Some(2097152));
+    }
+
+    #[test]
+    fn test_parse_memory_swap_negative() {
+        let cli = TestCli::try_parse_from(["test", "--memory-swap", "-1", "container1"]).unwrap();
+        assert_eq!(cli.update.memory_swap, Some(-1));
+    }
+
+    #[test]
+    fn test_parse_all_memory_flags() {
+        let cli = TestCli::try_parse_from([
+            "test",
+            "--memory",
+            "1048576",
+            "--memory-reservation",
+            "524288",
+            "--memory-swap",
+            "2097152",
+            "container1",
+        ])
+        .unwrap();
+        assert_eq!(cli.update.memory, Some(1048576));
+        assert_eq!(cli.update.memory_reservation, Some(524288));
+        assert_eq!(cli.update.memory_swap, Some(2097152));
+    }
+
+    #[test]
+    fn test_parse_all_memory_flags_negative() {
+        let cli = TestCli::try_parse_from([
+            "test",
+            "--memory",
+            "-1",
+            "--memory-reservation",
+            "-1",
+            "--memory-swap",
+            "-1",
+            "container1",
+        ])
+        .unwrap();
+        assert_eq!(cli.update.memory, Some(-1));
+        assert_eq!(cli.update.memory_reservation, Some(-1));
+        assert_eq!(cli.update.memory_swap, Some(-1));
+    }
+
+    #[test]
+    fn test_parse_mixed_memory_flags() {
+        let cli = TestCli::try_parse_from([
+            "test",
+            "--memory",
+            "1048576",
+            "--memory-reservation",
+            "-1",
+            "--memory-swap",
+            "-1",
+            "container1",
+        ])
+        .unwrap();
+        assert_eq!(cli.update.memory, Some(1048576));
+        assert_eq!(cli.update.memory_reservation, Some(-1));
+        assert_eq!(cli.update.memory_swap, Some(-1));
+    }
+
+    #[test]
+    fn test_parse_with_resources() {
+        let cli = TestCli::try_parse_from([
+            "test",
+            "--resources",
+            "resources.json",
+            "--memory",
+            "1048576",
+            "container1",
+        ])
+        .unwrap();
+        assert_eq!(cli.update.resources, Some(PathBuf::from("resources.json")));
+        assert_eq!(cli.update.memory, Some(1048576));
+    }
+}

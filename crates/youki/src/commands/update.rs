@@ -131,6 +131,39 @@ mod tests {
     }
 
     #[test]
+    fn test_build_memory_limit_and_reservation() {
+        let mut args = default_update();
+        args.memory = Some(1024);
+        args.memory_reservation = Some(512);
+        let mem = build_memory(&args).unwrap().unwrap();
+        assert_eq!(mem.limit(), Some(1024));
+        assert_eq!(mem.reservation(), Some(512));
+        assert_eq!(mem.swap(), None);
+    }
+
+    #[test]
+    fn test_build_memory_limit_and_swap() {
+        let mut args = default_update();
+        args.memory = Some(1024);
+        args.memory_swap = Some(2048);
+        let mem = build_memory(&args).unwrap().unwrap();
+        assert_eq!(mem.limit(), Some(1024));
+        assert_eq!(mem.reservation(), None);
+        assert_eq!(mem.swap(), Some(2048));
+    }
+
+    #[test]
+    fn test_build_memory_reservation_and_swap() {
+        let mut args = default_update();
+        args.memory_reservation = Some(512);
+        args.memory_swap = Some(2048);
+        let mem = build_memory(&args).unwrap().unwrap();
+        assert_eq!(mem.limit(), None);
+        assert_eq!(mem.reservation(), Some(512));
+        assert_eq!(mem.swap(), Some(2048));
+    }
+
+    #[test]
     fn test_build_memory_all() {
         let mut args = default_update();
         args.memory = Some(1024);
@@ -140,5 +173,59 @@ mod tests {
         assert_eq!(mem.limit(), Some(1024));
         assert_eq!(mem.reservation(), Some(512));
         assert_eq!(mem.swap(), Some(2048));
+    }
+
+    #[test]
+    fn test_build_memory_unlimited_memory() {
+        let mut args = default_update();
+        args.memory = Some(-1);
+        let mem = build_memory(&args).unwrap().unwrap();
+        assert_eq!(mem.limit(), Some(-1));
+        assert_eq!(mem.reservation(), None);
+        assert_eq!(mem.swap(), None);
+    }
+
+    #[test]
+    fn test_build_memory_unlimited_reservation() {
+        let mut args = default_update();
+        args.memory_reservation = Some(-1);
+        let mem = build_memory(&args).unwrap().unwrap();
+        assert_eq!(mem.limit(), None);
+        assert_eq!(mem.reservation(), Some(-1));
+        assert_eq!(mem.swap(), None);
+    }
+
+    #[test]
+    fn test_build_memory_unlimited_swap() {
+        let mut args = default_update();
+        args.memory_swap = Some(-1);
+        let mem = build_memory(&args).unwrap().unwrap();
+        assert_eq!(mem.limit(), None);
+        assert_eq!(mem.reservation(), None);
+        assert_eq!(mem.swap(), Some(-1));
+    }
+
+    #[test]
+    fn test_build_memory_unlimited_all() {
+        let mut args = default_update();
+        args.memory = Some(-1);
+        args.memory_reservation = Some(-1);
+        args.memory_swap = Some(-1);
+        let mem = build_memory(&args).unwrap().unwrap();
+        assert_eq!(mem.limit(), Some(-1));
+        assert_eq!(mem.reservation(), Some(-1));
+        assert_eq!(mem.swap(), Some(-1));
+    }
+
+    #[test]
+    fn test_build_memory_preserves_negative_values() {
+        let mut args = default_update();
+        args.memory = Some(-2);
+        args.memory_reservation = Some(-2);
+        args.memory_swap = Some(-2);
+        let mem = build_memory(&args).unwrap().unwrap();
+        assert_eq!(mem.limit(), Some(-2));
+        assert_eq!(mem.reservation(), Some(-2));
+        assert_eq!(mem.swap(), Some(-2));
     }
 }
