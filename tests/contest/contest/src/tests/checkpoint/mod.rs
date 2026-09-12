@@ -175,7 +175,7 @@ fn get_container_pid(project_path: &Path, id: &str) -> Result<i32, TestResult> {
 fn setup_network_namespace(project_path: &Path, id: &str) -> Result<(), TestResult> {
     let pid = get_container_pid(project_path, id)?;
 
-    if let Err(e) = Command::new("nsenter")
+    let output = match Command::new("nsenter")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .arg("-t")
@@ -186,9 +186,19 @@ fn setup_network_namespace(project_path: &Path, id: &str) -> Result<(), TestResu
         .expect("failed to exec ip")
         .wait_with_output()
     {
+        Ok(o) => o,
+        Err(e) => {
+            return Err(TestResult::Failed(anyhow!(
+                "error setting up network namespace {}",
+                e
+            )));
+        }
+    };
+
+    if !output.status.success() {
         return Err(TestResult::Failed(anyhow!(
-            "error setting up network namespace {}",
-            e
+            "failed to bring up loopback in network namespace: {}",
+            String::from_utf8_lossy(&output.stderr)
         )));
     }
 
@@ -213,10 +223,6 @@ fn checkpoint(
         Ok(p) => p,
         Err(e) => return e,
     };
-
-    if let Err(e) = setup_network_namespace(project_path, id) {
-        return e;
-    }
 
     let leave_running = args.contains(&"--leave-running");
 
