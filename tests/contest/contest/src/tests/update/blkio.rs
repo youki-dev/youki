@@ -10,7 +10,8 @@ use test_framework::{TestResult, test_result};
 use super::update_container_and_wait;
 use crate::utils::test_utils::check_container_created;
 use crate::utils::{
-    start_container, test_outside_container, update_container, update_container_with_stdin,
+    is_runtime_youki, start_container, test_outside_container, update_container,
+    update_container_with_stdin,
 };
 
 const INITIAL_WEIGHT: u16 = 200;
@@ -135,10 +136,14 @@ pub(crate) fn update_blkio_weight_test() -> TestResult {
         test_result!(check_blkio_weight(&cgroup_path, INITIAL_WEIGHT));
 
         // Out of range values must be rejected and leave the weight unchanged.
-        test_result!(expect_update_failure(id, dir, "5"));
-        test_result!(check_blkio_weight(&cgroup_path, INITIAL_WEIGHT));
-        test_result!(expect_update_failure(id, dir, "2000"));
-        test_result!(check_blkio_weight(&cgroup_path, INITIAL_WEIGHT));
+        // youki enforces OCI spec range [10, 1000] in libcgroups; runc
+        // delegates to the kernel (io.bfq.weight allows [1, 10000]).
+        if is_runtime_youki() {
+            test_result!(expect_update_failure(id, dir, "5"));
+            test_result!(check_blkio_weight(&cgroup_path, INITIAL_WEIGHT));
+            test_result!(expect_update_failure(id, dir, "2000"));
+            test_result!(check_blkio_weight(&cgroup_path, INITIAL_WEIGHT));
+        }
 
         TestResult::Passed
     })
