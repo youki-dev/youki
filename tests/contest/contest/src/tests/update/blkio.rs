@@ -13,7 +13,7 @@ use crate::utils::{
     start_container, test_outside_container, update_container, update_container_with_stdin,
 };
 
-const INITIAL_WEIGHT: u16 = 100;
+const INITIAL_WEIGHT: u16 = 200;
 const UPDATED_WEIGHT: u16 = 500;
 
 fn create_spec(cgroup_name: &str, resources: Option<LinuxResources>) -> Result<Spec> {
@@ -130,7 +130,13 @@ pub(crate) fn update_blkio_weight_test() -> TestResult {
         }
         test_result!(check_blkio_weight(&cgroup_path, INITIAL_WEIGHT));
 
+        // Updating to 0 must succeed and leave the value unchanged.
+        test_result!(update_container_and_wait(id, dir, &["--blkio-weight", "0"]));
+        test_result!(check_blkio_weight(&cgroup_path, INITIAL_WEIGHT));
+
         // Out of range values must be rejected and leave the weight unchanged.
+        test_result!(expect_update_failure(id, dir, "5"));
+        test_result!(check_blkio_weight(&cgroup_path, INITIAL_WEIGHT));
         test_result!(expect_update_failure(id, dir, "2000"));
         test_result!(check_blkio_weight(&cgroup_path, INITIAL_WEIGHT));
 

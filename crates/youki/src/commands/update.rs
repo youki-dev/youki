@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::{fs, io};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result};
 use libcgroups::common::{CgroupManager, ControllerOpt};
 use libcgroups::{self};
 use libcontainer::oci_spec::runtime::{
@@ -25,15 +25,12 @@ pub fn update(args: Update, root_path: PathBuf) -> Result<()> {
         };
     } else {
         let mut builder = LinuxResourcesBuilder::default();
-        if let Some(blkio_weight) = args.blkio_weight {
-            if !(10..=1000).contains(&blkio_weight) {
-                bail!(
-                    "invalid value {blkio_weight} for --blkio-weight, expected value in range [10, 1000]"
-                );
-            }
-            let blkio = LinuxBlockIoBuilder::default()
-                .weight(blkio_weight as u16)
-                .build()?;
+        if let Some(blkio_weight) = args.blkio_weight
+            && blkio_weight != 0
+        {
+            let weight = u16::try_from(blkio_weight)
+                .with_context(|| format!("invalid value {blkio_weight} for --blkio-weight"))?;
+            let blkio = LinuxBlockIoBuilder::default().weight(weight).build()?;
             builder = builder.block_io(blkio);
         }
         if let Some(new_pids_limit) = args.pids_limit {
