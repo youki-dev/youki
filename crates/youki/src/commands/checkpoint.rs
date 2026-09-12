@@ -6,6 +6,8 @@ use liboci_cli::Checkpoint;
 
 use crate::commands::load_container;
 
+const NETWORK_NS: &str = "network";
+
 pub fn checkpoint(args: Checkpoint, root_path: PathBuf) -> Result<()> {
     tracing::debug!("start checkpointing container {}", args.container_id);
     let mut container = load_container(root_path, &args.container_id)?;
@@ -20,10 +22,18 @@ pub fn checkpoint(args: Checkpoint, root_path: PathBuf) -> Result<()> {
         work_path: args.work_path,
         manage_cgroups_mode: parse_cgroups_mode(&args.manage_cgroups_mode)?,
         link_remap: args.link_remap,
+        empty_net_ns: parse_empty_ns(&args.empty_ns)?,
     };
     container
         .checkpoint(&opts)
         .with_context(|| format!("failed to checkpoint container {}", args.container_id))
+}
+
+fn parse_empty_ns(s: &str) -> Result<bool, anyhow::Error> {
+    match s {
+        NETWORK_NS => Ok(true),
+        _ => Err(anyhow::anyhow!("namespace {s:?} is not supported")),
+    }
 }
 
 fn parse_cgroups_mode(s: &str) -> Result<rust_criu::CgMode, anyhow::Error> {
@@ -66,5 +76,23 @@ mod tests {
         assert!(parse_cgroups_mode("Ignore").is_err());
         assert!(parse_cgroups_mode("unknown").is_err());
         assert!(parse_cgroups_mode("").is_err());
+    }
+
+    #[test]
+    fn test_parse_empty_ns_ok() {
+        assert!(matches!(parse_empty_ns("network"), Ok(true)));
+    }
+
+    #[test]
+    fn test_parse_empty_ns_ng() {
+        for ns in [
+            "pid", "mount", "ipc", "user", "uts", "cgroup", "Network", "",
+        ] {
+            let err = parse_empty_ns(ns).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!("namespace {ns:?} is not supported")
+            );
+        }
     }
 }

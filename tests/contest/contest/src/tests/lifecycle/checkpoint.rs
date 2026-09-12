@@ -663,3 +663,46 @@ pub fn checkpoint_with_external_namespaces(project_path: &Path, id: &str) -> Tes
 
     TestResult::Passed
 }
+
+/// Checkpoint a container and verify that the content of its network namespace
+/// was not dumped.
+pub fn checkpoint_empty_net_ns(project_path: &Path, id: &str) -> TestResult {
+    let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+
+    let result = checkpoint(
+        project_path,
+        id,
+        &image_path,
+        vec!["--leave-running", "--empty-ns", "network"],
+        None,
+    );
+    if !matches!(result, TestResult::Passed) {
+        return result;
+    }
+
+    // netdev-<id>.img holds the network devices of a dumped namespace
+    let netdev_img = match std::fs::read_dir(&image_path) {
+        Ok(entries) => entries
+            .flatten()
+            .find(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                name.starts_with("netdev-") && name.ends_with(".img")
+            })
+            .map(|entry| entry.path()),
+        Err(e) => {
+            return TestResult::Failed(anyhow::anyhow!("failed to read {:?}: {}", &image_path, e));
+        }
+    };
+
+    if let Some(img) = netdev_img {
+        return TestResult::Failed(anyhow::anyhow!(
+            "{:?} was written: the network namespace was dumped although it must be emptied",
+            img,
+        ));
+    }
+
+    TestResult::Passed
+}
