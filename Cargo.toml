@@ -30,7 +30,6 @@ oci-spec = { version = "0.10.0", features = ["runtime"] }
 pathrs = "0.2.4"
 pentacle = "1.1.0"
 pkg-config = "0.3.33"
-pnet_datalink = "0.35.0"
 prctl = "1.0.0"
 procfs = "0.18.0"
 quickcheck = "1"
