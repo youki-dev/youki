@@ -29,7 +29,7 @@ chrono = { workspace = true, features = ["clock", "serde"] }
 libcgroups = { path = "../libcgroups", default-features = false, version = "0.7.0" } # MARK: Version
 libcontainer = { path = "../libcontainer", default-features = false, version = "0.7.0" } # MARK: Version
 liboci-cli = { workspace = true }
-nix = { workspace = true }
+nix = { workspace = true, features = ["event", "poll"] }
 pentacle = { workspace = true }
 procfs = { workspace = true }
 serde_json = { workspace = true }

@@ -20,7 +20,6 @@ use procfs::process::Namespace;
 
 use super::Container;
 use super::builder::ContainerBuilder;
-use super::mount_validation::validate_idmapped_mounts;
 use crate::capabilities::CapabilityExt;
 use crate::container::ContainerStatus;
 use crate::container::builder_impl::ContainerBuilderImpl;
@@ -47,6 +46,7 @@ pub struct TenantContainerBuilder {
     capabilities: Vec<String>,
     process: Option<PathBuf>,
     detached: bool,
+    tty: bool,
     as_sibling: bool,
     additional_gids: Vec<u32>,
     user: Option<u32>,
@@ -146,6 +146,7 @@ impl TenantContainerBuilder {
             capabilities: Vec::new(),
             process: None,
             detached: false,
+            tty: false,
             as_sibling: false,
             additional_gids: vec![],
             user: None,
@@ -202,6 +203,11 @@ impl TenantContainerBuilder {
         self
     }
 
+    pub fn with_tty(mut self, tty: bool) -> Self {
+        self.tty = tty;
+        self
+    }
+
     pub fn with_additional_gids(mut self, gids: Vec<u32>) -> Self {
         self.additional_gids = gids;
         self
@@ -238,7 +244,7 @@ impl TenantContainerBuilder {
     }
 
     /// Joins an existing container
-    pub fn build(self) -> Result<Pid, LibcontainerError> {
+    pub fn build(self) -> Result<(Pid, Option<OwnedFd>), LibcontainerError> {
         let container_dir = self.lookup_container_dir()?;
         let container = self.load_container_state(container_dir.clone())?;
         let mut spec = self.load_init_spec(&container)?;
@@ -289,7 +295,7 @@ impl TenantContainerBuilder {
             process_label: self.process_label,
         };
 
-        let pid = builder_impl.create()?;
+        let (pid, foreground_pty_fd) = builder_impl.create()?;
 
         let mut notify_socket = NotifySocket::new(notify_path);
         notify_socket.notify_container_start()?;
@@ -306,10 +312,10 @@ impl TenantContainerBuilder {
 
         loop {
             let mut buf = [0; 3];
-            match read(read_end.as_raw_fd(), &mut buf).map_err(LibcontainerError::OtherSyscall)? {
+            match read(&read_end, &mut buf).map_err(LibcontainerError::OtherSyscall)? {
                 0 => {
                     if err_str_buf.is_empty() {
-                        return Ok(pid);
+                        return Ok((pid, foreground_pty_fd));
                     } else {
                         return Err(LibcontainerError::Other(
                             String::from_utf8_lossy(&err_str_buf).to_string(),
@@ -357,18 +363,11 @@ impl TenantContainerBuilder {
             Err(ErrInvalidSpec::UnsupportedVersion)?;
         }
 
-        Validator::validate_spec(spec)?;
-
         let syscall = create_syscall();
+        let is_rootless =
+            utils::rootless_required(&*syscall).map_err(LibcontainerError::OtherIO)?;
 
-        if let Some(mounts) = spec.mounts() {
-            utils::validate_mount_options(mounts)?;
-            validate_idmapped_mounts(mounts, spec.linux().as_ref(), &*syscall)?;
-        }
-
-        utils::validate_spec_for_new_user_ns(spec, &*syscall)?;
-        utils::validate_spec_for_net_devices(spec, &*syscall)
-            .map_err(LibcontainerError::NetDevicesError)?;
+        Validator::validate_spec(spec, is_rootless)?;
 
         Ok(())
     }
@@ -439,6 +438,8 @@ impl TenantContainerBuilder {
             }
 
             process_builder = process_builder.user(user_builder.build()?);
+
+            process_builder = process_builder.terminal(self.tty);
 
             process_builder.build()?
         };

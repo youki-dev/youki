@@ -21,6 +21,8 @@ pub enum V2IoControllerError {
     WrappedIo(#[from] WrappedIoError),
     #[error("cannot set leaf_weight with cgroupv2")]
     LeafWeight,
+    #[error("invalid weight {0}: must be in range [10, 1000]")]
+    InvalidWeight(u16),
 }
 
 pub struct Io {}
@@ -112,7 +114,8 @@ impl Io {
         if v == 0 {
             return 0;
         }
-        1 + (v.saturating_sub(10)) * 9999 / 990
+        // Widen before multiplying because the intermediate value may exceed u16.
+        (1 + (u32::from(v) - 10) * 9999 / 990) as u16
     }
 
     fn io_max_path(path: &Path) -> PathBuf {
@@ -137,9 +140,12 @@ impl Io {
             }
         }
         if let Some(io_weight) = blkio.weight() {
-            // be aligned with what runc does
-            // See also: https://github.com/opencontainers/runc/blob/81044ad7c902f3fc153cb8ffadaf4da62855193f/libcontainer/cgroups/fs2/io.go#L57-L69
-            if io_weight > 0 {
+            if io_weight != 0 {
+                if !(10..=1000).contains(&io_weight) {
+                    return Err(V2IoControllerError::InvalidWeight(io_weight));
+                }
+                // be aligned with what runc does
+                // See also: https://github.com/opencontainers/runc/blob/81044ad7c902f3fc153cb8ffadaf4da62855193f/libcontainer/cgroups/fs2/io.go#L57-L69
                 let cgroup_file = root_path.join(CGROUP_BFQ_IO_WEIGHT);
                 if cgroup_file.exists() {
                     common::write_cgroup_file(cgroup_file, io_weight)?;
@@ -341,6 +347,36 @@ mod test {
             Io::apply(tmp.path(), &blkio).expect("apply blkio");
             let content = fs::read_to_string(weight_file).expect("read blkio weight");
             assert_eq!(case.expected_weight, content);
+        }
+    }
+
+    #[test]
+    fn test_set_ioweight_zero_is_noop() {
+        for cgroup_file in [CGROUP_BFQ_IO_WEIGHT, CGROUP_IO_WEIGHT] {
+            let (tmp, weight_file) = setup(cgroup_file);
+            set_fixture(tmp.path(), cgroup_file, "100").unwrap();
+            let blkio = LinuxBlockIoBuilder::default().weight(0u16).build().unwrap();
+
+            Io::apply(tmp.path(), &blkio).expect("weight 0 must succeed as no-op");
+            let content = fs::read_to_string(weight_file).expect("read blkio weight");
+            assert_eq!("100", content);
+        }
+    }
+
+    #[test]
+    fn test_set_ioweight_rejects_out_of_range() {
+        for weight in [1u16, 9, 1001, 2000] {
+            let (tmp, _) = setup(CGROUP_BFQ_IO_WEIGHT);
+            let blkio = LinuxBlockIoBuilder::default()
+                .weight(weight)
+                .build()
+                .unwrap();
+
+            let err = Io::apply(tmp.path(), &blkio).expect_err("weight must be rejected");
+            assert!(
+                matches!(err, V2IoControllerError::InvalidWeight(v) if v == weight),
+                "unexpected error for weight {weight}: {err:?}"
+            );
         }
     }
 

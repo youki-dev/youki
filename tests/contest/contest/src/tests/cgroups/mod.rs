@@ -1,26 +1,9 @@
 use std::fs;
 use std::path::Component::RootDir;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result};
-use procfs::process::Process;
-pub mod blkio;
 pub mod cpu;
-pub mod memory;
-pub mod network;
-pub mod pids;
-
-pub fn cleanup_v1() -> Result<()> {
-    for subsystem in list_subsystem_mount_points()? {
-        let runtime_test = subsystem.join("runtime-test");
-        if runtime_test.exists() {
-            fs::remove_dir(&runtime_test)
-                .with_context(|| format!("failed to delete {runtime_test:?}"))?;
-        }
-    }
-
-    Ok(())
-}
 
 pub fn cleanup_v2() -> Result<()> {
     let runtime_test = Path::new("/sys/fs/cgroup/runtime-test");
@@ -38,22 +21,6 @@ pub fn cleanup_v2() -> Result<()> {
     }
 
     Ok(())
-}
-
-pub fn list_subsystem_mount_points() -> Result<Vec<PathBuf>> {
-    Ok(Process::myself()
-        .context("failed to get self")?
-        .mountinfo()
-        .context("failed to get mountinfo")?
-        .into_iter()
-        .filter_map(|m| {
-            if m.fs_type == "cgroup" {
-                Some(m.mount_point)
-            } else {
-                None
-            }
-        })
-        .collect())
 }
 
 pub fn attach_controller(cgroup_root: &Path, cgroup_path: &Path, controller: &str) -> Result<()> {

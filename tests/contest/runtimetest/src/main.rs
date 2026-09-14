@@ -51,6 +51,7 @@ fn main() {
         "process_capabilities_bounding_unset" => {
             tests::validate_process_capabilities_bounding_unset(&spec)
         }
+        "process_capabilities" => tests::validate_process_capabilities(&spec),
         "process" => tests::validate_process(&spec),
         "process_user" => tests::validate_process_user(&spec),
         "process_rlimits" => tests::validate_process_rlimits(&spec),

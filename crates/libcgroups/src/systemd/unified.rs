@@ -30,6 +30,10 @@ pub enum SystemdUnifiedError {
     },
     #[error("failed to to parse pids.max {value}: {err}")]
     PidsMax { err: ParseIntError, value: String },
+    #[error("unified resource {filename} must be a file name (no slashes)")]
+    InvalidFilename { filename: String },
+    #[error("unified resource {filename} must be in the form CONTROLLER.PARAMETER")]
+    InvalidFormat { filename: String },
 }
 
 pub struct Unified {}
@@ -58,6 +62,16 @@ impl Unified {
         properties: &mut HashMap<&str, Variant>,
     ) -> Result<(), SystemdUnifiedError> {
         for (key, value) in unified {
+            if key.contains('/') {
+                return Err(SystemdUnifiedError::InvalidFilename {
+                    filename: key.into(),
+                });
+            }
+            if !key.contains('.') || key.starts_with('.') {
+                return Err(SystemdUnifiedError::InvalidFormat {
+                    filename: key.into(),
+                });
+            }
             match key.as_str() {
                 "cpu.weight" => {
                     let shares =
@@ -248,5 +262,62 @@ mod tests {
         assert_eq!(recast!(cpu_quota, Variant)?, Variant::U64(500000));
 
         Ok(())
+    }
+
+    #[test]
+    fn test_key_with_slash_returns_error() {
+        let unified: HashMap<String, String> = [("/memory/max", "100000")]
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect();
+        let mut actual: HashMap<&str, Variant> = HashMap::new();
+
+        let result = Unified::apply(&unified, 245, &mut actual);
+
+        assert!(matches!(
+            result,
+            Err(SystemdUnifiedError::InvalidFilename { .. })
+        ));
+        assert!(actual.is_empty());
+    }
+
+    #[test]
+    fn test_key_without_dot_returns_error() {
+        // arrange
+        let unified: HashMap<String, String> = [("foo", "100000")]
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect();
+        let mut actual: HashMap<&str, Variant> = HashMap::new();
+
+        // act
+        let result = Unified::apply(&unified, 245, &mut actual);
+
+        // assert
+        assert!(matches!(
+            result,
+            Err(SystemdUnifiedError::InvalidFormat { .. })
+        ));
+        assert!(actual.is_empty());
+    }
+
+    #[test]
+    fn test_key_starting_with_dot_returns_error() {
+        // arrange
+        let unified: HashMap<String, String> = [(".max", "100000")]
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect();
+        let mut actual: HashMap<&str, Variant> = HashMap::new();
+
+        // act
+        let result = Unified::apply(&unified, 245, &mut actual);
+
+        // assert
+        assert!(matches!(
+            result,
+            Err(SystemdUnifiedError::InvalidFormat { .. })
+        ));
+        assert!(actual.is_empty());
     }
 }

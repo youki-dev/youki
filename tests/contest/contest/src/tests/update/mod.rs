@@ -1,11 +1,15 @@
+mod blkio;
 mod common;
 mod cpu;
+mod cpuset;
 mod pids_limit;
 
 use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
+use libcgroups::common::{CgroupSetup, DEFAULT_CGROUP_ROOT, get_cgroup_setup};
+use libcgroups::v2::controller_type::ControllerType;
 use nix::sys::statfs::{CGROUP2_SUPER_MAGIC, statfs};
 use test_framework::{ConditionalTest, TestGroup};
 
@@ -63,6 +67,63 @@ fn can_run_update() -> bool {
     !is_runtime_youki() && is_cgroup_v2()
 }
 
+fn cpu_count() -> usize {
+    fs::read_to_string("/proc/cpuinfo")
+        .map(|content| {
+            content
+                .lines()
+                .filter(|line| line.starts_with("processor"))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+fn can_run_cpuset() -> bool {
+    let setup_result = get_cgroup_setup();
+    if !matches!(setup_result, Ok(CgroupSetup::Unified)) {
+        return false;
+    }
+
+    let controllers_result = libcgroups::v2::util::get_available_controllers(DEFAULT_CGROUP_ROOT);
+    if controllers_result.is_err() {
+        return false;
+    }
+
+    if !controllers_result
+        .unwrap()
+        .into_iter()
+        .any(|controller| controller == ControllerType::CpuSet)
+    {
+        return false;
+    }
+
+    true
+}
+
+fn can_run_cpuset_update() -> bool {
+    can_run_cpuset() && cpu_count() >= 2
+}
+
+fn can_run_cpuset_range_update() -> bool {
+    can_run_cpuset() && cpu_count() > 8
+}
+
+fn can_run_blkio_update() -> bool {
+    if !is_cgroup_v2() {
+        return false;
+    }
+
+    let controllers_result = libcgroups::v2::util::get_available_controllers(DEFAULT_CGROUP_ROOT);
+    if controllers_result.is_err() {
+        return false;
+    }
+
+    controllers_result
+        .unwrap()
+        .into_iter()
+        .any(|controller| controller == ControllerType::Io)
+}
+
 pub fn get_update_test() -> TestGroup {
     let mut test_group = TestGroup::new("update");
 
@@ -82,6 +143,12 @@ pub fn get_update_test() -> TestGroup {
         "update_pids_limit_test",
         Box::new(can_run_update),
         Box::new(pids_limit::update_pids_limit_test),
+    );
+
+    let update_blkio_weight_test = ConditionalTest::new(
+        "update_blkio_weight_test",
+        Box::new(can_run_blkio_update),
+        Box::new(blkio::update_blkio_weight_test),
     );
 
     let cpu_burst_test = ConditionalTest::new(
@@ -126,10 +193,35 @@ pub fn get_update_test() -> TestGroup {
         Box::new(cpu::update_cgroup_cpu_idle_test),
     );
 
+    let update_cgroup_v2_resources_via_unified_map_test = ConditionalTest::new(
+        "update_cgroup_v2_resources_via_unified_map_test",
+        Box::new(can_run),
+        Box::new(cpuset::update_cgroup_v2_resources_via_unified_map_test),
+    );
+
+    let update_cpuset_parameters_via_resources_cpu_test = ConditionalTest::new(
+        "update_cpuset_parameters_via_resources_cpu_test",
+        Box::new(can_run_cpuset_update),
+        Box::new(cpuset::update_cpuset_parameters_via_resources_cpu_test),
+    );
+
+    let update_cpuset_parameters_via_v2_unified_map_test = ConditionalTest::new(
+        "update_cpuset_parameters_via_v2_unified_map_test",
+        Box::new(can_run_cpuset_update),
+        Box::new(cpuset::update_cpuset_parameters_via_v2_unified_map_test),
+    );
+
+    let update_cpuset_cpus_range_via_v2_unified_map_test = ConditionalTest::new(
+        "update_cpuset_cpus_range_via_v2_unified_map_test",
+        Box::new(can_run_cpuset_range_update),
+        Box::new(cpuset::update_cpuset_cpus_range_via_v2_unified_map_test),
+    );
+
     test_group.add(vec![
         Box::new(update_cgroup_v2_common_limits_test),
         Box::new(update_cpu_limits_test),
         Box::new(update_pids_limit_test),
+        Box::new(update_blkio_weight_test),
         Box::new(cpu_burst_test),
         Box::new(set_cpu_period_without_quota_test),
         Box::new(set_cpu_period_without_quota_invalid_test),
@@ -137,6 +229,10 @@ pub fn get_update_test() -> TestGroup {
         Box::new(update_cpu_period_without_previous_limits_test),
         Box::new(update_cpu_quota_without_previous_limits_test),
         Box::new(update_cgroup_cpu_idle_test),
+        Box::new(update_cgroup_v2_resources_via_unified_map_test),
+        Box::new(update_cpuset_parameters_via_resources_cpu_test),
+        Box::new(update_cpuset_parameters_via_v2_unified_map_test),
+        Box::new(update_cpuset_cpus_range_via_v2_unified_map_test),
     ]);
     test_group
 }
