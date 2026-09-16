@@ -76,11 +76,19 @@ pub struct ContainerData {
 
 #[derive(Debug, Default)]
 pub struct CreateOptions<'a> {
+    global_args: &'a [&'a OsStr],
     extra_args: &'a [&'a OsStr],
     no_pivot: bool,
 }
 
 impl<'a> CreateOptions<'a> {
+    /// Runtime-level arguments passed before the `create` subcommand, e.g.
+    /// `youki --systemd-cgroup create ...`.
+    pub fn with_global_args(mut self, global_args: &'a [&'a OsStr]) -> Self {
+        self.global_args = global_args;
+        self
+    }
+
     pub fn with_extra_args(mut self, extra_args: &'a [&'a OsStr]) -> Self {
         self.extra_args = extra_args;
         self
@@ -97,6 +105,7 @@ fn create_container_command<P: AsRef<Path>>(id: &str, dir: P, options: &CreateOp
     command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .args(options.global_args)
         .arg("--root")
         .arg(dir.as_ref().join("runtime"))
         .arg("create")
@@ -344,12 +353,21 @@ pub fn test_outside_container(
     spec: &Spec,
     execute_test: &dyn Fn(ContainerData) -> TestResult,
 ) -> TestResult {
+    test_outside_container_with_options(spec, &CreateOptions::default(), execute_test)
+}
+
+/// Same as [`test_outside_container`], but with control over how the runtime is invoked,
+/// e.g. to create the container with `--systemd-cgroup`.
+pub fn test_outside_container_with_options(
+    spec: &Spec,
+    options: &CreateOptions,
+    execute_test: &dyn Fn(ContainerData) -> TestResult,
+) -> TestResult {
     let id = generate_uuid();
     let id_str = id.to_string();
     let bundle = prepare_bundle().unwrap();
     set_config(&bundle, spec).unwrap();
-    let options = CreateOptions::default();
-    let create_result = create_container(&id_str, &bundle, &options).unwrap().wait();
+    let create_result = create_container(&id_str, &bundle, options).unwrap().wait();
     let (out, err) = get_state(&id_str, &bundle).unwrap();
     let state: Option<State> = serde_json::from_str(&out).ok();
     let data = ContainerData {
