@@ -148,6 +148,7 @@ fn main() -> Result<()> {
     let cgroup_v2_cpuset = cgroups::cpuset::get_test_group();
     let cgroup_v2_memory = cgroups::memory::get_test_group();
     let cgroup_v2_pids = cgroups::pids::get_test_group();
+    let cgroup_v2_blkio = cgroups::blkio::v2::get_test_group();
     let seccomp = get_seccomp_test();
     let seccomp_notify = get_seccomp_notify_test();
     let state = get_state_test();
@@ -212,6 +213,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(cgroup_v2_cpuset));
     tm.add_test_group(Box::new(cgroup_v2_memory));
     tm.add_test_group(Box::new(cgroup_v2_pids));
+    tm.add_test_group(Box::new(cgroup_v2_blkio));
     tm.add_test_group(Box::new(seccomp));
     tm.add_test_group(Box::new(seccomp_notify));
     tm.add_test_group(Box::new(state));
