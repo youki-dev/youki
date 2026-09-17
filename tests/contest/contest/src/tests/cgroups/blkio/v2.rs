@@ -85,13 +85,19 @@ fn check_io_weight(dir: &Path, expected_weight: u16) -> Result<()> {
     }
 
     let data = read_cgroup_file(dir, IO_WEIGHT)?;
+    // io.weight reads as e.g. "default 100" or "default 4950" — the numeric
+    // token may be second, so pick the first parseable token.
     let actual: u16 = data
         .split_whitespace()
+        .filter_map(|token| {
+            token
+                .strip_prefix("default")
+                .unwrap_or(token)
+                .trim()
+                .parse::<u16>()
+                .ok()
+        })
         .next()
-        .with_context(|| format!("empty {IO_WEIGHT} content: {data:?}"))?
-        .trim_start_matches("default")
-        .trim()
-        .parse()
         .with_context(|| format!("failed to parse {data:?}"))?;
     let expected = convert_blkio_weight_to_io_weight(expected_weight);
     assert_result_eq!(expected, actual, "unexpected io weight")
