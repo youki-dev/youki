@@ -3,6 +3,7 @@ use std::path::Component::RootDir;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+pub mod blkio;
 pub mod cpu;
 pub mod memory;
 
