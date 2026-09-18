@@ -144,6 +144,20 @@ jobs:
       - name: test/k8s/deploy (systemd cgroup)
         run: just test-kind-systemd-cgroup
 
+  k8s-tests-crio-deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install just
+        uses: taiki-e/install-action@just
+      # The recipe builds the node image and the installer image, and the
+      # DaemonSet then installs youki. The runner supplies kind and kubectl.
+      # The installer image compiles youki from this checkout, so this job
+      # does not need the youki-build artifact.
+      - name: test/k8s/deploy (CRI-O)
+        run: just test-kind-deploy-crio
+
   oci-validation-go:
     runs-on: ubuntu-24.04
     needs: [youki-build]

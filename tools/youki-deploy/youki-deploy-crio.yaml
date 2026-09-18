@@ -1,5 +1,5 @@
 ---
-# containerd
+# CRI-O
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -11,10 +11,11 @@ apiVersion: node.k8s.io/v1
 kind: RuntimeClass
 metadata:
   name: youki
+# CRI-O matches this handler to a runtime name in its config. The installer
+# writes the [crio.runtime.runtimes.youki] table.
 handler: youki
-# Only schedule pods using this RuntimeClass onto nodes where the installer
-# has finished. The label is applied by install-youki.sh once youki is
-# installed and containerd has been reconfigured on the node.
+# Use only the nodes where the installer is done. install-youki.sh adds this
+# label after it installs youki and configures CRI-O.
 scheduling:
   nodeSelector:
     youki.dev/runtime-ready: "true"
@@ -30,7 +31,7 @@ kind: ClusterRole
 metadata:
   name: youki-deploy
 rules:
-  # Required by install-youki.sh to label its own node as runtime-ready.
+  # install-youki.sh needs this to label its own node.
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "patch"]
@@ -51,18 +52,18 @@ subjects:
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: youki-deploy
+  name: youki-deploy-crio
   namespace: youki-system
   labels:
-    app: youki-deploy
+    app: youki-deploy-crio
 spec:
   selector:
     matchLabels:
-      app: youki-deploy
+      app: youki-deploy-crio
   template:
     metadata:
       labels:
-        app: youki-deploy
+        app: youki-deploy-crio
     spec:
       serviceAccountName: youki-deploy
       hostPID: true
@@ -85,22 +86,24 @@ spec:
             - name: HOST_BIN_DIR
               value: /host/usr/local/bin
             - name: CRI_RUNTIME
-              value: containerd
-            - name: HOST_CONTAINERD_CONFIG
-              value: /host/etc/containerd/config.toml
+              value: crio
+            - name: HOST_CRIO_CONFIG_DIR
+              value: /host/etc/crio/crio.conf.d
             - name: RUNTIME_HANDLER
               value: youki
           volumeMounts:
             - name: host-usr-local-bin
               mountPath: /host/usr/local/bin
-            - name: host-etc-containerd
-              mountPath: /host/etc/containerd
+            - name: host-etc-crio
+              mountPath: /host/etc/crio
       volumes:
         - name: host-usr-local-bin
           hostPath:
             path: /usr/local/bin
             type: Directory
-        - name: host-etc-containerd
+        # A CRI-O node always has /etc/crio, so Directory stops the pod on a
+        # node without CRI-O. The installer makes crio.conf.d if it is absent.
+        - name: host-etc-crio
           hostPath:
-            path: /etc/containerd
+            path: /etc/crio
             type: Directory
