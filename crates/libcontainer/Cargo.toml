@@ -42,6 +42,7 @@ netlink-packet-route = { workspace = true }
 netlink-sys = { workspace = true }
 netlink-packet-core = { workspace = true }
 pathrs = { workspace = true }
+scopeguard = { workspace = true }
 
 [dev-dependencies]
 oci-spec = { workspace = true, features = ["proptests"] }
@@ -50,4 +51,4 @@ serial_test = { workspace = true }
 tempfile = { workspace = true }
 anyhow = { workspace = true }
 rand = { workspace = true }
-scopeguard = { workspace = true }
+
