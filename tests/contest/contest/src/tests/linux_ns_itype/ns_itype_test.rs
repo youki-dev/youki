@@ -67,6 +67,10 @@ fn get_test(test_name: &'static str) -> Test {
 
 pub fn get_ns_itype_tests() -> TestGroup {
     let mut tg = TestGroup::new("ns_itype");
+    // this test creates a container without a mount namespace, so the runtime
+    // applies its mount setup (including make-rslave) to the host mount
+    // namespace, which breaks mount tests running in parallel
+    tg.set_nonparallel();
     let tests: Vec<_> = vec![Box::new(get_test("ns_itype"))];
     tg.add(tests);
     tg
