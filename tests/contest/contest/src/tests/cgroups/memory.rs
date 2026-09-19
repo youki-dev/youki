@@ -2,15 +2,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use libcgroups::common::{self, CgroupSetup};
+use libcgroups::common;
 use libcgroups::v2::controller_type::ControllerType;
 use oci_spec::runtime::{
     LinuxBuilder, LinuxMemoryBuilder, LinuxResourcesBuilder, Spec, SpecBuilder,
 };
 use test_framework::{ConditionalTest, TestGroup, TestResult, assert_result_eq, test_result};
 
-use crate::utils::test_outside_container;
 use crate::utils::test_utils::{CGROUP_ROOT, check_container_created};
+use crate::utils::{is_cgroup_v2_with_controller, test_outside_container};
 
 const MEMORY_MAX: &str = "memory.max";
 const MEMORY_LOW: &str = "memory.low";
@@ -125,17 +125,7 @@ fn read_cgroup_data(cgroup_name: &str, cgroup_file: &str) -> Result<String> {
 }
 
 fn can_run() -> bool {
-    let setup_result = common::get_cgroup_setup();
-    if !matches!(setup_result, Ok(CgroupSetup::Unified)) {
-        return false;
-    }
-
-    let controllers_result =
-        libcgroups::v2::util::get_available_controllers(common::DEFAULT_CGROUP_ROOT);
-    match controllers_result {
-        Ok(controllers) => controllers.into_iter().any(|c| c == ControllerType::Memory),
-        Err(_) => false,
-    }
+    is_cgroup_v2_with_controller(ControllerType::Memory)
 }
 
 fn can_run_swap() -> bool {
