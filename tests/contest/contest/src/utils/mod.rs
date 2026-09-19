@@ -1,7 +1,9 @@
+pub mod cgroups;
 pub mod net;
 pub mod support;
 pub mod test_utils;
 
+pub use cgroups::{is_cgroup_v2, is_cgroup_v2_with_controller};
 pub use support::{
     generate_uuid, get_runtime_path, get_runtimetest_path, is_runtime_runc, is_runtime_youki,
     prepare_bundle, set_config, wait_for_file_content,
