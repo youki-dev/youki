@@ -8,18 +8,11 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
-use libcgroups::common::{CgroupSetup, DEFAULT_CGROUP_ROOT, get_cgroup_setup};
 use libcgroups::v2::controller_type::ControllerType;
-use nix::sys::statfs::{CGROUP2_SUPER_MAGIC, statfs};
 use test_framework::{ConditionalTest, TestGroup};
 
-use crate::utils::{is_runtime_youki, update_container};
-
-pub(super) fn is_cgroup_v2() -> bool {
-    statfs("/sys/fs/cgroup")
-        .map(|stat| stat.filesystem_type() == CGROUP2_SUPER_MAGIC)
-        .unwrap_or(false)
-}
+pub(super) use crate::utils::is_cgroup_v2;
+use crate::utils::{is_cgroup_v2_with_controller, is_runtime_youki, update_container};
 
 pub(super) fn check_cgroup_value(base: &Path, file: &str, expected: &str) -> anyhow::Result<()> {
     let path = base.join(file);
@@ -79,25 +72,7 @@ fn cpu_count() -> usize {
 }
 
 fn can_run_cpuset() -> bool {
-    let setup_result = get_cgroup_setup();
-    if !matches!(setup_result, Ok(CgroupSetup::Unified)) {
-        return false;
-    }
-
-    let controllers_result = libcgroups::v2::util::get_available_controllers(DEFAULT_CGROUP_ROOT);
-    if controllers_result.is_err() {
-        return false;
-    }
-
-    if !controllers_result
-        .unwrap()
-        .into_iter()
-        .any(|controller| controller == ControllerType::CpuSet)
-    {
-        return false;
-    }
-
-    true
+    is_cgroup_v2_with_controller(ControllerType::CpuSet)
 }
 
 fn can_run_cpuset_update() -> bool {
@@ -109,19 +84,7 @@ fn can_run_cpuset_range_update() -> bool {
 }
 
 fn can_run_blkio_update() -> bool {
-    if !is_cgroup_v2() {
-        return false;
-    }
-
-    let controllers_result = libcgroups::v2::util::get_available_controllers(DEFAULT_CGROUP_ROOT);
-    if controllers_result.is_err() {
-        return false;
-    }
-
-    controllers_result
-        .unwrap()
-        .into_iter()
-        .any(|controller| controller == ControllerType::Io)
+    is_cgroup_v2_with_controller(ControllerType::Io)
 }
 
 pub fn get_update_test() -> TestGroup {
