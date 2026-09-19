@@ -42,8 +42,14 @@ pub const MOUNT_ATTR_NOATIME: u64 = 0x00000010;
 pub const MOUNT_ATTR_STRICTATIME: u64 = 0x00000020;
 pub const MOUNT_ATTR_NODIRATIME: u64 = 0x00000080;
 pub const MOUNT_ATTR_NOSYMFOLLOW: u64 = 0x00200000;
+pub const MOUNT_ATTR_IDMAP: u64 = 0x00100000; // Idmap mount to @userns_fd in struct mount_attr.
 pub const MOVE_MOUNT_F_EMPTY_PATH: u32 = 0x00000004;
 pub const MOVE_MOUNT_T_EMPTY_PATH: u32 = 0x00000040;
+
+// Flags used in open_tree(2).
+// see https://man7.org/linux/man-pages/man2/open_tree.2.html.
+pub const OPEN_TREE_CLONE: u32 = 0x00000001; // Clone the target path as a detached mount.
+pub const OPEN_TREE_CLOEXEC: u32 = 0x00080000; // == O_CLOEXEC.
 
 // The type of fsconfig() call made.
 pub const FSCONFIG_SET_FLAG: u64 = 0;

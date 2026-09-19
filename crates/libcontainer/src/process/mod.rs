@@ -7,6 +7,7 @@ pub mod container_intermediate_process;
 pub mod container_main_process;
 pub mod cpu_affinity;
 mod fork;
+mod idmapped_mount;
 pub mod init;
 pub mod intel_rdt;
 pub mod memory_policy;
