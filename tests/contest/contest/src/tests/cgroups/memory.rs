@@ -1,8 +1,7 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use libcgroups::common;
 use libcgroups::v2::controller_type::ControllerType;
 use oci_spec::runtime::{
     LinuxBuilder, LinuxMemoryBuilder, LinuxResourcesBuilder, Spec, SpecBuilder,
@@ -10,7 +9,7 @@ use oci_spec::runtime::{
 use test_framework::{ConditionalTest, TestGroup, TestResult, assert_result_eq, test_result};
 
 use crate::utils::test_utils::{CGROUP_ROOT, check_container_created};
-use crate::utils::{is_cgroup_v2_with_controller, test_outside_container};
+use crate::utils::{cgroup_has_file, is_cgroup_v2_with_controller, test_outside_container};
 
 const MEMORY_MAX: &str = "memory.max";
 const MEMORY_LOW: &str = "memory.low";
@@ -129,26 +128,7 @@ fn can_run() -> bool {
 }
 
 fn can_run_swap() -> bool {
-    if !can_run() {
-        return false;
-    }
-
-    // memory.swap.max exists only on non-root cgroups, so the root cannot be
-    // probed. Check the cgroup of this process instead: it lives on the same
-    // hierarchy the containers will be created in.
-    let Ok(self_cgroup) = fs::read_to_string("/proc/self/cgroup") else {
-        return false;
-    };
-    let Some(cgroup_path) = self_cgroup
-        .lines()
-        .find_map(|line| line.rsplit_once(':').map(|(_, path)| path))
-    else {
-        return false;
-    };
-    Path::new(common::DEFAULT_CGROUP_ROOT)
-        .join(cgroup_path.trim_start_matches('/'))
-        .join(MEMORY_SWAP_MAX)
-        .exists()
+    can_run() && cgroup_has_file(MEMORY_SWAP_MAX)
 }
 
 pub fn get_test_group() -> TestGroup {
