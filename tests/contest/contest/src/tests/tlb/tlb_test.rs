@@ -14,6 +14,9 @@ fn check_hugetlb() -> bool {
 }
 
 fn check_hugetlb_rsvd() -> bool {
+    if !check_hugetlb() {
+        return false;
+    }
     let sizes = get_tlb_sizes();
     for size in sizes.iter() {
         let rsvd_path = format!(
