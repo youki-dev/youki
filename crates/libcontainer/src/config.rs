@@ -37,7 +37,7 @@ pub enum ConfigError {
     #[error("missing linux in spec")]
     MissingLinux,
     #[error("failed to determine the default cgroup path")]
-    CgroupPath(#[from] procfs::ProcError),
+    CgroupPath(#[from] utils::CgroupPathError),
 }
 
 type Result<T> = std::result::Result<T, ConfigError>;

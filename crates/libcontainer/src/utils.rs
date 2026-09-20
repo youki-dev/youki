@@ -11,7 +11,9 @@ use std::time::Duration;
 use nix::sys::stat::{Mode, fstat};
 use nix::sys::statfs::{Statfs, fstatfs};
 use nix::unistd::{Uid, User};
-use procfs::process::Process;
+use pathrs::flags::OpenFlags;
+use pathrs::procfs::{ProcfsBase, ProcfsHandle};
+use procfs::{FromRead, ProcessCGroups};
 
 use crate::syscall::syscall::Syscall;
 
@@ -149,17 +151,25 @@ pub fn get_cgroup_path(cgroups_path: &Option<PathBuf>, container_id: &str) -> Pa
     resolve_cgroup_path(cgroups_path, container_id, true, None)
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum CgroupPathError {
+    #[error("failed to open /proc/self/cgroup")]
+    Procfs(#[from] pathrs::error::Error),
+    #[error("failed to parse /proc/self/cgroup")]
+    Parse(#[from] procfs::ProcError),
+}
+
 /// Resolves the cgroup path using the selected cgroup manager's semantics.
 ///
 /// # Errors
 ///
 /// Returns an error when cgroupfs needs the current process's cgroup to derive
-/// a default path and that process information cannot be read.
+/// a default path and `/proc/self/cgroup` cannot be read.
 pub(crate) fn get_cgroup_path_for_manager(
     cgroups_path: &Option<PathBuf>,
     container_id: &str,
     systemd_cgroup: bool,
-) -> Result<PathBuf, procfs::ProcError> {
+) -> Result<PathBuf, CgroupPathError> {
     if cgroups_path.is_some() || systemd_cgroup {
         return Ok(resolve_cgroup_path(
             cgroups_path,
@@ -169,13 +179,15 @@ pub(crate) fn get_cgroup_path_for_manager(
         ));
     }
 
-    let current_cgroup = Process::myself()?
-        .cgroups()?
-        .0
-        .into_iter()
-        // A hierarchy ID of zero identifies the unified cgroup v2 entry.
-        .find(|cgroup| cgroup.hierarchy == 0)
-        .map(|cgroup| PathBuf::from(cgroup.pathname));
+    let current_cgroup = ProcessCGroups::from_read(ProcfsHandle::new()?.open(
+        ProcfsBase::ProcSelf,
+        "cgroup",
+        OpenFlags::O_RDONLY | OpenFlags::O_CLOEXEC,
+    )?)?
+    .into_iter()
+    // A hierarchy ID of zero identifies the unified cgroup v2 entry.
+    .find(|cgroup| cgroup.hierarchy == 0)
+    .map(|cgroup| PathBuf::from(cgroup.pathname));
 
     Ok(resolve_cgroup_path(
         cgroups_path,
