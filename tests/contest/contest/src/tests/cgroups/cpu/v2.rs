@@ -12,10 +12,9 @@ use tracing::debug;
 use super::create_spec;
 use crate::tests::cgroups::attach_controller;
 use crate::utils::test_utils::{CGROUP_ROOT, check_container_created};
-use crate::utils::{is_cgroup_v2_with_controller, test_outside_container};
+use crate::utils::{cgroup_has_file, is_cgroup_v2_with_controller, test_outside_container};
 
 const DEFAULT_PERIOD: u64 = 100_000;
-const CPU: &str = "cpu";
 const CGROUP_CPU_IDLE: &str = "cpu.idle";
 
 // SPEC: The runtime spec does not specify what should happen if the cpu weight is outside
@@ -383,10 +382,7 @@ fn can_run() -> bool {
 }
 
 fn can_run_idle() -> bool {
-    let idle_path = Path::new(common::DEFAULT_CGROUP_ROOT)
-        .join(CPU)
-        .join(CGROUP_CPU_IDLE);
-    can_run() && idle_path.exists()
+    can_run() && cgroup_has_file(CGROUP_CPU_IDLE)
 }
 
 pub fn get_test_group() -> TestGroup {
