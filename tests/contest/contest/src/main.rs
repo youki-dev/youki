@@ -11,6 +11,7 @@ use tests::cgroups;
 
 use crate::tests::checkpoint_restore::get_checkpoint_restore_tests;
 use crate::tests::create_runtime::get_create_runtime_tests;
+use crate::tests::default::get_validate_default_symlinks_test;
 use crate::tests::delete::get_delete_test;
 use crate::tests::devices::get_devices_test;
 use crate::tests::domainname::get_domainname_tests;
@@ -162,6 +163,7 @@ fn main() -> Result<()> {
     let io_priority_test = get_io_priority_test();
     let delete = get_delete_test();
     let devices = get_devices_test();
+    let validate_default_symlinks = get_validate_default_symlinks_test();
     let root_readonly = get_root_readonly_test();
     let process = get_process_test();
     let process_capabilities = get_process_capabilities_test();
@@ -222,6 +224,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(memory_policy));
     tm.add_test_group(Box::new(delete));
     tm.add_test_group(Box::new(devices));
+    tm.add_test_group(Box::new(validate_default_symlinks));
     tm.add_test_group(Box::new(root_readonly));
     tm.add_test_group(Box::new(process));
     tm.add_test_group(Box::new(process_capabilities));
