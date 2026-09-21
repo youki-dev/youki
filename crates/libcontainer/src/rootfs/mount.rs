@@ -1,6 +1,6 @@
-use std::fs::{Permissions, canonicalize};
+use std::fs::Permissions;
 use std::io::{BufRead, BufReader, ErrorKind};
-use std::os::fd::{AsFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -13,7 +13,9 @@ use libcgroups::common::CgroupSetup::{Hybrid, Legacy, Unified};
 use libcgroups::common::DEFAULT_CGROUP_ROOT;
 use nix::NixPath;
 use nix::errno::Errno;
+use nix::fcntl::{OFlag, open};
 use nix::mount::MsFlags;
+use nix::sys::stat::{Mode, fstat};
 use nix::sys::statfs::{PROC_SUPER_MAGIC, statfs};
 use oci_spec::runtime::{Mount as SpecMount, MountBuilder as SpecMountBuilder};
 use pathrs::Root;
@@ -591,13 +593,14 @@ impl Mount {
 
         let source = m.source().as_ref().ok_or(MountError::NoSource)?;
         let dir_perm = Permissions::from_mode(0o755);
-        let src = if is_bind(m) {
-            let src = canonicalize(source).map_err(|err| {
-                tracing::error!("failed to canonicalize {:?}: {}", source, err);
-                err
-            })?;
+        let src_fd = if is_bind(m) {
+            let src_fd = open(source, OFlag::O_PATH | OFlag::O_CLOEXEC, Mode::empty())
+                .inspect_err(|err| {
+                    tracing::error!("failed to open bind mount source {:?}: {}", source, err);
+                })?;
 
-            if src.is_dir() {
+            let src_is_dir = fstat(&src_fd)?.st_mode & libc::S_IFMT == libc::S_IFDIR;
+            if src_is_dir {
                 root.mkdir_all(container_dest, &dir_perm)?;
             } else {
                 let parent = container_dest
@@ -622,10 +625,10 @@ impl Mount {
                 }?;
             };
 
-            src
+            Some(src_fd)
         } else {
             root.mkdir_all(container_dest, &dir_perm)?;
-            PathBuf::from(source)
+            None
         };
 
         let dest: OwnedFd = root.resolve(container_dest)?.into();
@@ -634,7 +637,7 @@ impl Mount {
         // fd-based mount flow:
         // - bind: open_tree -> mount_setattr -> move_mount
         // - nonbind: fsopen -> fsconfig -> fsmount -> mount_setattr -> move_mount
-        if is_bind(m) {
+        if let Some(src_fd) = src_fd {
             let recursive = m
                 .options()
                 .as_ref()
@@ -647,10 +650,9 @@ impl Mount {
                 open_tree_flags |= libc::AT_RECURSIVE as libc::c_uint;
             };
 
-            let src_str = src.to_str().ok_or(SyscallError::Nix(Errno::EINVAL))?;
             let mount_fd_owned =
                 self.syscall
-                    .open_tree(libc::AT_FDCWD, Some(src_str), open_tree_flags)?;
+                    .open_tree(src_fd.as_raw_fd(), None, open_tree_flags)?;
             let mount_fd = mount_fd_owned.as_fd();
 
             // mount_setattr
@@ -703,7 +705,7 @@ impl Mount {
                 let fsfd = fsfd_owned.as_fd();
 
                 // fsconfig
-                let src_str = src
+                let src_str = source
                     .as_os_str()
                     .to_str()
                     .ok_or(SyscallError::Nix(Errno::EINVAL))?;
@@ -1203,8 +1205,8 @@ mod tests {
             let open_tree = s.get_open_tree_args();
             assert_eq!(open_tree.len(), 1);
             assert_eq!(
-                open_tree[0].path.as_deref(),
-                Some(tmp_dir.path().join("null").to_str().unwrap())
+                open_tree[0].dirfd_path.as_deref(),
+                Some(tmp_dir.path().join("null").as_path())
             );
             assert_eq!(open_tree[0].flags & linux::AT_RECURSIVE, 0);
 
@@ -1241,8 +1243,8 @@ mod tests {
             let open_tree = s.get_open_tree_args();
             assert_eq!(open_tree.len(), 1);
             assert_eq!(
-                open_tree[0].path.as_deref(),
-                Some(tmp_dir.path().join("tmp.sock").to_str().unwrap())
+                open_tree[0].dirfd_path.as_deref(),
+                Some(tmp_dir.path().join("tmp.sock").as_path())
             );
             assert_eq!(open_tree[0].flags & linux::AT_RECURSIVE, 0);
 
