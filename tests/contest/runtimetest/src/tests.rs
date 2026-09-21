@@ -1665,3 +1665,50 @@ pub fn validate_mount_propagation(spec: &Spec) {
         }
     }
 }
+
+pub fn validate_default_symlinks(_spec: &Spec) {
+    let default_symlinks = [
+        ("/dev/fd", "/proc/self/fd"),
+        ("/dev/ptmx", "pts/ptmx"),
+        ("/dev/stdin", "/proc/self/fd/0"),
+        ("/dev/stdout", "/proc/self/fd/1"),
+        ("/dev/stderr", "/proc/self/fd/2"),
+    ];
+
+    for (link, target) in default_symlinks.iter() {
+        let check_symlink_exists = std::fs::symlink_metadata(link);
+        match check_symlink_exists {
+            Ok(metadata) => {
+                if !metadata.file_type().is_symlink() {
+                    return eprintln!("symlink {} is not a symlink", link);
+                }
+            }
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    return eprintln!("symlink {} does not exist", link);
+                } else {
+                    return eprintln!("Error occurred while checking symlink {}: {:?}", link, e);
+                }
+            }
+        }
+        let check_symlink_target = std::fs::read_link(link);
+        if check_symlink_target.is_err() {
+            return eprintln!("symlink {} does not have a valid target", link);
+        }
+        match check_symlink_target {
+            Ok(target_path) => {
+                if target_path != Path::new(target) {
+                    return eprintln!(
+                        "symlink {} does not point to the correct target. Expected: {:?}, Found: {:?}",
+                        link,
+                        target,
+                        target_path.display()
+                    );
+                }
+            }
+            Err(_e) => {
+                return eprintln!("symlink {} does not have a valid target", link);
+            }
+        }
+    }
+}
