@@ -2,7 +2,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use libcgroups::common::{self, CgroupSetup};
 use libcgroups::v2::controller_type::ControllerType;
 use oci_spec::runtime::{
     LinuxBlockIoBuilder, LinuxThrottleDeviceBuilder, LinuxWeightDeviceBuilder,
@@ -12,7 +11,7 @@ use tracing::debug;
 
 use super::create_spec;
 use crate::utils::test_utils::{CGROUP_ROOT, check_container_created};
-use crate::utils::{cgroup_has_file, test_outside_container};
+use crate::utils::{cgroup_has_file, is_cgroup_v2_with_controller, test_outside_container};
 
 const IO_WEIGHT: &str = "io.weight";
 const IO_BFQ_WEIGHT: &str = "io.bfq.weight";
@@ -67,19 +66,12 @@ fn read_cgroup_file(dir: &Path, cgroup_file: &str) -> Result<String> {
 fn check_io_weight(dir: &Path, expected_weight: u16) -> Result<()> {
     if dir.join(IO_BFQ_WEIGHT).exists() {
         let data = read_cgroup_file(dir, IO_BFQ_WEIGHT)?;
-        let actual = data
-            .split_whitespace()
-            .next()
-            .with_context(|| format!("empty {IO_BFQ_WEIGHT} content: {data:?}"))?;
-        // File may contain a "default" prefix plus per-device entries,
-        // so match the numeric token.
-        if !data
-            .split_whitespace()
-            .any(|token| token == expected_weight.to_string())
-        {
-            bail!(
-                "unexpected io bfq weight: expected {expected_weight}, got {actual:?} ({data:?})"
-            );
+        // io.bfq.weight prints `default N` on the first line, followed by any
+        // per-device entries. Only the default line reflects the cgroup's
+        // weight, so match it exactly.
+        let expected = format!("default {expected_weight}");
+        if data.lines().next() != Some(expected.as_str()) {
+            bail!("unexpected io bfq weight: expected {expected:?}, got {data:?}");
         }
         return Ok(());
     }
@@ -374,32 +366,7 @@ fn test_relative_blkio() -> TestResult {
 }
 
 fn can_run() -> bool {
-    if !matches!(common::get_cgroup_setup(), Ok(CgroupSetup::Unified)) {
-        debug!(
-            "cgroup setup is not v2, was {:?}",
-            common::get_cgroup_setup()
-        );
-        return false;
-    }
-
-    let controllers =
-        match libcgroups::v2::util::get_available_controllers(common::DEFAULT_CGROUP_ROOT) {
-            Ok(controllers) => controllers,
-            Err(err) => {
-                debug!("could not retrieve cgroup controllers: {err:?}");
-                return false;
-            }
-        };
-
-    if !controllers
-        .into_iter()
-        .any(|controller| controller == ControllerType::Io)
-    {
-        debug!("io controller is not attached to the v2 hierarchy");
-        return false;
-    }
-
-    true
+    is_cgroup_v2_with_controller(ControllerType::Io)
 }
 
 fn can_run_bfq() -> bool {
