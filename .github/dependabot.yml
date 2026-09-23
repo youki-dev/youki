@@ -11,7 +11,7 @@ updates:
       wasmtime:
         patterns:
           - "wasmtime"
-          - "wasi-common"
+          - "wasmtime-wasi"
       netlink:
         patterns:
           - "netlink-packet-core"
