@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use libcgroups::common::{self, CgroupSetup, DEFAULT_CGROUP_ROOT};
+use libcgroups::common::{self, CgroupSetup};
 use libcgroups::v2::controller_type::ControllerType;
 use oci_spec::runtime::{
     LinuxBlockIoBuilder, LinuxThrottleDeviceBuilder, LinuxWeightDeviceBuilder,
@@ -11,8 +11,8 @@ use test_framework::{ConditionalTest, TestGroup, TestResult, assert_result_eq, t
 use tracing::debug;
 
 use super::create_spec;
-use crate::utils::test_outside_container;
 use crate::utils::test_utils::{CGROUP_ROOT, check_container_created};
+use crate::utils::{cgroup_has_file, test_outside_container};
 
 const IO_WEIGHT: &str = "io.weight";
 const IO_BFQ_WEIGHT: &str = "io.bfq.weight";
@@ -403,7 +403,15 @@ fn can_run() -> bool {
 }
 
 fn can_run_bfq() -> bool {
-    can_run() && Path::new(DEFAULT_CGROUP_ROOT).join(IO_BFQ_WEIGHT).exists()
+    can_run() && cgroup_has_file(IO_BFQ_WEIGHT)
+}
+
+// The default io.weight may be written through either io.bfq.weight (BFQ) or
+// io.weight (iocost). On kernels with the io controller but neither interface
+// (no BFQ, no iocost), youki's write at crates/libcgroups/src/v2/io.rs fails and
+// the container cannot start, so the test must be skipped there.
+fn can_run_io_weight() -> bool {
+    can_run() && (cgroup_has_file(IO_BFQ_WEIGHT) || cgroup_has_file(IO_WEIGHT))
 }
 
 pub fn get_test_group() -> TestGroup {
@@ -411,7 +419,7 @@ pub fn get_test_group() -> TestGroup {
 
     let test_io_weight_set = ConditionalTest::new(
         "test_io_weight_set",
-        Box::new(can_run),
+        Box::new(can_run_io_weight),
         Box::new(test_io_weight_set),
     );
     let test_io_weight_device_set = ConditionalTest::new(
