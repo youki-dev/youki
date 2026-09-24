@@ -16,7 +16,6 @@ use crate::process::intel_rdt::{cleanup_intel_rdt, setup_intel_rdt};
 use crate::process::{self};
 use crate::syscall::syscall::SyscallType;
 use crate::user_ns::UserNamespaceConfig;
-use crate::utils;
 use crate::utils::PathBufExt;
 use crate::workload::Executor;
 
@@ -60,6 +59,11 @@ pub(super) struct ContainerBuilderImpl {
     pub stderr: Option<OwnedFd>,
     // Indicate if the init process should be a sibling of the main process.
     pub as_sibling: bool,
+    /// Base cgroup path of the container, decided by the caller: the init
+    /// builder derives it from the spec and the cgroup manager and saves it in
+    /// the container's config; a tenant (exec) loads that saved path, so both
+    /// end up in the same cgroup.
+    pub cgroup_path: PathBuf,
     // Run the process in an (existing) sub-cgroup(s)
     pub sub_cgroup_path: Option<String>,
     // Asm process label for the process commonly used with selinux.
@@ -92,8 +96,7 @@ impl ContainerBuilderImpl {
 
     fn run_container(&mut self) -> Result<(Pid, Option<OwnedFd>), LibcontainerError> {
         let linux = self.spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
-        let base_cgroups_path = utils::get_cgroup_path(linux.cgroups_path(), &self.container_id);
-        let mut final_cgroups_path = base_cgroups_path;
+        let mut final_cgroups_path = self.cgroup_path.clone();
 
         if let Some(sub_cgroup_path) = &self.sub_cgroup_path
             && sub_cgroup_path != "/"
@@ -226,11 +229,9 @@ impl ContainerBuilderImpl {
     }
 
     fn cleanup_container(&self) -> Result<(), LibcontainerError> {
-        let linux = self.spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
-        let cgroups_path = utils::get_cgroup_path(linux.cgroups_path(), &self.container_id);
         let cmanager =
             libcgroups::common::create_cgroup_manager(libcgroups::common::CgroupConfig {
-                cgroup_path: cgroups_path,
+                cgroup_path: self.cgroup_path.clone(),
                 systemd_cgroup: self.use_systemd || self.user_ns_config.is_some(),
                 container_name: self.container_id.to_string(),
             })?;

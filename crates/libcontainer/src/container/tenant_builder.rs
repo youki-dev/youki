@@ -265,6 +265,10 @@ impl TenantContainerBuilder {
 
         let use_systemd = self.should_use_systemd(&container);
         let user_ns_config = UserNamespaceConfig::new(&spec)?;
+        // Join the cgroup the container was created in: the init builder saved
+        // its resolved path in the container's config, so the tenant does not
+        // derive it again from the spec or from its own current cgroup.
+        let cgroup_path = container.spec()?.cgroup_path;
 
         let (read_end, write_end) =
             pipe2(OFlag::O_CLOEXEC).map_err(LibcontainerError::OtherSyscall)?;
@@ -291,6 +295,7 @@ impl TenantContainerBuilder {
             stdout: self.base.stdout,
             stderr: self.base.stderr,
             as_sibling: self.as_sibling,
+            cgroup_path,
             sub_cgroup_path: self.sub_cgroup,
             process_label: self.process_label,
         };

@@ -104,8 +104,10 @@ impl InitContainerBuilder {
         };
 
         let user_ns_config = UserNamespaceConfig::new(&spec)?;
+        let systemd_cgroup = self.use_systemd || user_ns_config.is_some();
 
-        let config = YoukiConfig::from_spec(&spec, container.id())?;
+        let config =
+            YoukiConfig::from_spec_with_cgroup_manager(&spec, container.id(), systemd_cgroup)?;
         config.save(&container_dir).map_err(|err| {
             tracing::error!(?container_dir, "failed to save config: {}", err);
             err
@@ -131,6 +133,7 @@ impl InitContainerBuilder {
             stdout: self.base.stdout,
             stderr: self.base.stderr,
             as_sibling: self.as_sibling,
+            cgroup_path: config.cgroup_path.clone(),
             sub_cgroup_path: None,
             process_label: None,
         };
