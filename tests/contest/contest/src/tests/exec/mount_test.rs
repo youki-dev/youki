@@ -39,10 +39,10 @@ pub(crate) fn get_mount_test() -> TestResult {
         });
 
         // maskedPaths test
-        // /proc/acpi is default maskedPath
-        let count_proc_acpi = stdout
+        // /sys/firmware is default maskedPath
+        let count_sys_firmware = stdout
             .lines()
-            .filter(|l| l.split_whitespace().nth(4) == Some("/proc/acpi"))
+            .filter(|l| l.split_whitespace().nth(4) == Some("/sys/firmware"))
             .count();
 
         // readonlyPaths test
@@ -59,10 +59,10 @@ pub(crate) fn get_mount_test() -> TestResult {
             ));
         }
 
-        if count_proc_acpi != 1 {
+        if count_sys_firmware != 1 {
             return TestResult::Failed(anyhow!(
-                "expected exactly 1 mountinfo entry for /proc/acpi, got {}",
-                count_proc_acpi
+                "expected exactly 1 mountinfo entry for /sys/firmware, got {}",
+                count_sys_firmware
             ));
         }
         if count_proc_bus != 1 {
