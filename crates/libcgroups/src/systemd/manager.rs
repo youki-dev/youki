@@ -16,6 +16,7 @@ use super::cpuset::CpuSet;
 use super::dbus_native::client::SystemdClient;
 use super::dbus_native::dbus::DbusConnection;
 use super::dbus_native::utils::SystemdClientError;
+use super::devices::Devices;
 use super::memory::Memory;
 use super::pids::Pids;
 use crate::common::{
@@ -174,6 +175,11 @@ pub enum SystemdManagerError {
     Cpu(#[from] super::cpu::SystemdCpuError),
     #[error("in cpuset controller: {0}")]
     CpuSet(#[from] super::cpuset::SystemdCpuSetError),
+    #[error("in devices controller: {0}")]
+    Devices(#[from] super::devices::SystemdDevicesError),
+    #[cfg(feature = "cgroupsv2_devices")]
+    #[error("in ebpf devices controller: {0}")]
+    EbpfDevices(#[from] crate::v2::devices::controller::DevicesControllerError),
     #[error("in io controller: {0}")]
     Io(#[from] super::io::SystemdIoError),
     #[error("in memory controller: {0}")]
@@ -548,6 +554,10 @@ impl CgroupManager for Manager {
                     CpuSet::apply(controller_opt, systemd_version, &mut properties)?;
                 }
 
+                ControllerType::Devices => {
+                    Devices::apply(controller_opt, systemd_version, &mut properties)?;
+                }
+
                 ControllerType::Pids => {
                     Pids::apply(controller_opt, systemd_version, &mut properties)
                         .map_err(SystemdManagerError::Pids)?;
@@ -569,6 +579,16 @@ impl CgroupManager for Manager {
             self.client
                 .set_unit_properties(&self.unit_name, &properties)?;
         }
+
+        // systemd derives a device filter from DeviceAllow and attaches it every time
+        // unit properties are set, so this has to run afterwards to replace it. A rule
+        // DeviceAllow cannot express, a deny rule above all, is only honoured by the
+        // program built here.
+        #[cfg(feature = "cgroupsv2_devices")]
+        crate::v2::devices::Devices::apply_devices(
+            &self.full_path,
+            controller_opt.resources.devices(),
+        )?;
 
         Ok(())
     }

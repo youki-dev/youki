@@ -3,7 +3,7 @@ use std::ffi::OsStr;
 use std::fs::{self, File, read_dir};
 use std::io::{self, BufRead};
 use std::os::linux::fs::MetadataExt;
-use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
 use anyhow::{Result, bail};
@@ -18,7 +18,7 @@ use nix::errno::Errno;
 use nix::libc;
 use nix::mount::{MsFlags, mount};
 use nix::sys::resource::{Resource, getrlimit};
-use nix::sys::stat::{Mode, umask};
+use nix::sys::stat::{Mode, SFlag, mknod, umask};
 use nix::sys::utsname;
 use nix::unistd::{Gid, Uid, getcwd, getgid, getgroups, getuid};
 use oci_spec::runtime::IOPriorityClass::{self, IoprioClassBe, IoprioClassIdle, IoprioClassRt};
@@ -1662,6 +1662,46 @@ pub fn validate_mount_propagation(spec: &Spec) {
                 }
             }
             _ => unreachable!(),
+        }
+    }
+}
+
+/// Checks that the device cgroup denies access to a device the spec does not allow.
+///
+/// Runs under a deny-all rule set, where the runtime's defaults still allow mknod for block
+/// devices but no read access, so creating the node must work and opening it must not.
+pub fn validate_device_cgroup() {
+    let dev_path = "/dev/test";
+    let dev = libc::makedev(8, 0);
+
+    if let Err(e) = mknod(
+        dev_path,
+        SFlag::S_IFBLK,
+        Mode::from_bits_truncate(0o600),
+        dev,
+    ) {
+        eprintln!("error due to failing to mknod {dev_path}: {e}");
+        return;
+    }
+
+    match fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(dev_path)
+    {
+        Ok(_) => {
+            eprintln!(
+                "error due to reading block device {dev_path} being allowed; the device cgroup \
+                 should deny it"
+            );
+        }
+        // Expected: the device cgroup rejected the open.
+        Err(e) if e.raw_os_error() == Some(libc::EPERM) => {}
+        Err(e) => {
+            eprintln!(
+                "error due to opening block device {dev_path} failing with {e}, expected EPERM \
+                 from the device cgroup"
+            );
         }
     }
 }
