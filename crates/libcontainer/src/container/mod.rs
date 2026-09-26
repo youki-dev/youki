@@ -20,6 +20,7 @@ pub mod init_builder;
 pub mod mount_validation;
 pub mod state;
 pub mod tenant_builder;
+pub use builder::validate_id;
 pub use container::{CheckpointOptions, Container};
 pub use container_checkpoint::CheckpointError;
 #[allow(deprecated)]
