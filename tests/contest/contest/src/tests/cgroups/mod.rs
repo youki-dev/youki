@@ -4,6 +4,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 pub mod cpu;
+pub mod hugetlb;
 pub mod memory;
 pub mod pids;
 

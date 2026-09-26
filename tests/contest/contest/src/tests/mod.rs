@@ -52,6 +52,5 @@ pub mod state;
 pub mod sysctl;
 pub mod terminal;
 pub mod time_ns;
-pub mod tlb;
 pub mod uid_mappings;
 pub mod update;
