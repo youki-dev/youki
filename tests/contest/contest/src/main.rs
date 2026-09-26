@@ -62,7 +62,6 @@ use crate::tests::state::get_state_test;
 use crate::tests::sysctl::get_sysctl_test;
 use crate::tests::terminal::get_terminal_test;
 use crate::tests::time_ns::get_time_ns_test;
-use crate::tests::tlb::get_tlb_test;
 use crate::tests::uid_mappings::get_uid_mappings_test;
 use crate::tests::update::get_update_test;
 use crate::utils::support::{set_runtime_path, set_runtimetest_path};
@@ -131,7 +130,7 @@ fn main() -> Result<()> {
 
     let cl = ContainerLifecycle::new();
     let cc = ContainerCreate::new();
-    let huge_tlb = get_tlb_test();
+    let cgroup_v2_hugetlb = cgroups::hugetlb::get_hugetlb_test();
     let pidfile = get_pidfile_test();
     let ns_itype = get_ns_itype_tests();
     let hooks = get_hooks_tests();
@@ -192,7 +191,7 @@ fn main() -> Result<()> {
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
-    tm.add_test_group(Box::new(huge_tlb));
+    tm.add_test_group(Box::new(cgroup_v2_hugetlb));
     tm.add_test_group(Box::new(pidfile));
     tm.add_test_group(Box::new(ns_itype));
     tm.add_test_group(Box::new(hooks));
