@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use libcgroups::v2::controller_type::ControllerType;
 use oci_spec::runtime::{
-    LinuxBlockIoBuilder, LinuxThrottleDeviceBuilder, LinuxWeightDeviceBuilder,
+    LinuxBlockIo, LinuxBlockIoBuilder, LinuxBuilder, LinuxResourcesBuilder,
+    LinuxThrottleDeviceBuilder, LinuxWeightDeviceBuilder, Spec, SpecBuilder,
 };
 use test_framework::{ConditionalTest, TestGroup, TestResult, assert_result_eq, test_result};
 use tracing::debug;
 
-use super::create_spec;
 use crate::utils::test_utils::{CGROUP_ROOT, check_container_created};
 use crate::utils::{cgroup_has_file, is_cgroup_v2_with_controller, test_outside_container};
 
@@ -19,6 +19,26 @@ const IO_MAX: &str = "io.max";
 
 const WEIGHT: u16 = 500;
 const RATE: u64 = 102400;
+
+fn create_spec(cgroup_name: &str, block_io: LinuxBlockIo) -> Result<Spec> {
+    let spec = SpecBuilder::default()
+        .linux(
+            LinuxBuilder::default()
+                .cgroups_path(Path::new(cgroup_name))
+                .resources(
+                    LinuxResourcesBuilder::default()
+                        .block_io(block_io)
+                        .build()
+                        .context("failed to build resource spec")?,
+                )
+                .build()
+                .context("failed to build linux spec")?,
+        )
+        .build()
+        .context("failed to build spec")?;
+
+    Ok(spec)
+}
 
 fn convert_blkio_weight_to_io_weight(weight: u16) -> u16 {
     (1 + (u32::from(weight) - 10) * 9999 / 990) as u16
@@ -382,7 +402,7 @@ fn can_run_io_weight() -> bool {
 }
 
 pub fn get_test_group() -> TestGroup {
-    let mut test_group = TestGroup::new("cgroup_v2_blkio");
+    let mut test_group = TestGroup::new("cgroup_v2_io");
 
     let test_io_weight_set = ConditionalTest::new(
         "test_io_weight_set",
