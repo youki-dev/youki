@@ -5,6 +5,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 pub mod cpu;
 pub mod memory;
+pub mod pids;
 
 pub fn cleanup_v2() -> Result<()> {
     let runtime_test = Path::new("/sys/fs/cgroup/runtime-test");
