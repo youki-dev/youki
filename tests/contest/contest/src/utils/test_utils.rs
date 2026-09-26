@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::io::Write;
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread::sleep;
@@ -541,9 +542,16 @@ pub fn wait_container_running<P: AsRef<Path>>(id: &str, dir: P) -> Result<()> {
     )
 }
 
-pub fn handle_console_socket(stream: std::os::unix::net::UnixStream) {
+/// Blocks until the PTY master fd is received, so it is safe to call
+/// `child.wait()` immediately after.  Hold the returned fd until after the
+/// container is deleted — closing it early sends SIGHUP to the container.
+///
+/// Returns `None` when no fd arrived (the runtime failed before sending one).
+pub fn handle_console_socket(stream: std::os::unix::net::UnixStream) -> Option<OwnedFd> {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Option<OwnedFd>>(1);
     std::thread::spawn(move || {
-        use std::io::{IoSliceMut, Read};
+        use std::io::IoSliceMut;
+        use std::os::fd::FromRawFd;
         use std::os::unix::io::AsRawFd;
 
         use nix::sys::socket::{ControlMessageOwned, MsgFlags, recvmsg};
@@ -553,23 +561,37 @@ pub fn handle_console_socket(stream: std::os::unix::net::UnixStream) {
         let mut cmsg_space = nix::cmsg_space!([std::os::unix::io::RawFd; 1]);
         let fd = stream.as_raw_fd();
 
-        if let Ok(msg) = recvmsg::<()>(fd, &mut iov, Some(&mut cmsg_space), MsgFlags::empty())
-            && let Ok(cmsgs) = msg.cmsgs()
+        let mut owned_fd: Option<OwnedFd> = None;
+        // MSG_CMSG_CLOEXEC sets O_CLOEXEC on received fds atomically so that
+        // child processes spawned in subsequent tests do not inherit them.
+        if let Ok(msg) = recvmsg::<()>(
+            fd,
+            &mut iov,
+            Some(&mut cmsg_space),
+            MsgFlags::MSG_CMSG_CLOEXEC,
+        ) && let Ok(cmsgs) = msg.cmsgs()
         {
             for cmsg in cmsgs {
-                if let ControlMessageOwned::ScmRights(_) = cmsg {
-                    // Keep the PTY master open by waiting for the stream to close
-                    let mut buf = [0u8; 1024];
-                    let mut stream_mut = &stream;
-                    while let Ok(n) = stream_mut.read(&mut buf) {
-                        if n == 0 {
-                            break;
-                        }
-                    }
+                if let ControlMessageOwned::ScmRights(fds) = cmsg {
+                    // Convert to OwnedFd so the caller controls the lifetime.
+                    // If nix ever changes ScmRights to Vec<OwnedFd>, this site
+                    // will already be explicit about ownership.
+                    let received: Vec<OwnedFd> = fds
+                        .into_iter()
+                        // SAFETY: raw is a freshly-received fd and we take sole
+                        // ownership here.
+                        .map(|raw| unsafe { OwnedFd::from_raw_fd(raw) })
+                        .collect();
+                    // The runtime sends a single PTY master, and cmsg_space is sized
+                    // for one fd, so anything beyond the first is closed on drop.
+                    owned_fd = received.into_iter().next();
                 }
             }
         }
+        // Send even on error/empty so the receiver never hangs.
+        let _ = tx.send(owned_fd);
     });
+    rx.recv().unwrap_or_default()
 }
 
 /// Runs a container in detached mode with an OCI terminal (`run -d --console-socket`).
@@ -577,11 +599,14 @@ pub fn handle_console_socket(stream: std::os::unix::net::UnixStream) {
 /// Binds a console socket next to the bundle, spawns the runtime in detached mode,
 /// accepts the console socket connection and hands it off to [`handle_console_socket`].
 /// Returns an error if the runtime process exits with a non-zero status.
+///
+/// The returned PTY master fd must be kept alive by the caller for as long as the
+/// container is expected to run; dropping it closes the terminal.
 pub fn run_container_with_console(
     runtime_path: &Path,
     bundle_path: &Path,
     container_id: &str,
-) -> Result<()> {
+) -> Result<Option<OwnedFd>> {
     let console_socket = bundle_path.join("console.sock");
     if console_socket.exists() {
         std::fs::remove_file(&console_socket)
@@ -610,13 +635,13 @@ pub fn run_container_with_console(
     let (stream, _) = listener
         .accept()
         .context("failed to accept console socket")?;
-    handle_console_socket(stream);
+    let pty_fd = handle_console_socket(stream);
 
     let status = child.wait().context("failed to wait for run -d")?;
     if !status.success() {
         bail!("run -d failed ({status})");
     }
-    Ok(())
+    Ok(pty_fd)
 }
 
 /// Checkpoint a running container into `image_dir`.
@@ -727,7 +752,7 @@ pub fn restore_container(
     work_dir: Option<&Path>,
     restore_args: &[&str],
     global_args: &[&str],
-) -> Result<()> {
+) -> Result<Option<OwnedFd>> {
     let stderr_file = tempfile::NamedTempFile::new().context("failed to create temp file")?;
 
     let mut args: Vec<std::ffi::OsString> = global_args.iter().map(Into::into).collect();
@@ -783,10 +808,14 @@ pub fn restore_container(
         .spawn()
         .context("failed to spawn restore")?;
 
-    if let Some(l) = listener {
-        let (stream, _) = l.accept()?;
-        handle_console_socket(stream);
-    }
+    let pty_fd = match listener {
+        Some(l) => {
+            let (stream, _) = l.accept()?;
+            handle_console_socket(stream)
+        }
+        // is_terminal = false: no PTY fd to receive.
+        None => None,
+    };
 
     let status = child.wait().context("failed to wait for restore")?;
 
@@ -795,7 +824,7 @@ pub fn restore_container(
         bail!("restore failed ({}): {}", status, stderr);
     }
 
-    Ok(())
+    Ok(pty_fd)
 }
 
 /// Returns true if CRIU is installed on the host.
