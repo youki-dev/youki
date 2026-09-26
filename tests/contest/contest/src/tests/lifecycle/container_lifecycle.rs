@@ -196,6 +196,14 @@ impl ContainerLifecycle {
         )
     }
 
+    pub fn checkpoint_empty_net_ns(&self) -> TestResult {
+        if !criu_installed() {
+            return TestResult::Skipped("CRIU is not installed".to_string());
+        }
+
+        checkpoint::checkpoint_empty_net_ns(self.project_path.path(), &self.container_id)
+    }
+
     // NOTE: The following two methods (`checkpoint_link_remap` and
     // `checkpoint_with_external_namespaces`) deviate from the pattern used by
     // the other checkpoint methods in this impl block. The typical pattern is:
@@ -220,6 +228,14 @@ impl ContainerLifecycle {
         }
 
         checkpoint::checkpoint_link_remap()
+    }
+
+    pub fn checkpoint_tcp_skip_in_flight() -> TestResult {
+        if !criu_installed() {
+            return TestResult::Skipped("CRIU is not installed".to_string());
+        }
+
+        checkpoint::checkpoint_tcp_skip_in_flight()
     }
 
     pub fn checkpoint_with_external_namespaces() -> TestResult {
@@ -325,7 +341,15 @@ impl TestableGroup for ContainerLifecycle {
                 "checkpoint with cgroups-mode soft",
                 self.checkpoint_manage_cgroups_mode_soft(),
             ),
+            (
+                "checkpoint with empty network namespace",
+                self.checkpoint_empty_net_ns(),
+            ),
             ("checkpoint with link-remap", Self::checkpoint_link_remap()),
+            (
+                "checkpoint with tcp-skip-in-flight",
+                Self::checkpoint_tcp_skip_in_flight(),
+            ),
             (
                 "checkpoint with external namespaces",
                 Self::checkpoint_with_external_namespaces(),
@@ -358,9 +382,17 @@ impl TestableGroup for ContainerLifecycle {
                     "checkpoint with cgroups-mode soft",
                     self.checkpoint_manage_cgroups_mode_soft(),
                 )),
+                "checkpoint_empty_net_ns" => ret.push((
+                    "checkpoint with empty network namespace",
+                    self.checkpoint_empty_net_ns(),
+                )),
                 "checkpoint_link_remap" => {
                     ret.push(("checkpoint with link-remap", Self::checkpoint_link_remap()))
                 }
+                "checkpoint_tcp_skip_in_flight" => ret.push((
+                    "checkpoint with tcp-skip-in-flight",
+                    Self::checkpoint_tcp_skip_in_flight(),
+                )),
                 "checkpoint_with_external_namespaces" => ret.push((
                     "checkpoint with external namespaces",
                     Self::checkpoint_with_external_namespaces(),

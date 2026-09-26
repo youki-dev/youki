@@ -7,6 +7,7 @@ use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::Path;
 
 use anyhow::{Result, bail};
+use caps::CapSet;
 use netlink_packet_core::{NLM_F_DUMP, NLM_F_REQUEST, NetlinkMessage, NetlinkPayload};
 use netlink_packet_route::RouteNetlinkMessage;
 use netlink_packet_route::address::AddressMessage;
@@ -23,9 +24,10 @@ use nix::unistd::{Gid, Uid, getcwd, getgid, getgroups, getuid};
 use oci_spec::runtime::IOPriorityClass::{self, IoprioClassBe, IoprioClassIdle, IoprioClassRt};
 use oci_spec::runtime::MemoryPolicyFlagType::*;
 use oci_spec::runtime::{
-    LinuxDevice, LinuxDeviceType, LinuxIdMapping, LinuxSchedulerPolicy, MemoryPolicyModeType,
-    PosixRlimit, PosixRlimitType, Spec,
+    Capability, LinuxDevice, LinuxDeviceType, LinuxIdMapping, LinuxSchedulerPolicy,
+    MemoryPolicyModeType, PosixRlimit, PosixRlimitType, Spec,
 };
+use procfs::process::{MountInfo, MountOptFields, Process};
 use tempfile::Builder;
 
 use crate::utils::{
@@ -882,6 +884,54 @@ pub fn validate_process_capabilities_bounding_unset(_spec: &Spec) {
     }
 }
 
+fn spec_capabilities(
+    caps: Option<&std::collections::HashSet<Capability>>,
+    supported: &caps::CapsHashSet,
+) -> caps::CapsHashSet {
+    caps.into_iter()
+        .flat_map(|set| set.iter())
+        .filter_map(|cap| format!("CAP_{cap}").parse().ok())
+        .filter(|cap| supported.contains(cap))
+        .collect()
+}
+
+fn validate_capability_set(
+    name: &str,
+    configured: Option<&std::collections::HashSet<Capability>>,
+    set: CapSet,
+    supported: &caps::CapsHashSet,
+) {
+    let expected = spec_capabilities(configured, supported);
+    match caps::read(None, set) {
+        Ok(actual) if actual == expected => {}
+        Ok(actual) => {
+            eprintln!("unexpected {name} capabilities: {actual:?}, expected {expected:?}")
+        }
+        Err(e) => eprintln!("failed to read {name} capabilities: {e}"),
+    }
+}
+
+pub fn validate_process_capabilities(spec: &Spec) {
+    let Some(process) = spec.process().as_ref() else {
+        return eprintln!("process not set in spec");
+    };
+    let Some(config) = process.capabilities().as_ref() else {
+        return eprintln!("process.capabilities not set in spec");
+    };
+    let supported = caps::runtime::procfs_all_supported(None)
+        .unwrap_or_else(|_| caps::runtime::thread_all_supported());
+
+    for (name, configured, set) in [
+        ("inheritable", config.inheritable(), CapSet::Inheritable),
+        ("permitted", config.permitted(), CapSet::Permitted),
+        ("effective", config.effective(), CapSet::Effective),
+        ("bounding", config.bounding(), CapSet::Bounding),
+        ("ambient", config.ambient(), CapSet::Ambient),
+    ] {
+        validate_capability_set(name, configured.as_ref(), set, &supported);
+    }
+}
+
 pub fn test_validate_root_readonly(spec: &Spec) {
     let root = spec.root().as_ref().unwrap();
     if root.readonly().unwrap() {
@@ -1409,6 +1459,209 @@ pub fn validate_net_devices(spec: &Spec) {
                     );
                 }
             }
+        }
+    }
+}
+
+pub fn validate_time_offsets(spec: &Spec) {
+    let linux = spec.linux().as_ref().unwrap();
+    let time_offsets_mapping = linux.time_offsets();
+
+    let (boottime_secs, boottime_nanosecs, monotonic_secs, monotonic_nanosecs) =
+        if let Some(offsets) = time_offsets_mapping {
+            let boottime_values = offsets.get("boottime").unwrap();
+            let boottime_secs = boottime_values.secs().unwrap_or(0);
+            let boottime_nanosecs = boottime_values.nanosecs().unwrap_or(0);
+
+            let monotonic_values = offsets.get("monotonic").unwrap();
+            let monotonic_secs = monotonic_values.secs().unwrap_or(0);
+            let monotonic_nanosecs = monotonic_values.nanosecs().unwrap_or(0);
+
+            (
+                boottime_secs,
+                boottime_nanosecs,
+                monotonic_secs,
+                monotonic_nanosecs,
+            )
+        } else {
+            (0, 0, 0, 0)
+        };
+
+    let actual_offsets = match fs::read_to_string("/proc/self/timens_offsets") {
+        Ok(contents) => contents,
+        Err(e) => {
+            eprintln!("Failed to read /proc/self/timens_offsets: {}", e);
+            return;
+        }
+    };
+
+    for line in actual_offsets.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() != 3 {
+            eprintln!("Invalid time offset format: {line}");
+            continue;
+        }
+
+        let clock_type = parts[0];
+        let actual_secs = match parts[1].parse::<i64>() {
+            Ok(value) => value,
+            Err(e) => {
+                eprintln!("Invalid seconds value in `{line}`: {e}");
+                continue;
+            }
+        };
+
+        let actual_nanosecs = match parts[2].parse::<u32>() {
+            Ok(value) => value,
+            Err(e) => {
+                eprintln!("Invalid nanoseconds value in `{line}`: {e}");
+                continue;
+            }
+        };
+
+        let expected = match clock_type {
+            "monotonic" => Some((monotonic_secs, monotonic_nanosecs)),
+            "boottime" => Some((boottime_secs, boottime_nanosecs)),
+            _ => None,
+        };
+        if let Some((expected_secs, expected_nanosecs)) = expected
+            && (actual_secs != expected_secs || actual_nanosecs != expected_nanosecs)
+        {
+            eprintln!(
+                "Unexpected {clock_type} time offset, expected: {expected_secs} {expected_nanosecs}, found: {actual_secs} {actual_nanosecs}"
+            );
+        }
+    }
+}
+
+pub fn validate_mount_propagation(spec: &Spec) {
+    let Some(mounts) = spec.mounts() else {
+        eprintln!("Error: mounts are not set in spec");
+        return;
+    };
+
+    let mountinfo: Vec<MountInfo> = match Process::myself().and_then(|p| p.mountinfo()) {
+        std::result::Result::Ok(mi) => mi.into_iter().collect(),
+        Err(e) => {
+            eprintln!("Error: failed to read mountinfo: {e}");
+            return;
+        }
+    };
+    let find = |path: &Path| mountinfo.iter().find(|m| m.mount_point == path);
+    let has_shared = |m: &MountInfo| {
+        m.opt_fields
+            .iter()
+            .any(|f| matches!(f, MountOptFields::Shared(_)))
+    };
+    let has_master = |m: &MountInfo| {
+        m.opt_fields
+            .iter()
+            .any(|f| matches!(f, MountOptFields::Master(_)))
+    };
+    let has_unbindable = |m: &MountInfo| {
+        m.opt_fields
+            .iter()
+            .any(|f| matches!(f, MountOptFields::Unbindable))
+    };
+
+    for mount in mounts {
+        let Some(options) = mount.options() else {
+            continue;
+        };
+        let Some(propagation) = options.iter().find(|o| {
+            matches!(
+                o.as_str(),
+                "shared"
+                    | "rshared"
+                    | "slave"
+                    | "rslave"
+                    | "private"
+                    | "rprivate"
+                    | "unbindable"
+                    | "runbindable"
+            )
+        }) else {
+            continue;
+        };
+
+        let dest = mount.destination();
+        let Some(top) = find(dest) else {
+            eprintln!("Error: mount {dest:?} not found in mountinfo");
+            continue;
+        };
+        let sub = find(&dest.join("sub"));
+
+        match propagation.as_str() {
+            "shared" | "rshared" => {
+                if !has_shared(top) {
+                    eprintln!(
+                        "Error: expected {dest:?} to be shared, got optional fields {:?}",
+                        top.opt_fields
+                    );
+                }
+                if let Some(sub) = sub {
+                    let expect_sub_shared = propagation == "rshared";
+                    if has_shared(sub) != expect_sub_shared {
+                        eprintln!(
+                            "Error: expected submount shared to be {expect_sub_shared} for {propagation}, got optional fields {:?}",
+                            sub.opt_fields
+                        );
+                    }
+                }
+            }
+            "slave" | "rslave" => {
+                if !has_master(top) || has_shared(top) {
+                    eprintln!(
+                        "Error: expected {dest:?} to be a slave, got optional fields {:?}",
+                        top.opt_fields
+                    );
+                }
+                if propagation == "rslave"
+                    && let Some(sub) = sub
+                    && (!has_master(sub) || has_shared(sub))
+                {
+                    eprintln!(
+                        "Error: expected submount to be a slave for rslave, got optional fields {:?}",
+                        sub.opt_fields
+                    );
+                }
+            }
+            "private" | "rprivate" => {
+                if has_shared(top) || has_master(top) || has_unbindable(top) {
+                    eprintln!(
+                        "Error: expected {dest:?} to be private, got optional fields {:?}",
+                        top.opt_fields
+                    );
+                }
+                if let Some(sub) = sub {
+                    let sub_private = !has_shared(sub) && !has_master(sub) && !has_unbindable(sub);
+                    let expect_sub_private = propagation == "rprivate";
+                    if sub_private != expect_sub_private {
+                        eprintln!(
+                            "Error: expected submount private to be {expect_sub_private} for {propagation}, got optional fields {:?}",
+                            sub.opt_fields
+                        );
+                    }
+                }
+            }
+            "unbindable" | "runbindable" => {
+                if !has_unbindable(top) {
+                    eprintln!(
+                        "Error: expected {dest:?} to be unbindable, got optional fields {:?}",
+                        top.opt_fields
+                    );
+                }
+                if let Some(sub) = sub {
+                    let expect_sub_unbindable = propagation == "runbindable";
+                    if has_unbindable(sub) != expect_sub_unbindable {
+                        eprintln!(
+                            "Error: expected submount unbindable to be {expect_sub_unbindable} for {propagation}, got optional fields {:?}",
+                            sub.opt_fields
+                        );
+                    }
+                }
+            }
+            _ => unreachable!(),
         }
     }
 }

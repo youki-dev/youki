@@ -4,7 +4,6 @@
 //! following the patterns established by runc's CRIU integration.
 
 use std::fs::File;
-use std::os::unix::io::AsRawFd;
 
 use nix::sys::stat::fstat;
 use oci_spec::runtime::{LinuxNamespaceType, Spec};
@@ -94,7 +93,7 @@ pub fn handle_checkpointing_external_namespaces(
         LibcontainerError::OtherIO(err)
     })?;
 
-    let stat = fstat(ns_file.as_raw_fd()).map_err(|err| {
+    let stat = fstat(&ns_file).map_err(|err| {
         tracing::error!(?ns_path, ?err, "failed to stat namespace");
         LibcontainerError::Other(format!("failed to stat namespace: {}", err))
     })?;

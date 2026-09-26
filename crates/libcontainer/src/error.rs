@@ -24,8 +24,6 @@ pub enum LibcontainerError {
     InvalidInput(String),
     #[error("requires at least one executors")]
     NoExecutors,
-    #[error("rootless container requires valid user namespace definition")]
-    NoUserNamespace,
 
     // Invalid inputs
     #[error(transparent)]
@@ -66,8 +64,6 @@ pub enum LibcontainerError {
     Checkpoint(#[from] crate::container::CheckpointError),
     #[error[transparent]]
     CreateContainerError(#[from] CreateContainerError),
-    #[error(transparent)]
-    NetDevicesError(#[from] crate::utils::NetDevicesError),
     #[error(transparent)]
     NetworkError(#[from] crate::network::NetworkError),
     #[error(transparent)]
@@ -140,6 +136,22 @@ pub enum ErrInvalidSpec {
     SysctlNotInSeparateNamespace(String),
     #[error("invalid intelRdt.closID (must not contain '.', '..', or '/')")]
     InvalidIntelRdtClosId,
+    #[error("time namespace offsets specified, but time namespace isn't enabled in the config")]
+    TimeNamespace,
+    #[error(
+        "time namespace enabled, but both namespace path and time offsets specified -- you may only provide one"
+    )]
+    TimeOffsetsWithPath,
+    #[error("unable to move network devices without a NET namespace")]
+    NetDevicesNoNetNamespace,
+    #[error("network devices are not supported in rootless containers")]
+    NetDevicesRootlessNotSupported,
+    #[error("invalid network device name: {0}")]
+    NetDevicesInvalidDeviceName(String),
+    #[error(transparent)]
+    IO(#[from] std::io::Error),
+    #[error("rootless container requires valid user namespace definition")]
+    NoUserNamespace,
 }
 
 #[derive(Debug, thiserror::Error)]

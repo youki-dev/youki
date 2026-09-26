@@ -12,6 +12,11 @@ updates:
         patterns:
           - "wasmtime"
           - "wasi-common"
+      netlink:
+        patterns:
+          - "netlink-packet-core"
+          - "netlink-packet-route"
+          - "netlink-sys"
       patch:
         update-types: 
         - patch

@@ -8,14 +8,18 @@
 //! Cgroup (Resource limits, execution priority etc.)
 
 use std::collections;
+use std::os::unix::io::AsRawFd;
 
+use nix::fcntl;
 use nix::sched::CloneFlags;
 use nix::sys::stat;
-use nix::{fcntl, unistd};
 use oci_spec::runtime::{LinuxNamespace, LinuxNamespaceType};
 
 use crate::syscall::Syscall;
 use crate::syscall::syscall::create_syscall;
+
+// CLONE_NEWTIME is not yet defined in nix's CloneFlags.
+pub(crate) const CLONE_NEWTIME_FLAG: CloneFlags = CloneFlags::from_bits_retain(libc::CLONE_NEWTIME);
 
 type Result<T> = std::result::Result<T, NamespaceError>;
 
@@ -39,6 +43,7 @@ static ORDERED_NAMESPACES: &[CloneFlags] = &[
     CloneFlags::CLONE_NEWNET,
     CloneFlags::CLONE_NEWCGROUP,
     CloneFlags::CLONE_NEWNS,
+    CLONE_NEWTIME_FLAG,
 ];
 
 /// Holds information about namespaces
@@ -56,7 +61,7 @@ fn get_clone_flag(namespace_type: LinuxNamespaceType) -> Result<CloneFlags> {
         LinuxNamespaceType::Network => CloneFlags::CLONE_NEWNET,
         LinuxNamespaceType::Cgroup => CloneFlags::CLONE_NEWCGROUP,
         LinuxNamespaceType::Mount => CloneFlags::CLONE_NEWNS,
-        LinuxNamespaceType::Time => return Err(NamespaceError::NotSupported("time".to_string())),
+        LinuxNamespaceType::Time => CLONE_NEWTIME_FLAG,
     };
 
     Ok(flag)
@@ -108,14 +113,11 @@ impl Namespaces {
                         tracing::error!(?err, ?namespace, "failed to open namespace file");
                     })?;
                 self.command
-                    .set_ns(fd, get_clone_flag(namespace.typ())?)
+                    .set_ns(fd.as_raw_fd(), get_clone_flag(namespace.typ())?)
                     .map_err(|err| {
                         tracing::error!(?err, ?namespace, "failed to set namespace");
                         err
                     })?;
-                unistd::close(fd).inspect_err(|err| {
-                    tracing::error!(?err, ?namespace, "failed to close namespace file");
-                })?;
             }
             None => {
                 self.command
@@ -167,6 +169,10 @@ mod tests {
                 .typ(LinuxNamespaceType::Ipc)
                 .build()
                 .unwrap(),
+            LinuxNamespaceBuilder::default()
+                .typ(LinuxNamespaceType::Time)
+                .build()
+                .unwrap(),
         ]
     }
 
@@ -195,7 +201,11 @@ mod tests {
 
         let mut unshare_args = test_command.get_unshare_args();
         unshare_args.sort();
-        let mut expect = vec![CloneFlags::CLONE_NEWUSER, CloneFlags::CLONE_NEWPID];
+        let mut expect = vec![
+            CLONE_NEWTIME_FLAG,
+            CloneFlags::CLONE_NEWUSER,
+            CloneFlags::CLONE_NEWPID,
+        ];
         expect.sort();
         assert_eq!(unshare_args, expect)
     }

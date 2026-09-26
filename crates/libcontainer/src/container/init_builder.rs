@@ -1,4 +1,5 @@
 use std::fs;
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -7,7 +8,6 @@ use user_ns::UserNamespaceConfig;
 
 use super::builder::ContainerBuilder;
 use super::builder_impl::ContainerBuilderImpl;
-use super::mount_validation::validate_idmapped_mounts;
 use super::{Container, ContainerStatus};
 use crate::config::YoukiConfig;
 use crate::error::{ErrInvalidSpec, LibcontainerError, MissingSpecError};
@@ -73,7 +73,7 @@ impl InitContainerBuilder {
     }
 
     /// Creates a new container
-    pub fn build(self) -> Result<Container, LibcontainerError> {
+    pub fn build(self) -> Result<(Container, Option<OwnedFd>), LibcontainerError> {
         let spec = self.load_spec()?;
         // validate terminal field against console socket presence before any side effects
         // (mirrors runc's checkTerminal called at the top of runner.run())
@@ -135,11 +135,11 @@ impl InitContainerBuilder {
             process_label: None,
         };
 
-        builder_impl.create()?;
+        let (_, foreground_pty_fd) = builder_impl.create()?;
 
         container.refresh_state()?;
 
-        Ok(container)
+        Ok((container, foreground_pty_fd))
     }
 
     fn create_container_dir(&self) -> Result<PathBuf, LibcontainerError> {
@@ -186,7 +186,11 @@ impl InitContainerBuilder {
             Err(ErrInvalidSpec::UnsupportedVersion)?;
         }
 
-        Validator::validate_spec(spec)?;
+        let syscall = create_syscall();
+        let is_rootless =
+            utils::rootless_required(&*syscall).map_err(LibcontainerError::OtherIO)?;
+
+        Validator::validate_spec(spec, is_rootless)?;
 
         if let Some(process) = spec.process() {
             if let Some(profile) = process.apparmor_profile() {
@@ -203,17 +207,6 @@ impl InitContainerBuilder {
                 }
             }
         }
-
-        let syscall = create_syscall();
-
-        if let Some(mounts) = spec.mounts() {
-            utils::validate_mount_options(mounts)?;
-            validate_idmapped_mounts(mounts, spec.linux().as_ref(), &*syscall)?;
-        }
-
-        utils::validate_spec_for_new_user_ns(spec, &*syscall)?;
-        utils::validate_spec_for_net_devices(spec, &*syscall)
-            .map_err(LibcontainerError::NetDevicesError)?;
 
         Ok(())
     }

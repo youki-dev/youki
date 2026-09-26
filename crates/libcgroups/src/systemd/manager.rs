@@ -48,6 +48,8 @@ pub struct Manager {
     destructured_path: CgroupsPath,
     /// Name of the container e.g. 569d5ce3afe1074769f67
     container_name: String,
+    /// Name of the sub-cgroup
+    sub_cgroup: String,
     /// Name of the systemd unit e.g. youki-569d5ce3afe1074769f67.scope
     unit_name: String,
     /// Client for communicating with systemd
@@ -199,6 +201,10 @@ impl Manager {
         let mut destructured_path: CgroupsPath = cgroups_path.as_path().try_into()?;
         ensure_parent_unit(&mut destructured_path, use_system);
 
+        let (name, sub_cgroup) = Self::split_sub_cgroup(&destructured_path.name);
+        let sub_cgroup = sub_cgroup.to_owned();
+        destructured_path.name = name.to_owned();
+
         // EAGAIN from a recv() that timed out via SO_RCVTIMEO (set in dbus::connect()).
         let is_eagain = |e: &SystemdManagerError| {
             matches!(
@@ -260,7 +266,7 @@ impl Manager {
 
             // Step 2 — initial method calls to discover the cgroup path.
             // On EAGAIN, client is dropped here and the next iteration reconnects.
-            match Self::construct_cgroups_path(&destructured_path, &client) {
+            match Self::construct_cgroups_path(&destructured_path, &client, &sub_cgroup) {
                 Ok((cgroups_path, delegation_boundary)) => {
                     let full_path = root_path.join_safely(&cgroups_path)?;
                     let fs_manager = FsManager::new(root_path.clone(), cgroups_path.clone())?;
@@ -270,6 +276,7 @@ impl Manager {
                         full_path,
                         container_name,
                         unit_name: Self::get_unit_name(&destructured_path),
+                        sub_cgroup,
                         destructured_path,
                         client,
                         fs_manager,
@@ -310,6 +317,18 @@ impl Manager {
         .into())
     }
 
+    // split_sub_cgroup splits the unit `name` into the base unit name and the
+    // sub-cgroup suffix.
+    // Example: "{id}/sub/init" becomes:
+    //   - base name: "{id}"
+    //   - sub-cgroup: "/sub/init"
+    fn split_sub_cgroup(name: &str) -> (&str, &str) {
+        match name.find('/') {
+            Some(i) => name.split_at(i),
+            None => (name, ""),
+        }
+    }
+
     /// get_unit_name returns the unit (scope) name from the path provided by the user
     /// for example: foo:docker:bar returns in '/docker-bar.scope'
     fn get_unit_name(cgroups_path: &CgroupsPath) -> String {
@@ -326,6 +345,7 @@ impl Manager {
     fn construct_cgroups_path(
         cgroups_path: &CgroupsPath,
         client: &dyn SystemdClient,
+        sub_cgroup: &str,
     ) -> Result<(PathBuf, PathBuf), SystemdManagerError> {
         // if the user provided a '.slice' (as in a branch of a tree)
         // we need to convert it to a filesystem path.
@@ -334,7 +354,10 @@ impl Manager {
         let systemd_root = client.control_cgroup_root()?;
         let unit_name = Self::get_unit_name(cgroups_path);
 
-        let cgroups_path = systemd_root.join_safely(parent)?.join_safely(unit_name)?;
+        let cgroups_path = systemd_root
+            .join_safely(parent)?
+            .join_safely(unit_name)?
+            .join_safely(sub_cgroup)?;
         Ok((cgroups_path, systemd_root))
     }
 
@@ -489,8 +512,11 @@ impl CgroupManager for Manager {
         }
         if self.client.transient_unit_exists(&self.unit_name) {
             tracing::debug!("Transient unit {:?} already exists", self.unit_name);
-            self.client
-                .add_process_to_unit(&self.unit_name, "", pid.as_raw() as u32)?;
+            self.client.add_process_to_unit(
+                &self.unit_name,
+                &self.sub_cgroup,
+                pid.as_raw() as u32,
+            )?;
             return Ok(());
         }
 
@@ -631,6 +657,47 @@ mod tests {
     }
 
     #[test]
+    fn test_split_sub_cgroup() {
+        struct Case {
+            name: &'static str,
+            expected_name: &'static str,
+            expected_sub_cgroup: &'static str,
+        }
+        let cases = [
+            Case {
+                name: "youki-569d5ce3afe1074769f67",
+                expected_name: "youki-569d5ce3afe1074769f67",
+                expected_sub_cgroup: "",
+            },
+            Case {
+                name: "youki-569d5ce3afe1074769f67/init",
+                expected_name: "youki-569d5ce3afe1074769f67",
+                expected_sub_cgroup: "/init",
+            },
+            Case {
+                name: "youki-569d5ce3afe1074769f67/sub/init",
+                expected_name: "youki-569d5ce3afe1074769f67",
+                expected_sub_cgroup: "/sub/init",
+            },
+            Case {
+                name: "youki-569d5ce3afe1074769f67/",
+                expected_name: "youki-569d5ce3afe1074769f67",
+                expected_sub_cgroup: "/",
+            },
+        ];
+
+        for case in cases {
+            let (name, sub_cgroup) = Manager::split_sub_cgroup(case.name);
+            assert_eq!(name, case.expected_name, "name mismatch for {}", case.name);
+            assert_eq!(
+                sub_cgroup, case.expected_sub_cgroup,
+                "sub_cgroup mismatch for {}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
     fn expand_slice_works() -> Result<()> {
         assert_eq!(
             Manager::expand_slice("test-a-b.slice")?,
@@ -647,7 +714,7 @@ mod tests {
             .context("construct path")?;
 
         assert_eq!(
-            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {})?.0,
+            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {}, "")?.0,
             PathBuf::from("/test.slice/test-a.slice/test-a-b.slice/docker-foo.scope"),
         );
 
@@ -661,8 +728,22 @@ mod tests {
             .context("construct path")?;
 
         assert_eq!(
-            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {})?.0,
+            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {}, "")?.0,
             PathBuf::from("/machine.slice/libpod-foo.scope"),
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn get_cgroups_path_works_with_sub_cgroup() -> Result<()> {
+        let cgroups_path = Path::new("machine.slice:libpod:foo")
+            .try_into()
+            .context("construct path")?;
+
+        assert_eq!(
+            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {}, "/init")?.0,
+            PathBuf::from("/machine.slice/libpod-foo.scope/init"),
         );
 
         Ok(())
@@ -676,7 +757,7 @@ mod tests {
         ensure_parent_unit(&mut cgroups_path, true);
 
         assert_eq!(
-            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {})?.0,
+            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {}, "")?.0,
             PathBuf::from("/system.slice/docker-foo.scope"),
         );
 

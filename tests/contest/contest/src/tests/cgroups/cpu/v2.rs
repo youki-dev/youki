@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use libcgroups::common::{self, CgroupSetup, DEFAULT_CGROUP_ROOT};
+use libcgroups::common::{self, DEFAULT_CGROUP_ROOT};
 use libcgroups::v2::controller_type::ControllerType;
 use libcontainer::utils::PathBufExt;
 use oci_spec::runtime::{LinuxCpuBuilder, Spec};
@@ -11,11 +11,10 @@ use tracing::debug;
 
 use super::create_spec;
 use crate::tests::cgroups::attach_controller;
-use crate::utils::test_outside_container;
 use crate::utils::test_utils::{CGROUP_ROOT, check_container_created};
+use crate::utils::{cgroup_has_file, is_cgroup_v2_with_controller, test_outside_container};
 
 const DEFAULT_PERIOD: u64 = 100_000;
-const CPU: &str = "cpu";
 const CGROUP_CPU_IDLE: &str = "cpu.idle";
 
 // SPEC: The runtime spec does not specify what should happen if the cpu weight is outside
@@ -379,39 +378,11 @@ fn prepare_cpu_max(spec: &Spec, quota: &str, period: &str) -> Result<()> {
 }
 
 fn can_run() -> bool {
-    let setup_result = common::get_cgroup_setup();
-    if !matches!(setup_result, Ok(CgroupSetup::Unified)) {
-        debug!("cgroup setup is not v2, was {:?}", setup_result);
-        return false;
-    }
-
-    let controllers_result =
-        libcgroups::v2::util::get_available_controllers(common::DEFAULT_CGROUP_ROOT);
-    if controllers_result.is_err() {
-        debug!(
-            "could not retrieve cgroup controllers: {:?}",
-            controllers_result
-        );
-        return false;
-    }
-
-    if !controllers_result
-        .unwrap()
-        .into_iter()
-        .any(|c| c == ControllerType::Cpu)
-    {
-        debug!("cpu controller is not attached to the v2 hierarchy");
-        return false;
-    }
-
-    true
+    is_cgroup_v2_with_controller(ControllerType::Cpu)
 }
 
 fn can_run_idle() -> bool {
-    let idle_path = Path::new(common::DEFAULT_CGROUP_ROOT)
-        .join(CPU)
-        .join(CGROUP_CPU_IDLE);
-    can_run() && idle_path.exists()
+    can_run() && cgroup_has_file(CGROUP_CPU_IDLE)
 }
 
 pub fn get_test_group() -> TestGroup {

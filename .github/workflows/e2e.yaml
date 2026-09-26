@@ -33,7 +33,6 @@ jobs:
       - name: Build youki
         run: just youki-release
       - name: Upload youki binary
-        if: ${{ matrix.arch == 'x86_64' }}
         uses: actions/upload-artifact@v4
         with:
           name: youki-${{ matrix.arch }}-${{ matrix.libc }}
@@ -175,13 +174,18 @@ jobs:
         run: just test-oci
 
   oci-validation-rust:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     needs: [youki-build]
     timeout-minutes: 20
     strategy:
       matrix:
-        arch: [ "x86_64" ]
+        arch: [ "x86_64", "aarch64" ]
         libc: [ "gnu", "musl" ]
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
         with:
@@ -208,8 +212,10 @@ jobs:
           name: youki-${{ matrix.arch }}-${{ matrix.libc }}
       - name: Add the permission to run
         run: chmod +x ./youki
+      - name: Build integration tests
+        run: just contest
       - name: Validate tests on youki
-        run: just test-contest
+        run: sudo ./scripts/contest.sh "$PWD/youki"
 
   rootless-podman-test:
     runs-on: ubuntu-24.04

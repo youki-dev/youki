@@ -14,6 +14,8 @@ pub enum ChannelError {
         expected: &'static str,
         received: Box<Message>,
     },
+    #[error("received unexpected init message: {0:?}")]
+    UnexpectedInitMessage(Box<Message>),
     #[error("failed to receive. {msg:?}. {source:?}")]
     ReceiveError {
         msg: String,
@@ -73,6 +75,13 @@ impl MainSender {
         Ok(())
     }
 
+    pub fn time_offset_request(&mut self) -> Result<(), ChannelError> {
+        tracing::debug!("send time offset request");
+        self.sender.send(Message::WriteTimeOffsets)?;
+
+        Ok(())
+    }
+
     pub fn seccomp_notify_request(&mut self, fd: RawFd) -> Result<(), ChannelError> {
         self.sender
             .send_fds(Message::SeccompNotify, &[fd.as_raw_fd()])?;
@@ -101,8 +110,13 @@ impl MainSender {
         Ok(())
     }
 
-    pub fn init_ready(&mut self) -> Result<(), ChannelError> {
-        self.sender.send(Message::InitReady)?;
+    pub fn init_ready(&mut self, foreground_pty_fd: Option<RawFd>) -> Result<(), ChannelError> {
+        if let Some(fd) = foreground_pty_fd {
+            self.sender
+                .send_fds(Message::InitReady, &[fd.as_raw_fd()])?;
+        } else {
+            self.sender.send(Message::InitReady)?;
+        }
 
         Ok(())
     }
@@ -182,13 +196,35 @@ impl MainReceiver {
         }
     }
 
-    pub fn recv_message_with_fds(&mut self) -> Result<(Message, Option<[RawFd; 1]>), ChannelError> {
-        self.receiver
-            .recv_with_fds::<[RawFd; 1]>()
-            .map_err(|err| ChannelError::ReceiveError {
-                msg: "waiting for message".to_string(),
+    /// Receives an init message, normalizing error messages and taking ownership of
+    /// any attached fd.
+    pub fn recv_init_message(&mut self) -> Result<(Message, Option<OwnedFd>), ChannelError> {
+        let (msg, fds) = self.receiver.recv_with_fds::<[RawFd; 1]>().map_err(|err| {
+            ChannelError::ReceiveError {
+                msg: "waiting for init message".to_string(),
                 source: err,
-            })
+            }
+        })?;
+        let fd = fds.map(|fds| unsafe { OwnedFd::from_raw_fd(fds[0]) });
+        match msg {
+            Message::ExecFailed(err) => Err(ChannelError::ExecError(err)),
+            Message::OtherError(err) => Err(ChannelError::OtherError(err)),
+            msg => Ok((msg, fd)),
+        }
+    }
+
+    pub fn wait_for_time_offset_request(&mut self) -> Result<(), ChannelError> {
+        let msg = self
+            .receiver
+            .recv()
+            .map_err(|err| ChannelError::ReceiveError {
+                msg: "waiting for time offset request".to_string(),
+                source: err,
+            })?;
+        match msg {
+            Message::WriteTimeOffsets => Ok(()),
+            msg => Err(ChannelError::unexpected("WriteTimeOffsets", msg)),
+        }
     }
 
     pub fn wait_for_seccomp_request(&mut self) -> Result<i32, ChannelError> {
@@ -231,18 +267,22 @@ impl MainReceiver {
         }
     }
 
-    /// Waits for associated init process to send ready message
-    /// and return the pid of init process which is forked by init process
-    pub fn wait_for_init_ready(&mut self) -> Result<(), ChannelError> {
-        let msg = self
-            .receiver
-            .recv()
-            .map_err(|err| ChannelError::ReceiveError {
+    /// Waits for the associated init process to send the ready message.
+    /// Returns the PTY master fd when the init process allocated a foreground
+    /// terminal (process.terminal=true without a console socket).
+    pub fn wait_for_init_ready(&mut self) -> Result<Option<OwnedFd>, ChannelError> {
+        let (msg, fds) = self.receiver.recv_with_fds::<[RawFd; 1]>().map_err(|err| {
+            ChannelError::ReceiveError {
                 msg: "waiting for init ready".to_string(),
                 source: err,
-            })?;
+            }
+        })?;
         match msg {
-            Message::InitReady => Ok(()),
+            // SAFETY: the fd (if any) was just received via SCM_RIGHTS with
+            // MSG_CMSG_CLOEXEC, so it is a fresh fd that we own.
+            Message::InitReady => Ok(fds
+                .and_then(|f| f.first().copied())
+                .map(|fd| unsafe { OwnedFd::from_raw_fd(fd) })),
             // this case in unique and known enough to have a special error format
             Message::ExecFailed(err) => Err(ChannelError::ExecError(format!(
                 "error in executing process : {err}"
@@ -292,6 +332,13 @@ impl IntermediateSender {
         Ok(())
     }
 
+    pub fn time_offsets_written(&mut self) -> Result<(), ChannelError> {
+        tracing::debug!("time offsets written");
+        self.sender.send(Message::TimeOffsetsWritten)?;
+
+        Ok(())
+    }
+
     pub fn close(&self) -> Result<(), ChannelError> {
         self.sender.close()?;
 
@@ -317,6 +364,21 @@ impl IntermediateReceiver {
         match msg {
             Message::MappingWritten => Ok(()),
             msg => Err(ChannelError::unexpected("MappingWritten", msg)),
+        }
+    }
+
+    pub fn wait_for_time_offsets_ack(&mut self) -> Result<(), ChannelError> {
+        tracing::debug!("waiting for time offsets ack");
+        let msg = self
+            .receiver
+            .recv()
+            .map_err(|err| ChannelError::ReceiveError {
+                msg: "waiting for time offsets ack".to_string(),
+                source: err,
+            })?;
+        match msg {
+            Message::TimeOffsetsWritten => Ok(()),
+            msg => Err(ChannelError::unexpected("TimeOffsetsWritten", msg)),
         }
     }
 
@@ -541,6 +603,48 @@ mod tests {
 
     #[test]
     #[serial]
+    fn test_channel_time_offset_request() -> Result<()> {
+        let (sender, receiver) = &mut main_channel()?;
+        match unsafe { unistd::fork()? } {
+            unistd::ForkResult::Parent { child } => {
+                wait::waitpid(child, None)?;
+                receiver.wait_for_time_offset_request()?;
+                receiver.close()?;
+            }
+            unistd::ForkResult::Child => {
+                sender
+                    .time_offset_request()
+                    .with_context(|| "Failed to send time offset request")?;
+                sender.close()?;
+                std::process::exit(0);
+            }
+        };
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_channel_time_offsets_ack() -> Result<()> {
+        let (sender, receiver) = &mut intermediate_channel()?;
+        match unsafe { unistd::fork()? } {
+            unistd::ForkResult::Parent { child } => {
+                wait::waitpid(child, None)?;
+                receiver.wait_for_time_offsets_ack()?;
+            }
+            unistd::ForkResult::Child => {
+                sender
+                    .time_offsets_written()
+                    .with_context(|| "Failed to send time offsets written")?;
+                std::process::exit(0);
+            }
+        };
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
     fn test_channel_mount_fd_error() -> Result<()> {
         let (sender, receiver) = &mut init_channel()?;
         sender.send_mount_fd_error("boom".to_string())?;
@@ -624,7 +728,7 @@ mod tests {
             }
             unistd::ForkResult::Child => {
                 sender
-                    .init_ready()
+                    .init_ready(None)
                     .with_context(|| "Failed to send init ready")?;
                 sender.close()?;
                 std::process::exit(0);
@@ -747,6 +851,43 @@ mod tests {
             }
         };
 
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_recv_init_message_passes_through_protocol_message() -> Result<()> {
+        let (mut sender, mut receiver) = main_channel()?;
+        sender.init_ready(None)?;
+        let (msg, fd) = receiver.recv_init_message()?;
+        assert!(matches!(msg, Message::InitReady));
+        assert!(fd.is_none());
+        sender.close()?;
+        receiver.close()?;
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_recv_init_message_normalizes_exec_failed() -> Result<()> {
+        let (mut sender, mut receiver) = main_channel()?;
+        sender.exec_failed("boom".to_string())?;
+        let err = receiver.recv_init_message().unwrap_err();
+        assert!(matches!(err, ChannelError::ExecError(msg) if msg == "boom"));
+        sender.close()?;
+        receiver.close()?;
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_recv_init_message_normalizes_other_error() -> Result<()> {
+        let (mut sender, mut receiver) = main_channel()?;
+        sender.send_error("boom".to_string())?;
+        let err = receiver.recv_init_message().unwrap_err();
+        assert!(matches!(err, ChannelError::OtherError(msg) if msg == "boom"));
+        sender.close()?;
+        receiver.close()?;
         Ok(())
     }
 }

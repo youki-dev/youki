@@ -328,7 +328,9 @@ pub fn resume_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
     Ok(res)
 }
 
-fn runtime_command<P: AsRef<Path>>(dir: P) -> Command {
+/// Base command to invoke the runtime under test: `<runtime> --root <dir>/runtime`,
+/// with stdout/stderr piped.
+pub fn runtime_command<P: AsRef<Path>>(dir: P) -> Command {
     let mut command = Command::new(get_runtime_path());
     command
         .stdout(Stdio::piped())
@@ -570,6 +572,53 @@ pub fn handle_console_socket(stream: std::os::unix::net::UnixStream) {
     });
 }
 
+/// Runs a container in detached mode with an OCI terminal (`run -d --console-socket`).
+///
+/// Binds a console socket next to the bundle, spawns the runtime in detached mode,
+/// accepts the console socket connection and hands it off to [`handle_console_socket`].
+/// Returns an error if the runtime process exits with a non-zero status.
+pub fn run_container_with_console(
+    runtime_path: &Path,
+    bundle_path: &Path,
+    container_id: &str,
+) -> Result<()> {
+    let console_socket = bundle_path.join("console.sock");
+    if console_socket.exists() {
+        std::fs::remove_file(&console_socket)
+            .context("failed to remove existing console socket")?;
+    }
+    let listener = std::os::unix::net::UnixListener::bind(&console_socket)
+        .context("failed to bind console socket")?;
+
+    let mut child = Command::new(runtime_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .arg("--root")
+        .arg(bundle_path.join("runtime"))
+        .arg("run")
+        .arg("-d")
+        .arg("--bundle")
+        .arg(bundle_path.join("bundle"))
+        .arg("--console-socket")
+        .arg(&console_socket)
+        .arg(container_id)
+        .current_dir(bundle_path)
+        .spawn()
+        .context("failed to spawn run -d")?;
+
+    let (stream, _) = listener
+        .accept()
+        .context("failed to accept console socket")?;
+    handle_console_socket(stream);
+
+    let status = child.wait().context("failed to wait for run -d")?;
+    if !status.success() {
+        bail!("run -d failed ({status})");
+    }
+    Ok(())
+}
+
 /// Checkpoint a running container into `image_dir`.
 ///
 /// * `global_args` are passed before the `checkpoint` subcommand (e.g., `&["--debug"]`).
@@ -807,6 +856,13 @@ pub fn build_exec_command<P: AsRef<Path>>(
             command.args(&cmd);
         }
     } else {
+        // With --process, only pass through flags (the process.json holds the command).
+        for a in args {
+            let s = a.as_ref();
+            if !s.is_empty() && s.to_string_lossy().starts_with("--") {
+                command.arg(s);
+            }
+        }
         command.arg(id);
     }
 

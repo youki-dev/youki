@@ -240,9 +240,11 @@ pub struct CheckpointOptions {
     pub leave_running: bool,
     pub shell_job: bool,
     pub tcp_established: bool,
+    pub tcp_skip_in_flight: bool,
     pub work_path: Option<PathBuf>,
     pub manage_cgroups_mode: rust_criu::CgMode,
     pub link_remap: bool,
+    pub empty_net_ns: bool,
 }
 
 #[cfg(test)]

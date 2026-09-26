@@ -55,11 +55,15 @@ fn get_container_pid(project_path: &Path, id: &str) -> Result<i32, TestResult> {
     Ok(state.pid.unwrap_or(-1))
 }
 
-// CRIU requires a minimal network setup in the network namespace
-fn setup_network_namespace(project_path: &Path, id: &str) -> Result<(), TestResult> {
+fn bring_up_loopback(project_path: &Path, id: &str) -> Result<(), TestResult> {
     let pid = get_container_pid(project_path, id)?;
 
-    if let Err(e) = Command::new("nsenter")
+    // Brings `lo` up so the container can talk to itself over 127.0.0.1. Only
+    // tests that actually use the loopback need this; the CRIU dump itself does
+    // not require `lo` to be up. The container cannot bring it up itself because
+    // the default contest spec grants no NET_ADMIN, hence entering the netns
+    // from the host.
+    let output = match Command::new("nsenter")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .arg("-t")
@@ -70,9 +74,19 @@ fn setup_network_namespace(project_path: &Path, id: &str) -> Result<(), TestResu
         .expect("failed to exec ip")
         .wait_with_output()
     {
+        Ok(o) => o,
+        Err(e) => {
+            return Err(TestResult::Failed(anyhow!(
+                "error setting up network namespace {}",
+                e
+            )));
+        }
+    };
+
+    if !output.status.success() {
         return Err(TestResult::Failed(anyhow!(
-            "error setting up network namespace {}",
-            e
+            "failed to bring up loopback in network namespace: {}",
+            String::from_utf8_lossy(&output.stderr)
         )));
     }
 
@@ -97,10 +111,6 @@ fn checkpoint(
         Ok(p) => p,
         Err(e) => return e,
     };
-
-    if let Err(e) = setup_network_namespace(project_path, id) {
-        return e;
-    }
 
     let leave_running = args.contains(&"--leave-running");
 
@@ -433,6 +443,158 @@ pub fn checkpoint_link_remap() -> TestResult {
     result
 }
 
+// Polls until the listen socket on `port` has a queued, unaccepted connection,
+// which is the in-flight state.
+//
+// Requires lo to be up
+fn wait_in_flight(
+    project_path: &Path,
+    id: &str,
+    port: u16,
+    timeout: std::time::Duration,
+) -> Result<(), TestResult> {
+    let pid = get_container_pid(project_path, id)?;
+    let deadline = std::time::Instant::now() + timeout;
+
+    loop {
+        let output = Command::new("nsenter")
+            .args(["-t", &pid.to_string(), "-n"])
+            .args(["ss", "-Htl", &format!("sport = :{port}")])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| TestResult::Failed(anyhow!("failed to exec ss via nsenter: {e}")))?;
+
+        // second column of `ss` is Recv-Q which is the accepted accept backlog depth.
+        if String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+            line.split_whitespace()
+                .nth(1)
+                .and_then(|recv_q| recv_q.parse::<u32>().ok())
+                .is_some_and(|recv_q| recv_q > 0)
+        }) {
+            return Ok(());
+        }
+
+        if std::time::Instant::now() >= deadline {
+            return Err(TestResult::Failed(anyhow!(
+                "timed out waiting for an in-flight connection on port {port}"
+            )));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+struct ContainerCleanup<'a> {
+    id: &'a str,
+    bundle_path: &'a Path,
+}
+
+impl Drop for ContainerCleanup<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut child) = kill_container(self.id, self.bundle_path) {
+            let _ = child.wait();
+        }
+        if let Ok(mut child) = delete_container(self.id, self.bundle_path) {
+            let _ = child.wait();
+        }
+    }
+}
+
+pub fn checkpoint_tcp_skip_in_flight() -> TestResult {
+    const PORT: u16 = 11111;
+
+    let bundle = match prepare_bundle() {
+        Ok(b) => b,
+        Err(e) => return TestResult::Failed(anyhow!("failed to prepare bundle: {e}")),
+    };
+    let id = generate_uuid().to_string();
+
+    let mut spec = Spec::default();
+    let mut process = spec.process().clone().unwrap_or_default();
+    // We need an unaccepted connection sitting in the listen socket's accept queue at
+    // dump time, because that is the only state `--tcp-skip-in-flight` acts on.
+    // `-c` caps the number of simultaneously accepted connections, so `tcpsvd -c 0`
+    // never calls accept(). The kernel still completes the handshake for the `nc`
+    // connect, leaving it ESTABLISHED but unaccepted in the accept queue: in-flight.
+    process.set_args(Some(vec![
+        "sh".to_string(),
+        "-c".to_string(),
+        format!(
+            "until ip addr show lo | grep -q 127.0.0.1; do sleep 0.1; done; \
+             tcpsvd -c 0 0.0.0.0 {PORT} sleep 100000 & \
+             sleep 100000 | nc 127.0.0.1 {PORT} & \
+             while true; do sleep 1; done"
+        ),
+    ]));
+    spec.set_process(Some(process));
+
+    if let Err(e) = set_config(&bundle, &spec) {
+        return TestResult::Failed(anyhow!("failed to write config.json: {e}"));
+    }
+
+    let bundle_path = bundle.path();
+
+    let _cleanup = ContainerCleanup {
+        id: &id,
+        bundle_path,
+    };
+
+    if let Err(e) = create::create(bundle_path, &id) {
+        return TestResult::Failed(anyhow!("create container failed: {e}"));
+    }
+
+    if let Err(e) = start::start(bundle_path, &id) {
+        return TestResult::Failed(anyhow!("start container failed: {e}"));
+    }
+
+    if let Err(e) = wait_container_running(&id, bundle_path) {
+        return TestResult::Failed(anyhow!("container did not reach running state: {e}"));
+    }
+
+    if let Err(e) = bring_up_loopback(bundle_path, &id) {
+        return e;
+    }
+
+    // The container only starts `tcpsvd` and `nc` once lo is up, so we have to
+    // wait for the connection to reach the accept queue before dumping.
+    if let Err(e) = wait_in_flight(bundle_path, &id, PORT, std::time::Duration::from_secs(10)) {
+        return e;
+    }
+
+    let (_image_temp_dir, image_path) = match create_checkpoint_image_dir() {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+
+    let result = checkpoint(
+        bundle_path,
+        &id,
+        &image_path,
+        vec!["--tcp-established", "--tcp-skip-in-flight"],
+        None,
+    );
+    if let TestResult::Failed(_) = &result {
+        return result;
+    }
+
+    let has_tcp_stream_img = match std::fs::read_dir(&image_path) {
+        Ok(entries) => entries
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().starts_with("tcp-stream-")),
+        Err(e) => {
+            return TestResult::Failed(anyhow!("failed to read image dir {image_path:?}: {e}"));
+        }
+    };
+    if has_tcp_stream_img {
+        TestResult::Passed
+    } else {
+        TestResult::Failed(anyhow!(
+            "checkpoint with --tcp-skip-in-flight succeeded but no tcp-stream-*.img \
+             was written to {image_path:?}; the TCP connection state was not dumped"
+        ))
+    }
+}
+
 /// Check that a namespace was treated as external by CRIU.
 /// Fails if `<img_prefix>-*.img` is absent or lacks `ext_key`.
 /// CRIU img files embed protobuf strings as raw UTF-8, so a byte search suffices.
@@ -497,6 +659,49 @@ pub fn checkpoint_with_external_namespaces(project_path: &Path, id: &str) -> Tes
 
     if let Err(e) = check_external_pidns(&image_path) {
         return e;
+    }
+
+    TestResult::Passed
+}
+
+/// Checkpoint a container and verify that the content of its network namespace
+/// was not dumped.
+pub fn checkpoint_empty_net_ns(project_path: &Path, id: &str) -> TestResult {
+    let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+
+    let result = checkpoint(
+        project_path,
+        id,
+        &image_path,
+        vec!["--leave-running", "--empty-ns", "network"],
+        None,
+    );
+    if !matches!(result, TestResult::Passed) {
+        return result;
+    }
+
+    // netdev-<id>.img holds the network devices of a dumped namespace
+    let netdev_img = match std::fs::read_dir(&image_path) {
+        Ok(entries) => entries
+            .flatten()
+            .find(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                name.starts_with("netdev-") && name.ends_with(".img")
+            })
+            .map(|entry| entry.path()),
+        Err(e) => {
+            return TestResult::Failed(anyhow::anyhow!("failed to read {:?}: {}", &image_path, e));
+        }
+    };
+
+    if let Some(img) = netdev_img {
+        return TestResult::Failed(anyhow::anyhow!(
+            "{:?} was written: the network namespace was dumped although it must be emptied",
+            img,
+        ));
     }
 
     TestResult::Passed

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::os::fd::{BorrowedFd, FromRawFd, OwnedFd};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::{env, fs, mem};
@@ -9,7 +10,7 @@ use nix::mount::{MntFlags, MsFlags};
 use nix::sched::CloneFlags;
 use nix::sys::stat::Mode;
 use nix::sys::statfs::statfs;
-use nix::unistd::{self, Gid, Uid, close, dup2, setsid};
+use nix::unistd::{self, Gid, Uid, dup2_stderr, dup2_stdin, dup2_stdout, setsid};
 use oci_spec::runtime::{
     IOPriorityClass, LinuxIOPriority, LinuxNamespaceType, LinuxNetDevice, LinuxPersonalityDomain,
     LinuxSchedulerFlag, LinuxSchedulerPolicy, Scheduler, Spec, User,
@@ -45,6 +46,7 @@ pub fn container_init_process(
     init_receiver: &mut channel::InitReceiver,
 ) -> Result<()> {
     let mut ctx = InitContext::try_from(args)?;
+    let terminal = ctx.process.terminal().unwrap_or_default();
 
     setsid().map_err(|err| {
         tracing::error!(?err, "failed to setsid to create a session");
@@ -57,19 +59,19 @@ pub fn container_init_process(
 
     memory_policy::setup_memory_policy(ctx.linux.memory_policy(), ctx.syscall.as_ref())?;
 
-    // If no console socket, set up stdio now
-    if args.console_socket.is_none() {
+    // No console (no socket, no terminal): pass the provided stdio through now
+    if args.console_socket.is_none() && !terminal {
         if let Some(stdin) = args.stdin {
-            dup2(stdin, 0).map_err(InitProcessError::NixOther)?;
-            close(stdin).map_err(InitProcessError::NixOther)?;
+            let stdin = unsafe { OwnedFd::from_raw_fd(stdin) };
+            dup2_stdin(&stdin).map_err(InitProcessError::NixOther)?;
         }
         if let Some(stdout) = args.stdout {
-            dup2(stdout, 1).map_err(InitProcessError::NixOther)?;
-            close(stdout).map_err(InitProcessError::NixOther)?;
+            let stdout = unsafe { OwnedFd::from_raw_fd(stdout) };
+            dup2_stdout(&stdout).map_err(InitProcessError::NixOther)?;
         }
         if let Some(stderr) = args.stderr {
-            dup2(stderr, 2).map_err(InitProcessError::NixOther)?;
-            close(stderr).map_err(InitProcessError::NixOther)?;
+            let stderr = unsafe { OwnedFd::from_raw_fd(stderr) };
+            dup2_stderr(&stderr).map_err(InitProcessError::NixOther)?;
         }
     }
 
@@ -152,13 +154,24 @@ pub fn container_init_process(
     // mount=true for init (mount /dev/console), false for exec (already mounted)
     // See: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/standard_init_linux.go
     // See: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/setns_init_linux.go
-    if let Some(csocketfd) = args.console_socket {
+    let foreground_pty_fd = if args.console_socket.is_some() || terminal {
         let mount_console = matches!(args.container_type, ContainerType::InitContainer);
-        tty::setup_console(ctx.syscall.as_ref(), csocketfd, mount_console).map_err(|err| {
+        match tty::setup_console(
+            ctx.syscall.as_ref(),
+            args.console_socket,
+            mount_console,
+            ctx.process.console_size(),
+        )
+        .map_err(|err| {
             tracing::error!(?err, "failed to set up tty");
             InitProcessError::Tty(err)
-        })?;
-    }
+        })? {
+            tty::PtyMaster::Foreground(fd) => Some(fd),
+            tty::PtyMaster::SentToSocket => None,
+        }
+    } else {
+        None
+    };
 
     if let Some(personality) = ctx.linux.personality() {
         if let Some(flags) = personality.flags() {
@@ -432,13 +445,15 @@ pub fn container_init_process(
     // payload.  Note, because we are already inside the pid namespace, the pid
     // outside the pid namespace should be recorded by the intermediate process
     // already.
-    main_sender.init_ready().map_err(|err| {
-        tracing::error!(
-            ?err,
-            "failed to notify main process that init process is ready"
-        );
-        InitProcessError::Channel(err)
-    })?;
+    main_sender
+        .init_ready(foreground_pty_fd.as_ref().map(|fd| fd.as_raw_fd()))
+        .map_err(|err| {
+            tracing::error!(
+                ?err,
+                "failed to notify main process that init process is ready"
+            );
+            InitProcessError::Channel(err)
+        })?;
     main_sender.close().map_err(|err| {
         tracing::error!(?err, "failed to close down main sender in init process");
         InitProcessError::Channel(err)
@@ -626,7 +641,9 @@ fn apply_rest_namespaces(
 ) -> Result<()> {
     namespaces
         .apply_namespaces(|ns_type| -> bool {
-            ns_type != CloneFlags::CLONE_NEWUSER && ns_type != CloneFlags::CLONE_NEWPID
+            ns_type != CloneFlags::CLONE_NEWUSER
+                && ns_type != CloneFlags::CLONE_NEWPID
+                && ns_type != crate::namespaces::CLONE_NEWTIME_FLAG
         })
         .map_err(|err| {
             tracing::error!(
@@ -665,7 +682,7 @@ fn reopen_dev_null() -> Result<()> {
         tracing::error!(?err, "failed to open /dev/null inside the container");
         InitProcessError::ReopenDevNull(err)
     })?;
-    let dev_null_fstat_info = nix::sys::stat::fstat(dev_null.as_raw_fd()).map_err(|err| {
+    let dev_null_fstat_info = nix::sys::stat::fstat(&dev_null).map_err(|err| {
         tracing::error!(?err, "failed to fstat /dev/null inside the container");
         InitProcessError::NixOther(err)
     })?;
@@ -676,16 +693,24 @@ fn reopen_dev_null() -> Result<()> {
 
     // Check if stdin, stdout or stderr point to /dev/null
     for fd in 0..3 {
-        let fstat_info = nix::sys::stat::fstat(fd).map_err(|err| {
-            tracing::error!(?err, "failed to fstat stdio fd {}", fd);
-            InitProcessError::NixOther(err)
-        })?;
+        let fstat_info =
+            nix::sys::stat::fstat(unsafe { BorrowedFd::borrow_raw(fd) }).map_err(|err| {
+                tracing::error!(?err, "failed to fstat stdio fd {}", fd);
+                InitProcessError::NixOther(err)
+            })?;
 
         if dev_null_fstat_info.st_rdev == fstat_info.st_rdev {
             // This FD points to /dev/null outside of the container.
             // Let's point to /dev/null inside of the container.
-            nix::unistd::dup2(dev_null.as_raw_fd(), fd).map_err(|err| {
-                tracing::error!(?err, "failed to dup2 fd {} to /dev/null", fd);
+            let (res, stream) = match fd {
+                0 => (nix::unistd::dup2_stdin(&dev_null), "stdin"),
+                1 => (nix::unistd::dup2_stdout(&dev_null), "stdout"),
+                2 => (nix::unistd::dup2_stderr(&dev_null), "stderr"),
+                _ => unreachable!(),
+            };
+
+            res.map_err(|err| {
+                tracing::error!(?err, "failed to dup2 {} to /dev/null", stream);
                 InitProcessError::NixOther(err)
             })?;
         }

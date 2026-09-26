@@ -5,6 +5,10 @@ set -ex
 
 runtime=$1
 
+# log the podman version and cgroup manager
+podman --version
+podman info --format '{{.Host.CgroupManager}}'
+
 podman rm --force --ignore create-test # remove if existing
 
 podman create --runtime $runtime --name create-test hello-world
@@ -19,7 +23,9 @@ echo $log | grep $rand
 
 podman kill exec-test || true # ignore failure for killing
 podman rm --force --ignore exec-test
-podman run -d --runtime $runtime --name exec-test busybox sleep 10m
+# TODO: In rootless mode with the `cgroupfs` cgroup manager, youki behaves differently from runc, so explicitly use `systemd`.
+# See: https://github.com/youki-dev/youki/issues/3690
+podman --cgroup-manager systemd run -d --runtime $runtime --name exec-test busybox sleep 10m
 
 rand=$(head -c 10 /dev/random | base64)
 

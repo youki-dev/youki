@@ -1,7 +1,9 @@
+pub mod cgroups;
 pub mod net;
 pub mod support;
 pub mod test_utils;
 
+pub use cgroups::{cgroup_has_file, is_cgroup_v2, is_cgroup_v2_with_controller};
 pub use support::{
     generate_uuid, get_runtime_path, get_runtimetest_path, is_runtime_runc, is_runtime_youki,
     prepare_bundle, set_config, wait_for_file_content,
@@ -9,8 +11,8 @@ pub use support::{
 pub use test_utils::{
     CreateOptions, LifecycleStatus, State, WaitTarget, build_checkpoint_command,
     checkpoint_container, create_container, criu_has_feature, criu_installed, delete_container,
-    exec_container, get_container_pid, get_state, handle_console_socket, kill_container,
-    kill_container_with_signal, restore_container, start_container, test_inside_container,
+    exec_container, get_container_pid, get_state, kill_container, kill_container_with_signal,
+    restore_container, run_container_with_console, start_container, test_inside_container,
     test_outside_container, try_checkpoint_container, update_container,
     update_container_with_stdin, wait_container_running, wait_for_state,
 };

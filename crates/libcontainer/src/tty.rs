@@ -14,16 +14,18 @@
 
 use std::env;
 use std::io::IoSlice;
-use std::os::fd::OwnedFd;
+use std::os::fd::{BorrowedFd, OwnedFd};
 use std::os::unix::fs::{OpenOptionsExt, symlink};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::prelude::RawFd;
 use std::path::{Path, PathBuf};
 
+use nix::pty;
 use nix::sys::socket::{self, UnixAddr};
 use nix::sys::stat::{SFlag, major, minor};
 use nix::sys::statfs::FsType;
-use nix::unistd::{close, dup2};
+use nix::sys::termios::{self, OutputFlags, SetArg};
+use nix::unistd::{close, dup2_stderr, dup2_stdin, dup2_stdout};
 
 use crate::syscall::Syscall;
 use crate::utils::{VerifyInodeError, verify_inode};
@@ -79,6 +81,8 @@ pub enum TTYError {
     CreateConsoleSocketFd { source: nix::Error },
     #[error("could not create pseudo terminal")]
     CreatePseudoTerminal { source: nix::Error },
+    #[error("failed to clear ONLCR on pty")]
+    ClearOnlcr { source: nix::Error },
     #[error("failed to send pty master")]
     SendPtyMaster { source: nix::Error },
     #[error("could not close console socket")]
@@ -97,7 +101,6 @@ pub enum TTYError {
 
 type Result<T> = std::result::Result<T, TTYError>;
 
-// TODO: Handling when there isn't console-socket.
 pub fn setup_console_socket(
     container_dir: &Path,
     console_socket_path: &Path,
@@ -263,51 +266,62 @@ fn verify_pty_slave(slave: &OwnedFd) -> Result<()> {
     })
 }
 
+#[derive(Debug)]
+pub enum PtyMaster {
+    SentToSocket,
+    Foreground(OwnedFd),
+}
+
 /// Setup console AFTER pivot_root.
 ///
 /// This function should be called AFTER pivot_root. This follows runc's approach:
 /// setupConsole is called after pivotRoot in prepareRootfs.
 ///
 /// The process:
-/// 1. Create PTY pair from /dev/pts/ptmx (we're already in the container)
+/// 1. Create PTY pair from /dev/pts/ptmx (we're already in the container),
+///    sized from `console_size` if given
 /// 2. Optionally mount PTY slave on /dev/console (bind mount) - only for init
-/// 3. Send PTY master to console socket
-/// 4. Set controlling terminal
-/// 5. Connect stdio to PTY slave
+/// 3. Set controlling terminal
+/// 4. Connect stdio to PTY slave
+/// 5. Send PTY master to the console socket, or return it to be bridged to the
+///    host stdio when no socket is given (foreground)
 ///
 /// # Arguments
-/// * `console_fd` - The console socket file descriptor
+/// * `console_fd` - The console socket file descriptor, if any
 /// * `mount` - Whether to mount PTY slave on /dev/console (true for init, false for exec)
+/// * `console_size` - The `process.consoleSize` from the spec, if any
 ///
 /// By creating PTY from container's devpts, the PTY belongs to a mount that
 /// exists within the container's namespace, which is required for CRIU checkpoint.
 ///
 /// See: https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/rootfs_linux.go
-pub fn setup_console(syscall: &dyn Syscall, console_fd: RawFd, mount: bool) -> Result<()> {
+pub fn setup_console(
+    syscall: &dyn Syscall,
+    console_fd: Option<RawFd>,
+    mount: bool,
+    console_size: Option<oci_spec::runtime::Box>,
+) -> Result<PtyMaster> {
+    let winsize = console_size.map(|size| pty::Winsize {
+        ws_row: size.height() as u16,
+        ws_col: size.width() as u16,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    });
     // Create PTY pair from /dev/pts/ptmx
     // After pivot_root, /dev/pts points to the container's devpts
-    let openpty_result = nix::pty::openpty(None, None)
+    let openpty_result = pty::openpty(&winsize, None)
         .map_err(|err| TTYError::CreatePseudoTerminal { source: err })?;
 
-    let master = &openpty_result.master;
-    let slave = &openpty_result.slave;
+    let (master, slave) = (openpty_result.master, openpty_result.slave);
 
     // Verify both master and slave are real PTY devices (CVE-2025-52565 mitigation)
-    verify_ptmx_handle(master)?;
-    verify_pty_slave(slave)?;
+    verify_ptmx_handle(&master)?;
+    verify_pty_slave(&slave)?;
 
     // Mount PTY slave on /dev/console (only for init container)
     if mount {
-        mount_console(syscall, slave, Path::new(CONSOLE_PATH))?;
+        mount_console(syscall, &slave, Path::new(CONSOLE_PATH))?;
     }
-
-    // Send PTY master to console socket
-    let pty_name: &[u8] = PTMX_PATH;
-    let iov = [IoSlice::new(pty_name)];
-    let fds = [master.as_raw_fd()];
-    let cmsg = socket::ControlMessage::ScmRights(&fds);
-    socket::sendmsg::<UnixAddr>(console_fd, &iov, &[cmsg], socket::MsgFlags::empty(), None)
-        .map_err(|err| TTYError::SendPtyMaster { source: err })?;
 
     // Set controlling terminal
     if unsafe { libc::ioctl(slave.as_raw_fd(), libc::TIOCSCTTY) } < 0 {
@@ -317,10 +331,42 @@ pub fn setup_console(syscall: &dyn Syscall, console_fd: RawFd, mount: bool) -> R
     // Connect stdio to PTY slave
     connect_stdio(&slave.as_raw_fd(), &slave.as_raw_fd(), &slave.as_raw_fd())?;
 
-    // Close console socket
-    close(console_fd).map_err(|err| TTYError::CloseConsoleSocket { source: err })?;
+    Ok(match console_fd {
+        Some(console_fd) => {
+            // Send PTY master to console socket
+            let pty_name: &[u8] = PTMX_PATH;
+            let iov = [IoSlice::new(pty_name)];
+            let fds = [master.as_raw_fd()];
+            let cmsg = socket::ControlMessage::ScmRights(&fds);
 
-    Ok(())
+            socket::sendmsg::<UnixAddr>(console_fd, &iov, &[cmsg], socket::MsgFlags::empty(), None)
+                .map_err(|err| TTYError::SendPtyMaster { source: err })?;
+
+            // Close console socket
+            close(console_fd).map_err(|err| TTYError::CloseConsoleSocket { source: err })?;
+            PtyMaster::SentToSocket
+        }
+        None => {
+            clear_onlcr(&master)?;
+            PtyMaster::Foreground(master)
+        }
+    })
+}
+
+/// Clear the ONLCR output flag on the PTY so the container's "\n" is not
+/// rewritten to "\r\n": a not-very-well-known default of Linux unix98 ptys is
+/// that they have +onlcr.
+///
+/// runc does the same for the foreground path only ((*tty).recvtty); for the
+/// console-socket path the receiver of the master owns the termios, so it is
+/// left untouched there.
+///
+/// See: https://github.com/opencontainers/runc/blob/v1.4.0/tty.go
+fn clear_onlcr(pty: &OwnedFd) -> Result<()> {
+    let mut attrs = termios::tcgetattr(pty).map_err(|err| TTYError::ClearOnlcr { source: err })?;
+    attrs.output_flags.remove(OutputFlags::ONLCR);
+    termios::tcsetattr(pty, SetArg::TCSANOW, &attrs)
+        .map_err(|err| TTYError::ClearOnlcr { source: err })
 }
 
 /// Mount PTY slave on /dev/console.
@@ -377,17 +423,21 @@ fn mount_console(syscall: &dyn Syscall, slave: &OwnedFd, console_path: &Path) ->
 }
 
 fn connect_stdio(stdin: &RawFd, stdout: &RawFd, stderr: &RawFd) -> Result<()> {
-    dup2(stdin.as_raw_fd(), StdIO::Stdin.into()).map_err(|err| TTYError::ConnectStdIO {
+    let stdin_fd = unsafe { BorrowedFd::borrow_raw(*stdin) };
+    let stdout_fd = unsafe { BorrowedFd::borrow_raw(*stdout) };
+    let stderr_fd = unsafe { BorrowedFd::borrow_raw(*stderr) };
+
+    dup2_stdin(stdin_fd).map_err(|err| TTYError::ConnectStdIO {
         source: err,
         stdio: StdIO::Stdin,
     })?;
-    dup2(stdout.as_raw_fd(), StdIO::Stdout.into()).map_err(|err| TTYError::ConnectStdIO {
+    dup2_stdout(stdout_fd).map_err(|err| TTYError::ConnectStdIO {
         source: err,
         stdio: StdIO::Stdout,
     })?;
     // FIXME: Rarely does it fail.
     // error message: `Error: Resource temporarily unavailable (os error 11)`
-    dup2(stderr.as_raw_fd(), StdIO::Stderr.into()).map_err(|err| TTYError::ConnectStdIO {
+    dup2_stderr(stderr_fd).map_err(|err| TTYError::ConnectStdIO {
         source: err,
         stdio: StdIO::Stderr,
     })?;
@@ -459,9 +509,9 @@ mod tests {
         // duplicate the existing std* fds
         // we need to restore them later, and we cannot simply store them
         // as they themselves get modified in setup_console
-        let old_stdin: RawFd = nix::unistd::dup(StdIO::Stdin.into())?;
-        let old_stdout: RawFd = nix::unistd::dup(StdIO::Stdout.into())?;
-        let old_stderr: RawFd = nix::unistd::dup(StdIO::Stderr.into())?;
+        let old_stdin = nix::unistd::dup(unsafe { BorrowedFd::borrow_raw(StdIO::Stdin.into()) })?;
+        let old_stdout = nix::unistd::dup(unsafe { BorrowedFd::borrow_raw(StdIO::Stdout.into()) })?;
+        let old_stderr = nix::unistd::dup(unsafe { BorrowedFd::borrow_raw(StdIO::Stderr.into()) })?;
 
         let lis = UnixListener::bind(&socket_path);
         assert!(lis.is_ok());
@@ -470,12 +520,12 @@ mod tests {
         // mount=false because mounting /dev/console requires an actual container
         // environment with proper namespace setup (pivot_root completed).
         let syscall = create_syscall();
-        let status = setup_console(syscall.as_ref(), fd.into_raw_fd(), false);
+        let status = setup_console(syscall.as_ref(), Some(fd.into_raw_fd()), false, None);
 
         // restore the original std* before doing final assert
-        dup2(old_stdin, StdIO::Stdin.into())?;
-        dup2(old_stdout, StdIO::Stdout.into())?;
-        dup2(old_stderr, StdIO::Stderr.into())?;
+        nix::unistd::dup2_stdin(old_stdin)?;
+        nix::unistd::dup2_stdout(old_stdout)?;
+        nix::unistd::dup2_stderr(old_stderr)?;
 
         assert!(status.is_ok(), "setup_console failed: {:?}", status);
 
@@ -483,10 +533,27 @@ mod tests {
     }
 
     #[test]
+    fn test_clear_onlcr() -> Result<()> {
+        let openpty_result =
+            pty::openpty(None, None).map_err(|e| TTYError::CreatePseudoTerminal { source: e })?;
+
+        // Linux unix98 ptys default to +onlcr.
+        let attrs = termios::tcgetattr(&openpty_result.master)?;
+        assert!(attrs.output_flags.contains(OutputFlags::ONLCR));
+
+        clear_onlcr(&openpty_result.master)?;
+
+        let attrs = termios::tcgetattr(&openpty_result.master)?;
+        assert!(!attrs.output_flags.contains(OutputFlags::ONLCR));
+
+        Ok(())
+    }
+
+    #[test]
     fn test_verify_pty_slave_with_real_pty() -> Result<()> {
         // Allocate a real PTY pair
-        let openpty_result = nix::pty::openpty(None, None)
-            .map_err(|e| TTYError::CreatePseudoTerminal { source: e })?;
+        let openpty_result =
+            pty::openpty(None, None).map_err(|e| TTYError::CreatePseudoTerminal { source: e })?;
 
         // Verify slave handle should succeed
         let result = verify_pty_slave(&openpty_result.slave);
@@ -498,8 +565,8 @@ mod tests {
     #[test]
     fn test_verify_ptmx_handle_with_real_pty() -> Result<()> {
         // Allocate a real PTY pair
-        let openpty_result = nix::pty::openpty(None, None)
-            .map_err(|e| TTYError::CreatePseudoTerminal { source: e })?;
+        let openpty_result =
+            pty::openpty(None, None).map_err(|e| TTYError::CreatePseudoTerminal { source: e })?;
 
         // Verify ptmx handle should succeed
         let result = verify_ptmx_handle(&openpty_result.master);
