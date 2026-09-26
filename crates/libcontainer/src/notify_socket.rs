@@ -1,11 +1,13 @@
-use std::env;
+use std::ffi::OsStr;
 use std::io::prelude::*;
-use std::os::fd::FromRawFd;
+use std::os::fd::{FromRawFd, OwnedFd};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 
-use nix::unistd::{self, close};
+use nix::fcntl::{OFlag, open};
+use nix::sys::stat::Mode;
+use nix::unistd::close;
 
 pub const NOTIFY_FILE: &str = "notify.sock";
 
@@ -39,6 +41,21 @@ pub enum NotifyListenerError {
 
 type Result<T> = std::result::Result<T, NotifyListenerError>;
 
+fn socket_path_via_dir_fd(workdir: &Path, socket_name: &OsStr) -> Result<(OwnedFd, PathBuf)> {
+    let dir = open(
+        workdir,
+        OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|source| NotifyListenerError::Chdir {
+        source,
+        path: workdir.to_owned(),
+    })?;
+    let path = PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd())).join(socket_name);
+
+    Ok((dir, path))
+}
+
 pub struct NotifyListener {
     socket: UnixListener,
 }
@@ -46,32 +63,17 @@ pub struct NotifyListener {
 impl NotifyListener {
     pub fn new(socket_path: &Path) -> Result<Self> {
         tracing::debug!(?socket_path, "create notify listener");
-        // Unix domain socket has a maximum length of 108, different from
-        // normal path length of 255. Due to how docker create the path name
-        // to the container working directory, there is a high chance that
-        // the full absolute path is over the limit. To work around this
-        // limitation, we chdir first into the workdir where the socket is,
-        // and chdir back after the socket is created.
         let workdir = socket_path
             .parent()
             .ok_or_else(|| NotifyListenerError::InvalidPath(socket_path.to_owned()))?;
         let socket_name = socket_path
             .file_name()
             .ok_or_else(|| NotifyListenerError::InvalidPath(socket_path.to_owned()))?;
-        let cwd = env::current_dir().map_err(NotifyListenerError::GetCwd)?;
-        tracing::debug!(?cwd, "the cwd to create the notify socket");
-        unistd::chdir(workdir).map_err(|e| NotifyListenerError::Chdir {
-            source: e,
-            path: workdir.to_owned(),
-        })?;
-        let stream = UnixListener::bind(socket_name).map_err(|e| NotifyListenerError::Bind {
+        let (_dir, path) = socket_path_via_dir_fd(workdir, socket_name)?;
+        let stream = UnixListener::bind(path).map_err(|e| NotifyListenerError::Bind {
             source: e,
             // ok to unwrap here as OsStr should always be utf-8 compatible
             name: socket_name.to_str().unwrap().to_owned(),
-        })?;
-        unistd::chdir(&cwd).map_err(|e| NotifyListenerError::Chdir {
-            source: e,
-            path: cwd,
         })?;
 
         Ok(Self { socket: stream })
@@ -128,39 +130,32 @@ impl NotifySocket {
 
     pub fn notify_container_start(&mut self) -> Result<()> {
         tracing::debug!("notify container start");
-        let cwd = env::current_dir().map_err(NotifyListenerError::GetCwd)?;
         let workdir = self
             .path
             .parent()
             .ok_or_else(|| NotifyListenerError::InvalidPath(self.path.to_owned()))?;
-        unistd::chdir(workdir).map_err(|e| NotifyListenerError::Chdir {
-            source: e,
-            path: workdir.to_owned(),
-        })?;
         let socket_name = self
             .path
             .file_name()
             .ok_or_else(|| NotifyListenerError::InvalidPath(self.path.to_owned()))?;
-        let mut stream =
-            UnixStream::connect(socket_name).map_err(|e| NotifyListenerError::Connect {
-                source: e,
-                // ok to unwrap as OsStr should always be utf-8 compatible
-                name: socket_name.to_str().unwrap().to_owned(),
-            })?;
+        let (_dir, path) = socket_path_via_dir_fd(workdir, socket_name)?;
+        let mut stream = UnixStream::connect(path).map_err(|e| NotifyListenerError::Connect {
+            source: e,
+            // ok to unwrap as OsStr should always be utf-8 compatible
+            name: socket_name.to_str().unwrap().to_owned(),
+        })?;
         stream
             .write_all(b"start container")
             .map_err(NotifyListenerError::SendStartContainer)?;
         tracing::debug!("notify finished");
-        unistd::chdir(&cwd).map_err(|e| NotifyListenerError::Chdir {
-            source: e,
-            path: cwd,
-        })?;
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod test {
+    use std::env;
+
     use tempfile::tempdir;
 
     use super::*;
@@ -187,5 +182,42 @@ mod test {
 
         socket.notify_container_start().unwrap();
         thread_handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_notify_listener_long_path() {
+        let tempdir = tempdir().unwrap();
+        let mut dir = tempdir.path().to_path_buf();
+        for _ in 0..8 {
+            dir = dir.join("aaaaaaaaaaaaaaaaaaaa");
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        let socket_path = dir.join(NOTIFY_FILE);
+        assert!(socket_path.as_os_str().len() > 108);
+
+        let listener = NotifyListener::new(&socket_path).unwrap();
+        let mut socket = NotifySocket::new(socket_path);
+        let thread_handle = std::thread::spawn(move || {
+            listener.wait_for_container_start().unwrap();
+        });
+
+        socket.notify_container_start().unwrap();
+        thread_handle.join().unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_notify_listener_leaves_cwd_alone() {
+        let before = env::current_dir().unwrap();
+
+        let tempdir = tempdir().unwrap();
+        let socket_path = tempdir.path().join(NOTIFY_FILE);
+        NotifyListener::new(&socket_path).unwrap();
+        assert_eq!(env::current_dir().unwrap(), before);
+
+        let failing = tempdir.path().join("taken");
+        std::fs::create_dir_all(failing.join(NOTIFY_FILE)).unwrap();
+        assert!(NotifyListener::new(&failing.join(NOTIFY_FILE)).is_err());
+        assert_eq!(env::current_dir().unwrap(), before);
     }
 }
