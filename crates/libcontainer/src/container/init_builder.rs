@@ -79,6 +79,8 @@ impl InitContainerBuilder {
         // (mirrors runc's checkTerminal called at the top of runner.run())
         self.base.check_terminal(&spec, self.detached)?;
 
+        let spec = self.base.executor.modify_spec(spec)?;
+
         let container_dir = self.create_container_dir()?;
 
         let mut container = self.create_container_state(&container_dir)?;
