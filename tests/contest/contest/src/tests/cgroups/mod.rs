@@ -4,6 +4,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 pub mod cpu;
+pub mod io;
 pub mod memory;
 
 pub fn cleanup_v2() -> Result<()> {
