@@ -1,4 +1,3 @@
-use std::ffi::OsStr;
 use std::io::prelude::*;
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::os::unix::io::AsRawFd;
@@ -41,7 +40,19 @@ pub enum NotifyListenerError {
 
 type Result<T> = std::result::Result<T, NotifyListenerError>;
 
-fn socket_path_via_dir_fd(workdir: &Path, socket_name: &OsStr) -> Result<(OwnedFd, PathBuf)> {
+const MAX_SOCKET_LEN: usize = 108;
+
+fn socket_addr_path(socket_path: &Path) -> Result<(Option<OwnedFd>, PathBuf)> {
+    if socket_path.as_os_str().len() < MAX_SOCKET_LEN {
+        return Ok((None, socket_path.to_owned()));
+    }
+
+    let workdir = socket_path
+        .parent()
+        .ok_or_else(|| NotifyListenerError::InvalidPath(socket_path.to_owned()))?;
+    let socket_name = socket_path
+        .file_name()
+        .ok_or_else(|| NotifyListenerError::InvalidPath(socket_path.to_owned()))?;
     let dir = open(
         workdir,
         OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC,
@@ -53,7 +64,7 @@ fn socket_path_via_dir_fd(workdir: &Path, socket_name: &OsStr) -> Result<(OwnedF
     })?;
     let path = PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd())).join(socket_name);
 
-    Ok((dir, path))
+    Ok((Some(dir), path))
 }
 
 pub struct NotifyListener {
@@ -63,17 +74,10 @@ pub struct NotifyListener {
 impl NotifyListener {
     pub fn new(socket_path: &Path) -> Result<Self> {
         tracing::debug!(?socket_path, "create notify listener");
-        let workdir = socket_path
-            .parent()
-            .ok_or_else(|| NotifyListenerError::InvalidPath(socket_path.to_owned()))?;
-        let socket_name = socket_path
-            .file_name()
-            .ok_or_else(|| NotifyListenerError::InvalidPath(socket_path.to_owned()))?;
-        let (_dir, path) = socket_path_via_dir_fd(workdir, socket_name)?;
+        let (_dir, path) = socket_addr_path(socket_path)?;
         let stream = UnixListener::bind(path).map_err(|e| NotifyListenerError::Bind {
             source: e,
-            // ok to unwrap here as OsStr should always be utf-8 compatible
-            name: socket_name.to_str().unwrap().to_owned(),
+            name: socket_path.display().to_string(),
         })?;
 
         Ok(Self { socket: stream })
@@ -130,19 +134,10 @@ impl NotifySocket {
 
     pub fn notify_container_start(&mut self) -> Result<()> {
         tracing::debug!("notify container start");
-        let workdir = self
-            .path
-            .parent()
-            .ok_or_else(|| NotifyListenerError::InvalidPath(self.path.to_owned()))?;
-        let socket_name = self
-            .path
-            .file_name()
-            .ok_or_else(|| NotifyListenerError::InvalidPath(self.path.to_owned()))?;
-        let (_dir, path) = socket_path_via_dir_fd(workdir, socket_name)?;
+        let (_dir, path) = socket_addr_path(&self.path)?;
         let mut stream = UnixStream::connect(path).map_err(|e| NotifyListenerError::Connect {
             source: e,
-            // ok to unwrap as OsStr should always be utf-8 compatible
-            name: socket_name.to_str().unwrap().to_owned(),
+            name: self.path.display().to_string(),
         })?;
         stream
             .write_all(b"start container")
