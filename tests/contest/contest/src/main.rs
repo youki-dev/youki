@@ -146,7 +146,7 @@ fn main() -> Result<()> {
     let cgroup_v2_cpu = cgroups::cpu::v2::get_test_group();
     let cgroup_v2_memory = cgroups::memory::get_test_group();
     let cgroup_v2_pids = cgroups::pids::get_test_group();
-    let cgroup_systemd_devices = cgroups::systemd_devices::get_test_group();
+    let cgroup_systemd_devices = cgroups::systemd::devices::get_test_group();
     let seccomp = get_seccomp_test();
     let seccomp_notify = get_seccomp_notify_test();
     let state = get_state_test();

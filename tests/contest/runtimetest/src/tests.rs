@@ -18,7 +18,7 @@ use nix::errno::Errno;
 use nix::libc;
 use nix::mount::{MsFlags, mount};
 use nix::sys::resource::{Resource, getrlimit};
-use nix::sys::stat::{Mode, SFlag, mknod, umask};
+use nix::sys::stat::{Mode, umask};
 use nix::sys::utsname;
 use nix::unistd::{Gid, Uid, getcwd, getgid, getgroups, getuid};
 use oci_spec::runtime::IOPriorityClass::{self, IoprioClassBe, IoprioClassIdle, IoprioClassRt};
@@ -1694,41 +1694,71 @@ pub fn validate_default_symlinks(_spec: &Spec) {
     }
 }
 
-/// Checks that the device cgroup denies access to a device the spec does not allow.
-///
-/// Runs under a deny-all rule set, where the runtime's defaults still allow mknod for block
-/// devices but no read access, so creating the node must work and opening it must not.
-pub fn validate_device_cgroup() {
-    let dev_path = "/dev/test";
-    let dev = libc::makedev(8, 0);
+fn device_rules(spec: &Spec) -> impl Iterator<Item = &oci_spec::runtime::LinuxDeviceCgroup> {
+    spec.linux()
+        .as_ref()
+        .and_then(|linux| linux.resources().as_ref())
+        .and_then(|resources| resources.devices().as_ref())
+        .into_iter()
+        .flatten()
+}
 
-    if let Err(e) = mknod(
-        dev_path,
-        SFlag::S_IFBLK,
-        Mode::from_bits_truncate(0o600),
-        dev,
-    ) {
-        eprintln!("error due to failing to mknod {dev_path}: {e}");
+/// Whether the spec's device rules grant `access` on the `typ` device `major:minor`. The
+/// rules apply in order with a deny-all default, and a type "a" rule matches every device.
+fn spec_allows_device(
+    spec: &Spec,
+    typ: LinuxDeviceType,
+    major: i64,
+    minor: i64,
+    access: char,
+) -> bool {
+    device_rules(spec).fold(false, |allowed, rule| {
+        let rule_typ = rule.typ().unwrap_or_default();
+        let matches = rule_typ == LinuxDeviceType::A
+            || (rule_typ == typ
+                && rule.major().is_none_or(|m| m < 0 || m == major)
+                && rule.minor().is_none_or(|m| m < 0 || m == minor)
+                && rule.access().as_deref().is_some_and(|a| a.contains(access)));
+        if matches { rule.allow() } else { allowed }
+    })
+}
+
+/// Opens each block device node the spec has the runtime create (`linux.devices`) and checks
+/// that reading it is allowed or denied as the spec's device cgroup rules say. Only block
+/// devices: the runtime's default rules (the same list in runc and youki) allow a few char
+/// devices whatever the spec says, so a char node cannot be checked from the spec alone.
+pub fn validate_device_cgroup(spec: &Spec) {
+    let block_nodes: Vec<_> = spec
+        .linux()
+        .as_ref()
+        .and_then(|linux| linux.devices().as_ref())
+        .into_iter()
+        .flatten()
+        .filter(|node| node.typ() == LinuxDeviceType::B)
+        .collect();
+    if block_nodes.is_empty() {
+        eprintln!("error due to the spec creating no block device whose access could be checked");
         return;
     }
 
-    match fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NONBLOCK)
-        .open(dev_path)
-    {
-        Ok(_) => {
+    for node in block_nodes {
+        let path = node.path();
+        let (major, minor) = (node.major(), node.minor());
+        let expected = spec_allows_device(spec, LinuxDeviceType::B, major, minor, 'r');
+        let result = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path);
+        // The device cgroup answers before the driver does, so EPERM is the only error it
+        // can give; whether a disk with that number exists on the host is not the question.
+        let denied = matches!(&result, Err(e) if e.raw_os_error() == Some(libc::EPERM));
+        if denied == expected {
             eprintln!(
-                "error due to reading block device {dev_path} being allowed; the device cgroup \
-                 should deny it"
-            );
-        }
-        // Expected: the device cgroup rejected the open.
-        Err(e) if e.raw_os_error() == Some(libc::EPERM) => {}
-        Err(e) => {
-            eprintln!(
-                "error due to opening block device {dev_path} failing with {e}, expected EPERM \
-                 from the device cgroup"
+                "error due to reading block device {} ({major}:{minor}) being {}, the spec's \
+                 device rules {} it: {result:?}",
+                path.display(),
+                if denied { "denied" } else { "allowed" },
+                if expected { "allow" } else { "deny" },
             );
         }
     }
