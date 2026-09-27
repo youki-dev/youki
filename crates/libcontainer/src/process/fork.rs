@@ -22,6 +22,11 @@ pub enum CloneError {
     UnknownErrno(i32),
 }
 
+/// A lock around the fork of each intermediate process. A caller that writes
+/// a file that a container can exec holds it for reading while the file is
+/// open. This stops an `ETXTBSY` error from a fd copy in a forked child.
+pub static CLONE_LOCK: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
 /// The callback function used in clone system call. The return value is i32
 /// which is consistent with C functions return code. The trait has to be
 /// `FnMut` because we need to be able to call the closure multiple times, once
@@ -52,7 +57,12 @@ pub fn container_clone_sibling(cb: CloneCb) -> Result<Pid, CloneError> {
 // Clone a child process and execute the callback.
 // This uses glibc `fork`, which resets the libc locks in the child. A raw
 // clone3 call does not, and the child can hang. See youki issue #2144.
+// The fork holds `CLONE_LOCK` for writing.
 pub fn container_clone(mut cb: CloneCb) -> Result<Pid, CloneError> {
+    let _guard = CLONE_LOCK
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
     match unsafe { libc::fork() } {
         -1 => Err(CloneError::Clone(nix::Error::last())),
         // The child ends with `_exit`. See the comment in `clone3`.
