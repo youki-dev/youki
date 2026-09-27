@@ -95,9 +95,10 @@ impl Devices {
         let mut emulator = Emulator::with_default_allow(false);
         emulator.add_rules(devices);
 
-        // A deny rule takes away access an earlier rule, or one of the defaults below,
-        // grants, and the OCI spec requires the rules to be applied in order. A whitelist
-        // cannot express that.
+        // Leave rules containing a deny to the existing eBPF emulator. Even a redundant
+        // deny falls back to an empty DeviceAllow list, so the properties can differ from
+        // runc for deny-all + allow X + deny Y. Aligning rule folding with runc belongs to
+        // the FIXME in v2::devices::emulator and is outside this controller's scope.
         let has_deny_rule = emulator.rules.iter().any(|rule| !rule.allow());
 
         if emulator.default_allow && !has_deny_rule {

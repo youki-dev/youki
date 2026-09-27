@@ -61,6 +61,8 @@ pub struct Manager {
     delegation_boundary: PathBuf,
     /// Duration to wait for a specific PID to be added to a cgroup
     cgroup_wait_timeout_duration: Duration,
+    /// Whether the manager operates in a rootless environment
+    rootless: bool,
 }
 
 /// Represents the systemd cgroups path:
@@ -288,6 +290,7 @@ impl Manager {
                         fs_manager,
                         delegation_boundary,
                         cgroup_wait_timeout_duration,
+                        rootless: false,
                     });
                 }
                 Err(e) if !is_eagain(&e) => return Err(e),
@@ -321,6 +324,15 @@ impl Manager {
             CONNECT_MAX_RETRIES, err_msg
         )))
         .into())
+    }
+
+    /// Marks the manager as operating in a rootless environment.
+    ///
+    /// Rootless containers usually cannot load an eBPF device filter, so failing to apply
+    /// the device rules is not fatal there, as in runc's fs2 manager.
+    pub fn with_rootless(mut self, rootless: bool) -> Self {
+        self.rootless = rootless;
+        self
     }
 
     // split_sub_cgroup splits the unit `name` into the base unit name and the
@@ -585,10 +597,22 @@ impl CgroupManager for Manager {
         // DeviceAllow cannot express, a deny rule above all, is only honoured by the
         // program built here.
         #[cfg(feature = "cgroupsv2_devices")]
-        crate::v2::devices::Devices::apply_devices(
+        match crate::v2::devices::Devices::apply_devices(
             &self.full_path,
             controller_opt.resources.devices(),
-        )?;
+        ) {
+            Ok(()) => {}
+            // Like runc, treat device rules as best effort in rootless mode instead of
+            // failing the container.
+            Err(err) if self.rootless => {
+                tracing::warn!(
+                    "rootless cgroup: cannot apply device rules to {:?}: {err}; \
+                     skipping device cgroup",
+                    self.full_path
+                );
+            }
+            Err(err) => return Err(err.into()),
+        }
 
         Ok(())
     }

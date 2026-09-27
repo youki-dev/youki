@@ -1,86 +1,50 @@
 //! Tests for the systemd cgroup manager's device controller.
-//!
-//! The runtime is invoked with `--systemd-cgroup` and a systemd-style cgroupsPath so that
-//! the systemd manager is selected over the cgroupfs one, and what it asked systemd for is
-//! read back off the transient unit.
 
-use std::collections::HashSet;
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use oci_spec::runtime::{
-    Capability, LinuxBuilder, LinuxCapabilitiesBuilder, LinuxDeviceCgroup,
-    LinuxDeviceCgroupBuilder, LinuxDeviceType, LinuxResourcesBuilder, ProcessBuilder, Spec,
-    SpecBuilder,
+    LinuxBuilder, LinuxDevice, LinuxDeviceBuilder, LinuxDeviceCgroup, LinuxDeviceCgroupBuilder,
+    LinuxDeviceType, LinuxResourcesBuilder, ProcessBuilder, Spec, SpecBuilder,
 };
 use test_framework::{ConditionalTest, TestGroup, TestResult, test_result};
 
+use super::{SCOPE_PREFIX, can_run, show_property, unit_name};
 use crate::utils::test_utils::{CreateOptions, check_container_created};
-use crate::utils::{
-    is_cgroup_v2, is_runtime_youki, test_inside_container, test_outside_container_with_options,
-};
-
-const SCOPE_PREFIX: &str = "contest";
-
-/// The capability set docker gives a container by default, to keep the container under test
-/// close to a real one. Mknod is what lets it create the device nodes it then opens.
-fn docker_default_capabilities() -> HashSet<Capability> {
-    HashSet::from([
-        Capability::Chown,
-        Capability::DacOverride,
-        Capability::Fsetid,
-        Capability::Fowner,
-        Capability::Mknod,
-        Capability::NetRaw,
-        Capability::Setgid,
-        Capability::Setuid,
-        Capability::Setfcap,
-        Capability::Setpcap,
-        Capability::NetBindService,
-        Capability::SysChroot,
-        Capability::Kill,
-        Capability::AuditWrite,
-    ])
-}
+use crate::utils::{is_runtime_runc, test_inside_container, test_outside_container_with_options};
 
 fn create_spec(cgroup_name: &str, devices: Vec<LinuxDeviceCgroup>) -> Result<Spec> {
-    create_spec_with_args(
+    create_spec_with_nodes(
         cgroup_name,
         devices,
+        vec![],
         vec!["sleep".to_string(), "30".to_string()],
     )
 }
 
-fn create_spec_with_args(
+/// `nodes` are created in the container by the runtime; runtimetest opens them and checks
+/// each against the device cgroup rules in `devices`.
+fn create_spec_with_nodes(
     cgroup_name: &str,
     devices: Vec<LinuxDeviceCgroup>,
+    nodes: Vec<LinuxDevice>,
     args: Vec<String>,
 ) -> Result<Spec> {
     // systemd cgroupsPath notation: [slice]:[scope prefix]:[name]
     let cgroups_path = PathBuf::from(format!("system.slice:{SCOPE_PREFIX}:{cgroup_name}"));
 
-    let capabilities = LinuxCapabilitiesBuilder::default()
-        .bounding(docker_default_capabilities())
-        .effective(docker_default_capabilities())
-        .permitted(docker_default_capabilities())
-        .inheritable(HashSet::new())
-        .ambient(HashSet::new())
-        .build()
-        .context("failed to build capabilities")?;
-
     SpecBuilder::default()
         .process(
             ProcessBuilder::default()
                 .args(args)
-                .capabilities(capabilities)
                 .build()
                 .context("failed to build process spec")?,
         )
         .linux(
             LinuxBuilder::default()
                 .cgroups_path(cgroups_path)
+                .devices(nodes)
                 .resources(
                     LinuxResourcesBuilder::default()
                         .devices(devices)
@@ -92,6 +56,17 @@ fn create_spec_with_args(
         )
         .build()
         .context("failed to build spec")
+}
+
+/// A block device node for the runtime to create at `/dev/test-<major>-<minor>`.
+fn block_node(major: i64, minor: i64) -> Result<LinuxDevice> {
+    LinuxDeviceBuilder::default()
+        .path(PathBuf::from(format!("/dev/test-{major}-{minor}")))
+        .typ(LinuxDeviceType::B)
+        .major(major)
+        .minor(minor)
+        .build()
+        .context("failed to build device node")
 }
 
 fn device_rule(
@@ -114,30 +89,6 @@ fn device_rule(
         builder = builder.minor(minor);
     }
     builder.build().context("failed to build device rule")
-}
-
-/// `<prefix>-<name>.scope` unit name, see get_unit_name() in the systemd manager.
-fn unit_name(cgroup_name: &str) -> String {
-    format!("{SCOPE_PREFIX}-{cgroup_name}.scope")
-}
-
-fn show_property(unit: &str, property: &str) -> Result<String> {
-    let output = Command::new("systemctl")
-        .args(["show", unit, "-p", property, "--value"])
-        .output()
-        .with_context(|| format!("failed to run systemctl show for {unit}"))?;
-
-    if !output.status.success() {
-        bail!(
-            "systemctl show {unit} -p {property} failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-
-    Ok(String::from_utf8(output.stdout)
-        .context("systemctl output was not utf-8")?
-        .trim()
-        .to_string())
 }
 
 fn device_policy(cgroup_name: &str) -> Result<String> {
@@ -225,6 +176,45 @@ fn test_whitelist_rules() -> TestResult {
     })
 }
 
+/// A redundant deny must leave the allowed device accessible and other devices denied.
+/// The runtimes may represent these rules differently in systemd's DeviceAllow list;
+/// check access inside the container rather than requiring the same list.
+fn test_redundant_deny_preserves_device_access() -> TestResult {
+    let cgroup_name = "systemd_devices_redundant_deny";
+    let devices = vec![
+        test_result!(device_rule(
+            false,
+            Some(LinuxDeviceType::A),
+            None,
+            None,
+            "rwm"
+        )),
+        test_result!(device_rule(
+            true,
+            Some(LinuxDeviceType::B),
+            Some(8),
+            Some(0),
+            "rw"
+        )),
+        // Never allowed above, so denying it changes nothing.
+        test_result!(device_rule(
+            false,
+            Some(LinuxDeviceType::B),
+            Some(8),
+            Some(1),
+            "r"
+        )),
+    ];
+
+    // 8:0 is allowed, 8:1 is explicitly denied, and 8:2 stays denied by default.
+    let nodes = vec![
+        test_result!(block_node(8, 0)),
+        test_result!(block_node(8, 1)),
+        test_result!(block_node(8, 2)),
+    ];
+    run_device_access_test(cgroup_name, devices, nodes)
+}
+
 /// A rule set that allows everything and denies nothing is exactly DevicePolicy=auto.
 fn test_allow_all_is_auto() -> TestResult {
     let cgroup_name = "systemd_devices_allow_all";
@@ -239,10 +229,9 @@ fn test_allow_all_is_auto() -> TestResult {
     run_test(cgroup_name, devices, &|| check_policy(cgroup_name, "auto"))
 }
 
-/// A deny rule on top of an allow-all rule cannot be put in a DeviceAllow list, so the unit
-/// gets a deny-all list and the eBPF filter carries the rules. Checks the container still
-/// runs and the denied access is refused, which only holds if the filter replaced the
-/// program systemd derives from that list.
+/// A deny on top of allow-all has no DeviceAllow form, so the unit gets a deny-all list and
+/// the eBPF filter carries the rules. Checks the container still runs and the denied access
+/// is refused. Needs runc >= 1.5.2: older releases leave systemd's deny-all filter attached.
 fn test_deny_rule_on_allow_all_is_enforced() -> TestResult {
     let cgroup_name = "systemd_devices_allow_all_deny";
     let devices = vec![
@@ -253,7 +242,7 @@ fn test_deny_rule_on_allow_all_is_enforced() -> TestResult {
             None,
             "rwm"
         )),
-        // The device runtimetest creates and then opens for reading.
+        // 8:0 is denied; 8:1, created next to it, shows the allow-all still holds.
         test_result!(device_rule(
             false,
             Some(LinuxDeviceType::B),
@@ -262,32 +251,57 @@ fn test_deny_rule_on_allow_all_is_enforced() -> TestResult {
             "r"
         )),
     ];
-    let spec = test_result!(create_spec_with_args(
+    let nodes = vec![
+        test_result!(block_node(8, 0)),
+        test_result!(block_node(8, 1)),
+    ];
+    run_device_access_test(cgroup_name, devices, nodes)
+}
+
+fn run_device_access_test(
+    cgroup_name: &str,
+    devices: Vec<LinuxDeviceCgroup>,
+    nodes: Vec<LinuxDevice>,
+) -> TestResult {
+    let spec = test_result!(create_spec_with_nodes(
         cgroup_name,
         devices,
+        nodes,
         vec!["runtimetest".to_string(), "device_cgroup".to_string()],
     ));
-    let systemd_cgroup: &[&OsStr] = &[OsStr::new("--systemd-cgroup")];
-    let options = CreateOptions::default().with_global_args(systemd_cgroup);
+    // runc warns on stderr about the temporary deny-all rule, and test_inside_container
+    // reads anything on stderr as a failure, so its log goes to a file here.
+    let runc_log = test_result!(tempfile::NamedTempFile::new().context("runc log file"));
+    let systemd_cgroup: Vec<&OsStr> = if is_runtime_runc() {
+        vec![
+            OsStr::new("--systemd-cgroup"),
+            OsStr::new("--log"),
+            runc_log.path().as_os_str(),
+        ]
+    } else {
+        vec![OsStr::new("--systemd-cgroup")]
+    };
+    let options = CreateOptions::default().with_global_args(&systemd_cgroup);
 
     test_inside_container(&spec, &options, &|_| Ok(()))
 }
 
-/// Checks the rules are enforced, not just present on the unit. A "deny all" reset leaves
-/// only the runtime's own defaults, which allow mknod but no read access, so creating the
-/// node must work and opening it must not.
+/// Checks the rules are enforced, not just present on the unit: under deny-all a node the
+/// runtime created for the container must not be readable.
 fn test_default_deny_is_enforced() -> TestResult {
     let cgroup_name = "systemd_devices_deny_rule";
-    let deny_rule = test_result!(device_rule(
+    let deny_all = test_result!(device_rule(
         false,
         Some(LinuxDeviceType::A),
         None,
         None,
         "rwm"
     ));
-    let spec = test_result!(create_spec_with_args(
+    let nodes = vec![test_result!(block_node(8, 0))];
+    let spec = test_result!(create_spec_with_nodes(
         cgroup_name,
-        vec![deny_rule],
+        vec![deny_all],
+        nodes,
         vec!["runtimetest".to_string(), "device_cgroup".to_string()],
     ));
     let systemd_cgroup: &[&OsStr] = &[OsStr::new("--systemd-cgroup")];
@@ -299,18 +313,6 @@ fn test_default_deny_is_enforced() -> TestResult {
 // NOTE: "*:minor" rules are left to the unit tests too. They cannot be seen from here: the
 // default rules come after the spec's and systemd keeps the last entry for a path, so a
 // "char-*" entry from the spec is always replaced by the default "char-* m".
-
-/// The systemd cgroup manager needs a unified cgroup hierarchy, a running systemd to talk
-/// to, and root to place units in system.slice.
-fn systemd_cgroups_available() -> bool {
-    nix::unistd::geteuid().is_root() && is_cgroup_v2() && Path::new("/run/systemd/system").is_dir()
-}
-
-fn can_run() -> bool {
-    // DeviceAllow is youki specific enough (property names and defaults) that this is not
-    // run against other runtimes.
-    is_runtime_youki() && systemd_cgroups_available()
-}
 
 pub fn get_test_group() -> TestGroup {
     let mut test_group = TestGroup::new("cgroup_systemd_devices");
@@ -334,11 +336,17 @@ pub fn get_test_group() -> TestGroup {
         Box::new(can_run),
         Box::new(test_deny_rule_on_allow_all_is_enforced),
     );
+    let redundant_deny = ConditionalTest::new(
+        "redundant_deny_preserves_device_access",
+        Box::new(can_run),
+        Box::new(test_redundant_deny_preserves_device_access),
+    );
     test_group.add(vec![
         Box::new(whitelist),
         Box::new(allow_all),
         Box::new(default_deny),
         Box::new(allow_all_deny),
+        Box::new(redundant_deny),
     ]);
     test_group
 }
