@@ -26,6 +26,13 @@ fn container_userns_has_mappings(linux: Option<&Linux>) -> bool {
     }
 }
 
+pub(crate) fn mount_requests_idmap(mount: &SpecMount) -> bool {
+    let has_any_mount_mappings = mount.uid_mappings().is_some() || mount.gid_mappings().is_some();
+    let options = mount.options().as_deref().unwrap_or(&[]);
+    let has_idmap_option = options.iter().any(|o| o == "idmap" || o == "ridmap");
+    has_idmap_option || has_any_mount_mappings
+}
+
 fn validate_mount_mappings(mount: &SpecMount) -> Result<bool, ErrInvalidSpec> {
     match (
         mount.uid_mappings().as_deref(),
@@ -56,14 +63,11 @@ pub(crate) fn validate_idmapped_mounts(
     let can_use_container_userns = container_userns_has_mappings(linux);
 
     for mount in mounts {
-        let has_any_mount_mappings =
-            mount.uid_mappings().is_some() || mount.gid_mappings().is_some();
-        let options = mount.options().as_deref().unwrap_or(&[]);
-        let has_idmap_option = options.iter().any(|o| o == "idmap" || o == "ridmap");
-        if !has_idmap_option && !has_any_mount_mappings {
+        if !mount_requests_idmap(mount) {
             continue;
         }
 
+        let options = mount.options().as_deref().unwrap_or(&[]);
         let is_bind = mount.typ().as_deref() == Some("bind")
             || options.iter().any(|o| o == "bind" || o == "rbind");
 
