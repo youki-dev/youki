@@ -66,7 +66,14 @@ pub fn container_clone(mut cb: CloneCb) -> Result<Pid, CloneError> {
     match unsafe { libc::fork() } {
         -1 => Err(CloneError::Clone(nix::Error::last())),
         // The child ends with `_exit`. See the comment in `clone3`.
-        0 => unsafe { libc::_exit(cb()) },
+        0 => {
+            // Use a no-op tracing default. The caller's subscriber takes
+            // locks that another thread can hold at the fork, so an event
+            // in the child can wait forever.
+            let _quiet = tracing::dispatcher::set_default(&tracing::Dispatch::none());
+
+            unsafe { libc::_exit(cb()) }
+        }
         pid => Ok(Pid::from_raw(pid)),
     }
 }
