@@ -179,6 +179,13 @@ pub fn container_intermediate_process(
                 Ok(_) => 0,
                 Err(e) => {
                     tracing::error!("failed to initialize container process: {e}");
+                    // Write the error to the container's stderr also, so
+                    // that a reader of that stream can see the cause.
+                    #[cfg(feature = "init-error-stderr")]
+                    {
+                        let line = format!("youki init error: {e:?}\n");
+                        unsafe { libc::write(2, line.as_ptr().cast(), line.len()) };
+                    }
                     if let Err(err) = init_main_sender.exec_failed(e.to_string()) {
                         tracing::error!(?err, "failed sending error to main sender");
                     }

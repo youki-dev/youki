@@ -12,6 +12,8 @@ rust-version = "1.85.0"
 keywords = ["youki", "container", "cgroups"]
 
 [features]
+# The init process also writes its start error to its own stderr.
+init-error-stderr = []
 default = ["systemd", "v2", "v1", "libseccomp"]
 libseccomp = ["dep:libseccomp"]
 systemd = ["libcgroups/systemd", "v2"]
