@@ -390,7 +390,7 @@ impl TenantContainerBuilder {
         spec: &mut Spec,
         container: &Container,
     ) -> Result<(), LibcontainerError> {
-        let process = if let Some(process) = &self.process {
+        let mut process = if let Some(process) = &self.process {
             self.get_process(process)?
         } else {
             // Use the spec's process env as the baseline for exec.
@@ -443,6 +443,18 @@ impl TenantContainerBuilder {
 
             process_builder.build()?
         };
+
+        // The exec'd process gets the SELinux label asked for (--process-label or the process
+        // file), else the container's, as runc and crun do.
+        if let Some(label) = self.process_label.clone() {
+            process.set_selinux_label(Some(label));
+        } else if process.selinux_label().is_none() {
+            let label = spec
+                .process()
+                .as_ref()
+                .and_then(|p| p.selinux_label().clone());
+            process.set_selinux_label(label);
+        }
 
         let container_pid = container.pid().ok_or(LibcontainerError::Other(
             "could not retrieve container init pid".into(),
