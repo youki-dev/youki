@@ -34,6 +34,10 @@ use crate::syscall::{Syscall, SyscallError, linux};
 use crate::utils::{PathBufExt, retry};
 
 const MAX_EBUSY_MOUNT_ATTEMPTS: u32 = 3;
+
+/// The longest value fsconfig(FSCONFIG_SET_STRING) accepts: the kernel copies it with
+/// strndup_user(value, 256), which counts the NUL, and returns EINVAL for anything longer.
+const FSCONFIG_MAX_STRING_LEN: usize = 255;
 // runc has a retry interval of 100ms. We are following this.
 // https://github.com/opencontainers/runc/blob/v1.3.0/libcontainer/rootfs_linux.go#L1235
 #[cfg(not(test))]
@@ -717,6 +721,24 @@ impl Mount {
 
                 for opt in data_options.iter().filter(|s| !s.is_empty()) {
                     if let Some((k, v)) = opt.split_once('=') {
+                        if typ == Some("overlay")
+                            && k == "lowerdir"
+                            && v.len() > FSCONFIG_MAX_STRING_LEN
+                        {
+                            // A lowerdir list this long does not fit in one fsconfig string.
+                            // Pass the layers one at a time instead ("lowerdir+" and
+                            // "datadir+", Linux 6.8+).
+                            for (key, layer) in overlay_layers(v) {
+                                self.syscall.fsconfig(
+                                    fsfd,
+                                    linux::FSCONFIG_SET_STRING as u32,
+                                    Some(key),
+                                    Some(&layer),
+                                    0,
+                                )?;
+                            }
+                            continue;
+                        }
                         self.syscall.fsconfig(
                             fsfd,
                             linux::FSCONFIG_SET_STRING as u32,
@@ -1042,6 +1064,29 @@ impl Mount {
 }
 
 /// Find parent mount of rootfs in given mount infos
+/// Splits an overlay `lowerdir` value into the per-layer fsconfig keys that replace it:
+/// "lowerdir+" for each lower layer and, after a "::" separator, "datadir+" for each data-only
+/// layer. A backslash escapes the next character (`\:` is a colon inside a path), and the
+/// per-layer keys take paths unescaped.
+fn overlay_layers(lowerdir: &str) -> Vec<(&'static str, String)> {
+    let mut layers = Vec::new();
+    let mut key = "lowerdir+";
+    let mut layer = String::new();
+    let mut chars = lowerdir.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => layer.extend(chars.next()),
+            ':' if layer.is_empty() => key = "datadir+",
+            ':' => layers.push((key, std::mem::take(&mut layer))),
+            c => layer.push(c),
+        }
+    }
+    if !layer.is_empty() {
+        layers.push((key, layer));
+    }
+    layers
+}
+
 pub fn find_parent_mount(
     rootfs: &Path,
     mount_infos: Vec<MountInfo>,
@@ -1104,6 +1149,83 @@ mod tests {
             val: None,
             aux: 0,
         }
+    }
+
+    #[test]
+    fn test_overlay_layers() {
+        let layers = |v| overlay_layers(v);
+        assert_eq!(
+            layers("/l1:/l2"),
+            vec![
+                ("lowerdir+", "/l1".to_string()),
+                ("lowerdir+", "/l2".to_string())
+            ]
+        );
+        assert_eq!(
+            layers("/a\\:b:/c"),
+            vec![
+                ("lowerdir+", "/a:b".to_string()),
+                ("lowerdir+", "/c".to_string())
+            ]
+        );
+        assert_eq!(
+            layers("/l1::/d1:/d2"),
+            vec![
+                ("lowerdir+", "/l1".to_string()),
+                ("datadir+", "/d1".to_string()),
+                ("datadir+", "/d2".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_mount_into_container_overlay_long_lowerdir() -> Result<()> {
+        let tmp_dir = tempfile::tempdir()?;
+        // Podman's image volumes (--mount type=image) are overlay mounts with only lower
+        // layers, whose paths together are longer than one fsconfig string may be.
+        let lower1 = format!(
+            "/var/lib/containers/storage/overlay/{}/merged",
+            "a".repeat(64)
+        );
+        let lower2 = format!(
+            "/var/lib/containers/storage/overlay-containers/{}/lower",
+            "b".repeat(96)
+        );
+        let short = format!("lowerdir={lower1}");
+        let long = format!("lowerdir={lower1}:{lower2}");
+        assert!(long.len() - "lowerdir=".len() > FSCONFIG_MAX_STRING_LEN);
+        for (lowerdir, want_layers) in [
+            (short.clone(), vec![fsc_str("lowerdir", &lower1)]),
+            (
+                long,
+                vec![fsc_str("lowerdir+", &lower1), fsc_str("lowerdir+", &lower2)],
+            ),
+        ] {
+            let m = Mount::new();
+            let mount = &SpecMountBuilder::default()
+                .destination(PathBuf::from("/guest"))
+                .typ("overlay")
+                .source(PathBuf::from("overlay"))
+                .options(vec![
+                    lowerdir,
+                    "private".to_string(),
+                    "userxattr".to_string(),
+                ])
+                .build()?;
+            let mount_option_config = parse_mount(mount)?;
+
+            assert!(
+                m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
+                    .is_ok()
+            );
+
+            let mut want_fsconfig = vec![fsc_str("source", "overlay")];
+            want_fsconfig.extend(want_layers);
+            want_fsconfig.push(fsc_flag("userxattr"));
+            want_fsconfig.push(fsc_create());
+            assert_eq!(helper_syscall(&m).get_fsconfig_args(), want_fsconfig);
+        }
+        Ok(())
     }
 
     #[test]
