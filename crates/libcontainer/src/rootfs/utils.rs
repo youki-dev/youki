@@ -10,6 +10,8 @@ use crate::syscall::linux::{self, MountOption, MountRecursive};
 
 const IDMAP_FLAG: &str = "idmap";
 const RIDMAP_FLAG: &str = "ridmap";
+/// runc and crun's extension: a tmpfs that starts with a copy of the directory under it.
+pub const TMPCOPYUP: &str = "tmpcopyup";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MountOptionConfig {
@@ -102,6 +104,10 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
                     continue;
                 }
                 RIDMAP_FLAG => {
+                    continue;
+                }
+                // applied where the tmpfs is mounted, not passed to the filesystem
+                TMPCOPYUP => {
                     continue;
                 }
                 _ => {}
@@ -238,6 +244,24 @@ mod tests {
         assert_eq!(SFlag::S_IFCHR, to_sflag(LinuxDeviceType::C));
         assert_eq!(SFlag::S_IFCHR, to_sflag(LinuxDeviceType::U));
         assert_eq!(SFlag::S_IFIFO, to_sflag(LinuxDeviceType::P));
+    }
+
+    #[test]
+    fn test_parse_mount_tmpcopyup_is_not_mount_data() -> Result<()> {
+        let config = parse_mount(
+            &MountBuilder::default()
+                .destination(PathBuf::from("/run"))
+                .typ("tmpfs")
+                .source(PathBuf::from("tmpfs"))
+                .options(vec![
+                    "rw".to_string(),
+                    "nosuid".to_string(),
+                    "tmpcopyup".to_string(),
+                ])
+                .build()?,
+        )?;
+        assert!(config.data.is_empty(), "{:?}", config.data);
+        Ok(())
     }
 
     #[test]
