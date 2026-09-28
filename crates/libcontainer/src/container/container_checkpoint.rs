@@ -170,6 +170,9 @@ impl Container {
         );
         criu.cgroups_mode(opts.manage_cgroups_mode.clone());
         criu.set_link_remap(opts.link_remap);
+        if let Some(page_server) = opts.page_server {
+            criu.set_page_server(page_server.ip().to_string(), page_server.port().into());
+        }
         // youki does not manage network devices, so external dependencies such as the
         // host side of a veth pair cannot be described to CRIU. Dumping them makes
         // restore fail with "Unknown peer net namespace", so runc sets this unconditionally.

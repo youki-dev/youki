@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -40,9 +41,9 @@ pub struct Checkpoint {
     // TODO: Pass a file descriptor fd to criu. Is u32 the right type?
     // #[arg(long)]
     // pub status_fd: Option<u32>,
-    // TODO: Start a page server at the given URL
-    // #[arg(long)]
-    // pub page_server: Option<String>,
+    /// ADDRESS:PORT of the page server
+    #[arg(long)]
+    pub page_server: Option<SocketAddr>,
     /// Allow file locks
     #[arg(long)]
     pub file_locks: bool,
@@ -62,4 +63,50 @@ pub struct Checkpoint {
     // pub auto_dedup: bool,
     #[arg(value_parser = clap::builder::NonEmptyStringValueParser::new(), required = true)]
     pub container_id: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_page_server(value: &str) -> Result<Option<SocketAddr>, clap::Error> {
+        Checkpoint::try_parse_from(["checkpoint", "--page-server", value, "container"])
+            .map(|args| args.page_server)
+    }
+
+    #[test]
+    fn test_page_server_ok() {
+        for (input, expected) in [
+            ("127.0.0.1:27", "127.0.0.1:27"),
+            ("[::1]:1234", "[::1]:1234"),
+        ] {
+            assert_eq!(
+                parse_page_server(input).unwrap(),
+                Some(expected.parse().unwrap()),
+                "input: {input}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_page_server_ng() {
+        for input in [
+            "",
+            "localhost:80",
+            "127.0.0.1",
+            ":1234",
+            "127.0.0.1:",
+            "::1:1234",
+            "127.0.0.1:port",
+            "127.0.0.1:65536",
+        ] {
+            assert!(parse_page_server(input).is_err(), "input: {input}");
+        }
+    }
+
+    #[test]
+    fn test_page_server_unset() {
+        let args = Checkpoint::try_parse_from(["checkpoint", "container"]).unwrap();
+        assert_eq!(args.page_server, None);
+    }
 }
