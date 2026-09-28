@@ -1,3 +1,4 @@
+use std::ffi::CString;
 use std::fs::Permissions;
 use std::io::{BufRead, BufReader, ErrorKind};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
@@ -586,13 +587,16 @@ impl Mount {
         let typ = m.typ().as_deref();
         let mut data_options = mount_option_config.data.clone();
 
+        let mut xattr_label = None;
         if let Some(l) = label {
-            if typ != Some("proc") && typ != Some("sysfs") {
-                if Path::new("/sys/fs/selinux").exists() {
-                    data_options.push(format!("context={}", l));
-                } else {
-                    tracing::debug!("ignoring mount label because SELinux is disabled");
+            if Path::new("/sys/fs/selinux").exists() {
+                match mount_label_how(typ) {
+                    MountLabelHow::None => {}
+                    MountLabelHow::Context => data_options.push(format!("context={}", l)),
+                    MountLabelHow::Xattr => xattr_label = Some(l),
                 }
+            } else {
+                tracing::debug!("ignoring mount label because SELinux is disabled");
             }
         }
 
@@ -795,6 +799,10 @@ impl Mount {
                         rec_attr,
                         mem::size_of::<linux::MountAttr>(),
                     )?;
+                }
+
+                if let Some(l) = xattr_label {
+                    set_root_label(mount_fd, l)?;
                 }
 
                 // move_mount
@@ -1119,6 +1127,49 @@ fn copy_recursive_fd_to_fd(src: BorrowedFd, dst: BorrowedFd) -> std::io::Result<
 }
 
 /// Find parent mount of rootfs in given mount infos
+/// How a mount gets its SELinux mount label, as in crun's get_mount_label_how().
+#[derive(Debug, PartialEq, Eq)]
+enum MountLabelHow {
+    /// proc and sysfs keep the kernel's labels.
+    None,
+    /// The `context=` mount option.
+    Context,
+    /// mqueue's superblock belongs to the IPC namespace, so the kernel refuses `context=`
+    /// (EINVAL); its root inode is labelled with the security.selinux xattr instead.
+    Xattr,
+}
+
+fn mount_label_how(typ: Option<&str>) -> MountLabelHow {
+    match typ {
+        Some("proc" | "sysfs") => MountLabelHow::None,
+        Some("mqueue") => MountLabelHow::Xattr,
+        _ => MountLabelHow::Context,
+    }
+}
+
+/// Sets the SELinux label of a detached mount's root.
+fn set_root_label(mount_fd: BorrowedFd, label: &str) -> std::result::Result<(), SyscallError> {
+    let path = CString::new(format!("/proc/self/fd/{}", mount_fd.as_raw_fd()))
+        .map_err(|_| SyscallError::Nix(Errno::EINVAL))?;
+    let value = CString::new(label).map_err(|_| SyscallError::Nix(Errno::EINVAL))?;
+    // SAFETY: the path, name and value are NUL-terminated and outlive the call.
+    let ret = unsafe {
+        libc::setxattr(
+            path.as_ptr(),
+            c"security.selinux".as_ptr(),
+            value.as_ptr().cast(),
+            value.as_bytes().len(),
+            0,
+        )
+    };
+    if ret != 0 {
+        let err = Errno::last();
+        tracing::error!(?err, label, "failed to set the SELinux label of the mount");
+        return Err(SyscallError::Nix(err));
+    }
+    Ok(())
+}
+
 pub fn find_parent_mount(
     rootfs: &Path,
     mount_infos: Vec<MountInfo>,
@@ -1221,6 +1272,16 @@ mod tests {
             fs::metadata(from.path().join("sub/file"))?.uid()
         );
         Ok(())
+    }
+
+    #[test]
+    fn test_mount_label_how() {
+        assert_eq!(mount_label_how(Some("proc")), MountLabelHow::None);
+        assert_eq!(mount_label_how(Some("sysfs")), MountLabelHow::None);
+        assert_eq!(mount_label_how(Some("mqueue")), MountLabelHow::Xattr);
+        assert_eq!(mount_label_how(Some("tmpfs")), MountLabelHow::Context);
+        assert_eq!(mount_label_how(Some("devpts")), MountLabelHow::Context);
+        assert_eq!(mount_label_how(None), MountLabelHow::Context);
     }
 
     #[test]
