@@ -633,7 +633,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fa961b519f0b462e3a3b4a34b64d119eeaca1d59af726fe450bbba07a9fc0a1"
 dependencies = [
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -716,7 +716,7 @@ dependencies = [
  "tar",
  "tempfile",
  "test_framework",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -1294,7 +1294,7 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10d60334b3b2e7c9d91ef8150abfb6fa4c1c39ebbcf4a81c2e346aad939fee3e"
 dependencies = [
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -2567,7 +2567,7 @@ dependencies = [
  "jni-sys",
  "log",
  "simd_cesu8",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "walkdir",
  "windows-link",
 ]
@@ -2713,7 +2713,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "tempfile",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -2747,7 +2747,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "tempfile",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -2900,7 +2900,7 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bb4bdc8b0ce69932332cf76d24af69c3a155242af95c226b2ab6c2e371ed1149"
 dependencies = [
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "zerocopy",
  "zerocopy-derive",
 ]
@@ -3278,7 +3278,7 @@ dependencies = [
  "serde_json",
  "strum",
  "strum_macros",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3410,7 +3410,7 @@ dependencies = [
  "rustversion",
  "static_assertions",
  "tempfile",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3850,7 +3850,7 @@ dependencies = [
  "rustc-hash 2.1.2",
  "rustls 0.23.39",
  "socket2 0.6.3",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "web-time",
@@ -3873,7 +3873,7 @@ dependencies = [
  "rustls 0.23.39",
  "rustls-pki-types",
  "slab",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tinyvec",
  "tracing",
  "web-time",
@@ -4336,7 +4336,7 @@ dependencies = [
  "libc",
  "protobuf",
  "protobuf-codegen",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -5194,11 +5194,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.20"
+version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f"
+checksum = "09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e"
 dependencies = [
- "thiserror-impl 2.0.20",
+ "thiserror-impl 2.0.21",
 ]
 
 [[package]]
@@ -5214,9 +5214,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.20"
+version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
+checksum = "fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5774,7 +5774,7 @@ dependencies = [
  "replace_with",
  "shared-buffer",
  "slab",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "virtual-mio",
@@ -5795,7 +5795,7 @@ dependencies = [
  "parking",
  "serde",
  "socket2 0.6.3",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -5822,7 +5822,7 @@ dependencies = [
  "serde",
  "smoltcp",
  "socket2 0.6.3",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "virtual-mio",
@@ -5949,7 +5949,7 @@ dependencies = [
  "rand 0.10.3",
  "rustix 1.1.4",
  "system-interface",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "wasmtime",
  "wasmtime-environ",
@@ -6197,7 +6197,7 @@ dependencies = [
  "shared-buffer",
  "tar",
  "target-lexicon",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "wasm-bindgen",
  "wasmer-compiler",
@@ -6239,7 +6239,7 @@ dependencies = [
  "smallvec",
  "target-lexicon",
  "tempfile",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wasmer-types",
  "wasmer-vm",
  "wasmparser 0.245.1",
@@ -6308,7 +6308,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "toml 1.1.2+spec-1.1.0",
  "url",
 ]
@@ -6344,7 +6344,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shared-buffer",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "virtual-fs",
  "virtual-net",
@@ -6374,7 +6374,7 @@ dependencies = [
  "shared-buffer",
  "tar",
  "tempfile",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "toml 1.1.2+spec-1.1.0",
  "url",
  "wasmer-config",
@@ -6399,7 +6399,7 @@ dependencies = [
  "serde",
  "sha2 0.11.0",
  "target-lexicon",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wasmparser 0.245.1",
 ]
 
@@ -6430,7 +6430,7 @@ dependencies = [
  "region",
  "rustversion",
  "scopeguard",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wasmer-types",
  "windows-sys 0.61.2",
 ]
@@ -6484,7 +6484,7 @@ dependencies = [
  "tempfile",
  "terminal_size",
  "termios",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-stream",
  "toml 1.1.2+spec-1.1.0",
@@ -6754,7 +6754,7 @@ dependencies = [
  "pulley-interpreter",
  "smallvec",
  "target-lexicon",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "wasmparser 0.251.0",
  "wasmtime-environ",
  "wasmtime-internal-core 46.0.3",
@@ -6924,7 +6924,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "shared-buffer",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "url",
 ]
 
@@ -6977,7 +6977,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a77deefc2b0fe8c258316372ec322da627ce8c5b5ea9eec3b001190e9f8f2f69"
 dependencies = [
  "bitflags 2.13.0",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "wasmtime",
  "wasmtime-environ",
