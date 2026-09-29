@@ -10,10 +10,7 @@ fn default_symlinks() -> TestResult {
 
 pub fn get_default_symlinks_test() -> TestGroup {
     let mut test_group = test_framework::TestGroup::new("default_symlinks");
-    let test = test_framework::Test::new(
-        "default_symlinks_test",
-        Box::new(default_symlinks),
-    );
+    let test = test_framework::Test::new("default_symlinks_test", Box::new(default_symlinks));
 
     test_group.add(vec![Box::new(test)]);
     test_group
