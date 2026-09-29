@@ -67,6 +67,7 @@ pub struct FsmountArgs {
 pub struct OpenTreeArgs {
     pub dirfd: i32,
     pub path: Option<String>,
+    pub dirfd_path: Option<PathBuf>,
     pub flags: u32,
 }
 
@@ -415,11 +416,21 @@ impl Syscall for TestHelperSyscall {
     }
 
     fn open_tree(&self, dirfd: RawFd, path: Option<&str>, flags: u32) -> Result<OwnedFd> {
+        // The source is usually passed by fd (AT_EMPTY_PATH), so resolve the
+        // real path it points at via /proc/self/fd while the fd is still open,
+        // for later assertions.
+        let dirfd_path = if path.is_none() {
+            read_link(format!("/proc/self/fd/{dirfd}")).ok()
+        } else {
+            None
+        };
+
         self.mocks.act(
             ArgName::OpenTree,
             Box::new(OpenTreeArgs {
                 dirfd,
                 path: path.map(|s| s.to_owned()),
+                dirfd_path,
                 flags,
             }),
         )?;

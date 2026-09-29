@@ -13,7 +13,9 @@ use crate::config::YoukiConfig;
 use crate::error::{ErrInvalidSpec, LibcontainerError, MissingSpecError};
 use crate::notify_socket::NOTIFY_FILE;
 use crate::process::args::ContainerType;
+use crate::rootfs::utils::is_bind;
 use crate::syscall::syscall::create_syscall;
+use crate::utils::PathBufExt;
 use crate::validator::Validator;
 use crate::{apparmor, tty, user_ns, utils};
 
@@ -172,8 +174,40 @@ impl InitContainerBuilder {
             tracing::error!(bundle = ?self.bundle, "failed to canonicalize rootfs: {}", err);
             err
         })?;
+        self.resolve_relative_bind_sources(&mut spec)?;
 
         Ok(spec)
+    }
+
+    /// Resolve relative bind mount sources against the bundle directory.
+    ///
+    /// See: https://github.com/opencontainers/runc/blob/c17aefd6c669df803b7dada41a9dc1737b54f78c/libcontainer/specconv/spec_linux.go#L653
+    fn resolve_relative_bind_sources(&self, spec: &mut Spec) -> Result<(), LibcontainerError> {
+        let Some(mounts) = spec.mounts_mut() else {
+            return Ok(());
+        };
+        let bundle = fs::canonicalize(&self.bundle).map_err(|err| {
+            tracing::error!(bundle = ?self.bundle, "failed to canonicalize bundle: {}", err);
+            LibcontainerError::OtherIO(err)
+        })?;
+
+        for mount in mounts.iter_mut() {
+            if !is_bind(mount) {
+                continue;
+            }
+            let Some(source) = mount.source().as_ref().filter(|src| src.is_relative()) else {
+                continue;
+            };
+            let resolved = bundle.join(source).normalize();
+            tracing::debug!(
+                ?source,
+                ?resolved,
+                "resolved relative bind mount source against the bundle"
+            );
+            mount.set_source(Some(resolved));
+        }
+
+        Ok(())
     }
 
     fn validate_spec(spec: &Spec) -> Result<(), LibcontainerError> {
@@ -226,6 +260,8 @@ impl InitContainerBuilder {
 
 #[cfg(test)]
 mod tests {
+    use oci_spec::runtime::{MountBuilder, SpecBuilder};
+
     use super::*;
     use crate::container::builder::ContainerBuilder;
     use crate::syscall::syscall::SyscallType;
@@ -237,5 +273,55 @@ mod tests {
             .with_bundle("/new/bundle");
 
         assert_eq!(builder.bundle, PathBuf::from("/new/bundle"));
+    }
+
+    #[test]
+    fn test_resolve_relative_bind_sources() {
+        let bundle_dir = tempfile::tempdir().unwrap();
+        let bundle = fs::canonicalize(bundle_dir.path()).unwrap();
+        let builder =
+            ContainerBuilder::new("test-id".to_owned(), SyscallType::default()).as_init(&bundle);
+
+        let mount = |source: &str, typ: &str, options: Vec<&str>| {
+            MountBuilder::default()
+                .destination(PathBuf::from("/dest"))
+                .source(PathBuf::from(source))
+                .typ(typ.to_owned())
+                .options(options.into_iter().map(str::to_owned).collect::<Vec<_>>())
+                .build()
+                .unwrap()
+        };
+
+        let mut spec = SpecBuilder::default()
+            .mounts(vec![
+                // relative bind sources become bundle-relative
+                mount("rel/src", "none", vec!["bind"]),
+                mount("./deep/../rel", "none", vec!["rbind"]),
+                // absolute bind sources are left alone
+                mount("/abs/src", "none", vec!["bind"]),
+                // non-bind sources are left alone, they are not paths
+                mount("tmpfs", "tmpfs", vec!["nosuid"]),
+            ])
+            .build()
+            .unwrap();
+
+        builder.resolve_relative_bind_sources(&mut spec).unwrap();
+
+        let sources: Vec<&PathBuf> = spec
+            .mounts()
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|m| m.source().as_ref().unwrap())
+            .collect();
+        assert_eq!(
+            sources,
+            vec![
+                &bundle.join("rel/src"),
+                &bundle.join("rel"),
+                &PathBuf::from("/abs/src"),
+                &PathBuf::from("tmpfs"),
+            ]
+        );
     }
 }
