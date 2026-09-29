@@ -1,14 +1,14 @@
-mod validate_default_symlinks_test;
+mod default_symlinks_test;
 use anyhow::{Context, Result};
 use oci_spec::runtime::{ProcessBuilder, Spec, SpecBuilder};
-pub use validate_default_symlinks_test::get_validate_default_symlinks_test;
+pub use default_symlinks_test::get_default_symlinks_test;
 
-fn create_spec() -> Result<Spec> {
+fn create_spec(args:&[&str]) -> Result<Spec> {
     SpecBuilder::default()
         .process(
             ProcessBuilder::default()
                 .args(
-                    ["runtimetest", "validate_default_symlinks"]
+                    args
                         .iter()
                         .map(|s| s.to_string())
                         .collect::<Vec<String>>(),
