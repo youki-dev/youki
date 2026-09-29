@@ -26,6 +26,7 @@ impl Validator {
         }
         Self::validate_spec_for_net_devices(spec, is_rootless)?;
         Self::validate_spec_for_new_user_ns(spec, is_rootless)?;
+        Self::validate_spec_for_rlimits(spec)?;
 
         Ok(())
     }
@@ -413,6 +414,25 @@ impl Validator {
         }
         Ok(())
     }
+
+    fn validate_spec_for_rlimits(spec: &Spec) -> Result<(), ErrInvalidSpec> {
+        let Some(rlimits) = spec
+            .process()
+            .as_ref()
+            .and_then(|process| process.rlimits().as_ref())
+        else {
+            return Ok(());
+        };
+        let mut seen_types = Vec::with_capacity(rlimits.len());
+        for rlimit in rlimits {
+            let rlimit_type = rlimit.typ();
+            if seen_types.contains(&rlimit_type) {
+                return Err(ErrInvalidSpec::DuplicateRlimit);
+            }
+            seen_types.push(rlimit_type);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -423,8 +443,8 @@ mod tests {
     use nix::unistd::{Gid, Uid};
     use oci_spec::runtime::{
         IOPriorityClass, LinuxBuilder, LinuxIOPriorityBuilder, LinuxIdMappingBuilder,
-        LinuxIntelRdtBuilder, LinuxNamespaceBuilder, LinuxNetDevice, ProcessBuilder,
-        SchedulerBuilder, SpecBuilder,
+        LinuxIntelRdtBuilder, LinuxNamespaceBuilder, LinuxNetDevice, PosixRlimit,
+        PosixRlimitBuilder, PosixRlimitType, ProcessBuilder, SchedulerBuilder, SpecBuilder,
     };
     use serial_test::serial;
 
@@ -432,6 +452,72 @@ mod tests {
     use crate::syscall::syscall::create_syscall;
     use crate::test_utils;
     use crate::utils::rootless_required;
+
+    fn create_rlimit(rlimit_type: PosixRlimitType, soft_val: u64, hard_val: u64) -> PosixRlimit {
+        PosixRlimitBuilder::default()
+            .typ(rlimit_type)
+            .soft(soft_val)
+            .hard(hard_val)
+            .build()
+            .unwrap()
+    }
+    #[test]
+    fn test_validate_spec_with_duplicated_rlimits() {
+        let spec_with_duplicated_rlimit_entries = SpecBuilder::default()
+            .process(
+                ProcessBuilder::default()
+                    .rlimits(vec![
+                        create_rlimit(PosixRlimitType::RlimitNofile, 32, 64),
+                        create_rlimit(PosixRlimitType::RlimitNofile, 32, 64),
+                    ])
+                    .build()
+                    .expect("error in creating process config"),
+            )
+            .build()
+            .unwrap();
+        assert!(matches!(
+            Validator::validate_spec(&spec_with_duplicated_rlimit_entries, false).unwrap_err(),
+            ErrInvalidSpec::DuplicateRlimit
+        ));
+    }
+
+    #[test]
+    fn test_validate_spec_with_duplicated_rlimits_different_val() {
+        let spec_with_duplicated_rlimit_different_val = SpecBuilder::default()
+            .process(
+                ProcessBuilder::default()
+                    .rlimits(vec![
+                        create_rlimit(PosixRlimitType::RlimitNofile, 32, 64),
+                        create_rlimit(PosixRlimitType::RlimitNofile, 48, 64),
+                    ])
+                    .build()
+                    .expect("error in creating process config"),
+            )
+            .build()
+            .unwrap();
+        assert!(matches!(
+            Validator::validate_spec(&spec_with_duplicated_rlimit_different_val, false)
+                .unwrap_err(),
+            ErrInvalidSpec::DuplicateRlimit
+        ));
+    }
+
+    #[test]
+    fn test_validate_spec_with_right_rlimit() {
+        let spec_with_right_rlimit = SpecBuilder::default()
+            .process(
+                ProcessBuilder::default()
+                    .rlimits(vec![
+                        create_rlimit(PosixRlimitType::RlimitNofile, 32, 64),
+                        create_rlimit(PosixRlimitType::RlimitCpu, 60, 120),
+                    ])
+                    .build()
+                    .expect("error in creating process config"),
+            )
+            .build()
+            .unwrap();
+        assert!(Validator::validate_spec(&spec_with_right_rlimit, false).is_ok())
+    }
 
     #[test]
     fn test_validate_spec_for_uts_namespace() {
