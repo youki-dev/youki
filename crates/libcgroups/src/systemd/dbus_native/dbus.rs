@@ -196,7 +196,7 @@ impl DbusConnection {
         let socket = std::mem::ManuallyDrop::new(socket::socket(
             socket::AddressFamily::Unix,
             socket::SockType::Stream,
-            socket::SockFlag::empty(),
+            socket::SockFlag::SOCK_CLOEXEC,
             None,
         )?);
 
