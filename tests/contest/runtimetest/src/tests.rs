@@ -1665,3 +1665,31 @@ pub fn validate_mount_propagation(spec: &Spec) {
         }
     }
 }
+
+pub fn validate_default_symlinks(_spec: &Spec) {
+    let default_symlinks = [
+        ("/dev/fd", "/proc/self/fd"),
+        ("/dev/ptmx", "pts/ptmx"),
+        ("/dev/stdin", "/proc/self/fd/0"),
+        ("/dev/stdout", "/proc/self/fd/1"),
+        ("/dev/stderr", "/proc/self/fd/2"),
+    ];
+
+    for (link, target) in default_symlinks.iter() {
+        match std::fs::read_link(link) {
+            Ok(target_path) => {
+                if target_path != Path::new(target) {
+                    eprintln!(
+                        "Error: expected symlink {} to point to {}, but it points to {}",
+                        link,
+                        target,
+                        target_path.display()
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("Error: failed to read symlink {}: {:?}", link, e);
+            }
+        }
+    }
+}
