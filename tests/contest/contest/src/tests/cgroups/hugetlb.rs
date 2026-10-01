@@ -20,19 +20,14 @@ const HUGE_TLB_RSVD: &str = "rsvd";
 // between cgroup versions.
 
 fn can_run() -> bool {
-    is_cgroup_v2_with_controller(ControllerType::HugeTlb)
+    is_cgroup_v2_with_controller(ControllerType::HugeTlb) && !get_tlb_sizes().is_empty()
 }
 
 fn can_run_rsvd() -> bool {
-    if !can_run() {
-        return false;
-    }
-
-    // hugetlb.<size>.rsvd.max is written only when it exists, so every
-    // supported page size must provide it before the test can assert it.
-    get_tlb_sizes()
-        .iter()
-        .all(|size| cgroup_has_file(&format!("hugetlb.{size}.{HUGE_TLB_RSVD}.max")))
+    can_run()
+        && get_tlb_sizes()
+            .iter()
+            .all(|size| cgroup_has_file(&format!("hugetlb.{size}.{HUGE_TLB_RSVD}.max")))
 }
 
 fn make_hugetlb_spec(cgroup_name: &str, page_size: &str, limit: i64) -> Result<Spec> {
