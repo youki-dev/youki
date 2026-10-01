@@ -1676,40 +1676,19 @@ pub fn validate_default_symlinks(_spec: &Spec) {
     ];
 
     for (link, target) in default_symlinks.iter() {
-        let check_symlink_exists = std::fs::symlink_metadata(link);
-        match check_symlink_exists {
-            Ok(metadata) => {
-                if !metadata.file_type().is_symlink() {
-                    eprintln!("symlink {} is not a symlink", link);
-                    continue;
-                }
-            }
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    eprintln!("symlink {} does not exist", link);
-                    continue;
-                } else {
-                    eprintln!("Error occurred while checking symlink {}: {:?}", link, e);
-                    continue;
-                }
-            }
-        }
-        let check_symlink_target = std::fs::read_link(link);
-        match check_symlink_target {
+        match std::fs::read_link(link) {
             Ok(target_path) => {
                 if target_path != Path::new(target) {
                     eprintln!(
-                        "symlink {} does not point to the correct target. Expected: {:?}, Found: {:?}",
+                        "Error: expected symlink {} to point to {}, but it points to {}",
                         link,
                         target,
                         target_path.display()
                     );
-                    continue;
                 }
             }
             Err(e) => {
-                eprintln!("error occurred while reading symlink {}: {:?}", link, e);
-                continue;
+                eprintln!("Error: failed to read symlink {}: {:?}", link, e);
             }
         }
     }
