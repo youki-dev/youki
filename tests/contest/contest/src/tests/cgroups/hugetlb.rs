@@ -56,6 +56,37 @@ fn make_hugetlb_spec(cgroup_name: &str, page_size: &str, limit: i64) -> Result<S
     Ok(spec)
 }
 
+fn make_multi_hugetlb_spec(cgroup_name: &str, limits: &[(&str, i64)]) -> Result<Spec> {
+    let hugepage_limits = limits
+        .iter()
+        .map(|&(page_size, limit)| {
+            LinuxHugepageLimitBuilder::default()
+                .page_size(page_size.to_owned())
+                .limit(limit)
+                .build()
+                .context("could not build hugepage limit")
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let spec = SpecBuilder::default()
+        .linux(
+            LinuxBuilder::default()
+                .cgroups_path(PathBuf::from("/runtime-test").join(cgroup_name))
+                .resources(
+                    LinuxResourcesBuilder::default()
+                        .hugepage_limits(hugepage_limits)
+                        .build()
+                        .context("failed to build resource spec")?,
+                )
+                .build()
+                .context("failed to build linux spec")?,
+        )
+        .build()
+        .context("failed to build spec")?;
+
+    Ok(spec)
+}
+
 /// Tests that a page size that is not a power of 2 is rejected
 fn test_wrong_tlb() -> TestResult {
     // 3 MB pagesize is wrong, as valid values must be a power of 2
@@ -182,6 +213,32 @@ fn test_valid_tlb() -> TestResult {
     TestResult::Passed
 }
 
+/// Tests that every limit in a spec carrying all page sizes is applied, so
+/// a partial application of the list cannot pass unnoticed
+fn test_valid_tlb_multiple_limits() -> TestResult {
+    // A distinct limit per size, so a limit written to another size's file
+    // is caught instead of passing because the values happen to match.
+    let tlb_sizes = get_tlb_sizes();
+    let limits: Vec<(&str, i64)> = tlb_sizes
+        .iter()
+        .enumerate()
+        .map(|(i, size)| (size.as_str(), (1 << 30) * (i as i64 + 1)))
+        .collect();
+
+    let spec = test_result!(make_multi_hugetlb_spec(
+        "test_valid_tlb_multiple_limits",
+        &limits
+    ));
+    test_outside_container(&spec, &|data| {
+        test_result!(check_container_created(&data));
+
+        for &(size, limit) in limits.iter() {
+            test_result!(validate_tlb("test_valid_tlb_multiple_limits", size, limit));
+        }
+        TestResult::Passed
+    })
+}
+
 /// Tests that the same limit is written to hugetlb.<size>.rsvd.max
 fn test_valid_rsvd_tlb() -> TestResult {
     let limit: i64 = 1 << 30;
@@ -207,6 +264,11 @@ pub fn get_hugetlb_test() -> TestGroup {
     let wrong_tlb =
         ConditionalTest::new("invalid_tlb", Box::new(can_run), Box::new(test_wrong_tlb));
     let valid_tlb = ConditionalTest::new("valid_tlb", Box::new(can_run), Box::new(test_valid_tlb));
+    let valid_tlb_multiple_limits = ConditionalTest::new(
+        "valid_tlb_multiple_limits",
+        Box::new(can_run),
+        Box::new(test_valid_tlb_multiple_limits),
+    );
     let valid_rsvd_tlb = ConditionalTest::new(
         "valid_rsvd_tlb",
         Box::new(can_run_rsvd),
@@ -216,6 +278,7 @@ pub fn get_hugetlb_test() -> TestGroup {
     tg.add(vec![
         Box::new(wrong_tlb),
         Box::new(valid_tlb),
+        Box::new(valid_tlb_multiple_limits),
         Box::new(valid_rsvd_tlb),
     ]);
     tg
