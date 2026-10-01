@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use libcgroups::common::AnyCgroupManager;
+use libcgroups::common::{AnyCgroupManager, CgroupConfig};
 use libcontainer::container::Container;
 
 pub mod checkpoint;
@@ -18,6 +18,7 @@ pub mod kill;
 pub mod list;
 pub mod pause;
 pub mod ps;
+pub mod restore;
 pub mod resume;
 pub mod run;
 pub mod spec_json;
@@ -58,11 +59,19 @@ fn create_cgroup_manager<P: AsRef<Path>>(
     container_id: &str,
 ) -> Result<AnyCgroupManager> {
     let container = load_container(root_path, container_id)?;
-    Ok(libcgroups::common::create_cgroup_manager(
-        libcgroups::common::CgroupConfig {
-            cgroup_path: container.spec()?.cgroup_path,
-            systemd_cgroup: container.systemd(),
-            container_name: container.id().to_string(),
-        },
-    )?)
+    Ok(libcgroups::common::create_cgroup_manager(CgroupConfig {
+        cgroup_path: container.spec()?.cgroup_path,
+        systemd_cgroup: container.systemd(),
+        container_name: container.id().to_string(),
+    })?)
+}
+
+pub(crate) fn parse_cgroups_mode(s: &str) -> Result<rust_criu::CgMode> {
+    match s {
+        "ignore" => Ok(rust_criu::CgMode::IGNORE),
+        "full" => Ok(rust_criu::CgMode::FULL),
+        "strict" => Ok(rust_criu::CgMode::STRICT),
+        "soft" => Ok(rust_criu::CgMode::SOFT),
+        _ => bail!("invalid manage-cgroups-mode: {s}"),
+    }
 }
