@@ -1063,7 +1063,6 @@ impl Mount {
     }
 }
 
-/// Find parent mount of rootfs in given mount infos
 /// Splits an overlay `lowerdir` value into the per-layer fsconfig keys that replace it:
 /// "lowerdir+" for each lower layer and, after a "::" separator, "datadir+" for each data-only
 /// layer. A backslash escapes the next character (`\:` is a colon inside a path), and the
@@ -1087,6 +1086,7 @@ fn overlay_layers(lowerdir: &str) -> Vec<(&'static str, String)> {
     layers
 }
 
+/// Find parent mount of rootfs in given mount infos
 pub fn find_parent_mount(
     rootfs: &Path,
     mount_infos: Vec<MountInfo>,
