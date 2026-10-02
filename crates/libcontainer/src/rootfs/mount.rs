@@ -1051,7 +1051,6 @@ impl Mount {
     }
 }
 
-/// Find parent mount of rootfs in given mount infos
 /// How a mount gets its SELinux mount label, as in crun's get_mount_label_how().
 #[derive(Debug, PartialEq, Eq)]
 enum MountLabelHow {
@@ -1095,6 +1094,7 @@ fn set_root_label(mount_fd: BorrowedFd, label: &str) -> std::result::Result<(), 
     Ok(())
 }
 
+/// Find parent mount of rootfs in given mount infos
 pub fn find_parent_mount(
     rootfs: &Path,
     mount_infos: Vec<MountInfo>,
