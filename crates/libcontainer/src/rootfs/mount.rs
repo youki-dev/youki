@@ -1066,7 +1066,6 @@ impl Mount {
     }
 }
 
-/// Find parent mount of rootfs in given mount infos
 /// Copies the contents of `from` into `to`, keeping owners and modes, for tmpcopyup: regular
 /// files, directories, symlinks, and device nodes, fifos and sockets as nodes, as crun does.
 fn copy_dir_contents(from: &Path, to: &Path) -> std::io::Result<()> {
@@ -1104,6 +1103,7 @@ fn copy_dir_contents(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Find parent mount of rootfs in given mount infos
 pub fn find_parent_mount(
     rootfs: &Path,
     mount_infos: Vec<MountInfo>,
