@@ -1083,7 +1083,6 @@ impl Mount {
         }
     }
 }
-
 /// Copies what the directory `src` holds into the directory `dst`, keeping owners and modes:
 /// regular files, directories, symlinks, and device nodes, fifos and sockets as nodes. Like crun's
 /// copy_recursive_fd_to_fd(), it works on directory fds and never follows a symlink in `src`.
@@ -1140,7 +1139,6 @@ fn copy_recursive_fd_to_fd(src: BorrowedFd, dst: BorrowedFd) -> std::io::Result<
     Ok(())
 }
 
-/// Find parent mount of rootfs in given mount infos
 /// Splits an overlay `lowerdir` value into the per-layer fsconfig keys that replace it:
 /// "lowerdir+" for each lower layer and, after a "::" separator, "datadir+" for each data-only
 /// layer. A backslash escapes the next character (`\:` is a colon inside a path), and the
@@ -1164,6 +1162,7 @@ fn overlay_layers(lowerdir: &str) -> Vec<(&'static str, String)> {
     layers
 }
 
+/// Find parent mount of rootfs in given mount infos
 pub fn find_parent_mount(
     rootfs: &Path,
     mount_infos: Vec<MountInfo>,
