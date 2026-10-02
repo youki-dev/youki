@@ -471,6 +471,13 @@ impl TenantContainerBuilder {
             linux_builder = linux_builder.time_offsets(time_offsets.clone());
         }
 
+        // The exec'd process must run under the same seccomp filter as the
+        // container, as runc does. Without this the filter is silently dropped
+        // for everything started with exec.
+        if let Some(seccomp) = spec_linux.seccomp() {
+            linux_builder = linux_builder.seccomp(seccomp.clone());
+        }
+
         let linux = linux_builder.build()?;
         spec.set_process(Some(process)).set_linux(Some(linux));
 
