@@ -13,6 +13,7 @@ pub struct Validator;
 
 impl Validator {
     pub fn validate_spec(spec: &Spec, is_rootless: bool) -> Result<(), ErrInvalidSpec> {
+        Self::validate_namespace_types(spec)?;
         Self::validate_spec_for_uts_namespace(spec)?;
         Self::validate_spec_for_mnt_namespace(spec)?;
         Self::validate_spec_for_sysctl(spec)?;
@@ -27,6 +28,18 @@ impl Validator {
         Self::validate_spec_for_net_devices(spec, is_rootless)?;
         Self::validate_spec_for_new_user_ns(spec, is_rootless)?;
 
+        Ok(())
+    }
+
+    fn validate_namespace_types(spec: &Spec) -> Result<(), ErrInvalidSpec> {
+        if let Some(namespaces) = spec.linux().as_ref().and_then(|l| l.namespaces().as_ref()) {
+            let mut seen = HashSet::new();
+            for namespace in namespaces {
+                if !seen.insert(namespace.typ()) {
+                    return Err(ErrInvalidSpec::DuplicateNamespace(namespace.typ()));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -432,6 +445,50 @@ mod tests {
     use crate::syscall::syscall::create_syscall;
     use crate::test_utils;
     use crate::utils::rootless_required;
+
+    #[test]
+    fn test_reject_duplicate_namespace_types() {
+        for typ in [
+            LinuxNamespaceType::Mount,
+            LinuxNamespaceType::Pid,
+            LinuxNamespaceType::Network,
+            LinuxNamespaceType::Ipc,
+            LinuxNamespaceType::Uts,
+            LinuxNamespaceType::User,
+            LinuxNamespaceType::Cgroup,
+            LinuxNamespaceType::Time,
+        ] {
+            for path in [None, Some("/proc/self/ns/example")] {
+                let first = LinuxNamespaceBuilder::default().typ(typ).build().unwrap();
+                let mut duplicate = first.clone();
+                duplicate.set_path(path.map(PathBuf::from));
+                let spec = serde_json::from_value(serde_json::json!({
+                    "ociVersion": "1.0.2",
+                    "linux": { "namespaces": [first, duplicate] }
+                }))
+                .unwrap();
+                let error = Validator::validate_spec(&spec, false).unwrap_err();
+                assert!(matches!(error, ErrInvalidSpec::DuplicateNamespace(found) if found == typ));
+            }
+        }
+    }
+
+    #[test]
+    fn test_accept_unique_or_missing_namespace_types() {
+        for linux in [
+            serde_json::Value::Null,
+            serde_json::json!({}),
+            serde_json::json!({ "namespaces": [] }),
+            serde_json::json!({ "namespaces": [{ "type": "ipc" }, { "type": "uts" }] }),
+        ] {
+            let spec = serde_json::from_value(serde_json::json!({
+                "ociVersion": "1.0.2",
+                "linux": linux
+            }))
+            .unwrap();
+            Validator::validate_spec(&spec, false).unwrap();
+        }
+    }
 
     #[test]
     fn test_validate_spec_for_uts_namespace() {
