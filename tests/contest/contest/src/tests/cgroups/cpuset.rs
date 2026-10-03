@@ -14,14 +14,32 @@ use crate::utils::{is_cgroup_v2_with_controller, test_outside_container};
 
 const CPUSET_CPUS: &str = "cpuset.cpus";
 const CPUSET_MEMS: &str = "cpuset.mems";
+const CPUSET_CPUS_EFFECTIVE: &str = "cpuset.cpus.effective";
+const CPUSET_MEMS_EFFECTIVE: &str = "cpuset.mems.effective";
 
 // SPEC: the runtime spec carries the cpuset values as plain strings under the
 // cpu resource, and youki writes each one verbatim to the matching cgroup v2
-// file. "0" is used for both: CPU 0 and memory node 0 exist on every host
-// that has the controller.
+// file. A written value must be within the effective set of the parent
+// cgroup, which varies by host, so each test uses the effective value of the
+// cgroup root rather than a constant.
 
 fn can_run() -> bool {
     is_cgroup_v2_with_controller(ControllerType::CpuSet)
+}
+
+// Read from the root of the visible hierarchy: the test cgroups are created
+// directly under it, so its effective set is the constraint on what the tests
+// may write. The self cgroup is not an ancestor of the test cgroups and can
+// sit in a slice where the controller is not enabled, so it is not a valid
+// reference here.
+fn effective_cgroup_value(cgroup_file: &str) -> Result<String> {
+    let content = fs::read_to_string(Path::new(CGROUP_ROOT).join(cgroup_file))
+        .with_context(|| format!("could not read {cgroup_file} of the cgroup root"))?;
+    let value = content.trim();
+    if value.is_empty() {
+        anyhow::bail!("{cgroup_file} of the cgroup root is empty");
+    }
+    Ok(value.to_owned())
 }
 
 // The leaf cgroup only carries the cpuset.* files once the controller is
@@ -65,30 +83,40 @@ fn create_spec(cgroup_name: &str, case: LinuxCpuBuilder) -> Result<Spec> {
 
 /// Tests that the cpu list is written to cpuset.cpus
 fn test_cpuset_cpus_set() -> TestResult {
+    let cpus = test_result!(effective_cgroup_value(CPUSET_CPUS_EFFECTIVE));
     let spec = test_result!(create_spec(
         "test_cpuset_cpus_set",
-        LinuxCpuBuilder::default().cpus("0".to_owned()),
+        LinuxCpuBuilder::default().cpus(cpus.clone()),
     ));
     test_result!(prepare_cpuset_cgroup(&spec));
 
     test_outside_container(&spec, &|data| {
         test_result!(check_container_created(&data));
-        test_result!(check_cgroup_file("test_cpuset_cpus_set", CPUSET_CPUS, "0"));
+        test_result!(check_cgroup_file(
+            "test_cpuset_cpus_set",
+            CPUSET_CPUS,
+            &cpus
+        ));
         TestResult::Passed
     })
 }
 
 /// Tests that the memory node list is written to cpuset.mems
 fn test_cpuset_mems_set() -> TestResult {
+    let mems = test_result!(effective_cgroup_value(CPUSET_MEMS_EFFECTIVE));
     let spec = test_result!(create_spec(
         "test_cpuset_mems_set",
-        LinuxCpuBuilder::default().mems("0".to_owned()),
+        LinuxCpuBuilder::default().mems(mems.clone()),
     ));
     test_result!(prepare_cpuset_cgroup(&spec));
 
     test_outside_container(&spec, &|data| {
         test_result!(check_container_created(&data));
-        test_result!(check_cgroup_file("test_cpuset_mems_set", CPUSET_MEMS, "0"));
+        test_result!(check_cgroup_file(
+            "test_cpuset_mems_set",
+            CPUSET_MEMS,
+            &mems
+        ));
         TestResult::Passed
     })
 }
@@ -96,11 +124,13 @@ fn test_cpuset_mems_set() -> TestResult {
 /// Tests that a spec carrying both the cpu list and the memory node list
 /// writes both files, so a partial application cannot pass unnoticed
 fn test_cpuset_cpus_and_mems_set() -> TestResult {
+    let cpus = test_result!(effective_cgroup_value(CPUSET_CPUS_EFFECTIVE));
+    let mems = test_result!(effective_cgroup_value(CPUSET_MEMS_EFFECTIVE));
     let spec = test_result!(create_spec(
         "test_cpuset_cpus_and_mems_set",
         LinuxCpuBuilder::default()
-            .cpus("0".to_owned())
-            .mems("0".to_owned()),
+            .cpus(cpus.clone())
+            .mems(mems.clone()),
     ));
     test_result!(prepare_cpuset_cgroup(&spec));
 
@@ -109,12 +139,12 @@ fn test_cpuset_cpus_and_mems_set() -> TestResult {
         test_result!(check_cgroup_file(
             "test_cpuset_cpus_and_mems_set",
             CPUSET_CPUS,
-            "0"
+            &cpus
         ));
         test_result!(check_cgroup_file(
             "test_cpuset_cpus_and_mems_set",
             CPUSET_MEMS,
-            "0"
+            &mems
         ));
         TestResult::Passed
     })
