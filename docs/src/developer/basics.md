@@ -10,18 +10,18 @@ Before you start working on developing youki, you should go through [the User do
 
 ## Testing while developing
 
-While developing youki, you might need to compile and test the code from time to time, to make sure it is working and and something is not accidentally broken. Currently there are two ways to verify that:
+While developing youki, you can use unit tests to check individual components and integration tests to check the complete functionality of youki commands.
 
-- Unit tests, which test individual components of youki
-- Integration tests, which test the complete functionality of youki commands from start to end.
+Run the following recipes with [just](https://github.com/casey/just) from the repository root:
 
-As the steps to run these tests can be a bit tedious, a makefile in project the root provides an easy way to run these quickly. The makefile currently states three individual test :
+- `just test-unit`: Run the Rust unit tests.
+- `just test-doc`: Run the Rust documentation tests.
+- `just test-oci`: Run the integration tests provided by [OCI runtime-tools](./e2e/runtime_tools.md).
+- `just test-contest`: Build youki and run [Contest](./e2e/rust_oci_test.md), the Rust OCI integration test suite. This recipe uses `sudo`.
 
-- test: The unit tests
-- oci-integration-test: The integration tests provided by OCI, these are the current standard to make sure youki is OCI compliant.
-- integration-test: This is the Rust port of the OCI runtime tests, as there are some issues in the OCI tests. See [integration_test](./e2e/integration_test.md) page.
+Use `just test-basic` to run both unit and documentation tests, or `just test-integration` to run both OCI runtime-tools and Contest.
 
-All three can be run by using `make test-all`, or you can run the individual command to run specific tests.
+`just test-all` runs the basic tests, feature combinations, OCI runtime-tools tests, and containerd integration tests. It does not currently include Contest; run `just test-contest` separately. See `just --list` for the available recipes.
 
 ## Resources
 
