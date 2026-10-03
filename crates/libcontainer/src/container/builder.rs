@@ -35,6 +35,41 @@ pub struct ContainerBuilder {
     pub stderr: Option<OwnedFd>,
 }
 
+/// validate_id checks if the supplied container ID is valid, returning
+/// the ErrInvalidID in case it is not.
+///
+/// The format of valid ID was never formally defined, instead the code
+/// was modified to allow or disallow specific characters.
+///
+/// Currently, a valid ID is a non-empty string consisting only of
+/// the following characters:
+/// - uppercase (A-Z) and lowercase (a-z) Latin letters;
+/// - digits (0-9);
+/// - underscore (_);
+/// - plus sign (+);
+/// - minus sign (-);
+/// - period (.).
+///
+/// In addition, IDs that can't be used to represent a file name
+/// (such as . or ..) are rejected.
+pub fn validate_id(container_id: &str) -> Result<(), ErrInvalidID> {
+    if container_id.is_empty() {
+        return Err(ErrInvalidID::Empty);
+    }
+
+    if container_id == "." || container_id == ".." {
+        return Err(ErrInvalidID::FileName);
+    }
+
+    for c in container_id.chars() {
+        match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '+' | '-' | '.' => (),
+            _ => return Err(ErrInvalidID::InvalidChars(c)),
+        }
+    }
+    Ok(())
+}
+
 /// Builder that can be used to configure the common properties of
 /// either a init or a tenant container
 ///
@@ -85,39 +120,10 @@ impl ContainerBuilder {
         }
     }
 
-    /// validate_id checks if the supplied container ID is valid, returning
-    /// the ErrInvalidID in case it is not.
-    ///
-    /// The format of valid ID was never formally defined, instead the code
-    /// was modified to allow or disallow specific characters.
-    ///
-    /// Currently, a valid ID is a non-empty string consisting only of
-    /// the following characters:
-    /// - uppercase (A-Z) and lowercase (a-z) Latin letters;
-    /// - digits (0-9);
-    /// - underscore (_);
-    /// - plus sign (+);
-    /// - minus sign (-);
-    /// - period (.).
-    ///
-    /// In addition, IDs that can't be used to represent a file name
-    /// (such as . or ..) are rejected.
+    /// Validates the builder's container ID.
+    /// See the [`validate_id`](crate::...::validate_id) function for the accepted format.
     pub fn validate_id(self) -> Result<Self, LibcontainerError> {
-        let container_id = self.container_id.clone();
-        if container_id.is_empty() {
-            Err(ErrInvalidID::Empty)?;
-        }
-
-        if container_id == "." || container_id == ".." {
-            Err(ErrInvalidID::FileName)?;
-        }
-
-        for c in container_id.chars() {
-            match c {
-                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '+' | '-' | '.' => (),
-                _ => Err(ErrInvalidID::InvalidChars(c))?,
-            }
-        }
+        validate_id(&self.container_id)?;
         Ok(self)
     }
 
@@ -436,6 +442,15 @@ mod tests {
 
         let result = ContainerBuilder::new("...".to_owned(), syscall).validate_id();
         assert!(result.is_ok());
+
+        let result = ContainerBuilder::new("a/b".to_owned(), syscall).validate_id();
+        assert!(result.is_err());
+
+        let result = ContainerBuilder::new("../foo".to_owned(), syscall).validate_id();
+        assert!(result.is_err());
+
+        let result = ContainerBuilder::new("/abs".to_owned(), syscall).validate_id();
+        assert!(result.is_err());
 
         let result = ContainerBuilder::new("74f1a4cb3801".to_owned(), syscall).validate_id();
         assert!(result.is_ok());
