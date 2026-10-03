@@ -1,0 +1,29 @@
+# kind-config.yaml with the CRI-O socket given to kubeadm on every node.
+# Use it with the kind-node-crio image from tests/k8s/Dockerfile.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+# The node image runs CRI-O with cgroupfs, because kind has no dbus. The
+# kubelet must use the same manager, or the two use different cgroup paths.
+kubeadmConfigPatches:
+  - |
+    kind: KubeletConfiguration
+    cgroupDriver: cgroupfs
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          criSocket: unix:///var/run/crio/crio.sock
+  - role: worker
+    kubeadmConfigPatches:
+      - |
+        kind: JoinConfiguration
+        nodeRegistration:
+          criSocket: unix:///var/run/crio/crio.sock
+  - role: worker
+    kubeadmConfigPatches:
+      - |
+        kind: JoinConfiguration
+        nodeRegistration:
+          criSocket: unix:///var/run/crio/crio.sock
