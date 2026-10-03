@@ -3,7 +3,7 @@ use std::ffi::OsStr;
 use std::fs::{self, File, read_dir};
 use std::io::{self, BufRead};
 use std::os::linux::fs::MetadataExt;
-use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
 use anyhow::{Result, bail};
@@ -1690,6 +1690,76 @@ pub fn validate_default_symlinks(_spec: &Spec) {
             Err(e) => {
                 eprintln!("Error: failed to read symlink {}: {:?}", link, e);
             }
+        }
+    }
+}
+
+fn device_rules(spec: &Spec) -> impl Iterator<Item = &oci_spec::runtime::LinuxDeviceCgroup> {
+    spec.linux()
+        .as_ref()
+        .and_then(|linux| linux.resources().as_ref())
+        .and_then(|resources| resources.devices().as_ref())
+        .into_iter()
+        .flatten()
+}
+
+/// Whether the spec's device rules grant `access` on the `typ` device `major:minor`. The
+/// rules apply in order with a deny-all default, and a type "a" rule matches every device.
+fn spec_allows_device(
+    spec: &Spec,
+    typ: LinuxDeviceType,
+    major: i64,
+    minor: i64,
+    access: char,
+) -> bool {
+    device_rules(spec).fold(false, |allowed, rule| {
+        let rule_typ = rule.typ().unwrap_or_default();
+        let matches = rule_typ == LinuxDeviceType::A
+            || (rule_typ == typ
+                && rule.major().is_none_or(|m| m < 0 || m == major)
+                && rule.minor().is_none_or(|m| m < 0 || m == minor)
+                && rule.access().as_deref().is_some_and(|a| a.contains(access)));
+        if matches { rule.allow() } else { allowed }
+    })
+}
+
+/// Opens each block device node the spec has the runtime create (`linux.devices`) and checks
+/// that reading it is allowed or denied as the spec's device cgroup rules say. Only block
+/// devices: the runtime's default rules (the same list in runc and youki) allow a few char
+/// devices whatever the spec says, so a char node cannot be checked from the spec alone.
+pub fn validate_device_cgroup(spec: &Spec) {
+    let block_nodes: Vec<_> = spec
+        .linux()
+        .as_ref()
+        .and_then(|linux| linux.devices().as_ref())
+        .into_iter()
+        .flatten()
+        .filter(|node| node.typ() == LinuxDeviceType::B)
+        .collect();
+    if block_nodes.is_empty() {
+        eprintln!("error due to the spec creating no block device whose access could be checked");
+        return;
+    }
+
+    for node in block_nodes {
+        let path = node.path();
+        let (major, minor) = (node.major(), node.minor());
+        let expected = spec_allows_device(spec, LinuxDeviceType::B, major, minor, 'r');
+        let result = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path);
+        // The device cgroup answers before the driver does, so EPERM is the only error it
+        // can give; whether a disk with that number exists on the host is not the question.
+        let denied = matches!(&result, Err(e) if e.raw_os_error() == Some(libc::EPERM));
+        if denied == expected {
+            eprintln!(
+                "error due to reading block device {} ({major}:{minor}) being {}, the spec's \
+                 device rules {} it: {result:?}",
+                path.display(),
+                if denied { "denied" } else { "allowed" },
+                if expected { "allow" } else { "deny" },
+            );
         }
     }
 }
