@@ -94,12 +94,21 @@ impl Validator {
         Ok(())
     }
 
-    // Validates mount destinations and warns about deprecated relative paths.
+    // Rejects NUL bytes in mount options and warns about deprecated relative destinations.
     // Follows the OCI Runtime Spec requirement that mount destinations SHOULD be absolute.
     // Relative paths are deprecated but still accepted for backward compatibility.
     fn validate_spec_for_mount_options(
         mounts: &[oci_spec::runtime::Mount],
     ) -> Result<(), ErrInvalidSpec> {
+        for mount in mounts {
+            if let Some(options) = mount.options() {
+                for option in options {
+                    if option.contains('\0') {
+                        return Err(ErrInvalidSpec::MountOptionNul(option.clone()));
+                    }
+                }
+            }
+        }
         mounts
           .iter()
           .filter(|mount| !mount.destination().is_absolute())
@@ -432,6 +441,39 @@ mod tests {
     use crate::syscall::syscall::create_syscall;
     use crate::test_utils;
     use crate::utils::rootless_required;
+
+    #[test]
+    fn test_reject_nul_mount_options() {
+        for option in ["\0nosuid", "nosuid\0", "size=64\0k", "\0"] {
+            let spec = serde_json::from_value(serde_json::json!({
+                "ociVersion": "1.0.2",
+                "mounts": [{ "destination": "/test", "type": "tmpfs", "options": ["nodev", option] }]
+            })).unwrap();
+            let error = Validator::validate_spec(&spec, false).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!("mount option {option:?} contains a NUL byte")
+            );
+            assert!(matches!(error, ErrInvalidSpec::MountOptionNul(found) if found == option));
+        }
+    }
+
+    #[test]
+    fn test_accept_mount_options_without_nul() {
+        for options in [
+            serde_json::Value::Null,
+            serde_json::json!([]),
+            serde_json::json!(["nosuid", "nodev", "size=64k"]),
+            serde_json::json!(["", "literal=\\0"]),
+        ] {
+            let spec = serde_json::from_value(serde_json::json!({
+                "ociVersion": "1.0.2",
+                "mounts": [{ "destination": "/test", "type": "tmpfs", "options": options }]
+            }))
+            .unwrap();
+            Validator::validate_spec(&spec, false).unwrap();
+        }
+    }
 
     #[test]
     fn test_validate_spec_for_uts_namespace() {

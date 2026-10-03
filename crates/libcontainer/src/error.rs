@@ -106,6 +106,8 @@ pub enum ErrInvalidSpec {
     ConsoleSocketRequired,
     #[error("cannot use console socket if youki will not detach or allocate tty")]
     InvalidConsoleSocket,
+    #[error("mount option {0:?} contains a NUL byte")]
+    MountOptionNul(String),
     #[error("idmapped mount requires bind mount")]
     MountIdmapNonBind,
     #[error("idmapped mount requires uid/gid mappings or a usable user namespace")]
