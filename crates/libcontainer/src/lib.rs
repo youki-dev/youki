@@ -12,6 +12,7 @@ pub mod process;
 pub mod rootfs;
 #[cfg(feature = "libseccomp")]
 pub mod seccomp;
+pub mod selinux;
 pub mod signal;
 pub mod syscall;
 pub mod test_utils;

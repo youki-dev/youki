@@ -34,6 +34,7 @@ pub fn exec(args: Exec, root_path: PathBuf) -> Result<i32> {
             .with_ignore_paused(args.ignore_paused)
             .with_sub_cgroup(args.cgroup)
             .with_apparmor(args.apparmor)
+            .with_process_label(args.process_label)
             .with_tty(args.tty)
             .build()?;
 
