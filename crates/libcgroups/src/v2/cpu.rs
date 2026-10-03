@@ -74,9 +74,14 @@ impl StatsProvider for Cpu {
         get!("usage_usec" => usage.usage_total);
         get!("user_usec" => usage.usage_user);
         get!("system_usec" => usage.usage_kernel);
-        get!("nr_periods" => throttling.periods);
-        get!("nr_throttled" => throttling.throttled_periods);
-        get!("throttled_usec" => throttling.throttled_time);
+        // Throttling fields are only present when the CPU controller is enabled.
+        stats.throttling.periods = stats_table.get("nr_periods").copied().unwrap_or_default();
+        stats.throttling.throttled_periods =
+            stats_table.get("nr_throttled").copied().unwrap_or_default();
+        stats.throttling.throttled_time = stats_table
+            .get("throttled_usec")
+            .copied()
+            .unwrap_or_default();
 
         stats.psi = stats::psi_stats(&cgroup_path.join(CPU_PSI))?;
         Ok(stats)
@@ -348,6 +353,47 @@ mod tests {
             result.is_err(),
             "realtime period is not supported and should return an error"
         );
+    }
+
+    #[test]
+    fn test_stat_usage_without_cpu_controller() {
+        let tmp = tempfile::tempdir().unwrap();
+        set_fixture(
+            tmp.path(),
+            CPU_STAT,
+            "usage_usec 7730\nuser_usec 4387\nsystem_usec 3498\n",
+        )
+        .expect("create stat file");
+        set_fixture(tmp.path(), CPU_PSI, "").expect("create psi file");
+
+        let actual = Cpu::stats(tmp.path()).expect("get stats without CPU controller");
+
+        assert_eq!(actual.throttling, CpuThrottling::default());
+
+        // Usage accounting should be the same with or without throttling fields.
+        set_fixture(
+            tmp.path(),
+            CPU_STAT,
+            "usage_usec 7730\nuser_usec 4387\nsystem_usec 3498\nnr_periods 0\nnr_throttled 0\nthrottled_usec 0\n",
+        )
+        .expect("create stat file with CPU controller");
+        let enabled = Cpu::stats(tmp.path()).expect("get stats with CPU controller");
+        assert_eq!(actual.usage, enabled.usage);
+    }
+
+    #[test]
+    fn test_stat_missing_usage_field() {
+        let tmp = tempfile::tempdir().unwrap();
+        set_fixture(tmp.path(), CPU_STAT, "usage_usec 7730\nuser_usec 4387\n")
+            .expect("create stat file");
+
+        assert!(matches!(
+            Cpu::stats(tmp.path()),
+            Err(V2CpuStatsError::MissingField {
+                field: "system_usec",
+                ..
+            })
+        ));
     }
 
     #[test]
