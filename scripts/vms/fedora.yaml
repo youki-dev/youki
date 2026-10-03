@@ -1,0 +1,86 @@
+base: template:_images/fedora-44
+
+cpus: 4
+memory: "8gb"
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux
+      # Execute the mounted system provisioning script
+      SCRIPT_PATH="/tmp/provision_scripts/provision_system.sh"
+      if [ -f "${SCRIPT_PATH}" ]; then
+        echo "Executing ${SCRIPT_PATH}..."
+        bash "${SCRIPT_PATH}"
+        echo "Finished executing ${SCRIPT_PATH}."
+      else
+        echo "ERROR - ${SCRIPT_PATH} not found!"
+        exit 1
+      fi
+  - mode: user
+    script: |
+      #!/bin/bash
+      set -eux
+
+      if ! command -v just &> /dev/null; then
+        sudo dnf install just -y
+      fi
+  - mode: user
+    script: |
+      #!/bin/bash
+      sudo -eux
+      if [ ! -f $HOME/.prerequisites ]; then
+        touch $HOME/.prerequisites;
+        echo "installing prerequisites necessary for youki to be developed";
+        sudo dnf install -y     \
+          pkg-config            \
+          systemd-devel         \
+          elfutils-libelf-devel \
+          libseccomp-devel      \
+          clang-devel           \
+          openssl-devel
+      fi
+  - mode: user
+    script: |
+      #!/bin/bash
+      set -eux
+      USER_LOG_FILE="/tmp/user_provision.log"
+      exec > >(tee -a "${USER_LOG_FILE}") 2>&1 # Log to file and console
+      export PATH="$HOME/.cargo/bin:$PATH"
+
+      if ! command -v cargo &> /dev/null; then
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --default-toolchain stable
+        if [ -f "$HOME/.cargo/env" ]; then
+            source "$HOME/.cargo/env"
+        fi
+        if ! command -v cargo &> /dev/null; then
+            echo "Cargo still not available after rustup install. Exiting."
+            exit 1
+        fi
+        echo "Rust/Cargo installed successfully."
+        cargo --version
+      else
+        echo "Rust/Cargo is already installed."
+        cargo --version
+        if [ -f "$HOME/.cargo/env" ]; then # Ensure sourced for current script if already present
+             source "$HOME/.cargo/env"
+        fi
+      fi
+
+      echo "Ensuring $HOME/.cargo/env is sourced in .bashrc for future logins..."
+      if ! grep -q 'source "$HOME/.cargo/env"' "$HOME/.bashrc"; then
+        echo 'source "$HOME/.cargo/env"' >> "$HOME/.bashrc"
+      fi
+
+mounts:
+  - location: "{{.Param.ScriptDirectory}}" # Mount the directory containing the script
+    mountPoint: "/tmp/provision_scripts" # Mount to a directory in VM
+    writable: false
+  - location: "{{.Param.SourceDirectory}}"
+    mountPoint: "/workdir/youki"
+    writable: true
+
+param:
+  ScriptDirectory: ~/youki/experiment/selinux
+  SourceDirectory: ~/youki
