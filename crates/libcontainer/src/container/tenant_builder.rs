@@ -10,6 +10,8 @@ use std::str::FromStr;
 
 use caps::Capability;
 use nix::fcntl::OFlag;
+use nix::sys::signal::{Signal, kill};
+use nix::sys::wait::waitpid;
 use nix::unistd::{Pid, pipe2, read};
 use oci_spec::runtime::{
     Capabilities as SpecCapabilities, Capability as SpecCapability, LinuxBuilder,
@@ -297,6 +299,26 @@ impl TenantContainerBuilder {
 
         let (pid, foreground_pty_fd) = builder_impl.create()?;
 
+        // The caller gets no pid on an error. Kill and reap the init process
+        // here, so that it does not stay as a zombie.
+        Self::start_tenant(pid, notify_path, write_end, read_end)
+            .map(|pid| (pid, foreground_pty_fd))
+            .inspect_err(|_| {
+                let _ = kill(pid, Signal::SIGKILL);
+                if let Err(err) = waitpid(pid, None) {
+                    tracing::warn!(%pid, %err, "failed to reap the tenant init process");
+                }
+            })
+    }
+
+    /// Starts the tenant process `pid`, and then waits until it execs its
+    /// command. Returns an error if the exec fails.
+    fn start_tenant(
+        pid: Pid,
+        notify_path: PathBuf,
+        write_end: OwnedFd,
+        read_end: OwnedFd,
+    ) -> Result<Pid, LibcontainerError> {
         let mut notify_socket = NotifySocket::new(notify_path);
         notify_socket.notify_container_start()?;
 
@@ -315,7 +337,7 @@ impl TenantContainerBuilder {
             match read(&read_end, &mut buf).map_err(LibcontainerError::OtherSyscall)? {
                 0 => {
                     if err_str_buf.is_empty() {
-                        return Ok((pid, foreground_pty_fd));
+                        return Ok(pid);
                     } else {
                         return Err(LibcontainerError::Other(
                             String::from_utf8_lossy(&err_str_buf).to_string(),

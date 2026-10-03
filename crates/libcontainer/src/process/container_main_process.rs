@@ -4,6 +4,7 @@ use std::fs::File;
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::PathBuf;
 
+use nix::sys::signal::{Signal, kill};
 use nix::sys::wait::{WaitStatus, waitpid};
 use nix::unistd::Pid;
 use oci_spec::runtime::{Linux, LinuxNamespaceType, Spec};
@@ -53,8 +54,8 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, Op
     // cloned process, we have to be deligent about closing any unused channel.
     // At minimum, we have to close down any unused senders. The corresponding
     // receivers will be cleaned up once the senders are closed down.
-    let (mut intermediate_main_sender, mut intermediate_main_receiver) = channel::main_channel()?;
-    let (mut init_main_sender, mut init_main_receiver) = channel::main_channel()?;
+    let (mut intermediate_main_sender, intermediate_main_receiver) = channel::main_channel()?;
+    let (mut init_main_sender, init_main_receiver) = channel::main_channel()?;
     let mut inter_chan = channel::intermediate_channel()?;
     let mut init_chan = channel::init_channel()?;
 
@@ -101,6 +102,58 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, Op
         tracing::error!("failed to fork intermediate process: {}", err);
         ProcessError::IntermediateProcessFailed(err)
     })?;
+
+    // The caller gets no pid on an error. Kill and reap the two child
+    // processes here if a later step fails, so that no zombie stays.
+    let mut init_pid = None;
+
+    finish_main_process(
+        container_args,
+        intermediate_pid,
+        &mut init_pid,
+        (intermediate_main_sender, intermediate_main_receiver),
+        (init_main_sender, init_main_receiver),
+        inter_chan,
+        init_chan,
+    )
+    .inspect_err(|err| {
+        tracing::error!(%err, "failed to start the container process");
+        reap_children(intermediate_pid, init_pid);
+    })
+}
+
+/// Kills and reaps the intermediate process and, if its pid is known, the
+/// init process. The two processes are children of this process.
+fn reap_children(intermediate_pid: Pid, init_pid: Option<Pid>) {
+    [Some(intermediate_pid), init_pid]
+        .into_iter()
+        .flatten()
+        .for_each(|pid| {
+            // The process can already be dead. The kill then does nothing,
+            // and the wait reaps it.
+            let _ = kill(pid, Signal::SIGKILL);
+
+            match waitpid(pid, None) {
+                Ok(status) => tracing::debug!(?status, "reaped a child process"),
+                Err(err) => tracing::warn!(%pid, %err, "failed to reap a child process"),
+            }
+        });
+}
+
+/// The steps of [`container_main_process`] after the fork of the
+/// intermediate process. The function writes the init pid to
+/// `init_pid_slot` as soon as it knows the pid.
+fn finish_main_process(
+    container_args: &ContainerArgs,
+    intermediate_pid: Pid,
+    init_pid_slot: &mut Option<Pid>,
+    intermediate_main_chan: (channel::MainSender, channel::MainReceiver),
+    init_main_chan: (channel::MainSender, channel::MainReceiver),
+    inter_chan: (channel::IntermediateSender, channel::IntermediateReceiver),
+    init_chan: (channel::InitSender, channel::InitReceiver),
+) -> Result<(Pid, Option<OwnedFd>)> {
+    let (intermediate_main_sender, mut intermediate_main_receiver) = intermediate_main_chan;
+    let (init_main_sender, mut init_main_receiver) = init_main_chan;
 
     // Close down unused fds. The corresponding fds are duplicated to the
     // child process during clone.
@@ -161,6 +214,7 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, Op
     // The intermediate process will send the init pid once it forks the init
     // process.  The intermediate process should exit after this point.
     let init_pid = intermediate_main_receiver.wait_for_intermediate_ready()?;
+    *init_pid_slot = Some(init_pid);
 
     // if file to write the pid to is specified, write pid of the child
     if let Some(pid_file) = &container_args.pid_file {

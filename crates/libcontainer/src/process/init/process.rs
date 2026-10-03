@@ -494,6 +494,9 @@ pub fn container_init_process(
         Err(MissingSpecError::Args)?;
     }
 
+    // Start the payload with default signal actions and an empty signal mask.
+    reset_signals();
+
     args.executor.exec(ctx.spec).map_err(|err| {
         tracing::error!(?err, "failed to execute payload");
         err
@@ -503,6 +506,31 @@ pub fn container_init_process(
     // example, the default executor is expected to call `exec` and replace the
     // current process.
     unreachable!("the executor should not return if it is successful.");
+}
+
+/// Gives each signal its default action, and clears the signal mask. An
+/// `execve` keeps the ignored signals and the mask of the caller, so the
+/// payload gets them without this reset. The function ignores each error.
+fn reset_signals() {
+    // SAFETY: each call gets a pointer to a zeroed, local struct or to a
+    // local set. None of the calls allocate or take a lock.
+    unsafe {
+        let mut action: libc::sigaction = mem::zeroed();
+
+        action.sa_sigaction = libc::SIG_DFL;
+        libc::sigemptyset(&mut action.sa_mask);
+
+        for signal in 1..libc::SIGRTMAX() + 1 {
+            if signal != libc::SIGKILL && signal != libc::SIGSTOP {
+                libc::sigaction(signal, &action, std::ptr::null_mut());
+            }
+        }
+
+        let mut empty: libc::sigset_t = mem::zeroed();
+
+        libc::sigemptyset(&mut empty);
+        libc::sigprocmask(libc::SIG_SETMASK, &empty, std::ptr::null_mut());
+    }
 }
 
 fn sysctl(kernel_params: &HashMap<String, String>) -> Result<()> {

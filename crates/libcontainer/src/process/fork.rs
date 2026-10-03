@@ -1,7 +1,6 @@
 use std::ffi::c_int;
 use std::num::NonZeroUsize;
 
-use libc::SIGCHLD;
 use nix::sys::{mman, resource};
 use nix::unistd::Pid;
 
@@ -22,6 +21,11 @@ pub enum CloneError {
     #[error("unknown error code {0}")]
     UnknownErrno(i32),
 }
+
+/// A lock around the fork of each intermediate process. A caller that writes
+/// a file that a container can exec holds it for reading while the file is
+/// open. This stops an `ETXTBSY` error from a fd copy in a forked child.
+pub static CLONE_LOCK: std::sync::RwLock<()> = std::sync::RwLock::new(());
 
 /// The callback function used in clone system call. The return value is i32
 /// which is consistent with C functions return code. The trait has to be
@@ -51,8 +55,27 @@ pub fn container_clone_sibling(cb: CloneCb) -> Result<Pid, CloneError> {
 }
 
 // Clone a child process and execute the callback.
-pub fn container_clone(cb: CloneCb) -> Result<Pid, CloneError> {
-    clone_internal(cb, 0, Some(SIGCHLD as u64))
+// This uses glibc `fork`, which resets the libc locks in the child. A raw
+// clone3 call does not, and the child can hang. See youki issue #2144.
+// The fork holds `CLONE_LOCK` for writing.
+pub fn container_clone(mut cb: CloneCb) -> Result<Pid, CloneError> {
+    let _guard = CLONE_LOCK
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    match unsafe { libc::fork() } {
+        -1 => Err(CloneError::Clone(nix::Error::last())),
+        // The child ends with `_exit`. See the comment in `clone3`.
+        0 => {
+            // Use a no-op tracing default. The caller's subscriber takes
+            // locks that another thread can hold at the fork, so an event
+            // in the child can wait forever.
+            let _quiet = tracing::dispatcher::set_default(&tracing::Dispatch::none());
+
+            unsafe { libc::_exit(cb()) }
+        }
+        pid => Ok(Pid::from_raw(pid)),
+    }
 }
 
 // An internal wrapper to manage the clone3 vs clone fallback logic.
@@ -118,7 +141,9 @@ fn clone3(cb: &mut CloneCb, flags: u64, exit_signal: Option<u64>) -> Result<Pid,
         0 => {
             // Inside the cloned process, we execute the callback and exit with
             // the return code.
-            std::process::exit(cb());
+            // Use `_exit`, not `exit`. `exit` runs the exit handlers, and can
+            // wait on a lock that a parent thread held. See youki issue #2144.
+            unsafe { libc::_exit(cb()) };
         }
         ret if ret >= 0 => Ok(Pid::from_raw(ret as i32)),
         ret => Err(CloneError::UnknownErrno(ret as i32)),
