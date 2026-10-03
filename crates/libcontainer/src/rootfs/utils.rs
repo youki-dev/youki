@@ -10,8 +10,7 @@ use crate::syscall::linux::{self, MountOption, MountRecursive};
 
 const IDMAP_FLAG: &str = "idmap";
 const RIDMAP_FLAG: &str = "ridmap";
-/// runc and crun's extension: a tmpfs that starts with a copy of the directory under it.
-pub const TMPCOPYUP: &str = "tmpcopyup";
+const TMPCOPYUP: &str = "tmpcopyup";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MountOptionConfig {
@@ -27,6 +26,10 @@ pub struct MountOptionConfig {
     /// Mount propagation flags, kept separate from regular mount flags because
     /// they are applied after the mount is attached.
     pub propagation_flags: Vec<MsFlags>,
+
+    /// `tmpcopyup`, an extension from runc and crun: the new tmpfs starts with a copy of what
+    /// the directory it is mounted on holds.
+    pub tmpcopyup: bool,
 }
 
 pub fn default_devices() -> Vec<LinuxDevice> {
@@ -96,6 +99,7 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
     let mut propagation_flags = Vec::new();
     let mut data = Vec::new();
     let mut mount_attr: Option<linux::MountAttr> = None;
+    let mut tmpcopyup = false;
 
     if let Some(options) = &m.options() {
         for option in options {
@@ -106,8 +110,13 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
                 RIDMAP_FLAG => {
                     continue;
                 }
-                // applied where the tmpfs is mounted, not passed to the filesystem
                 TMPCOPYUP => {
+                    if m.typ().as_deref() != Some("tmpfs") {
+                        return Err(MountError::Custom(
+                            "tmpcopyup can be used only with tmpfs".to_string(),
+                        ));
+                    }
+                    tmpcopyup = true;
                     continue;
                 }
                 _ => {}
@@ -212,6 +221,7 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
         data: data.into_iter().map(|s| s.to_string()).collect(),
         rec_attr: mount_attr,
         propagation_flags,
+        tmpcopyup,
     })
 }
 
@@ -247,7 +257,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_mount_tmpcopyup_is_not_mount_data() -> Result<()> {
+    fn test_parse_mount_tmpcopyup() -> Result<()> {
         let config = parse_mount(
             &MountBuilder::default()
                 .destination(PathBuf::from("/run"))
@@ -261,6 +271,19 @@ mod tests {
                 .build()?,
         )?;
         assert!(config.data.is_empty(), "{:?}", config.data);
+        assert!(config.tmpcopyup);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_mount_tmpcopyup_only_on_tmpfs() -> Result<()> {
+        let mount = MountBuilder::default()
+            .destination(PathBuf::from("/dev/pts"))
+            .typ("devpts")
+            .source(PathBuf::from("devpts"))
+            .options(vec!["tmpcopyup".to_string()])
+            .build()?;
+        assert!(parse_mount(&mount).is_err());
         Ok(())
     }
 
@@ -279,6 +302,7 @@ mod tests {
                 data: vec![],
                 rec_attr: None,
                 propagation_flags: vec![],
+                tmpcopyup: false,
             },
             mount_option_config
         );
@@ -302,6 +326,7 @@ mod tests {
                 data: vec!["mode=755".to_string(), "size=65536k".to_string()],
                 rec_attr: None,
                 propagation_flags: vec![],
+                tmpcopyup: false,
             },
             mount_option_config
         );
@@ -333,6 +358,7 @@ mod tests {
                 ],
                 rec_attr: None,
                 propagation_flags: vec![],
+                tmpcopyup: false,
             },
             mount_option_config
         );
@@ -357,6 +383,7 @@ mod tests {
                 data: vec!["mode=1777".to_string(), "size=65536k".to_string()],
                 rec_attr: None,
                 propagation_flags: vec![],
+                tmpcopyup: false,
             },
             mount_option_config
         );
@@ -380,6 +407,7 @@ mod tests {
                 data: vec![],
                 rec_attr: None,
                 propagation_flags: vec![],
+                tmpcopyup: false,
             },
             mount_option_config
         );
@@ -406,6 +434,7 @@ mod tests {
                 data: vec![],
                 rec_attr: None,
                 propagation_flags: vec![],
+                tmpcopyup: false,
             },
             mount_option_config
         );
@@ -434,6 +463,7 @@ mod tests {
                 data: vec![],
                 rec_attr: None,
                 propagation_flags: vec![],
+                tmpcopyup: false,
             },
             mount_option_config,
         );
@@ -501,6 +531,7 @@ mod tests {
                     MsFlags::MS_SLAVE,
                     MsFlags::MS_SLAVE | MsFlags::MS_REC,
                 ],
+                tmpcopyup: false,
             },
             mount_option_config
         );
@@ -536,6 +567,7 @@ mod tests {
                 data: vec![],
                 rec_attr: Some(MountAttr::all()),
                 propagation_flags: vec![],
+                tmpcopyup: false,
             },
             mount_option_config
         );
