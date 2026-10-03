@@ -96,6 +96,8 @@ pub enum ErrInvalidID {
 pub enum ErrInvalidSpec {
     #[error("runtime spec has incompatible version. Only 1.X.Y is supported")]
     UnsupportedVersion,
+    #[error("duplicate namespace type: {0}")]
+    DuplicateNamespace(oci_spec::runtime::LinuxNamespaceType),
     #[error("apparmor is specified but not enabled on this system")]
     AppArmorNotEnabled,
     #[error("invalid io priority or class.")]
