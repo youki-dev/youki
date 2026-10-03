@@ -124,16 +124,6 @@ impl Io {
 
     // linux kernel doc: https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html#io
     fn apply(root_path: &Path, blkio: &LinuxBlockIo) -> Result<(), V2IoControllerError> {
-        if let Some(weight_device) = blkio.weight_device() {
-            for wd in weight_device {
-                if let Some(weight) = wd.weight() {
-                    common::write_cgroup_file(
-                        root_path.join(CGROUP_BFQ_IO_WEIGHT),
-                        format!("{}:{} {}", wd.major(), wd.minor(), weight),
-                    )?;
-                }
-            }
-        }
         if let Some(leaf_weight) = blkio.leaf_weight() {
             if leaf_weight > 0 {
                 return Err(V2IoControllerError::LeafWeight);
@@ -153,6 +143,16 @@ impl Io {
                     common::write_cgroup_file(
                         root_path.join(CGROUP_IO_WEIGHT),
                         Self::convert_cfq_io_weight_to_bfq(io_weight),
+                    )?;
+                }
+            }
+        }
+        if let Some(weight_device) = blkio.weight_device() {
+            for wd in weight_device {
+                if let Some(weight) = wd.weight() {
+                    common::write_cgroup_file(
+                        root_path.join(CGROUP_BFQ_IO_WEIGHT),
+                        format!("{}:{} {}", wd.major(), wd.minor(), weight),
                     )?;
                 }
             }
