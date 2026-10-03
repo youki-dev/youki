@@ -72,6 +72,32 @@ fn rootfs_propagation_unbindable_test() -> TestResult {
     test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
+fn rootfs_propagation_rshared_test() -> TestResult {
+    let spec = test_result!(create_spec("rshared".to_string()));
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
+}
+
+fn rootfs_propagation_rslave_test() -> TestResult {
+    let spec = test_result!(create_spec("rslave".to_string()));
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
+}
+
+fn rootfs_propagation_rprivate_test() -> TestResult {
+    let spec = test_result!(create_spec("rprivate".to_string()));
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
+}
+
+fn rootfs_propagation_runbindable_test() -> TestResult {
+    let mut spec = test_result!(create_spec("runbindable".to_string()));
+    // Every mount under "/" becomes unbindable, so the bind mounts for readonly and masked
+    // paths, which come after the propagation is applied, would fail with EINVAL.
+    if let Some(linux) = spec.linux_mut() {
+        linux.set_readonly_paths(Some(vec![]));
+        linux.set_masked_paths(Some(vec![]));
+    }
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
+}
+
 pub fn get_rootfs_propagation_test() -> TestGroup {
     let mut rootfs_propagation_test_group = TestGroup::new("rootfs_propagation");
 
@@ -91,11 +117,31 @@ pub fn get_rootfs_propagation_test() -> TestGroup {
         "rootfs_propagation_unbindable_test",
         Box::new(rootfs_propagation_unbindable_test),
     );
+    let rootfs_propagation_rshared_test = Test::new(
+        "rootfs_propagation_rshared_test",
+        Box::new(rootfs_propagation_rshared_test),
+    );
+    let rootfs_propagation_rslave_test = Test::new(
+        "rootfs_propagation_rslave_test",
+        Box::new(rootfs_propagation_rslave_test),
+    );
+    let rootfs_propagation_rprivate_test = Test::new(
+        "rootfs_propagation_rprivate_test",
+        Box::new(rootfs_propagation_rprivate_test),
+    );
+    let rootfs_propagation_runbindable_test = Test::new(
+        "rootfs_propagation_runbindable_test",
+        Box::new(rootfs_propagation_runbindable_test),
+    );
     rootfs_propagation_test_group.add(vec![
         Box::new(rootfs_propagation_shared_test),
         Box::new(rootfs_propagation_slave_test),
         Box::new(rootfs_propagation_private_test),
         Box::new(rootfs_propagation_unbindable_test),
+        Box::new(rootfs_propagation_rshared_test),
+        Box::new(rootfs_propagation_rslave_test),
+        Box::new(rootfs_propagation_rprivate_test),
+        Box::new(rootfs_propagation_runbindable_test),
     ]);
 
     rootfs_propagation_test_group
