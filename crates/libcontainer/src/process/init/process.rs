@@ -818,49 +818,48 @@ fn set_supplementary_gids(
     user_ns_config: &Option<UserNamespaceConfig>,
     syscall: &dyn Syscall,
 ) -> Result<()> {
-    if let Some(additional_gids) = user.additional_gids() {
+    let additional_gids = user.additional_gids().as_deref().unwrap_or_default();
+    let privileged = user_ns_config
+        .as_ref()
+        .is_none_or(|config| config.privileged);
+    if additional_gids.is_empty() && !privileged {
+        return Ok(());
+    }
+
+    let mut setgroups = String::new();
+    ProcfsHandle::new()?
+        .open(ProcfsBase::ProcSelf, "setgroups", OpenFlags::O_RDONLY)?
+        .read_to_string(&mut setgroups)
+        .map_err(|err| {
+            tracing::error!(?err, "failed to read setgroups");
+            InitProcessError::Io(err)
+        })?;
+
+    if setgroups.trim() == "deny" {
         if additional_gids.is_empty() {
             return Ok(());
         }
-
-        let mut setgroups = String::new();
-        ProcfsHandle::new()?
-            .open(ProcfsBase::ProcSelf, "setgroups", OpenFlags::O_RDONLY)?
-            .read_to_string(&mut setgroups)
-            .map_err(|err| {
-                tracing::error!(?err, "failed to read setgroups");
-                InitProcessError::Io(err)
-            })?;
-
-        if setgroups.trim() == "deny" {
-            tracing::error!("cannot set supplementary gids, setgroup is disabled");
-            return Err(InitProcessError::SetGroupDisabled);
-        }
-
-        let gids: Vec<Gid> = additional_gids
-            .iter()
-            .map(|gid| Gid::from_raw(*gid))
-            .collect();
-
-        match user_ns_config {
-            Some(r) if r.privileged => {
-                syscall.set_groups(&gids).map_err(|err| {
-                    tracing::error!(?err, ?gids, "failed to set privileged supplementary gids");
-                    InitProcessError::SyscallOther(err)
-                })?;
-            }
-            None => {
-                syscall.set_groups(&gids).map_err(|err| {
-                    tracing::error!(?err, ?gids, "failed to set unprivileged supplementary gids");
-                    InitProcessError::SyscallOther(err)
-                })?;
-            }
-            // this should have been detected during validation
-            _ => unreachable!(
-                "unprivileged users cannot set supplementary gids in containers with new user namespace"
-            ),
-        }
+        tracing::error!("cannot set supplementary gids, setgroup is disabled");
+        return Err(InitProcessError::SetGroupDisabled);
     }
+
+    // this should have been detected during validation
+    if !privileged {
+        unreachable!(
+            "unprivileged users cannot set supplementary gids in containers with new user namespace"
+        );
+    }
+
+    // An empty list too: the process must not keep the supplementary groups of whoever started
+    // the runtime, as runc and crun make sure.
+    let gids: Vec<Gid> = additional_gids
+        .iter()
+        .map(|gid| Gid::from_raw(*gid))
+        .collect();
+    syscall.set_groups(&gids).map_err(|err| {
+        tracing::error!(?err, ?gids, "failed to set supplementary gids");
+        InitProcessError::SyscallOther(err)
+    })?;
 
     Ok(())
 }
@@ -1172,9 +1171,19 @@ mod tests {
 
     #[test]
     fn test_set_supplementary_gids() -> Result<()> {
-        // gids additional gids is empty case
+        // gids additional gids is empty case: the caller's groups are dropped where allowed
         let user = UserBuilder::default().build().unwrap();
-        assert!(set_supplementary_gids(&user, &None, create_syscall().as_ref()).is_ok());
+        let syscall = create_syscall();
+        assert!(set_supplementary_gids(&user, &None, syscall.as_ref()).is_ok());
+        let calls = syscall
+            .as_any()
+            .downcast_ref::<TestHelperSyscall>()
+            .unwrap()
+            .get_groups_calls();
+        match fs::read_to_string("/proc/self/setgroups")?.trim() {
+            "deny" => assert!(calls.is_empty()),
+            _ => assert_eq!(calls, vec![Vec::<Gid>::new()]),
+        }
 
         let tests = vec![
             (

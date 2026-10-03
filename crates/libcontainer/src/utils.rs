@@ -260,6 +260,30 @@ pub fn is_in_new_userns() -> Result<bool, std::io::Error> {
     Ok(!content.contains("4294967295"))
 }
 
+/// Checks if this process may write a child user namespace's id mappings (several ranges
+/// included) and keep setgroups there, without newuidmap/newgidmap.
+///
+/// That holds for root in the initial user namespace, and for root in a user namespace whose
+/// setgroups is "allow", such as the one rootless Podman runs the runtime in (made with
+/// newuidmap/newgidmap from /etc/subuid). An unprivileged user can only map a user namespace
+/// after writing "deny" to its setgroups (CVE-2014-8989), so "allow" means a privileged helper
+/// made the mapping.
+pub fn can_map_ids(syscall: &dyn Syscall) -> Result<bool, std::io::Error> {
+    if !syscall.get_euid().is_root() {
+        return Ok(false);
+    }
+    if !is_in_new_userns()? {
+        return Ok(true);
+    }
+    Ok(setgroups_allowed(&std::fs::read_to_string(
+        "/proc/self/setgroups",
+    )?))
+}
+
+fn setgroups_allowed(setgroups: &str) -> bool {
+    setgroups.trim() == "allow"
+}
+
 /// Checks if rootless mode needs to be used
 pub fn rootless_required(syscall: &dyn Syscall) -> Result<bool, std::io::Error> {
     if !syscall.get_euid().is_root() {
@@ -301,6 +325,12 @@ mod tests {
 
     use super::*;
     use crate::syscall::syscall::create_syscall;
+
+    #[test]
+    fn test_setgroups_allowed() {
+        assert!(setgroups_allowed("allow\n"));
+        assert!(!setgroups_allowed("deny\n"));
+    }
 
     #[test]
     pub fn test_get_unix_user() {

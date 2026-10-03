@@ -119,6 +119,8 @@ pub enum MappingError {
     NoPathEnv,
     #[error("failed to execute newuidmap/newgidmap")]
     Execute(#[source] std::io::Error),
+    #[error("{binary:?} failed: {stderr}")]
+    MapBinaryFailed { binary: PathBuf, stderr: String },
     #[error("at least one id mapping needs to be defined")]
     NoIDMapping,
     #[error("failed to write id mapping")]
@@ -161,9 +163,13 @@ impl UserNamespaceConfig {
                 err
             })?;
             let mut user_ns_config = UserNamespaceConfig::try_from(linux)?;
-            if let Some((uid_binary, gid_binary)) = lookup_map_binaries(linux)? {
-                user_ns_config.newuidmap = Some(uid_binary);
-                user_ns_config.newgidmap = Some(gid_binary);
+            // A privileged runtime writes every range itself; newuidmap/newgidmap are for an
+            // unprivileged one.
+            if !user_ns_config.privileged {
+                if let Some((uid_binary, gid_binary)) = lookup_map_binaries(linux)? {
+                    user_ns_config.newuidmap = Some(uid_binary);
+                    user_ns_config.newgidmap = Some(gid_binary);
+                }
             }
 
             Ok(Some(user_ns_config))
@@ -220,7 +226,7 @@ impl TryFrom<&Linux> for UserNamespaceConfig {
             uid_mappings: linux.uid_mappings().to_owned(),
             gid_mappings: linux.gid_mappings().to_owned(),
             user_namespace: user_namespace.cloned(),
-            privileged: !utils::rootless_required(&*syscall)?,
+            privileged: utils::can_map_ids(&*syscall)?,
             id_mapper: UserNamespaceIDMapper::new(),
         })
     }
@@ -287,7 +293,7 @@ fn validate_spec_for_new_user_ns(
         .as_ref()
         .and_then(|process| process.user().additional_gids().as_ref())
     {
-        let privileged = !utils::rootless_required(syscall)?;
+        let privileged = utils::can_map_ids(syscall)?;
 
         match (privileged, additional_gids.is_empty()) {
             (true, false) => {
@@ -408,19 +414,21 @@ fn write_id_mapping(
 ) -> std::result::Result<(), MappingError> {
     tracing::debug!("Write ID mapping: {:?}", mappings);
 
-    match mappings.len() {
-        0 => return Err(MappingError::NoIDMapping),
-        1 => {
+    match (mappings.len(), map_binary) {
+        (0, _) => return Err(MappingError::NoIDMapping),
+        // One range, or a privileged writer: the map file takes all ranges in one write.
+        (1, _) | (_, None) => {
             let mapping = mappings
-                .first()
-                .and_then(|m| format!("{} {} {}", m.container_id(), m.host_id(), m.size()).into())
-                .unwrap();
+                .iter()
+                .map(|m| format!("{} {} {}", m.container_id(), m.host_id(), m.size()))
+                .collect::<Vec<_>>()
+                .join("\n");
             std::fs::write(map_file, &mapping).map_err(|err| {
                 tracing::error!(?err, ?map_file, ?mapping, "failed to write uid/gid mapping");
                 MappingError::WriteIDMapping(err)
             })?;
         }
-        _ => {
+        (_, Some(map_binary)) => {
             let args: Vec<String> = mappings
                 .iter()
                 .flat_map(|m| {
@@ -432,10 +440,7 @@ fn write_id_mapping(
                 })
                 .collect();
 
-            // we can be certain here that map_binary will not be None,
-            // as in the lookup_map_binaries function, we return error
-            // if there are mappings.len() > 1 and binaries are not present
-            Command::new(map_binary.unwrap())
+            let output = Command::new(map_binary)
                 .arg(pid.to_string())
                 .args(args)
                 .output()
@@ -443,6 +448,14 @@ fn write_id_mapping(
                     tracing::error!(?err, ?map_binary, "failed to execute newuidmap/newgidmap");
                     MappingError::Execute(err)
                 })?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                tracing::error!(?map_binary, %stderr, "newuidmap/newgidmap failed");
+                return Err(MappingError::MapBinaryFailed {
+                    binary: map_binary.to_path_buf(),
+                    stderr,
+                });
+            }
         }
     }
 
@@ -641,6 +654,46 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    fn keep_id_mappings() -> Vec<LinuxIdMapping> {
+        // The layout of Podman's --userns=keep-id for uid 1000.
+        [(0_u32, 1_u32, 1000_u32), (1000, 0, 1), (1001, 1001, 64536)]
+            .into_iter()
+            .map(|(container_id, host_id, size)| {
+                LinuxIdMappingBuilder::default()
+                    .container_id(container_id)
+                    .host_id(host_id)
+                    .size(size)
+                    .build()
+                    .unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_write_id_mapping_several_ranges_without_binary() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let map_file = tmp.path().join("uid_map");
+        write_id_mapping(getpid(), &map_file, &keep_id_mappings(), None)?;
+        assert_eq!(
+            fs::read_to_string(&map_file)?,
+            "0 1 1000\n1000 0 1\n1001 1001 64536"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_id_mapping_binary_failure_is_an_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let map_file = tmp.path().join("uid_map");
+        let result = write_id_mapping(
+            getpid(),
+            &map_file,
+            &keep_id_mappings(),
+            Some(Path::new("false")),
+        );
+        assert!(matches!(result, Err(MappingError::MapBinaryFailed { .. })));
     }
 
     #[test]
