@@ -1,6 +1,6 @@
 use std::fs::Permissions;
 use std::io::{BufRead, BufReader, ErrorKind};
-use std::os::fd::{AsFd, AsRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -68,6 +68,11 @@ pub enum MountError {
     UnsupportedMountOption(String),
     #[error(transparent)]
     Pathrs(#[from] pathrs::error::Error),
+    #[error("failed to copy up {dest:?} into the tmpfs")]
+    TmpCopyUp {
+        dest: PathBuf,
+        source: std::io::Error,
+    },
 }
 
 type Result<T> = std::result::Result<T, MountError>;
@@ -395,6 +400,7 @@ impl Mount {
             data: vec![data.into_owned()],
             rec_attr: None,
             propagation_flags: vec![],
+            tmpcopyup: false,
         };
 
         self.mount_into_container(
@@ -699,7 +705,7 @@ impl Mount {
                 linux::MOVE_MOUNT_T_EMPTY_PATH | linux::MOVE_MOUNT_F_EMPTY_PATH,
             )?;
         } else {
-            let mount_fn = || -> std::result::Result<(), SyscallError> {
+            let mount_fn = || -> Result<()> {
                 // fsopen
                 let fsfd_owned = self.syscall.fsopen(typ, 0)?;
                 let fsfd = fsfd_owned.as_fd();
@@ -743,6 +749,16 @@ impl Mount {
                 // fsmount
                 let mount_fd_owned = self.syscall.fsmount(fsfd, 0, None)?;
                 let mount_fd = mount_fd_owned.as_fd();
+
+                // Copy up while the tmpfs is still writable, before a "ro" is applied.
+                if mount_option_config.tmpcopyup {
+                    copy_recursive_fd_to_fd(dest_fd, mount_fd).map_err(|source| {
+                        MountError::TmpCopyUp {
+                            dest: container_dest.to_path_buf(),
+                            source,
+                        }
+                    })?;
+                }
 
                 // mount_setattr
                 let attr_set_from_flags = self.mount_flag_to_attr(&mount_option_config.flags);
@@ -792,16 +808,17 @@ impl Mount {
 
             match mount_fn() {
                 Ok(()) => {}
-                Err(SyscallError::Nix(nix::Error::EINVAL)) => {
+                Err(MountError::Syscall(SyscallError::Nix(nix::Error::EINVAL))) => {
                     mount_fn()?;
                 }
-                Err(SyscallError::Nix(nix::Error::EBUSY)) => {
+                Err(MountError::Syscall(SyscallError::Nix(nix::Error::EBUSY))) => {
                     let delay = Duration::from_millis(MOUNT_RETRY_DELAY_MS);
-                    let retry_policy =
-                        |err: &SyscallError| matches!(err, SyscallError::Nix(Errno::EBUSY));
+                    let retry_policy = |err: &MountError| {
+                        matches!(err, MountError::Syscall(SyscallError::Nix(Errno::EBUSY)))
+                    };
                     retry(mount_fn, MAX_EBUSY_MOUNT_ATTEMPTS - 1, delay, retry_policy)?;
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => return Err(e),
             }
         }
 
@@ -1043,6 +1060,67 @@ impl Mount {
     }
 }
 
+/// Copies what the directory `src` holds into the directory `dst`, keeping owners and modes:
+/// regular files, directories, symlinks, and device nodes, fifos and sockets as nodes. Like crun's
+/// copy_recursive_fd_to_fd(), it works on directory fds and never follows a symlink in `src`.
+fn copy_recursive_fd_to_fd(src: BorrowedFd, dst: BorrowedFd) -> std::io::Result<()> {
+    use nix::dir::Dir;
+    use nix::fcntl::{AtFlags, openat, readlinkat};
+    use nix::sys::stat::{FchmodatFlags, SFlag, fchmodat, fstatat, mkdirat, mknodat};
+    use nix::unistd::{Gid, Uid, fchownat, symlinkat};
+
+    let dir_flags = OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
+    for entry in Dir::openat(src, ".", dir_flags, Mode::empty())?.into_iter() {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name == c"." || name == c".." {
+            continue;
+        }
+        let st = fstatat(src, name, AtFlags::AT_SYMLINK_NOFOLLOW)?;
+        let kind = SFlag::from_bits_truncate(st.st_mode & SFlag::S_IFMT.bits());
+        let mode = Mode::from_bits_truncate(st.st_mode);
+        match kind {
+            SFlag::S_IFDIR => {
+                mkdirat(dst, name, Mode::S_IRWXU)?;
+                copy_recursive_fd_to_fd(
+                    openat(src, name, dir_flags, Mode::empty())?.as_fd(),
+                    openat(dst, name, dir_flags, Mode::empty())?.as_fd(),
+                )?;
+            }
+            SFlag::S_IFREG => {
+                let mut from = fs::File::from(openat(
+                    src,
+                    name,
+                    OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK | OFlag::O_CLOEXEC,
+                    Mode::empty(),
+                )?);
+                let mut to = fs::File::from(openat(
+                    dst,
+                    name,
+                    OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_CLOEXEC,
+                    Mode::S_IRUSR | Mode::S_IWUSR,
+                )?);
+                std::io::copy(&mut from, &mut to)?;
+            }
+            SFlag::S_IFLNK => symlinkat(readlinkat(src, name)?.as_os_str(), dst, name)?,
+            _ => mknodat(dst, name, kind, mode, st.st_rdev)?,
+        }
+        fchownat(
+            dst,
+            name,
+            Some(Uid::from_raw(st.st_uid)),
+            Some(Gid::from_raw(st.st_gid)),
+            AtFlags::AT_SYMLINK_NOFOLLOW,
+        )?;
+        // After the chown, which clears setuid and setgid. `dst` is a tmpfs that is not attached
+        // anywhere yet, so `name` is still what was just created.
+        if kind != SFlag::S_IFLNK {
+            fchmodat(dst, name, mode, FchmodatFlags::FollowSymlink)?;
+        }
+    }
+    Ok(())
+}
+
 /// Find parent mount of rootfs in given mount infos
 pub fn find_parent_mount(
     rootfs: &Path,
@@ -1106,6 +1184,46 @@ mod tests {
             val: None,
             aux: 0,
         }
+    }
+
+    #[test]
+    fn test_copy_recursive_fd_to_fd() -> Result<()> {
+        use std::os::unix::fs::{FileTypeExt, symlink};
+
+        let (from, to) = (tempfile::tempdir()?, tempfile::tempdir()?);
+        fs::create_dir(from.path().join("sub"))?;
+        fs::set_permissions(from.path().join("sub"), Permissions::from_mode(0o700))?;
+        fs::write(from.path().join("sub/file"), "content")?;
+        fs::set_permissions(from.path().join("sub/file"), Permissions::from_mode(0o640))?;
+        symlink("sub/file", from.path().join("link"))?;
+        nix::unistd::mkfifo(
+            &from.path().join("fifo"),
+            nix::sys::stat::Mode::from_bits_truncate(0o600),
+        )?;
+
+        copy_recursive_fd_to_fd(
+            fs::File::open(from.path())?.as_fd(),
+            fs::File::open(to.path())?.as_fd(),
+        )?;
+
+        let mode = |p: &str| fs::symlink_metadata(to.path().join(p)).map(|m| m.mode() & 0o7777);
+        assert_eq!(mode("sub")?, 0o700);
+        assert_eq!(mode("sub/file")?, 0o640);
+        assert_eq!(fs::read_to_string(to.path().join("sub/file"))?, "content");
+        assert_eq!(
+            fs::read_link(to.path().join("link"))?,
+            PathBuf::from("sub/file")
+        );
+        assert!(
+            fs::symlink_metadata(to.path().join("fifo"))?
+                .file_type()
+                .is_fifo()
+        );
+        assert_eq!(
+            fs::metadata(to.path().join("sub/file"))?.uid(),
+            fs::metadata(from.path().join("sub/file"))?.uid()
+        );
+        Ok(())
     }
 
     #[test]
@@ -1468,6 +1586,7 @@ mod tests {
             data: vec![],
             rec_attr: None,
             propagation_flags: vec![],
+            tmpcopyup: false,
         };
         mounter
             .mount_cgroup_v2(&spec_cgroup_mount, &mount_opts, &mount_option_config)

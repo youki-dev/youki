@@ -53,5 +53,6 @@ pub mod state;
 pub mod sysctl;
 pub mod terminal;
 pub mod time_ns;
+pub mod tmpcopyup;
 pub mod uid_mappings;
 pub mod update;
