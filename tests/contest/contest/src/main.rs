@@ -64,6 +64,7 @@ use crate::tests::sysctl::get_sysctl_test;
 use crate::tests::terminal::get_terminal_test;
 use crate::tests::time_ns::get_time_ns_test;
 use crate::tests::tmpcopyup::get_tmpcopyup_test;
+use crate::tests::tmpfs::get_tmpfs_test;
 use crate::tests::uid_mappings::get_uid_mappings_test;
 use crate::tests::update::get_update_test;
 use crate::utils::support::{set_runtime_path, set_runtimetest_path};
@@ -193,6 +194,7 @@ fn main() -> Result<()> {
     let update = get_update_test();
     let time_ns = get_time_ns_test();
     let tmpcopyup = get_tmpcopyup_test();
+    let tmpfs = get_tmpfs_test();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -257,6 +259,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(update));
     tm.add_test_group(Box::new(time_ns));
     tm.add_test_group(Box::new(tmpcopyup));
+    tm.add_test_group(Box::new(tmpfs));
     tm.add_cleanup(Box::new(cgroups::cleanup_v2));
 
     match opts.command {
