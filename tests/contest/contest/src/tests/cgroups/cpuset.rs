@@ -2,7 +2,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use libcgroups::common::DEFAULT_CGROUP_ROOT;
 use libcgroups::v2::controller_type::ControllerType;
 use libcontainer::utils::PathBufExt;
 use oci_spec::runtime::{LinuxBuilder, LinuxCpuBuilder, LinuxResourcesBuilder, Spec, SpecBuilder};
@@ -52,10 +51,10 @@ fn prepare_cpuset_cgroup(spec: &Spec) -> Result<()> {
         .as_ref()
         .and_then(|l| l.cgroups_path().as_ref())
         .context("spec has no cgroups path")?;
-    let full_cgroup_path = PathBuf::from(DEFAULT_CGROUP_ROOT).join_safely(cgroups_path)?;
+    let full_cgroup_path = PathBuf::from(CGROUP_ROOT).join_safely(cgroups_path)?;
     fs::create_dir_all(&full_cgroup_path)
         .with_context(|| format!("could not create cgroup {full_cgroup_path:?}"))?;
-    attach_controller(Path::new(DEFAULT_CGROUP_ROOT), cgroups_path, "cpuset")?;
+    attach_controller(Path::new(CGROUP_ROOT), cgroups_path, "cpuset")?;
 
     Ok(())
 }
