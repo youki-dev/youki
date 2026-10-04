@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use libcgroups::v2::controller_type::ControllerType;
 use oci_spec::runtime::{
-    LinuxBlockIo, LinuxBlockIoBuilder, LinuxBuilder, LinuxResourcesBuilder,
+    LinuxBlockIo, LinuxBlockIoBuilder, LinuxBuilder, LinuxResourcesBuilder, LinuxThrottleDevice,
     LinuxThrottleDeviceBuilder, LinuxWeightDeviceBuilder, Spec, SpecBuilder,
 };
 use test_framework::{ConditionalTest, TestGroup, TestResult, assert_result_eq, test_result};
@@ -44,25 +44,44 @@ fn convert_blkio_weight_to_io_weight(weight: u16) -> u16 {
     (1 + (u32::from(weight) - 10) * 9999 / 990) as u16
 }
 
-fn test_device() -> Result<(i64, i64)> {
+fn block_devices() -> Result<Vec<PathBuf>> {
     let mut entries: Vec<_> = fs::read_dir("/sys/block")
         .context("failed to read /sys/block")?
         .flatten()
-        .map(|entry| entry.path().join("dev"))
-        .filter(|path| path.exists())
+        .map(|entry| entry.path())
         .collect();
     entries.sort();
-    for dev_path in entries {
-        let content = fs::read_to_string(&dev_path)
-            .with_context(|| format!("failed to read {dev_path:?}"))?;
-        if let Some((major, minor)) = content.trim().split_once(':')
-            && let (Ok(major), Ok(minor)) =
-                (major.trim().parse::<i64>(), minor.trim().parse::<i64>())
+    Ok(entries)
+}
+
+fn device_numbers(dev_dir: &Path) -> Option<(i64, i64)> {
+    let content = fs::read_to_string(dev_dir.join("dev")).ok()?;
+    let (major, minor) = content.trim().split_once(':')?;
+    Some((major.trim().parse().ok()?, minor.trim().parse().ok()?))
+}
+
+fn get_block_device() -> Result<(i64, i64)> {
+    for dev_dir in block_devices()? {
+        if dev_dir.join("dev").exists()
+            && let Some(numbers) = device_numbers(&dev_dir)
         {
-            return Ok((major, minor));
+            return Ok(numbers);
         }
     }
     bail!("no block device found under /sys/block")
+}
+
+fn get_bfq_block_device() -> Result<(i64, i64)> {
+    for dev_dir in block_devices()? {
+        let scheduler = dev_dir.join("queue/scheduler");
+        let has_bfq = fs::read_to_string(&scheduler)
+            .map(|content| content.contains("[bfq]"))
+            .unwrap_or(false);
+        if has_bfq && let Some(numbers) = device_numbers(&dev_dir) {
+            return Ok(numbers);
+        }
+    }
+    bail!("no block device with the BFQ scheduler found under /sys/block")
 }
 
 fn cgroup_dir_for_pid(pid: i32) -> Result<PathBuf> {
@@ -131,7 +150,8 @@ fn check_io_max(dir: &Path, major: i64, minor: i64, key: &str, rate: u64) -> Res
     let prefix = format!("{major}:{minor}");
     let expected = format!("{key}={rate}");
     if !data.lines().any(|line| {
-        line.split_whitespace().next() == Some(prefix.as_str()) && line.contains(expected.as_str())
+        let mut tokens = line.split_whitespace();
+        tokens.next() == Some(prefix.as_str()) && tokens.any(|token| token == expected)
     }) {
         bail!("expected {IO_MAX} to contain {prefix} {expected}, got {data:?}");
     }
@@ -181,7 +201,7 @@ fn test_io_weight_set() -> TestResult {
 
 fn test_io_weight_device_set() -> TestResult {
     const CGROUP_NAME: &str = "runtime-test/test_io_weight_device_set";
-    let (major, minor) = test_result!(test_device());
+    let (major, minor) = test_result!(get_bfq_block_device());
     let block_io = test_result!(
         LinuxBlockIoBuilder::default()
             .weight_device(vec![test_result!(
@@ -207,121 +227,88 @@ fn test_io_weight_device_set() -> TestResult {
     })
 }
 
-fn test_io_throttle_read_bps_set() -> TestResult {
-    const CGROUP_NAME: &str = "runtime-test/test_io_throttle_read_bps_set";
-    let (major, minor) = test_result!(test_device());
-    let block_io = test_result!(
-        LinuxBlockIoBuilder::default()
-            .throttle_read_bps_device(vec![test_result!(
-                LinuxThrottleDeviceBuilder::default()
-                    .major(major)
-                    .minor(minor)
-                    .rate(RATE)
-                    .build()
-                    .context("failed to build throttle device spec")
-            ),])
+#[derive(Clone, Copy)]
+enum ThrottleKind {
+    ReadBps,
+    WriteBps,
+    ReadIops,
+    WriteIops,
+}
+
+impl ThrottleKind {
+    fn key(self) -> &'static str {
+        match self {
+            ThrottleKind::ReadBps => "rbps",
+            ThrottleKind::WriteBps => "wbps",
+            ThrottleKind::ReadIops => "riops",
+            ThrottleKind::WriteIops => "wiops",
+        }
+    }
+
+    fn block_io(self, major: i64, minor: i64) -> Result<LinuxBlockIo> {
+        let device: LinuxThrottleDevice = LinuxThrottleDeviceBuilder::default()
+            .major(major)
+            .minor(minor)
+            .rate(RATE)
             .build()
-            .context("failed to build block io spec")
-    );
-    let spec = test_result!(create_spec(CGROUP_NAME, block_io));
+            .context("failed to build throttle device spec")?;
+        let builder = LinuxBlockIoBuilder::default();
+        let builder = match self {
+            ThrottleKind::ReadBps => builder.throttle_read_bps_device(vec![device]),
+            ThrottleKind::WriteBps => builder.throttle_write_bps_device(vec![device]),
+            ThrottleKind::ReadIops => builder.throttle_read_iops_device(vec![device]),
+            ThrottleKind::WriteIops => builder.throttle_write_iops_device(vec![device]),
+        };
+        builder.build().context("failed to build block io spec")
+    }
+}
+
+fn run_io_throttle_test(cgroup_name: &str, kind: ThrottleKind) -> TestResult {
+    let (major, minor) = test_result!(get_block_device());
+    let block_io = test_result!(kind.block_io(major, minor));
+    let spec = test_result!(create_spec(cgroup_name, block_io));
 
     test_outside_container(&spec, &|data| {
         test_result!(check_container_created(&data));
         let pid = test_result!(container_pid(&data));
-        test_result!(check_container_in_relative_cgroup(pid, CGROUP_NAME));
+        test_result!(check_container_in_relative_cgroup(pid, cgroup_name));
         let dir = test_result!(cgroup_dir_for_pid(pid));
-        test_result!(check_io_max(&dir, major, minor, "rbps", RATE));
+        test_result!(check_io_max(&dir, major, minor, kind.key(), RATE));
         TestResult::Passed
     })
+}
+
+fn test_io_throttle_read_bps_set() -> TestResult {
+    run_io_throttle_test(
+        "runtime-test/test_io_throttle_read_bps_set",
+        ThrottleKind::ReadBps,
+    )
 }
 
 fn test_io_throttle_write_bps_set() -> TestResult {
-    const CGROUP_NAME: &str = "runtime-test/test_io_throttle_write_bps_set";
-    let (major, minor) = test_result!(test_device());
-    let block_io = test_result!(
-        LinuxBlockIoBuilder::default()
-            .throttle_write_bps_device(vec![test_result!(
-                LinuxThrottleDeviceBuilder::default()
-                    .major(major)
-                    .minor(minor)
-                    .rate(RATE)
-                    .build()
-                    .context("failed to build throttle device spec")
-            ),])
-            .build()
-            .context("failed to build block io spec")
-    );
-    let spec = test_result!(create_spec(CGROUP_NAME, block_io));
-
-    test_outside_container(&spec, &|data| {
-        test_result!(check_container_created(&data));
-        let pid = test_result!(container_pid(&data));
-        test_result!(check_container_in_relative_cgroup(pid, CGROUP_NAME));
-        let dir = test_result!(cgroup_dir_for_pid(pid));
-        test_result!(check_io_max(&dir, major, minor, "wbps", RATE));
-        TestResult::Passed
-    })
+    run_io_throttle_test(
+        "runtime-test/test_io_throttle_write_bps_set",
+        ThrottleKind::WriteBps,
+    )
 }
 
 fn test_io_throttle_read_iops_set() -> TestResult {
-    const CGROUP_NAME: &str = "runtime-test/test_io_throttle_read_iops_set";
-    let (major, minor) = test_result!(test_device());
-    let block_io = test_result!(
-        LinuxBlockIoBuilder::default()
-            .throttle_read_iops_device(vec![test_result!(
-                LinuxThrottleDeviceBuilder::default()
-                    .major(major)
-                    .minor(minor)
-                    .rate(RATE)
-                    .build()
-                    .context("failed to build throttle device spec")
-            ),])
-            .build()
-            .context("failed to build block io spec")
-    );
-    let spec = test_result!(create_spec(CGROUP_NAME, block_io));
-
-    test_outside_container(&spec, &|data| {
-        test_result!(check_container_created(&data));
-        let pid = test_result!(container_pid(&data));
-        test_result!(check_container_in_relative_cgroup(pid, CGROUP_NAME));
-        let dir = test_result!(cgroup_dir_for_pid(pid));
-        test_result!(check_io_max(&dir, major, minor, "riops", RATE));
-        TestResult::Passed
-    })
+    run_io_throttle_test(
+        "runtime-test/test_io_throttle_read_iops_set",
+        ThrottleKind::ReadIops,
+    )
 }
 
 fn test_io_throttle_write_iops_set() -> TestResult {
-    const CGROUP_NAME: &str = "runtime-test/test_io_throttle_write_iops_set";
-    let (major, minor) = test_result!(test_device());
-    let block_io = test_result!(
-        LinuxBlockIoBuilder::default()
-            .throttle_write_iops_device(vec![test_result!(
-                LinuxThrottleDeviceBuilder::default()
-                    .major(major)
-                    .minor(minor)
-                    .rate(RATE)
-                    .build()
-                    .context("failed to build throttle device spec")
-            ),])
-            .build()
-            .context("failed to build block io spec")
-    );
-    let spec = test_result!(create_spec(CGROUP_NAME, block_io));
-
-    test_outside_container(&spec, &|data| {
-        test_result!(check_container_created(&data));
-        let pid = test_result!(container_pid(&data));
-        test_result!(check_container_in_relative_cgroup(pid, CGROUP_NAME));
-        let dir = test_result!(cgroup_dir_for_pid(pid));
-        test_result!(check_io_max(&dir, major, minor, "wiops", RATE));
-        TestResult::Passed
-    })
+    run_io_throttle_test(
+        "runtime-test/test_io_throttle_write_iops_set",
+        ThrottleKind::WriteIops,
+    )
 }
 
 fn test_relative_blkio() -> TestResult {
     const CGROUP_NAME: &str = "runtime-test/test_relative_blkio";
-    let (major, minor) = test_result!(test_device());
+    let (major, minor) = test_result!(get_bfq_block_device());
     let block_io = test_result!(
         LinuxBlockIoBuilder::default()
             .weight(WEIGHT)
@@ -390,7 +377,7 @@ fn can_run() -> bool {
 }
 
 fn can_run_bfq() -> bool {
-    can_run() && cgroup_has_file(IO_BFQ_WEIGHT)
+    can_run() && cgroup_has_file(IO_BFQ_WEIGHT) && get_bfq_block_device().is_ok()
 }
 
 // The default io.weight may be written through either io.bfq.weight (BFQ) or
