@@ -1693,3 +1693,38 @@ pub fn validate_default_symlinks(_spec: &Spec) {
         }
     }
 }
+
+pub fn validate_tmpcopyup(spec: &Spec) {
+    for mount in spec.mounts().as_deref().unwrap_or_default() {
+        let options = mount.options().as_deref().unwrap_or_default();
+        if !options.iter().any(|o| o == "tmpcopyup") {
+            continue;
+        }
+        let dest = mount.destination();
+
+        match nix::sys::statfs::statfs(dest) {
+            Ok(fs) if fs.filesystem_type() == nix::sys::statfs::TMPFS_MAGIC => {}
+            Ok(_) => eprintln!("{dest:?} is not a tmpfs"),
+            Err(e) => eprintln!("statfs {dest:?}: {e}"),
+        }
+
+        // set up by the test: dir2 with mode 0777 in the image's directory under the tmpfs
+        let dir2 = dest.join("dir2");
+        match fs::metadata(&dir2) {
+            Ok(m) if m.is_dir() && m.permissions().mode() & 0o7777 == 0o777 => {}
+            Ok(m) => eprintln!(
+                "{dir2:?} was not copied up as a 0777 directory: mode {:o}",
+                m.permissions().mode()
+            ),
+            Err(e) => eprintln!("{dir2:?} was not copied up: {e}"),
+        }
+
+        let readonly = options.iter().any(|o| o == "ro");
+        match (test_dir_write_access(dest.to_str().unwrap()), readonly) {
+            (Ok(()), false) => {}
+            (Err(e), true) if e.raw_os_error() == Some(libc::EROFS) => {}
+            (Ok(()), true) => eprintln!("{dest:?} is writable but mounted ro"),
+            (Err(e), _) => eprintln!("write to {dest:?}: {e}"),
+        }
+    }
+}
