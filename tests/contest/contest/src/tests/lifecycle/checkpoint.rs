@@ -93,11 +93,27 @@ fn bring_up_loopback(project_path: &Path, id: &str) -> Result<(), TestResult> {
     Ok(())
 }
 
-fn is_process_running(pid: i32) -> bool {
+fn is_process_running(pid: i32) -> Result<bool> {
     if pid <= 0 {
-        return false;
+        return Ok(false);
     }
-    Path::new(&format!("/proc/{pid}")).exists()
+    // A /proc entry outlives the process until its parent reaps it, so the
+    // state has to be read, not the entry's existence; the Zombie and Dead
+    // mapping mirrors Container::refresh_status. A read that comes back
+    // NotFound means the process was reaped along the way, which is an
+    // answer, not an error.
+    let process = match procfs::process::Process::new(pid) {
+        Ok(process) => process,
+        Err(procfs::ProcError::NotFound(_)) => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
+    use procfs::process::ProcState;
+    let state = match process.stat().and_then(|s| s.state()) {
+        Ok(state) => state,
+        Err(procfs::ProcError::NotFound(_)) => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
+    Ok(!matches!(state, ProcState::Zombie | ProcState::Dead))
 }
 
 fn checkpoint(
@@ -173,20 +189,38 @@ fn checkpoint(
 
     // Verify process state based on --leave-running flag
     if leave_running {
-        if !is_process_running(pid_before) {
-            return TestResult::Failed(anyhow::anyhow!(
-                "process (pid {}) should still be running after checkpoint with --leave-running, \
-                 but it is gone",
-                pid_before,
-            ));
+        match is_process_running(pid_before) {
+            Ok(false) => {
+                return TestResult::Failed(anyhow::anyhow!(
+                    "process (pid {}) should still be running after checkpoint with \
+                     --leave-running, but it is gone",
+                    pid_before,
+                ));
+            }
+            Ok(true) => {}
+            Err(err) => {
+                return TestResult::Failed(anyhow::anyhow!(
+                    "could not determine whether process (pid {}) is running: {err}",
+                    pid_before,
+                ));
+            }
         }
     } else {
-        if is_process_running(pid_before) {
-            return TestResult::Failed(anyhow::anyhow!(
-                "process (pid {}) should have stopped after checkpoint without --leave-running, \
-                 but it is still running",
-                pid_before,
-            ));
+        match is_process_running(pid_before) {
+            Ok(true) => {
+                return TestResult::Failed(anyhow::anyhow!(
+                    "process (pid {}) should have stopped after checkpoint without \
+                     --leave-running, but it is still running",
+                    pid_before,
+                ));
+            }
+            Ok(false) => {}
+            Err(err) => {
+                return TestResult::Failed(anyhow::anyhow!(
+                    "could not determine whether process (pid {}) is running: {err}",
+                    pid_before,
+                ));
+            }
         }
 
         // Without --leave-running the runtime must fully remove the container
@@ -705,4 +739,71 @@ pub fn checkpoint_empty_net_ns(project_path: &Path, id: &str) -> TestResult {
     }
 
     TestResult::Passed
+}
+
+#[cfg(test)]
+mod is_process_running_tests {
+    use std::fs;
+    use std::process::{Child, Command, id};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    use super::is_process_running;
+
+    // Child does not reap on drop, so a failed assert would leak a zombie;
+    // this guard keeps every test path clean.
+    struct ReapOnDrop(Child);
+
+    impl Drop for ReapOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.wait();
+        }
+    }
+
+    fn spawn_and_exit_child() -> ReapOnDrop {
+        ReapOnDrop(Command::new("true").spawn().expect("failed to spawn child"))
+    }
+
+    // Independent of is_process_running: reads the state character from
+    // /proc/<pid>/stat directly, so the zombie test waits for the state it
+    // asserts on instead of assuming a fixed exit delay.
+    fn proc_state_char(pid: u32) -> Option<char> {
+        let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        // The state is the character after the pid in parentheses; comm may
+        // contain spaces or parentheses, so the last ')' bounds it.
+        let after_comm = stat.rsplit_once(')')?;
+        after_comm.1.trim_start().chars().next()
+    }
+
+    fn wait_for_state(pid: u32, state: char) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if proc_state_char(pid) == Some(state) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("child {pid} did not reach state {state} within 5s");
+    }
+
+    #[test]
+    fn live_process_is_running() {
+        assert!(is_process_running(id() as i32).expect("state of the test process"));
+    }
+
+    #[test]
+    fn reaped_process_is_not_running() {
+        let mut child = spawn_and_exit_child();
+        wait_for_state(child.0.id(), 'Z');
+        let _ = child.0.wait();
+        assert!(!is_process_running(child.0.id() as i32).expect("state of the reaped child"));
+    }
+
+    #[test]
+    fn zombie_process_is_not_running() {
+        let child = spawn_and_exit_child();
+        // The pid keeps its /proc entry as a zombie until wait() reaps it.
+        wait_for_state(child.0.id(), 'Z');
+        assert!(!is_process_running(child.0.id() as i32).expect("state of the zombie child"));
+    }
 }
