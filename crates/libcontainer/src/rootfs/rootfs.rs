@@ -43,15 +43,7 @@ impl RootFS {
         rootfs: &Path,
         cgroup_ns: bool,
     ) -> Result<()> {
-        let mut flags = MsFlags::MS_REC;
-        match linux.rootfs_propagation().as_deref() {
-            Some("shared") => flags |= MsFlags::MS_SHARED,
-            Some("private") => flags |= MsFlags::MS_PRIVATE,
-            Some("slave" | "unbindable") | None => flags |= MsFlags::MS_SLAVE,
-            Some(unknown) => {
-                return Err(RootfsError::UnknownRootfsPropagation(unknown.to_string()));
-            }
-        }
+        let flags = prepare_root_propagation(linux.rootfs_propagation().as_deref())?;
 
         self.syscall
             .mount(None, Path::new("/"), None, flags, None)
@@ -135,7 +127,9 @@ impl RootFS {
         let rootfs_propagation = linux.rootfs_propagation().as_deref();
         let flags = match rootfs_propagation {
             Some("shared") => Some(MsFlags::MS_SHARED),
+            Some("rshared") => Some(MsFlags::MS_SHARED | MsFlags::MS_REC),
             Some("unbindable") => Some(MsFlags::MS_UNBINDABLE),
+            Some("runbindable") => Some(MsFlags::MS_UNBINDABLE | MsFlags::MS_REC),
             _ => None,
         };
 
@@ -154,6 +148,22 @@ impl RootFS {
 
         Ok(())
     }
+}
+
+/// The propagation "/" gets before the rootfs is mounted. The runtime spec names `shared`,
+/// `slave`, `private` and `unbindable`; runc and crun also take the recursive spellings
+/// (`rshared`, `rslave`, `rprivate`, `runbindable`), which Podman writes. This mount is
+/// recursive either way.
+fn prepare_root_propagation(rootfs_propagation: Option<&str>) -> Result<MsFlags> {
+    let flags = match rootfs_propagation {
+        Some("shared" | "rshared") => MsFlags::MS_SHARED,
+        Some("private" | "rprivate") => MsFlags::MS_PRIVATE,
+        Some("slave" | "rslave" | "unbindable" | "runbindable") | None => MsFlags::MS_SLAVE,
+        Some(unknown) => {
+            return Err(RootfsError::UnknownRootfsPropagation(unknown.to_string()));
+        }
+    };
+    Ok(MsFlags::MS_REC | flags)
 }
 
 #[cfg(test)]
@@ -230,5 +240,39 @@ mod tests {
     #[test]
     fn test_ignore_none_inputs_on_root_mount_propagation() -> Result<()> {
         assert_root_mount_propagation(None, None)
+    }
+
+    #[test]
+    fn test_recursive_root_mount_propagation() -> Result<()> {
+        assert_root_mount_propagation(Some("rshared"), Some(MsFlags::MS_SHARED | MsFlags::MS_REC))?;
+        assert_root_mount_propagation(
+            Some("runbindable"),
+            Some(MsFlags::MS_UNBINDABLE | MsFlags::MS_REC),
+        )?;
+        assert_root_mount_propagation(Some("rslave"), None)?;
+        assert_root_mount_propagation(Some("rprivate"), None)
+    }
+
+    #[test]
+    fn test_prepare_root_propagation() {
+        use super::prepare_root_propagation;
+        for (value, want) in [
+            (None, MsFlags::MS_SLAVE),
+            (Some("slave"), MsFlags::MS_SLAVE),
+            (Some("rslave"), MsFlags::MS_SLAVE),
+            (Some("unbindable"), MsFlags::MS_SLAVE),
+            (Some("runbindable"), MsFlags::MS_SLAVE),
+            (Some("shared"), MsFlags::MS_SHARED),
+            (Some("rshared"), MsFlags::MS_SHARED),
+            (Some("private"), MsFlags::MS_PRIVATE),
+            (Some("rprivate"), MsFlags::MS_PRIVATE),
+        ] {
+            assert_eq!(
+                prepare_root_propagation(value).unwrap(),
+                MsFlags::MS_REC | want,
+                "{value:?}"
+            );
+        }
+        assert!(prepare_root_propagation(Some("rsomething")).is_err());
     }
 }

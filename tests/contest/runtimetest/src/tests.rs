@@ -1247,7 +1247,7 @@ pub fn validate_rootfs_propagation(spec: &Spec) {
     let target_path = target_dir.path();
 
     match propagation.as_str() {
-        "shared" | "slave" | "private" => {
+        "shared" | "slave" | "private" | "rshared" | "rslave" | "rprivate" => {
             if let Err(e) = mount(
                 Some("/"),
                 target_dir.path(),
@@ -1292,7 +1292,7 @@ pub fn validate_rootfs_propagation(spec: &Spec) {
             let file_visible = target_file.exists();
 
             match propagation.as_str() {
-                "shared" => {
+                "shared" | "rshared" => {
                     if !file_visible {
                         eprintln!(
                             "Error: shared root propagation failed to expose {:?}",
@@ -1300,7 +1300,7 @@ pub fn validate_rootfs_propagation(spec: &Spec) {
                         );
                     }
                 }
-                "slave" | "private" => {
+                "slave" | "private" | "rslave" | "rprivate" => {
                     if file_visible {
                         eprintln!(
                             "Error: {} root propagation unexpectedly exposed {:?}",
@@ -1311,7 +1311,7 @@ pub fn validate_rootfs_propagation(spec: &Spec) {
                 _ => unreachable!(),
             }
         }
-        "unbindable" => {
+        "unbindable" | "runbindable" => {
             if let Err(e) = mount(
                 Some("/"),
                 target_dir.path(),
