@@ -12,11 +12,13 @@ use libcgroups::common::CgroupSetup::{Hybrid, Legacy, Unified};
 #[cfg(feature = "v1")]
 use libcgroups::common::DEFAULT_CGROUP_ROOT;
 use nix::NixPath;
+use nix::dir::Dir;
 use nix::errno::Errno;
-use nix::fcntl::{OFlag, open};
+use nix::fcntl::{AtFlags, OFlag, open, openat, readlinkat};
 use nix::mount::MsFlags;
-use nix::sys::stat::{Mode, fstat};
+use nix::sys::stat::{FchmodatFlags, Mode, SFlag, fchmodat, fstat, fstatat, mkdirat, mknodat};
 use nix::sys::statfs::{PROC_SUPER_MAGIC, statfs};
+use nix::unistd::{Gid, Uid, fchownat, symlinkat};
 use oci_spec::runtime::{Mount as SpecMount, MountBuilder as SpecMountBuilder};
 use pathrs::Root;
 use pathrs::flags::OpenFlags;
@@ -1064,11 +1066,6 @@ impl Mount {
 /// regular files, directories, symlinks, and device nodes, fifos and sockets as nodes. Like crun's
 /// copy_recursive_fd_to_fd(), it works on directory fds and never follows a symlink in `src`.
 fn copy_recursive_fd_to_fd(src: BorrowedFd, dst: BorrowedFd) -> std::io::Result<()> {
-    use nix::dir::Dir;
-    use nix::fcntl::{AtFlags, openat, readlinkat};
-    use nix::sys::stat::{FchmodatFlags, SFlag, fchmodat, fstatat, mkdirat, mknodat};
-    use nix::unistd::{Gid, Uid, fchownat, symlinkat};
-
     let dir_flags = OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
     for entry in Dir::openat(src, ".", dir_flags, Mode::empty())?.into_iter() {
         let entry = entry?;
