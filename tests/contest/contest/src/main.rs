@@ -63,6 +63,7 @@ use crate::tests::state::get_state_test;
 use crate::tests::sysctl::get_sysctl_test;
 use crate::tests::terminal::get_terminal_test;
 use crate::tests::time_ns::get_time_ns_test;
+use crate::tests::tmpcopyup::get_tmpcopyup_test;
 use crate::tests::uid_mappings::get_uid_mappings_test;
 use crate::tests::update::get_update_test;
 use crate::utils::support::{set_runtime_path, set_runtimetest_path};
@@ -144,6 +145,7 @@ fn main() -> Result<()> {
     let create_runtime = get_create_runtime_tests();
     let prestart_fail = get_prestart_fail_tests();
     let cgroup_v2_cpu = cgroups::cpu::v2::get_test_group();
+    let cgroup_v2_cpuset = cgroups::cpuset::get_test_group();
     let cgroup_v2_memory = cgroups::memory::get_test_group();
     let cgroup_v2_pids = cgroups::pids::get_test_group();
     let seccomp = get_seccomp_test();
@@ -190,6 +192,7 @@ fn main() -> Result<()> {
     let checkpoint_restore = get_checkpoint_restore_tests();
     let update = get_update_test();
     let time_ns = get_time_ns_test();
+    let tmpcopyup = get_tmpcopyup_test();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -206,6 +209,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(create_runtime));
     tm.add_test_group(Box::new(prestart_fail));
     tm.add_test_group(Box::new(cgroup_v2_cpu));
+    tm.add_test_group(Box::new(cgroup_v2_cpuset));
     tm.add_test_group(Box::new(cgroup_v2_memory));
     tm.add_test_group(Box::new(cgroup_v2_pids));
     tm.add_test_group(Box::new(seccomp));
@@ -252,6 +256,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(checkpoint_restore));
     tm.add_test_group(Box::new(update));
     tm.add_test_group(Box::new(time_ns));
+    tm.add_test_group(Box::new(tmpcopyup));
     tm.add_cleanup(Box::new(cgroups::cleanup_v2));
 
     match opts.command {

@@ -64,6 +64,7 @@ fn main() {
         "net_devices" => tests::validate_net_devices(&spec),
         "time_offsets" => tests::validate_time_offsets(&spec),
         "default_symlinks" => tests::validate_default_symlinks(&spec),
+        "tmpcopyup" => tests::validate_tmpcopyup(&spec),
         _ => eprintln!("error due to unexpected execute test name: {execute_test}"),
     }
 }
