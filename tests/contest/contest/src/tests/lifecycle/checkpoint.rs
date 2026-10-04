@@ -743,10 +743,9 @@ pub fn checkpoint_empty_net_ns(project_path: &Path, id: &str) -> TestResult {
 
 #[cfg(test)]
 mod is_process_running_tests {
-    use std::fs;
     use std::process::{Child, Command, id};
-    use std::thread;
     use std::time::{Duration, Instant};
+    use std::{fs, thread};
 
     use super::is_process_running;
 
