@@ -16,6 +16,7 @@ use super::cpuset::CpuSet;
 use super::dbus_native::client::SystemdClient;
 use super::dbus_native::dbus::DbusConnection;
 use super::dbus_native::utils::SystemdClientError;
+use super::devices::Devices;
 use super::memory::Memory;
 use super::pids::Pids;
 use crate::common::{
@@ -60,6 +61,8 @@ pub struct Manager {
     delegation_boundary: PathBuf,
     /// Duration to wait for a specific PID to be added to a cgroup
     cgroup_wait_timeout_duration: Duration,
+    /// Whether the manager operates in a rootless environment
+    rootless: bool,
 }
 
 /// Represents the systemd cgroups path:
@@ -174,6 +177,11 @@ pub enum SystemdManagerError {
     Cpu(#[from] super::cpu::SystemdCpuError),
     #[error("in cpuset controller: {0}")]
     CpuSet(#[from] super::cpuset::SystemdCpuSetError),
+    #[error("in devices controller: {0}")]
+    Devices(#[from] super::devices::SystemdDevicesError),
+    #[cfg(feature = "cgroupsv2_devices")]
+    #[error("in ebpf devices controller: {0}")]
+    EbpfDevices(#[from] crate::v2::devices::controller::DevicesControllerError),
     #[error("in io controller: {0}")]
     Io(#[from] super::io::SystemdIoError),
     #[error("in memory controller: {0}")]
@@ -282,6 +290,7 @@ impl Manager {
                         fs_manager,
                         delegation_boundary,
                         cgroup_wait_timeout_duration,
+                        rootless: false,
                     });
                 }
                 Err(e) if !is_eagain(&e) => return Err(e),
@@ -315,6 +324,15 @@ impl Manager {
             CONNECT_MAX_RETRIES, err_msg
         )))
         .into())
+    }
+
+    /// Marks the manager as operating in a rootless environment.
+    ///
+    /// Rootless containers usually cannot load an eBPF device filter, so failing to apply
+    /// the device rules is not fatal there, as in runc's fs2 manager.
+    pub fn with_rootless(mut self, rootless: bool) -> Self {
+        self.rootless = rootless;
+        self
     }
 
     // split_sub_cgroup splits the unit `name` into the base unit name and the
@@ -548,6 +566,10 @@ impl CgroupManager for Manager {
                     CpuSet::apply(controller_opt, systemd_version, &mut properties)?;
                 }
 
+                ControllerType::Devices => {
+                    Devices::apply(controller_opt, systemd_version, &mut properties)?;
+                }
+
                 ControllerType::Pids => {
                     Pids::apply(controller_opt, systemd_version, &mut properties)
                         .map_err(SystemdManagerError::Pids)?;
@@ -568,6 +590,28 @@ impl CgroupManager for Manager {
             self.ensure_controllers_attached()?;
             self.client
                 .set_unit_properties(&self.unit_name, &properties)?;
+        }
+
+        // systemd derives a device filter from DeviceAllow and attaches it every time
+        // unit properties are set, so this has to run afterwards to replace it. A rule
+        // DeviceAllow cannot express, a deny rule above all, is only honoured by the
+        // program built here.
+        #[cfg(feature = "cgroupsv2_devices")]
+        match crate::v2::devices::Devices::apply_devices(
+            &self.full_path,
+            controller_opt.resources.devices(),
+        ) {
+            Ok(()) => {}
+            // Like runc, treat device rules as best effort in rootless mode instead of
+            // failing the container.
+            Err(err) if self.rootless => {
+                tracing::warn!(
+                    "rootless cgroup: cannot apply device rules to {:?}: {err}; \
+                     skipping device cgroup",
+                    self.full_path
+                );
+            }
+            Err(err) => return Err(err.into()),
         }
 
         Ok(())
