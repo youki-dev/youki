@@ -599,6 +599,13 @@ impl Mount {
         let root = Root::open(rootfs)?;
         let container_dest = m.destination();
 
+        // If the original target exists, copy its mode for the tmpfs mount.
+        if typ == Some("tmpfs") && !data_options.iter().any(|o| o.starts_with("mode=")) {
+            if let Some(mode) = existing_dest_mode(&root, container_dest)? {
+                data_options.push(format!("mode={mode:04o}"));
+            }
+        }
+
         let source = m.source().as_ref().ok_or(MountError::NoSource)?;
         let dir_perm = Permissions::from_mode(0o755);
         let src_fd = if is_bind(m) {
@@ -1118,6 +1125,20 @@ fn copy_recursive_fd_to_fd(src: BorrowedFd, dst: BorrowedFd) -> std::io::Result<
     Ok(())
 }
 
+/// Returns the mode bits of dest inside root if it exists, or None if it does not.
+fn existing_dest_mode(root: &Root, dest: &Path) -> Result<Option<u32>> {
+    match root.resolve(dest) {
+        Ok(handle) => {
+            let fd: OwnedFd = handle.into();
+            Ok(Some(fstat(&fd)?.st_mode & 0o7777))
+        }
+        Err(err) => match err.kind() {
+            pathrs::error::ErrorKind::OsError(Some(libc::ENOENT)) => Ok(None),
+            _ => Err(err.into()),
+        },
+    }
+}
+
 /// Find parent mount of rootfs in given mount infos
 pub fn find_parent_mount(
     rootfs: &Path,
@@ -1467,6 +1488,55 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_mount_into_container_tmpfs_mode() -> Result<()> {
+        let fsconfig_mode =
+            |options: Vec<&str>, dest: &str, rootfs: &Path| -> Result<Option<String>> {
+                let m = Mount::new();
+                let mount = &SpecMountBuilder::default()
+                    .destination(PathBuf::from(dest))
+                    .typ("tmpfs")
+                    .source(PathBuf::from("tmpfs"))
+                    .options(options.into_iter().map(String::from).collect::<Vec<_>>())
+                    .build()?;
+                let mount_option_config = parse_mount(mount)?;
+                m.mount_into_container(mount, rootfs, &mount_option_config, None)?;
+
+                let mode = helper_syscall(&m)
+                    .get_fsconfig_args()
+                    .into_iter()
+                    .find(|args| args.key.as_deref() == Some("mode"))
+                    .map(|args| args.val.unwrap_or_default());
+                Ok(mode)
+            };
+
+        let tmp_dir = tempfile::tempdir()?;
+        fs::create_dir(tmp_dir.path().join("run"))?;
+        fs::set_permissions(tmp_dir.path().join("run"), Permissions::from_mode(0o700))?;
+        fs::create_dir(tmp_dir.path().join("shm"))?;
+        fs::set_permissions(tmp_dir.path().join("shm"), Permissions::from_mode(0o1777))?;
+
+        // An existing directory lends its mode to the tmpfs, including the sticky bit.
+        assert_eq!(
+            fsconfig_mode(vec!["nosuid"], "/run", tmp_dir.path())?,
+            Some("0700".to_string())
+        );
+        assert_eq!(
+            fsconfig_mode(vec!["nosuid"], "/shm", tmp_dir.path())?,
+            Some("1777".to_string())
+        );
+        // An explicit mode= option wins.
+        assert_eq!(
+            fsconfig_mode(vec!["nosuid", "mode=755"], "/run", tmp_dir.path())?,
+            Some("755".to_string())
+        );
+        // A destination that is created for the mount keeps the kernel default.
+        assert_eq!(
+            fsconfig_mode(vec!["nosuid"], "/missing/dir", tmp_dir.path())?,
+            None
+        );
+        Ok(())
+    }
     struct FakeMountInfo {
         entries: Vec<MountInfo>,
     }
