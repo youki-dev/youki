@@ -45,5 +45,5 @@ pub fn exec(args: Exec, root_path: PathBuf) -> Result<i32> {
         return Ok(0);
     }
 
-    foreground::handle_foreground(pid, foreground_pty_fd)
+    foreground::handle_foreground(pid, foreground_pty_fd, None)
 }

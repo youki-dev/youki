@@ -23,6 +23,7 @@ pub mod run;
 pub mod spec_json;
 pub mod start;
 pub mod state;
+pub mod stdio;
 pub mod update;
 
 fn construct_container_root<P: AsRef<Path>>(root_path: P, container_id: &str) -> Result<PathBuf> {
