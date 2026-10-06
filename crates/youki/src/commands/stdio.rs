@@ -7,11 +7,12 @@ use std::thread;
 
 use anyhow::{Context, Result};
 use libcontainer::container::builder::ContainerBuilder;
+use nix::errno::Errno;
 use nix::fcntl::OFlag;
 use nix::libc;
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use nix::sys::eventfd::{EfdFlags, EventFd};
-use nix::unistd::{self, Gid, Uid, pipe2};
+use nix::unistd::{self, Gid, Pid, Uid, pipe2};
 use oci_spec::runtime::{LinuxIdMapping, LinuxIdMappingBuilder, LinuxNamespaceType, Spec};
 
 // Pipe endpoint ownership (arrows show the intended data flow):
@@ -20,7 +21,7 @@ use oci_spec::runtime::{LinuxIdMapping, LinuxIdMappingBuilder, LinuxNamespaceTyp
 // stdin:      write end  -----------------> read end
 // stdout:     read end   <----------------- write end
 // stderr:     read end   <----------------- write end
-pub(crate) fn create_stdio_pipes() -> nix::Result<(HostStdio, ContainerStdio)> {
+fn create_stdio_pipes() -> nix::Result<(HostStdio, ContainerStdio)> {
     let (stdin_read, stdin_write) = pipe2(OFlag::O_CLOEXEC)?;
     let (stdout_read, stdout_write) = pipe2(OFlag::O_CLOEXEC)?;
     let (stderr_read, stderr_write) = pipe2(OFlag::O_CLOEXEC)?;
@@ -37,6 +38,27 @@ pub(crate) fn create_stdio_pipes() -> nix::Result<(HostStdio, ContainerStdio)> {
             stderr: stderr_write,
         },
     ))
+}
+
+/// Creates the stdio pipes and gives the container ends to `uid` and `gid`.
+pub(crate) fn create_stdio_pipes_owned_by(
+    uid: Uid,
+    gid: Gid,
+) -> nix::Result<(HostStdio, ContainerStdio)> {
+    let (host, container) = create_stdio_pipes()?;
+    match container.set_owner(uid, gid) {
+        Ok(()) => {}
+        // Rootless youki cannot chown to a subordinate UID. The pipes
+        // stay owned by youki: relaying still works, but the container
+        // user may not reopen them, as with inherited stdio.
+        Err(Errno::EPERM) => tracing::warn!(
+            %uid,
+            %gid,
+            "cannot chown the stdio pipes to the container user"
+        ),
+        Err(err) => return Err(err),
+    }
+    Ok((host, container))
 }
 
 pub(crate) struct HostStdio {
@@ -156,18 +178,34 @@ pub(crate) fn pipe_owner(spec: &Spec) -> Result<Option<(Uid, Gid)>> {
             )
         }
         // A joined user namespace uses the mappings of a process inside it.
-        Some(Some(path)) => match proc_pid(path) {
-            Some(pid) => (
-                read_id_mappings(pid, "uid_map")?,
-                read_id_mappings(pid, "gid_map")?,
-            ),
-            None => return Ok(None),
-        },
+        Some(Some(path)) => {
+            return match proc_pid(path) {
+                Some(pid) => pipe_owner_from_proc(pid, uid).map(Some),
+                None => Ok(None),
+            };
+        }
     };
 
     let host_uid = map_to_host_id(uid, &uid_mappings).context("container UID is not mapped")?;
     let host_gid = map_to_host_id(0, &gid_mappings).context("container root GID is not mapped")?;
     Ok(Some((Uid::from_raw(host_uid), Gid::from_raw(host_gid))))
+}
+
+/// Returns the host IDs that should own the stdio pipes, like [`pipe_owner`],
+/// using the ID mappings of `pid`. `pid` must be in the container's user
+/// namespace, such as the init of a running container. No special case is
+/// needed without a user namespace: the mappings are then the identity mapping.
+pub(crate) fn pipe_owner_from_proc(pid: Pid, uid_in_container: u32) -> Result<(Uid, Gid)> {
+    let uid = host_id_from_proc(pid, uid_in_container, "uid_map")?;
+    let gid = host_id_from_proc(pid, 0, "gid_map")?;
+    Ok((Uid::from_raw(uid), Gid::from_raw(gid)))
+}
+
+/// Maps a container ID to the host ID through `/proc/<pid>/<file>`.
+fn host_id_from_proc(pid: Pid, id_in_container: u32, file: &str) -> Result<u32> {
+    let mappings = read_id_mappings(pid, file)?;
+    map_to_host_id(id_in_container, &mappings)
+        .with_context(|| format!("container ID {id_in_container} is not mapped in {file}"))
 }
 
 fn map_to_host_id(id_in_container: u32, mappings: &[LinuxIdMapping]) -> Option<u32> {
@@ -182,16 +220,16 @@ fn map_to_host_id(id_in_container: u32, mappings: &[LinuxIdMapping]) -> Option<u
 }
 
 /// Extracts `<pid>` from a `/proc/<pid>/ns/user` path.
-fn proc_pid(path: &Path) -> Option<u32> {
+fn proc_pid(path: &Path) -> Option<Pid> {
     let pid = path
         .to_str()?
         .strip_prefix("/proc/")?
         .strip_suffix("/ns/user")?;
-    pid.parse().ok().filter(|pid| *pid > 0)
+    pid.parse().ok().filter(|pid| *pid > 0).map(Pid::from_raw)
 }
 
 /// Reads `/proc/<pid>/uid_map` or `/proc/<pid>/gid_map`.
-fn read_id_mappings(pid: u32, file: &str) -> Result<Vec<LinuxIdMapping>> {
+fn read_id_mappings(pid: Pid, file: &str) -> Result<Vec<LinuxIdMapping>> {
     let path = format!("/proc/{pid}/{file}");
     let text = fs::read_to_string(&path).with_context(|| format!("failed to read {path}"))?;
     text.lines()

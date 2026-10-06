@@ -4,7 +4,6 @@ use anyhow::{Context, Result};
 use libcontainer::container::builder::ContainerBuilder;
 use libcontainer::syscall::syscall::SyscallType;
 use liboci_cli::Run;
-use nix::errno::Errno;
 use oci_spec::runtime::Spec;
 
 use crate::commands::{foreground, stdio};
@@ -33,20 +32,14 @@ pub fn run(args: Run, root_path: PathBuf, systemd_cgroup: bool) -> Result<i32> {
     if !args.detach && !terminal {
         // Without a known owner, the container keeps inheriting youki's stdio.
         if let Some((uid, gid)) = stdio::pipe_owner(&spec)? {
-            let (host, container) = stdio::create_stdio_pipes()?;
-            match container.set_owner(uid, gid) {
-                Ok(()) => {}
-                // Rootless youki cannot chown to a subordinate UID. The pipes
-                // stay owned by youki: relaying still works, but the container
-                // user may not reopen them, as with inherited stdio.
-                Err(Errno::EPERM) => tracing::warn!(
-                    %uid,
-                    %gid,
-                    "cannot chown the stdio pipes to the container user"
-                ),
-                Err(err) => return Err(err.into()),
-            }
-            builder = container.apply_to(builder);
+            let (host, container_stdio) = stdio::create_stdio_pipes_owned_by(uid, gid)
+                .with_context(|| {
+                    format!(
+                        "failed to create stdio pipes for container {}",
+                        args.container_id
+                    )
+                })?;
+            builder = container_stdio.apply_to(builder);
             host_stdio = Some(host);
         }
     }

@@ -243,6 +243,10 @@ pub fn get_terminal_test() -> TestGroup {
             Box::new(run_tests::terminal_large_output_test),
         )),
         Box::new(Test::new(
+            "terminal_exec_false_stdio_pipes",
+            Box::new(exec_tests::terminal_exec_false_stdio_pipes_test),
+        )),
+        Box::new(Test::new(
             "terminal_exec_no_console_socket",
             Box::new(exec_tests::terminal_exec_no_console_socket_test),
         )),
