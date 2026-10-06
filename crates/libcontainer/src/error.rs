@@ -60,10 +60,14 @@ pub enum LibcontainerError {
     CgroupCreate(#[from] libcgroups::common::CreateCgroupSetupError),
     #[error(transparent)]
     CgroupGet(#[from] libcgroups::common::GetCgroupSetupError),
-    #[error[transparent]]
+    #[error(transparent)]
     Checkpoint(#[from] crate::container::CheckpointError),
-    #[error[transparent]]
+    #[error(transparent)]
+    Restore(#[from] crate::container::RestoreError),
+    #[error(transparent)]
     CreateContainerError(#[from] CreateContainerError),
+    #[error(transparent)]
+    RestoreContainerError(#[from] RestoreContainerError),
     #[error(transparent)]
     NetworkError(#[from] crate::network::NetworkError),
     #[error(transparent)]
@@ -176,11 +180,35 @@ impl std::fmt::Display for CreateContainerError {
     }
 }
 
+/// Pairs the error that made a restore fail with any error hit while cleaning up
+/// after it, so neither is lost. Mirrors [`CreateContainerError`].
+#[derive(Debug, thiserror::Error)]
+pub struct RestoreContainerError(Box<LibcontainerError>, Option<Box<LibcontainerError>>);
+
+impl RestoreContainerError {
+    pub(crate) fn new(
+        restore_error: LibcontainerError,
+        cleanup_error: Option<LibcontainerError>,
+    ) -> Self {
+        Self(Box::new(restore_error), cleanup_error.map(Box::new))
+    }
+}
+
+impl std::fmt::Display for RestoreContainerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "failed to restore container: {}", self.0)?;
+        if let Some(cleanup_err) = &self.1 {
+            write!(f, ". error during cleanup: {}", cleanup_err)?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use libcgroups::common::CreateCgroupSetupError;
 
-    use super::{CreateContainerError, ErrInvalidID};
+    use super::{CreateContainerError, ErrInvalidID, RestoreContainerError};
 
     #[test]
     fn test_create_container() {
@@ -203,6 +231,28 @@ mod tests {
             msg
         );
     }
+    #[test]
+    fn test_restore_container() {
+        let restore_container_err =
+            RestoreContainerError::new(CreateCgroupSetupError::NonDefault.into(), None);
+        let msg = format!("{}", restore_container_err);
+        assert_eq!(
+            "failed to restore container: non default cgroup root not supported",
+            msg
+        );
+
+        let restore_container_err = RestoreContainerError::new(
+            CreateCgroupSetupError::NonDefault.into(),
+            Some(ErrInvalidID::Empty.into()),
+        );
+        let msg = format!("{}", restore_container_err);
+        assert_eq!(
+            "failed to restore container: non default cgroup root not supported. \
+         error during cleanup: container id can't be empty",
+            msg
+        );
+    }
+
     #[test]
     fn test_libcontainer_error_msg() {
         use crate::container::ContainerStatus::*;
