@@ -18,7 +18,7 @@ fi
 cp "$RUNTIME" "$RUNC_DIR/runc"
 chmod +x "$RUNC_DIR/runc"
 
-cd "$RUNC_DIR"
+cd "$RUNC_DIR" || exit
 
 sudo make test-binaries
 
@@ -31,6 +31,6 @@ for name in "${TEST_NAMES[@]}"; do
 
   # escape [](){}+?*.,'
   TEST_CASE=$(echo "$name" | sed 's/\\/\\\\/g; s/\[/\\[/g; s/\]/\\]/g; s/(/\\(/g; s/)/\\)/g; s/+/\\+/g; s/?/\\?/g; s/*/\\*/g; s/\./\\./g; s/{/\\{/g; s/}/\\}/g; s/,/\\,/g;')
-  echo $TEST_CASE
+  echo "$TEST_CASE"
   sudo -E PATH="$PATH" script -q -e -c "bats  -f \"^$TEST_CASE$\" -t tests/integration"
 done

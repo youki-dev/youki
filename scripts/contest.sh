@@ -9,8 +9,8 @@ if [ "$RUNTIME" = "" ]; then
     exit 1
 fi
 
-if [ ! -e $RUNTIME ]; then
-  if ! which $RUNTIME ; then
+if [ ! -e "$RUNTIME" ]; then
+  if ! which "$RUNTIME" ; then
     echo "$RUNTIME not found"
     exit 1
   fi
@@ -21,7 +21,7 @@ LOGFILE="${ROOT}/test.log"
 # Pick arch-specific bundle when available.
 # Fall back to bundle.tar.gz (x86_64) if there is no
 # arch-specific tarball.
-if [ ! -f ${ROOT}/bundle.tar.gz ]; then
+if [ ! -f "${ROOT}"/bundle.tar.gz ]; then
     ARCH=$(uname -m)
     ARCH_BUNDLE="${ROOT}/tests/contest/contest/bundle-${ARCH}.tar.gz"
     DEFAULT_BUNDLE="${ROOT}/tests/contest/contest/bundle.tar.gz"
@@ -32,15 +32,15 @@ if [ ! -f ${ROOT}/bundle.tar.gz ]; then
         cp "${DEFAULT_BUNDLE}" "${ROOT}/bundle.tar.gz"
     fi
 fi
-touch ${LOGFILE}
+touch "${LOGFILE}"
 
 if [ $# -gt 0 ]; then
-    ${ROOT}/contest run --runtime "$RUNTIME" --runtimetest "${ROOT}/runtimetest" -t "$@" 2>&1 | tee "$LOGFILE"
+    "${ROOT}"/contest run --runtime "$RUNTIME" --runtimetest "${ROOT}/runtimetest" -t "$@" 2>&1 | tee "$LOGFILE"
 else
-    ${ROOT}/contest run --runtime "$RUNTIME" --runtimetest "${ROOT}/runtimetest" 2>&1 | tee "$LOGFILE"
+    "${ROOT}"/contest run --runtime "$RUNTIME" --runtimetest "${ROOT}/runtimetest" 2>&1 | tee "$LOGFILE"
 fi
 
-if [ 0 -ne $(grep "not ok" $LOGFILE | wc -l ) ]; then
+if grep -q "not ok" "$LOGFILE"; then
     exit 1
 fi
 

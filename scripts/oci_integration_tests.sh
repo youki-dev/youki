@@ -5,7 +5,7 @@ ROOT=$(git rev-parse --show-toplevel)
 RUNTIME=${1:-.}/youki
 OCI_TEST_DIR=${ROOT}/tests/oci-runtime-tests/src/github.com/opencontainers/runtime-tools
 PATTERN=${2:-.}
-cd $OCI_TEST_DIR
+cd "$OCI_TEST_DIR"
 
 test_cases=(
   "create/create.t"
@@ -94,7 +94,7 @@ check_environment() {
 }
 
 if [[ ! -e $RUNTIME ]]; then
-  if ! which $RUNTIME ; then
+  if ! which "$RUNTIME" ; then
     echo "$RUNTIME not found"
     exit 1
   fi
@@ -109,25 +109,25 @@ done
 
 
 for case in "${test_cases[@]}"; do
-  if ! check_environment $case; then
+  if ! check_environment "$case"; then
     echo "Skip $case because your environment doesn't support this test case"
     continue
   fi
 
-  if [ $PATTERN != "." ] && [[ ! $case =~ $PATTERN ]]; then
+  if [ "$PATTERN" != "." ] && [[ ! $case =~ $PATTERN ]]; then
     continue
   fi
 
   echo "Running $case"
   logfile="./log/$case.log"
-  mkdir -p "$(dirname $logfile)"
-  sudo RUST_BACKTRACE=1 RUNTIME=${RUNTIME} ${OCI_TEST_DIR}/validation/$case >$logfile 2>&1 || (cat $logfile && exit 1)
-  if [ 0 -ne $(grep "not ok" $logfile | wc -l ) ]; then
-    if [ 0 -eq $(grep "# cgroupv2 is not supported yet " $logfile | wc -l ) ]; then
+  mkdir -p "$(dirname "$logfile")"
+  sudo RUST_BACKTRACE=1 RUNTIME="${RUNTIME}" "${OCI_TEST_DIR}"/validation/"$case" >"$logfile" 2>&1 || (cat "$logfile" && exit 1)
+  if grep -q "not ok" "$logfile"; then
+    if ! grep -q "# cgroupv2 is not supported yet " "$logfile"; then
       echo "Skip $case because oci-runtime-tools doesn't support cgroup v2"
       continue;
     fi
-    cat $logfile
+    cat "$logfile"
     exit 1
   fi
   sleep 1
