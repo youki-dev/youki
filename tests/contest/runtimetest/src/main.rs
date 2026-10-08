@@ -1,3 +1,4 @@
+mod io_uring;
 mod tests;
 mod utils;
 
@@ -65,6 +66,7 @@ fn main() {
         "time_offsets" => tests::validate_time_offsets(&spec),
         "default_symlinks" => tests::validate_default_symlinks(&spec),
         "tmpcopyup" => tests::validate_tmpcopyup(&spec),
+        "io_uring" => io_uring::validate_io_uring(),
         _ => eprintln!("error due to unexpected execute test name: {execute_test}"),
     }
 }

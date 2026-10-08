@@ -15,6 +15,7 @@ errno = "0.3.14"
 fastrand = "^2.3.0"
 fixedbitset = "0.5.7"
 flate2 = "1.1"
+io-uring = "0.7"
 libbpf-sys = "1.6.4"
 libc = "0.2.186"
 liboci-cli = { version = "0.7.0", path = "crates/liboci-cli" } # MARK: Version

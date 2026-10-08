@@ -14,6 +14,7 @@ pub mod hooks;
 pub mod hostname;
 pub mod intel_rdt;
 pub mod io_priority;
+pub mod io_uring;
 pub mod kill;
 pub mod kill_no_effect;
 pub mod killsig;
