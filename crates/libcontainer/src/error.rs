@@ -96,6 +96,8 @@ pub enum ErrInvalidID {
 pub enum ErrInvalidSpec {
     #[error("runtime spec has incompatible version. Only 1.X.Y is supported")]
     UnsupportedVersion,
+    #[error(transparent)]
+    IoUring(#[from] crate::io_uring::IoUringError),
     #[error("apparmor is specified but not enabled on this system")]
     AppArmorNotEnabled,
     #[error("invalid io priority or class.")]

@@ -36,7 +36,7 @@ use crate::rootfs::device::{open_device_fd, verify_dev_null};
 use crate::seccomp;
 use crate::syscall::{Syscall, SyscallError};
 use crate::user_ns::UserNamespaceConfig;
-use crate::{apparmor, capabilities, hooks, tty, utils};
+use crate::{apparmor, capabilities, hooks, io_uring, tty, utils};
 
 // Some variables are unused in the case where libseccomp feature is not enabled.
 #[allow(unused_variables)]
@@ -359,6 +359,17 @@ pub fn container_init_process(
                 err
             },
         )?;
+    }
+
+    // io_uring restrictions (experimental, dev.youki.io_uring annotation) go
+    // before seccomp, which may deny io_uring_register, and before
+    // capabilities are dropped: like seccomp, registering them needs
+    // CAP_SYS_ADMIN in the user namespace or no_new_privs.
+    if let Some(policy) = io_uring::policy_from_spec(ctx.spec)? {
+        io_uring::apply(&policy).map_err(|err| {
+            tracing::error!(?err, "failed to apply io_uring restrictions");
+            err
+        })?;
     }
 
     // Without no new privileges, seccomp is a privileged operation. We have to
