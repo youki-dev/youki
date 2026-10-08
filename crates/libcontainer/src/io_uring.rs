@@ -14,7 +14,8 @@
 //! {
 //!   "defaultAction": "deny",
 //!   "ops": ["IORING_OP_READ", "IORING_OP_WRITE", "IORING_OP_SOCKET"],
-//!   "socketFamilies": ["AF_UNIX", "AF_INET", "AF_INET6"]
+//!   "socketFamilies": ["AF_UNIX", "AF_INET", "AF_INET6"],
+//!   "deniedSqeFlags": ["IOSQE_BUFFER_SELECT"]
 //! }
 //! ```
 //!
@@ -22,6 +23,8 @@
 //!   (allow only `ops`) or `allow` (deny only `ops`).
 //! - `socketFamilies`, when present, limits `IORING_OP_SOCKET` to these
 //!   address families whenever the socket opcode is allowed.
+//! - `deniedSqeFlags`, when present, denies any allowed operation submitted
+//!   with one of these SQE flags (e.g. provided-buffer selection).
 //!
 //! The policy is built only from BPF filters, never from the one-shot opcode
 //! allowlist (`IORING_REGISTER_RESTRICTIONS`). That keeps the SQE flags
@@ -43,6 +46,14 @@ const IO_URING_BPF_FILTER_DENY_REST: u32 = 1;
 /// Offset of the per-opcode data in `struct io_uring_bpf_ctx`; for
 /// `IORING_OP_SOCKET` the first word is the address family.
 const BPF_CTX_PDU_OFFSET: u32 = 16;
+/// Offset of the word holding `opcode`, `sqe_flags`, `pdu_size` and a pad
+/// byte in `struct io_uring_bpf_ctx`. Filters may only load aligned words.
+const BPF_CTX_HDR_OFFSET: u32 = 8;
+/// Shift of the `sqe_flags` byte (ctx offset 9) within that word.
+#[cfg(target_endian = "little")]
+const SQE_FLAGS_SHIFT: u32 = 8;
+#[cfg(target_endian = "big")]
+const SQE_FLAGS_SHIFT: u32 = 16;
 
 // Classic BPF instruction classes and modes, from <linux/filter.h>.
 const BPF_LD: u16 = 0x00;
@@ -50,8 +61,20 @@ const BPF_W: u16 = 0x00;
 const BPF_ABS: u16 = 0x20;
 const BPF_JMP: u16 = 0x05;
 const BPF_JEQ: u16 = 0x10;
+const BPF_JSET: u16 = 0x40;
 const BPF_K: u16 = 0x00;
 const BPF_RET: u16 = 0x06;
+
+/// SQE flags by name, in `IOSQE_*_BIT` order.
+const SQE_FLAGS: &[&str] = &[
+    "IOSQE_FIXED_FILE",
+    "IOSQE_IO_DRAIN",
+    "IOSQE_IO_LINK",
+    "IOSQE_IO_HARDLINK",
+    "IOSQE_ASYNC",
+    "IOSQE_BUFFER_SELECT",
+    "IOSQE_CQE_SKIP_SUCCESS",
+];
 
 /// io_uring opcodes by name, in `enum io_uring_op` order (Linux 7.2).
 const OPS: &[&str] = &[
@@ -133,6 +156,8 @@ pub enum IoUringError {
     UnknownOp(String),
     #[error("unknown socket address family {0}")]
     UnknownFamily(String),
+    #[error("unknown io_uring SQE flag {0}")]
+    UnknownSqeFlag(String),
     #[error(
         "io_uring restrictions are not supported by this kernel (Linux 7.0 or newer is required)"
     )]
@@ -161,14 +186,17 @@ pub struct IoUringPolicy {
     #[serde(default)]
     pub ops: Vec<String>,
     pub socket_families: Option<Vec<String>>,
+    pub denied_sqe_flags: Option<Vec<String>>,
 }
 
-/// A policy resolved to opcode and family numbers, ready to load.
+/// A policy resolved to opcode, family and flag numbers, ready to load.
 #[derive(Debug, PartialEq, Eq)]
 pub struct CompiledPolicy {
     default_action: Action,
     ops: BTreeSet<u32>,
     socket_families: Option<Vec<u32>>,
+    /// IOSQE_* bits that deny an otherwise allowed operation.
+    denied_sqe_flags: u8,
 }
 
 /// One BPF program to register for one opcode.
@@ -177,6 +205,9 @@ struct FilterSpec {
     opcode: u32,
     flags: u32,
     program: Vec<libc::sock_filter>,
+    /// Generated for an opcode the policy didn't name: skip it if the
+    /// kernel doesn't know the opcode.
+    optional: bool,
 }
 
 /// Reads the policy from the spec's annotations, if there is one.
@@ -205,10 +236,19 @@ impl IoUringPolicy {
                     .collect::<Result<Vec<u32>>>()
             })
             .transpose()?;
+        let mut denied_sqe_flags = 0u8;
+        for name in self.denied_sqe_flags.iter().flatten() {
+            let bit = SQE_FLAGS
+                .iter()
+                .position(|&f| f == name)
+                .ok_or_else(|| IoUringError::UnknownSqeFlag(name.clone()))?;
+            denied_sqe_flags |= 1 << bit;
+        }
         Ok(CompiledPolicy {
             default_action: self.default_action,
             ops,
             socket_families,
+            denied_sqe_flags,
         })
     }
 }
@@ -216,30 +256,17 @@ impl IoUringPolicy {
 impl CompiledPolicy {
     /// The filters to register, in registration order.
     fn filters(&self) -> Vec<FilterSpec> {
-        let socket_allowed = match self.default_action {
-            Action::Deny => self.ops.contains(&IORING_OP_SOCKET),
-            Action::Allow => !self.ops.contains(&IORING_OP_SOCKET),
-        };
-        let family_filter = self
-            .socket_families
-            .as_ref()
-            .filter(|_| socket_allowed)
-            .map(|families| socket_family_program(families));
-
         let mut filters = Vec::new();
         match self.default_action {
             Action::Deny => {
                 // An allow filter on every listed opcode, then deny stubs on
                 // every other opcode (DENY_REST on the last registration).
                 for &opcode in &self.ops {
-                    let program = match (&family_filter, opcode) {
-                        (Some(p), IORING_OP_SOCKET) => p.clone(),
-                        _ => vec![ret(1)],
-                    };
                     filters.push(FilterSpec {
                         opcode,
                         flags: 0,
-                        program,
+                        program: self.allow_program(opcode),
+                        optional: false,
                     });
                 }
                 match filters.last_mut() {
@@ -249,6 +276,7 @@ impl CompiledPolicy {
                         opcode: IORING_OP_NOP,
                         flags: IO_URING_BPF_FILTER_DENY_REST,
                         program: vec![ret(0)],
+                        optional: false,
                     }),
                 }
             }
@@ -258,18 +286,37 @@ impl CompiledPolicy {
                         opcode,
                         flags: 0,
                         program: vec![ret(0)],
+                        optional: false,
                     });
                 }
-                if let Some(program) = family_filter {
-                    filters.push(FilterSpec {
-                        opcode: IORING_OP_SOCKET,
-                        flags: 0,
-                        program,
-                    });
+                // Every other opcode stays allowed. It needs a filter only to
+                // check SQE flags or socket families.
+                for opcode in 0..OPS.len() as u32 {
+                    let filtered = self.denied_sqe_flags != 0
+                        || (opcode == IORING_OP_SOCKET && self.socket_families.is_some());
+                    if filtered && !self.ops.contains(&opcode) {
+                        filters.push(FilterSpec {
+                            opcode,
+                            flags: 0,
+                            program: self.allow_program(opcode),
+                            optional: true,
+                        });
+                    }
                 }
             }
         }
         filters
+    }
+
+    /// The program for an allowed opcode: deny it with a denied SQE flag,
+    /// and for `IORING_OP_SOCKET` outside the allowed families.
+    fn allow_program(&self, opcode: u32) -> Vec<libc::sock_filter> {
+        let mut program = sqe_flags_check(self.denied_sqe_flags);
+        match (&self.socket_families, opcode) {
+            (Some(families), IORING_OP_SOCKET) => program.extend(socket_family_program(families)),
+            _ => program.push(ret(1)),
+        }
+        program
     }
 }
 
@@ -285,7 +332,15 @@ pub fn apply(policy: &CompiledPolicy) -> Result<()> {
     let filters = policy.filters();
     tracing::debug!(?policy, filters = filters.len(), "applying io_uring policy");
     for filter in &filters {
-        register_task_filter(filter)?;
+        match register_task_filter(filter) {
+            // An opcode newer than the kernel: it can't be submitted anyway.
+            Err(IoUringError::Register { op, source })
+                if filter.optional && source.raw_os_error() == Some(libc::EINVAL) =>
+            {
+                tracing::debug!(op, "io_uring opcode unknown to the kernel, skipped");
+            }
+            result => result?,
+        }
     }
     Ok(())
 }
@@ -379,6 +434,30 @@ fn ret(k: u32) -> libc::sock_filter {
         jf: 0,
         k,
     }
+}
+
+/// Denies the operation if any of `denied` (IOSQE_* bits) is set, else falls
+/// through to the next instruction. Empty when nothing is denied.
+fn sqe_flags_check(denied: u8) -> Vec<libc::sock_filter> {
+    if denied == 0 {
+        return Vec::new();
+    }
+    vec![
+        libc::sock_filter {
+            code: BPF_LD | BPF_W | BPF_ABS,
+            jt: 0,
+            jf: 0,
+            k: BPF_CTX_HDR_OFFSET,
+        },
+        // Any denied flag set: fall into the deny, else skip it.
+        libc::sock_filter {
+            code: BPF_JMP | BPF_JSET | BPF_K,
+            jt: 0,
+            jf: 1,
+            k: (denied as u32) << SQE_FLAGS_SHIFT,
+        },
+        ret(0),
+    ]
 }
 
 /// Allows `IORING_OP_SOCKET` only for the given address families.
@@ -536,5 +615,62 @@ mod tests {
         assert!(
             serde_json::from_str::<IoUringPolicy>(r#"{"defaultAction":"deny","extra":1}"#).is_err()
         );
+        let unknown_flag = serde_json::from_str::<IoUringPolicy>(
+            r#"{"defaultAction":"deny","deniedSqeFlags":["IOSQE_BOGUS"]}"#,
+        )
+        .unwrap()
+        .compile();
+        assert!(matches!(unknown_flag, Err(IoUringError::UnknownSqeFlag(_))));
+    }
+
+    #[test]
+    fn sqe_flags_check_tests_the_flags_byte() {
+        assert!(sqe_flags_check(0).is_empty());
+        // IOSQE_FIXED_FILE (bit 0) | IOSQE_BUFFER_SELECT (bit 5)
+        let check = sqe_flags_check(0b10_0001);
+        assert_eq!(check.len(), 3);
+        assert_eq!(check[0].k, BPF_CTX_HDR_OFFSET);
+        assert_eq!(check[1].code, BPF_JMP | BPF_JSET | BPF_K);
+        assert_eq!(check[1].k, 0b10_0001 << SQE_FLAGS_SHIFT);
+        assert_eq!((check[1].jt, check[1].jf), (0, 1));
+        assert_eq!(check[2], ret(0));
+    }
+
+    #[test]
+    fn denied_sqe_flags_prefix_every_allowed_op() {
+        let p = policy(
+            r#"{"defaultAction":"deny","ops":["IORING_OP_READ","IORING_OP_SOCKET"],
+                "socketFamilies":["AF_INET"],"deniedSqeFlags":["IOSQE_BUFFER_SELECT"]}"#,
+        );
+        let filters = p.filters();
+        assert_eq!(filters.len(), 2);
+        let check = sqe_flags_check(1 << 5);
+        let read = &filters[0];
+        assert_eq!(read.opcode, 22);
+        assert_eq!(read.program[..3], check[..]);
+        assert_eq!(read.program[3..], [ret(1)]);
+        let socket = &filters[1];
+        assert_eq!(socket.program[..3], check[..]);
+        assert_eq!(socket.program[3..], socket_family_program(&[2])[..]);
+    }
+
+    #[test]
+    fn allow_by_default_with_denied_flags_filters_every_other_op() {
+        let p = policy(
+            r#"{"defaultAction":"allow","ops":["IORING_OP_MSG_RING"],
+                "deniedSqeFlags":["IOSQE_BUFFER_SELECT"]}"#,
+        );
+        let filters = p.filters();
+        assert_eq!(filters.len(), OPS.len());
+        let msg_ring = op_number("IORING_OP_MSG_RING").unwrap();
+        for f in &filters {
+            if f.opcode == msg_ring {
+                assert_eq!(f.program, vec![ret(0)]);
+                assert!(!f.optional);
+            } else {
+                assert_eq!(f.program, p.allow_program(f.opcode));
+                assert!(f.optional);
+            }
+        }
     }
 }
