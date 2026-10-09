@@ -5,7 +5,7 @@ set -euo pipefail
 
 COUNT=${1:-20}
 
-for i in $(seq 1 ${COUNT})
+for i in $(seq 1 "${COUNT}")
 do 
     echo "Run test ${i} iteration..."
     cargo test -- --nocapture

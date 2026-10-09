@@ -203,6 +203,8 @@ lint:
 spellcheck:
     typos
 
+shellcheck:
+    git ls-files -z -- '*.sh' | xargs -0 shellcheck
 # run format on project
 format:
     {{ cwd }}/scripts/cargo.sh fmt --all
