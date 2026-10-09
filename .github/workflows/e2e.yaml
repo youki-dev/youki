@@ -217,6 +217,68 @@ jobs:
       - name: Validate tests on youki
         run: sudo ./scripts/contest.sh "$PWD/youki"
 
+  # Run contest on Fedora with SELinux enforcing.
+  fedora-contest:
+    runs-on: ubuntu-24.04
+    needs: [youki-build]
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [ "x86_64" ]
+        libc: [ "gnu", "musl" ]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust toolchain and cache
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install just
+        uses: taiki-e/install-action@just
+      - name: Install requirements
+        run: sudo env PATH=$PATH just ci-prepare
+      - name: Download youki binary
+        uses: actions/download-artifact@v4
+        with:
+          name: youki-${{ matrix.arch }}-${{ matrix.libc }}
+      - name: Add the permission to run
+        run: chmod +x ./youki
+      - name: Build integration tests
+        run: just contest
+
+      - name: Set up Lima
+        uses: lima-vm/lima-actions/setup@v1
+        id: lima-actions-setup
+      - name: Cache Lima images
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/lima
+          key: lima-${{ steps.lima-actions-setup.outputs.version }}-fedora
+      - name: Start Fedora VM
+        run: limactl start --plain --name=default --cpus=4 --memory=8 template:fedora
+      - name: Provision VM
+        run: |
+          set -eux -o pipefail
+          # container-selinux provides container_t / container_file_t etc.
+          lima sudo dnf -y --setopt=install_weak_deps=False install \
+            audit container-selinux criu git-core libseccomp policycoreutils
+      - name: Show guest info
+        run: |
+          set -eux -o pipefail
+          lima uname -a
+          lima cat /etc/os-release
+          lima systemctl --version
+          lima sestatus
+          lima rpm -q container-selinux criu
+          lima criu --version
+      - name: Copy sources and binaries into VM
+        run: |
+          set -eux -o pipefail
+          rsync -a -e ssh \
+            --exclude target --exclude contest-target \
+            ./ lima-default:/tmp/youki/
+          lima sudo chown -R root:root /tmp/youki
+      - name: Validate tests on youki (Fedora, SELinux enforcing)
+        run: ssh lima-default "cd /tmp/youki && sudo ./scripts/contest.sh /tmp/youki/youki"
+
   rootless-podman-test:
     runs-on: ubuntu-24.04
     needs: [youki-build]
