@@ -40,8 +40,10 @@ pub fn run(args: Run, root_path: PathBuf, systemd_cgroup: bool) -> Result<i32> {
     );
     let foreground_result =
         foreground::handle_foreground(container.pid().unwrap(), foreground_pty_fd);
-    // execute the destruction action after the container finishes running
-    container.delete(true)?;
-    // return result
+    // execute the destruction action after the container finishes running.
+    // A cleanup failure must not replace the workload's exit status (runc and crun log it).
+    if let Err(err) = container.delete(true) {
+        tracing::error!(?err, id = ?args.container_id, "failed to delete container");
+    }
     foreground_result
 }
