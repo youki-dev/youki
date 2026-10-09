@@ -1728,3 +1728,48 @@ pub fn validate_tmpcopyup(spec: &Spec) {
         }
     }
 }
+
+/// Checks that the tmpfs mounts have the expected mode specified in the
+/// `org.youki.contest.tmpfs` annotation as an octal value.
+pub fn validate_tmpfs(spec: &Spec) {
+    const EXPECTED_MODE_ANNOTATION: &str = "org.youki.contest.tmpfs";
+
+    let Some(expected) = spec
+        .annotations()
+        .as_ref()
+        .and_then(|a| a.get(EXPECTED_MODE_ANNOTATION))
+        .and_then(|m| u32::from_str_radix(m, 8).ok())
+    else {
+        eprintln!("invalid or missing {EXPECTED_MODE_ANNOTATION} annotation");
+        return;
+    };
+
+    let Some(mount) = spec
+        .mounts()
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .find(|m| m.typ().as_deref() == Some("tmpfs") && m.destination() == Path::new("/tmpfs"))
+    else {
+        eprintln!("the spec has no /tmpfs mount");
+        return;
+    };
+
+    let dest = mount.destination();
+
+    match nix::sys::statfs::statfs(dest) {
+        Ok(fs) if fs.filesystem_type() == nix::sys::statfs::TMPFS_MAGIC => {}
+        Ok(_) => eprintln!("{dest:?} is not a tmpfs"),
+        Err(e) => eprintln!("statfs {dest:?}: {e}"),
+    }
+
+    match fs::metadata(dest) {
+        Ok(metadata) => {
+            let mode = metadata.permissions().mode() & 0o7777;
+            if mode != expected {
+                eprintln!("{dest:?} has mode {mode:04o}, expected {expected:04o}");
+            }
+        }
+        Err(e) => eprintln!("stat {dest:?}: {e}"),
+    }
+}

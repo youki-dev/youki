@@ -65,6 +65,7 @@ fn main() {
         "time_offsets" => tests::validate_time_offsets(&spec),
         "default_symlinks" => tests::validate_default_symlinks(&spec),
         "tmpcopyup" => tests::validate_tmpcopyup(&spec),
+        "tmpfs" => tests::validate_tmpfs(&spec),
         _ => eprintln!("error due to unexpected execute test name: {execute_test}"),
     }
 }
