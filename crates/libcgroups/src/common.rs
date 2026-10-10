@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf, StripPrefixError};
+use std::path::{Component, Path, PathBuf, StripPrefixError};
 use std::time::Duration;
 
 use nix::sys::statfs::{CGROUP2_SUPER_MAGIC, TMPFS_MAGIC, statfs};
@@ -508,7 +508,7 @@ pub enum JoinSafelyError {
 
 impl PathBufExt for PathBuf {
     fn join_safely<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf, JoinSafelyError> {
-        let path = path.as_ref();
+        let path = clean_cgroup_path(path.as_ref());
         if path.is_relative() {
             return Ok(self.join(path));
         }
@@ -521,6 +521,21 @@ impl PathBufExt for PathBuf {
             })?;
         Ok(self.join(stripped))
     }
+}
+
+pub(crate) fn clean_cgroup_path(path: &Path) -> PathBuf {
+    let mut cleaned = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::RootDir => cleaned.push(component),
+            Component::ParentDir => {
+                cleaned.pop();
+            }
+            Component::Normal(c) => cleaned.push(c),
+            Component::CurDir | Component::Prefix(_) => {}
+        }
+    }
+    cleaned
 }
 
 #[cfg(any(feature = "cgroupsv2_devices", feature = "v1"))]
@@ -741,5 +756,52 @@ pub struct MustBePowerOfTwo;
 impl Display for MustBePowerOfTwo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("page size must be in the format of 2^(integer)")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_clean_cgroup_path() {
+        let cases = [
+            ("/a/b/c", "/a/b/c"),
+            ("/a/./b/", "/a/b"),
+            ("/a/b/../c", "/a/c"),
+            ("/..", "/"),
+            ("/../../../xx/yy", "/xx/yy"),
+            ("/a/../../b", "/b"),
+            ("a/b", "a/b"),
+            ("../a", "a"),
+            ("a/../../b", "b"),
+            (":youki:id", ":youki:id"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                clean_cgroup_path(Path::new(input)),
+                PathBuf::from(expected),
+                "input: {input}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_join_safely_stays_under_root() {
+        let root = PathBuf::from("/sys/fs/cgroup");
+        let cases = [
+            ("/a/b", "/sys/fs/cgroup/a/b"),
+            ("a/b", "/sys/fs/cgroup/a/b"),
+            ("/../../../xx/yy", "/sys/fs/cgroup/xx/yy"),
+            ("../../xx", "/sys/fs/cgroup/xx"),
+            ("/a/../../..", "/sys/fs/cgroup"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                root.join_safely(input).unwrap(),
+                PathBuf::from(expected),
+                "input: {input}"
+            );
+        }
     }
 }
