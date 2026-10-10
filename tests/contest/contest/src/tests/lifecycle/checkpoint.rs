@@ -3,6 +3,7 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Result, anyhow};
 use oci_spec::runtime::{MountBuilder, Spec};
+use procfs::process::ProcState;
 use test_framework::TestResult;
 
 use super::{create, get_result_from_output, start};
@@ -107,7 +108,6 @@ fn is_process_running(pid: i32) -> Result<bool> {
         Err(procfs::ProcError::NotFound(_)) => return Ok(false),
         Err(err) => return Err(err.into()),
     };
-    use procfs::process::ProcState;
     let state = match process.stat().and_then(|s| s.state()) {
         Ok(state) => state,
         Err(procfs::ProcError::NotFound(_)) => return Ok(false),
