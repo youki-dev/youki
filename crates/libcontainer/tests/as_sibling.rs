@@ -7,7 +7,8 @@ use anyhow::Result;
 use libcontainer::container::builder::ContainerBuilder;
 use libcontainer::syscall::syscall::SyscallType;
 use libcontainer::workload::{
-    Executor, ExecutorError, ExecutorSetEnvsError, ExecutorValidationError,
+    ContainerExecutor, Executor, ExecutorError, ExecutorSetEnvsError, ExecutorValidationError,
+    HostExecutor,
 };
 use nix::unistd::{getegid, geteuid};
 use oci_spec::runtime::{RootBuilder, Spec};
@@ -45,7 +46,7 @@ fn hash(v: impl Hash) -> u64 {
 #[derive(Clone)]
 struct SomeExecutor;
 
-impl Executor for SomeExecutor {
+impl ContainerExecutor for SomeExecutor {
     fn setup_envs(&self, _: HashMap<String, String>) -> Result<(), ExecutorSetEnvsError> {
         Ok(())
     }
@@ -58,6 +59,9 @@ impl Executor for SomeExecutor {
         Ok(())
     }
 }
+
+impl HostExecutor for SomeExecutor {}
+impl Executor for SomeExecutor {}
 
 #[test]
 #[serial]
