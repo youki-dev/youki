@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 pub mod cpu;
 pub mod cpuset;
 pub mod hugetlb;
+pub mod io;
 pub mod memory;
 pub mod pids;
 
