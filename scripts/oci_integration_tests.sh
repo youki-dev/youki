@@ -1,5 +1,16 @@
-#!/bin/bash -eu
+#!/bin/bash -u
 
+# Usage
+#   oci_integration_tests.sh [<RUNTIME> [<PATTERN>]]
+#     RUNTIME: directory path containing youki binary
+#     PATTERN: tests to run in regular expression
+# Environment variables
+#   VERBOSE=1: show output from test functions
+# Return
+#   0: Passed
+#   1: Failed
+
+: "${VERBOSE:=0}"
 ROOT=$(git rev-parse --show-toplevel)
 
 RUNTIME=${1:-.}/youki
@@ -79,6 +90,51 @@ test_cases=(
   # "process_user/process_user.t"
 )
 
+# Test Harness
+PASS=0
+SKIP=0
+FAIL=0
+FAILED_TESTS=()
+SKIPPED_TESTS=()
+
+run_test() {
+  local case="$1"
+  local output
+
+  if ! check_environment $case; then
+    SKIP=$((SKIP + 1))
+    SKIPPED_TESTS+=("$case")
+    printf '[ SKIP ] %s\n' "$case"
+    echo "Skipped because your environment doesn't support this test case"
+    return
+  fi
+
+  if [ $PATTERN != "." ] && [[ ! $case =~ $PATTERN ]]; then
+    return
+  fi
+
+  output=$(sudo RUST_BACKTRACE=1 RUNTIME=${RUNTIME} ${OCI_TEST_DIR}/validation/$case 2>&1)
+  if [ 0 -ne $(grep "not ok" "$output" 2> /dev/null | wc -l) ]; then
+    if [ 0 -eq $(grep "# cgroupv2 is not supported yet " "$output" 2> /dev/null | wc -l) ]; then
+      SKIP=$((SKIP + 1))
+      SKIPPED_TESTS+=("$case")
+      printf '[ SKIP ] %s\n' "$case"
+      echo "Skipped because oci-runtime-tools doesn't support cgroup v2"
+    else
+      FAIL=$((FAIL + 1))
+      FAILED_TESTS+=("$case")
+      printf '[ FAIL ] %s\n' "$case"
+    fi
+  else
+    PASS=$((PASS + 1))
+    printf '[ PASS ] %s\n' "$case"
+  fi
+
+  if [[ -n "$output" && "$VERBOSE" == "1" ]]; then
+    printf '%s\n' "$output" | sed 's/^/    | /'
+  fi
+}
+
 check_environment() {
   test_case=$1
   if [[ $test_case =~ .*(memory|hugetlb).t ]]; then
@@ -103,32 +159,33 @@ fi
 for case in "${test_cases[@]}"; do
   if [[ ! -e "${OCI_TEST_DIR}/validation/$case" ]]; then
     GO111MODULE=auto GOPATH=${ROOT}/tests/oci-runtime-tests make runtimetest validation-executables
+    if [[ $? -ne 0 ]]; then
+        echo "Building test binaries failed"
+	exit 1
+    fi
     break
   fi
 done
 
-
 for case in "${test_cases[@]}"; do
-  if ! check_environment $case; then
-    echo "Skip $case because your environment doesn't support this test case"
-    continue
-  fi
-
-  if [ $PATTERN != "." ] && [[ ! $case =~ $PATTERN ]]; then
-    continue
-  fi
-
-  echo "Running $case"
-  logfile="./log/$case.log"
-  mkdir -p "$(dirname $logfile)"
-  sudo RUST_BACKTRACE=1 RUNTIME=${RUNTIME} ${OCI_TEST_DIR}/validation/$case >$logfile 2>&1 || (cat $logfile && exit 1)
-  if [ 0 -ne $(grep "not ok" $logfile | wc -l ) ]; then
-    if [ 0 -eq $(grep "# cgroupv2 is not supported yet " $logfile | wc -l ) ]; then
-      echo "Skip $case because oci-runtime-tools doesn't support cgroup v2"
-      continue;
-    fi
-    cat $logfile
-    exit 1
-  fi
+  run_test $case
   sleep 1
 done
+
+total=$((PASS + FAIL + SKIP))
+echo
+echo "=============================="
+printf 'Total: %d  Passed: %d  Failed: %d Skipped: %d\n' "$total" "$PASS" "$FAIL" "$SKIP"
+if (( VERBOSE )); then
+    if (( FAIL > 0 )); then
+        echo "Failed tests:"
+        printf '  - %s\n' "${FAILED_TESTS[@]}"
+    fi
+    if (( SKIP > 0 )); then
+        echo "Skipped tests:"
+        printf '  - %s\n' "${SKIPPED_TESTS[@]}"
+    fi
+fi
+echo "=============================="
+
+exit $(( FAIL != 0 ))
