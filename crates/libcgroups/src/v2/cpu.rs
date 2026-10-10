@@ -78,6 +78,12 @@ impl StatsProvider for Cpu {
         get!("nr_throttled" => throttling.throttled_periods);
         get!("throttled_usec" => throttling.throttled_time);
 
+        // cgroup v2 reports microseconds; runtime CPU statistics use nanoseconds.
+        stats.usage.usage_total *= 1000;
+        stats.usage.usage_user *= 1000;
+        stats.usage.usage_kernel *= 1000;
+        stats.throttling.throttled_time *= 1000;
+
         stats.psi = stats::psi_stats(&cgroup_path.join(CPU_PSI))?;
         Ok(stats)
     }
@@ -368,15 +374,15 @@ mod tests {
         let actual = Cpu::stats(tmp.path()).expect("get cgroup stats");
         let expected = CpuStats {
             usage: CpuUsage {
-                usage_total: 7730,
-                usage_user: 4387,
-                usage_kernel: 3498,
+                usage_total: 7_730_000,
+                usage_user: 4_387_000,
+                usage_kernel: 3_498_000,
                 ..Default::default()
             },
             throttling: CpuThrottling {
                 periods: 400,
                 throttled_periods: 20,
-                throttled_time: 5000,
+                throttled_time: 5_000_000,
             },
             ..Default::default()
         };
