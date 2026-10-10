@@ -52,7 +52,12 @@ pub fn container_intermediate_process(
     let spec = &args.spec;
     let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
     let namespaces = Namespaces::try_from(linux.namespaces().as_ref())?;
-    let rootless = rootless_required(command.as_ref()).unwrap_or(false);
+    // like runc, only tolerate cgroup permission errors when the spec neither
+    // names a cgroup nor asks for limits; otherwise the container would run
+    // outside the cgroup it asked for
+    let rootless = rootless_required(command.as_ref()).unwrap_or(false)
+        && linux.cgroups_path().is_none()
+        && !has_resource_limits(linux.resources().as_ref());
     let cgroup_manager = libcgroups::common::create_cgroup_manager(args.cgroup_config.to_owned())
         .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?
         .with_rootless(rootless);
@@ -319,6 +324,15 @@ fn setup_time_offsets(sender: &mut MainSender, receiver: &mut IntermediateReceiv
     Ok(())
 }
 
+// device rules are not a limit here: the v2 devices controller is a no-op without root
+fn has_resource_limits(resources: Option<&LinuxResources>) -> bool {
+    resources.is_some_and(|r| {
+        let mut r = r.clone();
+        r.set_devices(None);
+        r != LinuxResources::default()
+    })
+}
+
 fn apply_cgroups<
     C: CgroupManager<Error = E> + ?Sized,
     E: std::error::Error + Send + Sync + 'static,
@@ -359,6 +373,32 @@ mod tests {
     use procfs::process::Process;
 
     use super::*;
+
+    #[test]
+    fn resource_limits_ignore_device_rules() -> Result<()> {
+        use oci_spec::runtime::{
+            LinuxDeviceCgroupBuilder, LinuxPidsBuilder, LinuxResourcesBuilder,
+        };
+
+        assert!(!has_resource_limits(None));
+        assert!(!has_resource_limits(Some(&LinuxResources::default())));
+
+        let devices_only = LinuxResourcesBuilder::default()
+            .devices(vec![
+                LinuxDeviceCgroupBuilder::default()
+                    .allow(false)
+                    .access("rwm".to_string())
+                    .build()?,
+            ])
+            .build()?;
+        assert!(!has_resource_limits(Some(&devices_only)));
+
+        let pids = LinuxResourcesBuilder::default()
+            .pids(LinuxPidsBuilder::default().limit(5).build()?)
+            .build()?;
+        assert!(has_resource_limits(Some(&pids)));
+        Ok(())
+    }
 
     #[test]
     fn apply_cgroup_init() -> Result<()> {
