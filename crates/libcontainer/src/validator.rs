@@ -12,6 +12,15 @@ use crate::utils::is_in_new_userns;
 pub struct Validator;
 
 impl Validator {
+    // A container with an io_uring policy must not start on a kernel that
+    // can't enforce it: fail here, before anything is created.
+    fn validate_spec_for_io_uring(spec: &Spec) -> Result<(), ErrInvalidSpec> {
+        if crate::io_uring::policy_from_spec(spec)?.is_some() && !crate::io_uring::supported() {
+            return Err(crate::io_uring::IoUringError::Unsupported.into());
+        }
+        Ok(())
+    }
+
     pub fn validate_spec(spec: &Spec, is_rootless: bool) -> Result<(), ErrInvalidSpec> {
         Self::validate_spec_for_uts_namespace(spec)?;
         Self::validate_spec_for_mnt_namespace(spec)?;
@@ -26,6 +35,7 @@ impl Validator {
         }
         Self::validate_spec_for_net_devices(spec, is_rootless)?;
         Self::validate_spec_for_new_user_ns(spec, is_rootless)?;
+        Self::validate_spec_for_io_uring(spec)?;
 
         Ok(())
     }

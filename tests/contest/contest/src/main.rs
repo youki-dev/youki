@@ -24,6 +24,7 @@ use crate::tests::hooks::{get_hooks_tests, get_start_container_env_tests};
 use crate::tests::hostname::get_hostname_test;
 use crate::tests::intel_rdt::get_intel_rdt_test;
 use crate::tests::io_priority::get_io_priority_test;
+use crate::tests::io_uring::get_io_uring_tests;
 use crate::tests::kill::get_kill_test;
 use crate::tests::kill_no_effect::get_kill_no_effect_test;
 use crate::tests::killsig::get_killsig_test;
@@ -162,6 +163,7 @@ fn main() -> Result<()> {
     let scheduler = get_scheduler_test();
     let memory_policy = get_linux_memory_policy_tests();
     let io_priority_test = get_io_priority_test();
+    let io_uring = get_io_uring_tests();
     let delete = get_delete_test();
     let devices = get_devices_test();
     let default_symlinks = get_default_symlinks_test();
@@ -252,6 +254,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(personality));
     tm.add_test_group(Box::new(prohibit_symlink));
     tm.add_test_group(Box::new(io_priority_test));
+    tm.add_test_group(Box::new(io_uring));
     tm.add_test_group(Box::new(terminal));
     tm.add_test_group(Box::new(checkpoint_restore));
     tm.add_test_group(Box::new(update));
