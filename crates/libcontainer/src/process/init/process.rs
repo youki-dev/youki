@@ -36,7 +36,7 @@ use crate::rootfs::device::{open_device_fd, verify_dev_null};
 use crate::seccomp;
 use crate::syscall::{Syscall, SyscallError};
 use crate::user_ns::UserNamespaceConfig;
-use crate::{apparmor, capabilities, hooks, tty, utils};
+use crate::{apparmor, capabilities, hooks, selinux, tty, utils};
 
 // Some variables are unused in the case where libseccomp feature is not enabled.
 #[allow(unused_variables)]
@@ -198,6 +198,22 @@ pub fn container_init_process(
             tracing::error!(?err, "failed to apply apparmor profile");
             InitProcessError::AppArmor(err)
         })?;
+    }
+
+    if let Some(label) = ctx
+        .process
+        .selinux_label()
+        .as_deref()
+        .filter(|label| !label.is_empty())
+    {
+        if selinux::is_enabled().map_err(InitProcessError::Selinux)? {
+            selinux::set_exec_label(label).map_err(|err| {
+                tracing::error!(?err, "failed to set the SELinux process label");
+                InitProcessError::Selinux(err)
+            })?;
+        } else {
+            tracing::debug!("ignoring the process label because SELinux is disabled");
+        }
     }
 
     if let Some(umask) = ctx.process.user().umask() {
