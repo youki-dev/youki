@@ -23,9 +23,7 @@ echo $log | grep $rand
 
 podman kill exec-test || true # ignore failure for killing
 podman rm --force --ignore exec-test
-# TODO: In rootless mode with the `cgroupfs` cgroup manager, youki behaves differently from runc, so explicitly use `systemd`.
-# See: https://github.com/youki-dev/youki/issues/3690
-podman --cgroup-manager systemd run -d --runtime $runtime --name exec-test busybox sleep 10m
+podman run -d --runtime $runtime --name exec-test busybox sleep 10m
 
 rand=$(head -c 10 /dev/random | base64)
 
