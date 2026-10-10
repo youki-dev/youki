@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-0d4b9b3f.js";
+            window.path_to_searchindex_js = "../searchindex-ec8aedc2.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-542fda56.js"></script>
@@ -180,18 +180,16 @@
 <p>Youki is a low level container runtime, which deals with the creation and management of Linux containers. Some of other such low-level runtimes are <a href="https://github.com/opencontainers/runc">runc</a> and <a href="https://github.com/containers/crun">crun</a>. These are usually used by a higher-level runtime such as Docker or Podman to actually create and manage containers, where the higher level runtime provides a much easier interface for users.</p>
 <p>Before you start working on developing youki, you should go through <a href="../user/introduction.html">the User documentation</a> as it specifies the requirements and setup for running youki. For developing youki, you will need to install the dependencies and clone the repo, as specified in the <a href="../user/basic_setup.html">Basic Setup</a> and <a href="../user/basic_usage.html">Basic Usage</a> sections.</p>
 <h2 id="testing-while-developing"><a class="header" href="#testing-while-developing">Testing while developing</a></h2>
-<p>While developing youki, you might need to compile and test the code from time to time, to make sure it is working and and something is not accidentally broken. Currently there are two ways to verify that:</p>
+<p>While developing youki, you can use unit tests to check individual components and integration tests to check the complete functionality of youki commands.</p>
+<p>Run the following recipes with <a href="https://github.com/casey/just">just</a> from the repository root:</p>
 <ul>
-<li>Unit tests, which test individual components of youki</li>
-<li>Integration tests, which test the complete functionality of youki commands from start to end.</li>
+<li><code>just test-unit</code>: Run the Rust unit tests.</li>
+<li><code>just test-doc</code>: Run the Rust documentation tests.</li>
+<li><code>just test-oci</code>: Run the integration tests provided by <a href="./e2e/runtime_tools.html">OCI runtime-tools</a>.</li>
+<li><code>just test-contest</code>: Build youki and run <a href="./e2e/rust_oci_test.html">Contest</a>, the Rust OCI integration test suite. This recipe uses <code>sudo</code>.</li>
 </ul>
-<p>As the steps to run these tests can be a bit tedious, a makefile in project the root provides an easy way to run these quickly. The makefile currently states three individual test :</p>
-<ul>
-<li>test: The unit tests</li>
-<li>oci-integration-test: The integration tests provided by OCI, these are the current standard to make sure youki is OCI compliant.</li>
-<li>integration-test: This is the Rust port of the OCI runtime tests, as there are some issues in the OCI tests. See <a href="./e2e/integration_test.html">integration_test</a> page.</li>
-</ul>
-<p>All three can be run by using <code>make test-all</code>, or you can run the individual command to run specific tests.</p>
+<p>Use <code>just test-basic</code> to run both unit and documentation tests, or <code>just test-integration</code> to run both OCI runtime-tools and Contest.</p>
+<p><code>just test-all</code> runs the basic tests, feature combinations, OCI runtime-tools tests, and containerd integration tests. It does not currently include Contest; run <code>just test-contest</code> separately. See <code>just --list</code> for the available recipes.</p>
 <h2 id="resources"><a class="header" href="#resources">Resources</a></h2>
 <h4 id="oci"><a class="header" href="#oci">OCI</a></h4>
 <p>Open containers initiative is project, which provides a standardization and standardized specification for operating-system-level virtualization. That way components that confirm to the specification provided by OCI spec, can interoperate with each other easily, and developing of new applications becomes easier. For example youki can be used in place of runc in Docker, as all three : Docker, runc and youki are OCI compliant, and have a standard interface.</p>
