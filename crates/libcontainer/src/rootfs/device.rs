@@ -86,11 +86,8 @@ impl Device {
         devices
             .into_iter()
             .map(|dev| {
-                if !dev.path().starts_with("/dev") {
-                    tracing::error!(
-                        "{:?} is not a valid device path starting with /dev",
-                        dev.path()
-                    );
+                if !dev.path().is_absolute() {
+                    tracing::error!("{:?} is not an absolute device path", dev.path());
                     return Err(DeviceError::InvalidDevicePath(dev.path().to_path_buf()));
                 }
 
@@ -374,6 +371,95 @@ mod tests {
             .get_mknod_args()[0];
         assert_eq!(want, *got);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_devices_outside_dev() -> Result<()> {
+        let dev: LinuxDevice = serde_json::from_str(
+            r#"{
+                "path": "/data/custom-null",
+                "type": "c",
+                "major": 1,
+                "minor": 3,
+                "fileMode": 438,
+                "uid": 0,
+                "gid": 0
+            }"#,
+        )?;
+
+        for bind in [false, true] {
+            let tmp_dir = tempfile::tempdir()?;
+            let device = Device::new_with_syscall(Box::<TestHelperSyscall>::default());
+            device.create_devices(tmp_dir.path(), [&dev], bind)?;
+
+            let helper = device
+                .syscall
+                .as_any()
+                .downcast_ref::<TestHelperSyscall>()
+                .unwrap();
+            let target = tmp_dir.path().join("data/custom-null");
+            assert!(target.parent().unwrap().is_dir());
+
+            if bind {
+                let mounts = helper.get_mount_args();
+                assert_eq!(mounts.len(), 1);
+                assert_eq!(mounts[0].source, Some(dev.path().clone()));
+                assert_eq!(mounts[0].target, target);
+                assert_eq!(mounts[0].flags, MsFlags::MS_BIND);
+            } else {
+                assert_eq!(
+                    helper.get_mknod_args(),
+                    vec![MknodArgs {
+                        path: target.clone(),
+                        kind: SFlag::S_IFCHR,
+                        perm: Mode::from_bits_truncate(438),
+                        dev: 259,
+                    }]
+                );
+                assert_eq!(
+                    helper.get_chown_args(),
+                    vec![ChownArgs {
+                        path: target,
+                        owner: Some(Uid::from_raw(0)),
+                        group: Some(Gid::from_raw(0)),
+                    }]
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_devices_rejects_relative_path() -> Result<()> {
+        let _restore_umask = scopeguard::guard(umask(Mode::empty()), |mode| {
+            umask(mode);
+        });
+        let tmp_dir = tempfile::tempdir()?;
+        let device = Device::new_with_syscall(Box::<TestHelperSyscall>::default());
+        let dev = LinuxDeviceBuilder::default()
+            .path(PathBuf::from("data/custom-null"))
+            .major(1)
+            .minor(3)
+            .typ(LinuxDeviceType::C)
+            .build()?;
+
+        for bind in [false, true] {
+            assert!(matches!(
+                device.create_devices(tmp_dir.path(), [&dev], bind),
+                Err(DeviceError::InvalidDevicePath(path)) if path == *dev.path()
+            ));
+        }
+
+        let helper = device
+            .syscall
+            .as_any()
+            .downcast_ref::<TestHelperSyscall>()
+            .unwrap();
+        assert!(helper.get_mount_args().is_empty());
+        assert!(helper.get_mknod_args().is_empty());
+        assert!(helper.get_chown_args().is_empty());
         Ok(())
     }
 }
