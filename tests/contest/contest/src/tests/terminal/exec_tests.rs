@@ -3,7 +3,7 @@ use std::fs;
 use std::process::Stdio;
 use std::time::Duration;
 
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use oci_spec::runtime::{ProcessBuilder, Spec, SpecBuilder};
 use serde_json::json;
 use test_framework::{TestResult, test_result};
@@ -23,6 +23,48 @@ fn sleeper_spec() -> Spec {
         )
         .build()
         .unwrap()
+}
+
+// Foreground exec without a terminal => stdio is a pipe relayed by the runtime,
+// as with run. The host pty makes the caller's stdio a tty, so inheriting it fails.
+pub(crate) fn terminal_exec_false_stdio_pipes_test() -> TestResult {
+    test_outside_container(&sleeper_spec(), &|data| {
+        test_result!(check_container_created(&data));
+        let id = &data.id;
+        let dir = &data.bundle;
+
+        let start = start_container(id, dir).unwrap().wait().unwrap();
+        if !start.success() {
+            return TestResult::Failed(anyhow!("container start failed"));
+        }
+
+        let pty = test_result!(sized_pty(24, 80).context("failed to open test pty"));
+        let exec = build_exec_command(
+            id,
+            dir,
+            &[
+                "sh",
+                "-c",
+                "for fd in 0 1 2; do [ -p /proc/self/fd/$fd ] && echo PIPE$fd; done",
+            ],
+            None,
+            &[],
+        );
+        let mut child = test_result!(spawn_on_pty(exec, pty.slave).context("failed to spawn exec"));
+        let reader = drain_master(pty.master);
+        let status = test_result!(
+            wait_timeout(&mut child, Duration::from_secs(30)).context("failed to wait for exec")
+        );
+        let output = reader.join().unwrap_or_default();
+
+        if (0..=2).all(|fd| saw_line(&output, &format!("PIPE{fd}"))) {
+            TestResult::Passed
+        } else {
+            TestResult::Failed(anyhow!(
+                "exec stdio is not a pipe: output={output:?} status={status:?}"
+            ))
+        }
+    })
 }
 
 // foreground `youki exec` with a terminal=true process.json and no --console-socket must bridge

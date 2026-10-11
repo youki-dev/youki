@@ -3,11 +3,12 @@ use std::io::Write;
 use std::os::unix::net::UnixListener;
 use std::time::Duration;
 
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use nix::sys::signal::{Signal, kill};
 use nix::sys::termios::{self, LocalFlags};
 use nix::unistd::Pid;
-use test_framework::TestResult;
+use oci_spec::runtime::{ProcessBuilder, SpecBuilder};
+use test_framework::{TestResult, test_result};
 
 use super::{
     console_size_spec, drain_master, poll_size_script, read_master_for, recv_pty_master,
@@ -15,6 +16,43 @@ use super::{
     wait_timeout,
 };
 use crate::utils::{generate_uuid, prepare_bundle, set_config};
+
+// process.terminal=false in the foreground => stdio is a pipe relayed by the
+// runtime. The host pty makes the caller's stdio a tty, so inheriting it fails.
+pub(crate) fn terminal_false_stdio_pipes_test() -> TestResult {
+    let id = generate_uuid().to_string();
+    let bundle = prepare_bundle().unwrap();
+    let process = ProcessBuilder::default()
+        .terminal(false)
+        .args(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "for fd in 0 1 2; do [ -p /proc/self/fd/$fd ] && echo PIPE$fd; done".to_string(),
+        ])
+        .build()
+        .unwrap();
+    let spec = SpecBuilder::default().process(process).build().unwrap();
+    set_config(&bundle, &spec).unwrap();
+
+    let pty = test_result!(sized_pty(24, 80).context("failed to open test pty"));
+    let mut child = test_result!(
+        spawn_on_pty(run_command(bundle.as_ref(), &id), pty.slave)
+            .context("failed to spawn container")
+    );
+    let reader = drain_master(pty.master);
+    let status = test_result!(
+        wait_timeout(&mut child, Duration::from_secs(30)).context("failed to wait for container")
+    );
+    let output = reader.join().unwrap_or_default();
+
+    if (0..=2).all(|fd| saw_line(&output, &format!("PIPE{fd}"))) {
+        TestResult::Passed
+    } else {
+        TestResult::Failed(anyhow!(
+            "stdio is not a pipe: output={output:?} status={status:?}"
+        ))
+    }
+}
 
 // process.terminal=true + no console socket => the container gets a real tty.
 // Every foreground test brings its own host pty: runc refuses to run a
