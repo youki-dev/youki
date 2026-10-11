@@ -700,6 +700,15 @@ impl TestHelperSyscall {
             .collect::<Vec<String>>()
     }
 
+    pub fn get_groups_calls(&self) -> Vec<Vec<Gid>> {
+        self.mocks
+            .fetch(ArgName::Groups)
+            .values
+            .iter()
+            .map(|x| x.downcast_ref::<Vec<Gid>>().unwrap().clone())
+            .collect()
+    }
+
     pub fn get_groups_args(&self) -> Vec<Gid> {
         self.mocks
             .fetch(ArgName::Groups)
