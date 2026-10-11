@@ -518,7 +518,7 @@ impl Mount {
             )?)?
             .into_iter()
             .find(|c| c.hierarchy == 0)
-            .map(|c| PathBuf::from(c.pathname))
+            .map(|c| PathBuf::from(c.pathname).normalize())
             .ok_or_else(|| MountError::Custom("failed to find unified process cgroup".into()))?;
 
             let bind_mount = SpecMountBuilder::default()

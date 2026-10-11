@@ -86,6 +86,7 @@ impl Manager {
     /// of a cgroup v2 fs and cgroup path being a relative path from the root.
     /// For rootless environments call .with_rootless(true).
     pub fn new(root_path: PathBuf, cgroup_path: PathBuf) -> Result<Self, V2ManagerError> {
+        let cgroup_path = common::clean_cgroup_path(&cgroup_path);
         let full_path = root_path.join_safely(&cgroup_path)?;
 
         Ok(Self {
@@ -297,5 +298,22 @@ impl CgroupManager for Manager {
 
     fn get_all_pids(&self) -> Result<Vec<Pid>, Self::Error> {
         Ok(common::get_all_pids(&self.full_path)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_keeps_cgroup_path_under_root() -> Result<(), V2ManagerError> {
+        let manager = Manager::new(
+            PathBuf::from("/sys/fs/cgroup"),
+            PathBuf::from("/../../../xx/yy"),
+        )?;
+
+        assert_eq!(manager.cgroup_path, PathBuf::from("/xx/yy"));
+        assert_eq!(manager.full_path, PathBuf::from("/sys/fs/cgroup/xx/yy"));
+        Ok(())
     }
 }

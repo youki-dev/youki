@@ -204,7 +204,10 @@ fn resolve_cgroup_path(
     current_cgroup: Option<&Path>,
 ) -> PathBuf {
     if let Some(cpath) = cgroups_path {
-        return cpath.clone();
+        if systemd_cgroup {
+            return cpath.clone();
+        }
+        return cpath.normalize();
     }
 
     if systemd_cgroup {
@@ -213,6 +216,7 @@ fn resolve_cgroup_path(
 
     match current_cgroup {
         Some(current) => current
+            .normalize()
             .parent()
             .unwrap_or_else(|| Path::new("/"))
             .join(container_id),
@@ -423,6 +427,41 @@ mod tests {
         assert_eq!(
             resolve_cgroup_path(&None, "container-id", false, None),
             PathBuf::from("container-id")
+        );
+    }
+
+    #[test]
+    fn test_resolve_explicit_cgroup_path() {
+        assert_eq!(
+            resolve_cgroup_path(&Some(PathBuf::from("/../xx/./ctr")), "id", false, None),
+            PathBuf::from("/xx/ctr")
+        );
+        // systemd `slice:prefix:name` paths are kept as is.
+        assert_eq!(
+            resolve_cgroup_path(
+                &Some(PathBuf::from("system.slice:youki:ctr/../x")),
+                "id",
+                true,
+                None
+            ),
+            PathBuf::from("system.slice:youki:ctr/../x")
+        );
+    }
+
+    #[test]
+    fn test_resolve_default_cgroupfs_path_outside_cgroupns_root() {
+        assert_eq!(
+            resolve_cgroup_path(
+                &None,
+                "container-id",
+                false,
+                Some(Path::new("/../../../../xx/yy"))
+            ),
+            PathBuf::from("/xx/container-id")
+        );
+        assert_eq!(
+            resolve_cgroup_path(&None, "container-id", false, Some(Path::new("/../.."))),
+            PathBuf::from("/container-id")
         );
     }
 
