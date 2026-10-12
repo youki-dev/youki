@@ -4,8 +4,7 @@
 //! attribute before the execve that starts the container program, as runc and crun do
 //! (`label.SetProcessLabel`, `/proc/thread-self/attr/exec`).
 
-use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 
 use pathrs::flags::OpenFlags;
 use pathrs::procfs::{ProcfsBase, ProcfsHandle};
@@ -28,7 +27,16 @@ type Result<T> = std::result::Result<T, SelinuxError>;
 /// Whether SELinux is enabled in the kernel: selinuxfs is registered only then. Unlike
 /// `/sys/fs/selinux`, `/proc/filesystems` still answers after pivot_root.
 pub fn is_enabled() -> Result<bool> {
-    let filesystems = fs::read_to_string("/proc/filesystems").map_err(SelinuxError::Filesystems)?;
+    // Through the verified procfs: after pivot_root, the rootfs could supply /proc/filesystems.
+    let mut filesystems = String::new();
+    ProcfsHandle::new()?
+        .open(
+            ProcfsBase::ProcRoot,
+            "filesystems",
+            OpenFlags::O_RDONLY | OpenFlags::O_CLOEXEC,
+        )?
+        .read_to_string(&mut filesystems)
+        .map_err(SelinuxError::Filesystems)?;
     Ok(has_selinuxfs(&filesystems))
 }
 
@@ -56,6 +64,12 @@ pub fn set_exec_label(label: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_is_enabled() {
+        let filesystems = std::fs::read_to_string("/proc/filesystems").unwrap();
+        assert_eq!(is_enabled().unwrap(), has_selinuxfs(&filesystems));
+    }
 
     #[test]
     fn test_has_selinuxfs() {

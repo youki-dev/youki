@@ -451,15 +451,14 @@ impl TenantContainerBuilder {
 
         // The exec'd process gets the SELinux label asked for (--process-label or the process
         // file), else the container's, as runc and crun do.
-        if let Some(label) = self.process_label.clone() {
-            process.set_selinux_label(Some(label));
-        } else if process.selinux_label().is_none() {
-            let label = spec
-                .process()
+        let label = exec_selinux_label([
+            self.process_label.as_deref(),
+            process.selinux_label().as_deref(),
+            spec.process()
                 .as_ref()
-                .and_then(|p| p.selinux_label().clone());
-            process.set_selinux_label(label);
-        }
+                .and_then(|p| p.selinux_label().as_deref()),
+        ]);
+        process.set_selinux_label(label);
 
         let container_pid = container.pid().ok_or(LibcontainerError::Other(
             "could not retrieve container init pid".into(),
@@ -623,6 +622,15 @@ impl TenantContainerBuilder {
             }
         }
     }
+}
+
+// An empty label counts as absent, so it does not hide the next one.
+fn exec_selinux_label(labels: [Option<&str>; 3]) -> Option<String> {
+    labels
+        .into_iter()
+        .flatten()
+        .find(|l| !l.is_empty())
+        .map(str::to_owned)
 }
 
 #[cfg(test)]
@@ -928,5 +936,23 @@ mod tests {
         )?;
         assert_eq!(got, vec![want_ns(Ipc, "/proc/1/ns/ipc")]);
         Ok(())
+    }
+
+    #[test]
+    fn test_exec_selinux_label() {
+        let container = Some("container_t");
+        assert_eq!(
+            exec_selinux_label([Some("cli_t"), Some("file_t"), container]).as_deref(),
+            Some("cli_t")
+        );
+        assert_eq!(
+            exec_selinux_label([None, Some("file_t"), container]).as_deref(),
+            Some("file_t")
+        );
+        assert_eq!(
+            exec_selinux_label([Some(""), Some(""), container]).as_deref(),
+            container
+        );
+        assert_eq!(exec_selinux_label([None, None, None]), None);
     }
 }
