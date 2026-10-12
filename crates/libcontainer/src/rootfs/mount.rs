@@ -766,6 +766,11 @@ impl Mount {
                     })?;
                 }
 
+                // Before mount_setattr: setxattr on a read-only mount fails with EROFS.
+                if let Some(l) = xattr_label {
+                    set_root_label(mount_fd, l)?;
+                }
+
                 // mount_setattr
                 let attr_set_from_flags = self.mount_flag_to_attr(&mount_option_config.flags);
                 let mut mount_attr = linux::MountAttr {
@@ -799,10 +804,6 @@ impl Mount {
                         rec_attr,
                         mem::size_of::<linux::MountAttr>(),
                     )?;
-                }
-
-                if let Some(l) = xattr_label {
-                    set_root_label(mount_fd, l)?;
                 }
 
                 // move_mount
