@@ -12,6 +12,7 @@ pub mod exec_env;
 pub mod fd_control;
 pub mod hooks;
 pub mod hostname;
+pub mod idmap;
 pub mod intel_rdt;
 pub mod io_priority;
 pub mod kill;
