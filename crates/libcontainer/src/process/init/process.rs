@@ -1171,7 +1171,7 @@ mod tests {
 
     #[test]
     fn test_set_supplementary_gids() -> Result<()> {
-        // gids additional gids is empty case: the caller's groups are dropped where allowed
+        // No additional GIDs: the caller's supplementary groups are dropped where setgroups is allowed
         let user = UserBuilder::default().build().unwrap();
         let syscall = create_syscall();
         assert!(set_supplementary_gids(&user, &None, syscall.as_ref()).is_ok());
