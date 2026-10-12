@@ -1,0 +1,109 @@
+---
+# CRI-O
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: youki-system
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: youki
+# CRI-O matches this handler to a runtime name in its config. The installer
+# writes the [crio.runtime.runtimes.youki] table.
+handler: youki
+# Use only the nodes where the installer is done. install-youki.sh adds this
+# label after it installs youki and configures CRI-O.
+scheduling:
+  nodeSelector:
+    youki.dev/runtime-ready: "true"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: youki-deploy
+  namespace: youki-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: youki-deploy
+rules:
+  # install-youki.sh needs this to label its own node.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: youki-deploy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: youki-deploy
+subjects:
+  - kind: ServiceAccount
+    name: youki-deploy
+    namespace: youki-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: youki-deploy-crio
+  namespace: youki-system
+  labels:
+    app: youki-deploy-crio
+spec:
+  selector:
+    matchLabels:
+      app: youki-deploy-crio
+  template:
+    metadata:
+      labels:
+        app: youki-deploy-crio
+    spec:
+      serviceAccountName: youki-deploy
+      hostPID: true
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+        - operator: Exists
+          effect: NoExecute
+      containers:
+        - name: installer
+          image: youki-installer:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: HOST_BIN_DIR
+              value: /host/usr/local/bin
+            - name: CRI_RUNTIME
+              value: crio
+            - name: HOST_CRIO_CONFIG_DIR
+              value: /host/etc/crio/crio.conf.d
+            - name: RUNTIME_HANDLER
+              value: youki
+          volumeMounts:
+            - name: host-usr-local-bin
+              mountPath: /host/usr/local/bin
+            - name: host-etc-crio
+              mountPath: /host/etc/crio
+      volumes:
+        - name: host-usr-local-bin
+          hostPath:
+            path: /usr/local/bin
+            type: Directory
+        # A CRI-O node always has /etc/crio, so Directory stops the pod on a
+        # node without CRI-O. The installer makes crio.conf.d if it is absent.
+        - name: host-etc-crio
+          hostPath:
+            path: /etc/crio
+            type: Directory
