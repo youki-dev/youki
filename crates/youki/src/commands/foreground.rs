@@ -1,11 +1,10 @@
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io;
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use anyhow::{Context, Result};
-use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use nix::sys::eventfd::{EfdFlags, EventFd};
 use nix::sys::signal::{self, kill};
 use nix::sys::signalfd::SigSet;
@@ -13,6 +12,8 @@ use nix::sys::termios::{self, Termios};
 use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
 use nix::unistd::Pid;
 use nix::{libc, unistd};
+
+use crate::commands::stdio::{HostStdio, relay_output};
 
 struct RawTerminalGuard {
     original: Termios,
@@ -99,66 +100,6 @@ fn io_bridge(master: OwnedFd) -> Result<OutputRelay> {
     })
 }
 
-// Relay PTY output until the master closes or the owning foreground process requests shutdown.
-fn relay_output(master: &mut File, out: &mut File, stop: &EventFd) -> io::Result<()> {
-    let mut buffer = [0_u8; 8192];
-
-    loop {
-        let (master_events, stop_events) = {
-            let mut fds = [
-                PollFd::new(master.as_fd(), PollFlags::POLLIN),
-                PollFd::new(stop.as_fd(), PollFlags::POLLIN),
-            ];
-
-            poll(&mut fds, PollTimeout::NONE)?;
-
-            (
-                fds[0].revents().unwrap_or(PollFlags::empty()),
-                fds[1].revents().unwrap_or(PollFlags::empty()),
-            )
-        };
-
-        if master_events.intersects(PollFlags::POLLIN | PollFlags::POLLHUP | PollFlags::POLLERR) {
-            match master.read(&mut buffer) {
-                Ok(0) => return Ok(()),
-                Ok(read) => out.write_all(&buffer[..read])?,
-                Err(err) if err.raw_os_error() == Some(libc::EIO) => return Ok(()),
-                Err(err) => return Err(err),
-            }
-        }
-
-        if stop_events.contains(PollFlags::POLLIN) {
-            drain_pending_output(master, out, &mut buffer)?;
-            return Ok(());
-        }
-    }
-}
-
-// Drain output while the PTY master is immediately readable. The zero timeout avoids waiting for
-// a descendant that keeps the PTY slave open after the queued output has been consumed.
-fn drain_pending_output(master: &mut File, out: &mut File, buffer: &mut [u8]) -> io::Result<()> {
-    loop {
-        let master_events = {
-            let mut fds = [PollFd::new(master.as_fd(), PollFlags::POLLIN)];
-
-            poll(&mut fds, PollTimeout::ZERO)?;
-
-            fds[0].revents().unwrap_or(PollFlags::empty())
-        };
-
-        if !master_events.intersects(PollFlags::POLLIN | PollFlags::POLLHUP | PollFlags::POLLERR) {
-            return Ok(());
-        }
-
-        match master.read(buffer) {
-            Ok(0) => return Ok(()),
-            Ok(read) => out.write_all(&buffer[..read])?,
-            Err(err) if err.raw_os_error() == Some(libc::EIO) => return Ok(()),
-            Err(err) => return Err(err),
-        }
-    }
-}
-
 /// Foreground console state. On drop it drains the PTY->stdout relay (so the last output is not
 /// lost) and restores the terminal, so hold it for the whole lifetime — never bind it to `_`.
 struct ConsoleBridge {
@@ -223,8 +164,12 @@ fn setup_console_bridge(master: Option<OwnedFd>) -> Result<Option<ConsoleBridge>
 // The youki main process will wait and reap the container init process. The
 // youki main process also forwards most of the signals to the container init
 // process.
-#[tracing::instrument(level = "trace")]
-pub(crate) fn handle_foreground(init_pid: Pid, foreground_pty_fd: Option<OwnedFd>) -> Result<i32> {
+#[tracing::instrument(level = "trace", skip(host_stdio))]
+pub(crate) fn handle_foreground(
+    init_pid: Pid,
+    foreground_pty_fd: Option<OwnedFd>,
+    host_stdio: Option<HostStdio>,
+) -> Result<i32> {
     tracing::trace!("waiting for container init process to exit");
 
     // We mask all signals here and forward most of the signals to the container
@@ -233,6 +178,10 @@ pub(crate) fn handle_foreground(init_pid: Pid, foreground_pty_fd: Option<OwnedFd
     signal_set
         .thread_block()
         .with_context(|| "failed to call pthread_sigmask")?;
+
+    // Relay the container's stdio pipes until init exits. Dropping the relay at
+    // the end of this function stops the threads and flushes the last output.
+    let _stdio_relay = host_stdio.map(HostStdio::start_relay).transpose()?;
 
     // With a PTY master, raw-mode the host terminal (restored on drop) and bridge stdio.
     let console = setup_console_bridge(foreground_pty_fd)?;
@@ -360,7 +309,7 @@ mod tests {
                 match unsafe { unistd::fork()? } {
                     unistd::ForkResult::Parent { child } => {
                         // Inside P1.
-                        let _ = handle_foreground(child, None).map_err(|err| {
+                        let _ = handle_foreground(child, None, None).map_err(|err| {
                             // Since we are in a child process, we want to use trace to log the error.
                             let _ = tracing_subscriber::fmt()
                                 .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -417,7 +366,7 @@ mod tests {
                 match unsafe { unistd::fork() } {
                     Ok(unistd::ForkResult::Parent { child }) => {
                         std::thread::sleep(Duration::from_millis(500));
-                        let code = match handle_foreground(child, None) {
+                        let code = match handle_foreground(child, None, None) {
                             Ok(_) => 0,
                             Err(_) => 1,
                         };
@@ -450,7 +399,7 @@ mod tests {
                 match unsafe { unistd::fork()? } {
                     unistd::ForkResult::Parent { child } => {
                         // Inside P1.
-                        handle_foreground(child, None)?;
+                        handle_foreground(child, None, None)?;
                         wait::waitpid(child, None)?;
                     }
                     unistd::ForkResult::Child => {
