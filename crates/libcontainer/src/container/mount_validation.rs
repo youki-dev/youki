@@ -96,13 +96,6 @@ pub(crate) fn validate_idmapped_mounts(
             );
             return Err(ErrInvalidSpec::MountIdmapMissingMappings);
         }
-
-        // TODO: remove this guard when idmapped mount support is implemented.
-        tracing::error!(
-            destination = ?mount.destination(),
-            "idmapped mounts are not supported"
-        );
-        return Err(ErrInvalidSpec::MountIdmapUnsupported);
     }
 
     Ok(())
@@ -147,7 +140,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_idmapped_mounts_rejects_idmap_with_mappings_bind_as_unsupported() {
+    fn validate_idmapped_mounts_allows_idmap_with_mappings_bind() {
         let mount = base_mount()
             .options(vec!["bind".to_string(), "idmap".to_string()])
             .uid_mappings(vec![make_mapping()])
@@ -156,11 +149,11 @@ mod tests {
             .unwrap();
         let syscall = create_root_syscall();
         let res = validate_idmapped_mounts(&[mount], None, rootless_required(&*syscall).unwrap());
-        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
+        assert!(res.is_ok());
     }
 
     #[test]
-    fn validate_idmapped_mounts_rejects_mappings_without_idmap_flag_as_unsupported() {
+    fn validate_idmapped_mounts_allows_mappings_without_idmap_flag() {
         let mount = base_mount()
             .options(vec!["bind".to_string()])
             .uid_mappings(vec![make_mapping()])
@@ -169,11 +162,11 @@ mod tests {
             .unwrap();
         let syscall = create_root_syscall();
         let res = validate_idmapped_mounts(&[mount], None, rootless_required(&*syscall).unwrap());
-        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
+        assert!(res.is_ok());
     }
 
     #[test]
-    fn validate_idmapped_mounts_rejects_implied_idmap_with_userns_as_unsupported() {
+    fn validate_idmapped_mounts_allows_implied_idmap_with_userns() {
         let mount = base_mount()
             .options(vec!["bind".to_string(), "idmap".to_string()])
             .build()
@@ -195,11 +188,11 @@ mod tests {
             Some(&linux),
             rootless_required(&*syscall).unwrap(),
         );
-        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
+        assert!(res.is_ok());
     }
 
     #[test]
-    fn validate_idmapped_mounts_rejects_implied_idmap_with_joined_userns_as_unsupported() {
+    fn validate_idmapped_mounts_allows_implied_idmap_with_joined_userns() {
         let mount = base_mount()
             .options(vec!["bind".to_string(), "idmap".to_string()])
             .build()
@@ -220,11 +213,11 @@ mod tests {
             Some(&linux),
             rootless_required(&*syscall).unwrap(),
         );
-        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
+        assert!(res.is_ok());
     }
 
     #[test]
-    fn validate_idmapped_mounts_rejects_ridmap_with_userns_as_unsupported() {
+    fn validate_idmapped_mounts_allows_ridmap_with_userns() {
         let mount = base_mount()
             .options(vec!["bind".to_string(), "ridmap".to_string()])
             .build()
@@ -246,11 +239,11 @@ mod tests {
             Some(&linux),
             rootless_required(&*syscall).unwrap(),
         );
-        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
+        assert!(res.is_ok());
     }
 
     #[test]
-    fn validate_idmapped_mounts_rejects_rbind_idmap_as_unsupported() {
+    fn validate_idmapped_mounts_allows_rbind_idmap() {
         let mount = MountBuilder::default()
             .destination(PathBuf::from("/mnt"))
             .source(PathBuf::from("/src"))
@@ -261,7 +254,7 @@ mod tests {
             .unwrap();
         let syscall = create_root_syscall();
         let res = validate_idmapped_mounts(&[mount], None, rootless_required(&*syscall).unwrap());
-        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
+        assert!(res.is_ok());
     }
 
     #[test]
@@ -440,7 +433,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_idmapped_mounts_rejects_bind_type_without_bind_option_as_unsupported() {
+    fn validate_idmapped_mounts_allows_bind_type_without_bind_option() {
         // typ="bind" のみで is_bind を満たし、options に "bind"/"rbind" を含まないケース
         let mount = base_mount()
             .options(vec!["idmap".to_string()])
@@ -450,11 +443,11 @@ mod tests {
             .unwrap();
         let syscall = create_root_syscall();
         let res = validate_idmapped_mounts(&[mount], None, rootless_required(&*syscall).unwrap());
-        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
+        assert!(res.is_ok());
     }
 
     #[test]
-    fn validate_idmapped_mounts_rejects_unsupported_idmap_among_multiple_mounts() {
+    fn validate_idmapped_mounts_allows_idmap_among_multiple_mounts() {
         let mapped_mount = base_mount()
             .options(vec!["bind".to_string(), "idmap".to_string()])
             .uid_mappings(vec![make_mapping()])
@@ -473,7 +466,7 @@ mod tests {
             None,
             rootless_required(&*syscall).unwrap(),
         );
-        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
+        assert!(res.is_ok());
     }
 
     #[test]
@@ -499,7 +492,7 @@ mod tests {
             None,
             rootless_required(&*syscall).unwrap(),
         );
-        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
+        assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapNonBind)));
     }
 
     #[test]

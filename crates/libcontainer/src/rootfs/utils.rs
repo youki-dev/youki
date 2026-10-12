@@ -11,6 +11,7 @@ use crate::syscall::linux::{self, MountOption, MountRecursive};
 const IDMAP_FLAG: &str = "idmap";
 const RIDMAP_FLAG: &str = "ridmap";
 const TMPCOPYUP: &str = "tmpcopyup";
+const RBIND_FLAG: &str = "rbind";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MountOptionConfig {
@@ -30,6 +31,9 @@ pub struct MountOptionConfig {
     /// `tmpcopyup`, an extension from runc and crun: the new tmpfs starts with a copy of what
     /// the directory it is mounted on holds.
     pub tmpcopyup: bool,
+
+    /// Whether `ridmap` asked for the id-mapping to apply to submounts too.
+    pub apply_recursive_idmap: bool,
 }
 
 pub fn default_devices() -> Vec<LinuxDevice> {
@@ -100,6 +104,7 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
     let mut data = Vec::new();
     let mut mount_attr: Option<linux::MountAttr> = None;
     let mut tmpcopyup = false;
+    let mut apply_recursive_idmap = false;
 
     if let Some(options) = &m.options() {
         for option in options {
@@ -108,6 +113,7 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
                     continue;
                 }
                 RIDMAP_FLAG => {
+                    apply_recursive_idmap = true;
                     continue;
                 }
                 TMPCOPYUP => {
@@ -222,6 +228,7 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
         rec_attr: mount_attr,
         propagation_flags,
         tmpcopyup,
+        apply_recursive_idmap,
     })
 }
 
@@ -233,13 +240,19 @@ pub fn is_bind(m: &Mount) -> bool {
     m.typ().as_deref() == Some("bind")
         || m.options()
             .as_deref()
-            .is_some_and(|opts| opts.iter().any(|o| o == "bind" || o == "rbind"))
+            .is_some_and(|opts| opts.iter().any(|o| o == "bind" || o == RBIND_FLAG))
+}
+
+pub fn is_recursive_bind(m: &Mount) -> bool {
+    m.options()
+        .as_deref()
+        .is_some_and(|options| options.iter().any(|option| option == RBIND_FLAG))
 }
 
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
-    use oci_spec::runtime::MountBuilder;
+    use oci_spec::runtime::{LinuxIdMappingBuilder, MountBuilder};
 
     use super::*;
     use crate::syscall::linux::MountAttr;
@@ -303,6 +316,7 @@ mod tests {
                 rec_attr: None,
                 propagation_flags: vec![],
                 tmpcopyup: false,
+                apply_recursive_idmap: false,
             },
             mount_option_config
         );
@@ -327,6 +341,7 @@ mod tests {
                 rec_attr: None,
                 propagation_flags: vec![],
                 tmpcopyup: false,
+                apply_recursive_idmap: false,
             },
             mount_option_config
         );
@@ -359,6 +374,7 @@ mod tests {
                 rec_attr: None,
                 propagation_flags: vec![],
                 tmpcopyup: false,
+                apply_recursive_idmap: false,
             },
             mount_option_config
         );
@@ -384,6 +400,7 @@ mod tests {
                 rec_attr: None,
                 propagation_flags: vec![],
                 tmpcopyup: false,
+                apply_recursive_idmap: false,
             },
             mount_option_config
         );
@@ -408,6 +425,7 @@ mod tests {
                 rec_attr: None,
                 propagation_flags: vec![],
                 tmpcopyup: false,
+                apply_recursive_idmap: false,
             },
             mount_option_config
         );
@@ -435,6 +453,7 @@ mod tests {
                 rec_attr: None,
                 propagation_flags: vec![],
                 tmpcopyup: false,
+                apply_recursive_idmap: false,
             },
             mount_option_config
         );
@@ -464,6 +483,7 @@ mod tests {
                 rec_attr: None,
                 propagation_flags: vec![],
                 tmpcopyup: false,
+                apply_recursive_idmap: false,
             },
             mount_option_config,
         );
@@ -532,6 +552,7 @@ mod tests {
                     MsFlags::MS_SLAVE | MsFlags::MS_REC,
                 ],
                 tmpcopyup: false,
+                apply_recursive_idmap: false,
             },
             mount_option_config
         );
@@ -568,6 +589,7 @@ mod tests {
                 rec_attr: Some(MountAttr::all()),
                 propagation_flags: vec![],
                 tmpcopyup: false,
+                apply_recursive_idmap: false,
             },
             mount_option_config
         );
@@ -582,6 +604,7 @@ mod tests {
                 .options(vec!["idmap".to_string()])
                 .build()?,
         )?;
+        assert!(!mount_option_config.apply_recursive_idmap);
         assert_eq!(mount_option_config.data, Vec::<String>::new());
 
         let mount_option_config = parse_mount(
@@ -589,7 +612,21 @@ mod tests {
                 .options(vec!["ridmap".to_string()])
                 .build()?,
         )?;
+        assert!(mount_option_config.apply_recursive_idmap);
         assert_eq!(mount_option_config.data, Vec::<String>::new());
+
+        let mapping = LinuxIdMappingBuilder::default()
+            .container_id(0_u32)
+            .host_id(1000_u32)
+            .size(1_u32)
+            .build()?;
+        let mount_option_config = parse_mount(
+            &MountBuilder::default()
+                .uid_mappings(vec![mapping])
+                .gid_mappings(vec![mapping])
+                .build()?,
+        )?;
+        assert!(!mount_option_config.apply_recursive_idmap);
 
         Ok(())
     }
@@ -774,5 +811,20 @@ mod tests {
         // Negative check
         let m4 = MountBuilder::default().typ("tmpfs").build().unwrap();
         assert!(!is_bind(&m4));
+    }
+
+    #[test]
+    fn test_is_recursive_bind() {
+        let recursive = MountBuilder::default()
+            .options(vec!["rbind".to_string()])
+            .build()
+            .unwrap();
+        assert!(is_recursive_bind(&recursive));
+
+        let bind = MountBuilder::default()
+            .options(vec!["bind".to_string()])
+            .build()
+            .unwrap();
+        assert!(!is_recursive_bind(&bind));
     }
 }

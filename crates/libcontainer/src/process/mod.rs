@@ -11,6 +11,6 @@ mod idmapped_mount;
 pub mod init;
 pub mod intel_rdt;
 pub mod memory_policy;
-mod message;
+pub(crate) mod message;
 #[cfg(feature = "libseccomp")]
 mod seccomp_listener;
