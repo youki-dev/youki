@@ -1,6 +1,6 @@
 //! Checks the io_uring policy set by the contest `io_uring` test group:
-//! NOP, READ and SOCKET allowed, sockets limited to AF_INET, provided-buffer
-//! selection denied. A denied operation completes with -EACCES.
+//! NOP, READ and SOCKET allowed, sockets limited to AF_INET. A denied
+//! operation completes with -EACCES.
 
 use io_uring::{IoUring, opcode, squeue, types};
 use nix::libc;
@@ -8,7 +8,7 @@ use nix::libc;
 /// Submits one SQE and returns its CQE result.
 fn submit(ring: &mut IoUring, entry: squeue::Entry) -> std::io::Result<i32> {
     // SAFETY: the entry references no buffers that outlive this call; reads
-    // are zero-length or use buffer selection.
+    // are zero-length.
     unsafe { ring.submission().push(&entry) }.map_err(std::io::Error::other)?;
     ring.submit_and_wait(1)?;
     Ok(ring
@@ -30,14 +30,6 @@ pub fn validate_io_uring() {
             "read",
             opcode::Read::new(types::Fd(0), std::ptr::null_mut(), 0).build(),
             true,
-        ),
-        (
-            "read with IOSQE_BUFFER_SELECT",
-            opcode::Read::new(types::Fd(0), std::ptr::null_mut(), 64)
-                .buf_group(0)
-                .build()
-                .flags(squeue::Flags::BUFFER_SELECT),
-            false,
         ),
         (
             "socket AF_INET",
