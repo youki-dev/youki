@@ -1,0 +1,28 @@
+base: template:_images/fedora-44
+
+cpus: 4
+memory: "8gb"
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux
+      bash /tmp/provision_scripts/provision_system.sh
+  - mode: user
+    script: |
+      #!/bin/bash
+      set -eux
+      bash /tmp/provision_scripts/install_cargo.sh
+
+mounts:
+  - location: "{{.Param.ScriptDirectory}}" # Mount the directory containing the script
+    mountPoint: "/tmp/provision_scripts" # Mount to a directory in VM
+    writable: false
+  - location: "{{.Param.SourceDirectory}}"
+    mountPoint: "/workdir/youki"
+    writable: true
+
+param:
+  ScriptDirectory: ~/youki/experiment/selinux
+  SourceDirectory: ~/youki

@@ -18,7 +18,7 @@ create_vm:
 
   ScriptDirectory=$(pwd)/experiment/selinux
   SourceDirectory=$(pwd)
-  limactl create scripts/vms/fedora.yaml \
+  limactl create tests/vms/fedora.yaml \
     --name={{ DEV_VM_NAME }} \
     --param ScriptDirectory="$ScriptDirectory" \
     --param SourceDirectory="$SourceDirectory" -y
