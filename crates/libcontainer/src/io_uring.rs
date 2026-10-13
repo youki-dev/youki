@@ -133,6 +133,8 @@ pub enum IoUringError {
     UnknownOp(String),
     #[error("unknown socket address family {0}")]
     UnknownFamily(String),
+    #[error("socketFamilies is empty; to deny all sockets, leave IORING_OP_SOCKET out of ops")]
+    EmptyFamilies,
     #[error(
         "io_uring restrictions are not supported by this kernel (Linux 7.0 or newer is required)"
     )]
@@ -189,6 +191,9 @@ impl IoUringPolicy {
             .socket_families
             .as_ref()
             .map(|families| {
+                if families.is_empty() {
+                    return Err(IoUringError::EmptyFamilies);
+                }
                 families
                     .iter()
                     .map(|f| family_number(f))
@@ -496,6 +501,11 @@ mod tests {
             unknown_family,
             Err(IoUringError::UnknownFamily(_))
         ));
+        let empty_families =
+            serde_json::from_str::<IoUringPolicy>(r#"{"ops":[],"socketFamilies":[]}"#)
+                .unwrap()
+                .compile();
+        assert!(matches!(empty_families, Err(IoUringError::EmptyFamilies)));
         // ops is required, and the fields of the earlier draft are refused.
         for json in [
             r#"{}"#,
