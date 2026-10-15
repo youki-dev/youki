@@ -3,6 +3,7 @@ mod cgroup_test;
 mod ignore_paused_test;
 mod mount_test;
 mod preserve_fds_test;
+mod seccomp_test;
 
 use anyhow::{Context, Result};
 use oci_spec::runtime::{ProcessBuilder, Spec, SpecBuilder};
@@ -58,6 +59,23 @@ pub fn get_exec_test() -> TestGroup {
     );
     let mount_test = Test::new("mount_test", Box::new(mount_test::get_mount_test));
 
+    let exec_seccomp_without_nnp_test = Test::new(
+        "exec_seccomp_without_no_new_privileges_test",
+        Box::new(seccomp_test::get_test_exec_seccomp_without_no_new_privileges),
+    );
+    let exec_seccomp_with_nnp_test = Test::new(
+        "exec_seccomp_with_no_new_privileges_test",
+        Box::new(seccomp_test::get_test_exec_seccomp_with_no_new_privileges),
+    );
+    let exec_seccomp_unset_nnp_test = Test::new(
+        "exec_seccomp_with_unset_no_new_privileges_test",
+        Box::new(seccomp_test::get_test_exec_seccomp_with_unset_no_new_privileges),
+    );
+    let init_seccomp_without_nnp_test = Test::new(
+        "init_seccomp_without_no_new_privileges_test",
+        Box::new(seccomp_test::get_test_init_seccomp_without_no_new_privileges),
+    );
+
     test_group.add(vec![
         Box::new(preserve_fds_test),
         Box::new(ignore_paused_test),
@@ -69,6 +87,10 @@ pub fn get_exec_test() -> TestGroup {
         Box::new(capabilities_by_flag_test_case1),
         Box::new(capabilities_by_flag_test_case2),
         Box::new(mount_test),
+        Box::new(exec_seccomp_without_nnp_test),
+        Box::new(exec_seccomp_with_nnp_test),
+        Box::new(exec_seccomp_unset_nnp_test),
+        Box::new(init_seccomp_without_nnp_test),
     ]);
 
     test_group
