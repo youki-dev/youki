@@ -117,11 +117,8 @@ fn clone3(cb: &mut CloneCb, flags: u64, exit_signal: Option<u64>) -> Result<Pid,
         -1 => Err(CloneError::Clone(nix::Error::last())),
         0 => {
             // Inside the cloned process, we execute the callback and exit with
-            // the return code. Like the `clone` fallback, whose libc trampoline
-            // exits with a raw syscall, we skip atexit handlers and std's
-            // runtime cleanup: the child copies a parent that may be
-            // multi-threaded, and a lock another thread held at clone time
-            // (malloc, stdout) would block those handlers forever.
+            // the return code. `_exit` skips atexit handlers, which can block on
+            // locks held by the parent's other threads.
             let ret = cb();
             unsafe { libc::_exit(ret) }
         }
@@ -280,8 +277,6 @@ mod test {
     fn test_container_fork_skips_exit_handlers() -> Result<()> {
         use std::sync::atomic::{AtomicBool, Ordering};
 
-        // Only the cloned child sets this, so the handler stays inert in the
-        // test process and in any other process it forks.
         static IN_CLONED_CHILD: AtomicBool = AtomicBool::new(false);
         extern "C" fn handler() {
             if IN_CLONED_CHILD.load(Ordering::SeqCst) {
