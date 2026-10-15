@@ -52,7 +52,12 @@ pub fn container_intermediate_process(
     let spec = &args.spec;
     let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
     let namespaces = Namespaces::try_from(linux.namespaces().as_ref())?;
-    let rootless = rootless_required(command.as_ref()).unwrap_or(false);
+    // like runc, only tolerate cgroup permission errors when the spec neither
+    // names a cgroup nor asks for limits; otherwise the container would run
+    // outside the cgroup it asked for
+    let rootless = rootless_required(command.as_ref()).unwrap_or(false)
+        && linux.cgroups_path().is_none()
+        && !has_resource_limits(linux.resources().as_ref());
     let cgroup_manager = libcgroups::common::create_cgroup_manager(args.cgroup_config.to_owned())
         .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?
         .with_rootless(rootless);
@@ -319,6 +324,52 @@ fn setup_time_offsets(sender: &mut MainSender, receiver: &mut IntermediateReceiv
     Ok(())
 }
 
+// only settings a v2 controller would write count as limits. Empty objects and
+// lists, v1-only fields such as network, and device rules (the v2 devices
+// controller is a no-op without root) do not.
+fn has_resource_limits(resources: Option<&LinuxResources>) -> bool {
+    fn non_empty<T>(v: &Option<Vec<T>>) -> bool {
+        v.as_ref().is_some_and(|v| !v.is_empty())
+    }
+    fn set(s: &Option<String>) -> bool {
+        s.as_ref().is_some_and(|s| !s.is_empty())
+    }
+
+    let Some(r) = resources else {
+        return false;
+    };
+    let memory = r
+        .memory()
+        .as_ref()
+        .is_some_and(|m| m.limit().is_some() || m.reservation().is_some() || m.swap().is_some());
+    let cpu = r.cpu().as_ref().is_some_and(|c| {
+        c.shares().is_some()
+            || c.quota().is_some()
+            || c.period().is_some()
+            || c.burst().is_some()
+            || c.idle().is_some()
+            || c.realtime_runtime().is_some()
+            || c.realtime_period().is_some()
+            || set(c.cpus())
+            || set(c.mems())
+    });
+    // a negative limit is written as "max"
+    let pids = r.pids().as_ref().is_some_and(|p| p.limit() >= 0);
+    let io = r.block_io().as_ref().is_some_and(|b| {
+        b.weight().is_some()
+            || b.leaf_weight().is_some()
+            || non_empty(b.weight_device())
+            || non_empty(b.throttle_read_bps_device())
+            || non_empty(b.throttle_write_bps_device())
+            || non_empty(b.throttle_read_iops_device())
+            || non_empty(b.throttle_write_iops_device())
+    });
+    let hugetlb = non_empty(r.hugepage_limits());
+    let unified = r.unified().as_ref().is_some_and(|u| !u.is_empty());
+
+    memory || cpu || pids || io || hugetlb || unified
+}
+
 fn apply_cgroups<
     C: CgroupManager<Error = E> + ?Sized,
     E: std::error::Error + Send + Sync + 'static,
@@ -359,6 +410,46 @@ mod tests {
     use procfs::process::Process;
 
     use super::*;
+
+    #[test]
+    fn resource_limits_count_only_v2_writes() -> Result<()> {
+        use oci_spec::runtime::{
+            LinuxBlockIoBuilder, LinuxCpuBuilder, LinuxDeviceCgroupBuilder, LinuxMemoryBuilder,
+            LinuxNetworkBuilder, LinuxPidsBuilder, LinuxResourcesBuilder,
+        };
+
+        assert!(!has_resource_limits(None));
+        assert!(!has_resource_limits(Some(&LinuxResources::default())));
+
+        let devices_only = LinuxResourcesBuilder::default()
+            .devices(vec![
+                LinuxDeviceCgroupBuilder::default()
+                    .allow(false)
+                    .access("rwm".to_string())
+                    .build()?,
+            ])
+            .build()?;
+        assert!(!has_resource_limits(Some(&devices_only)));
+
+        let empty_controllers = LinuxResourcesBuilder::default()
+            .memory(LinuxMemoryBuilder::default().build()?)
+            .cpu(LinuxCpuBuilder::default().build()?)
+            .block_io(LinuxBlockIoBuilder::default().build()?)
+            .network(LinuxNetworkBuilder::default().class_id(1u32).build()?)
+            .build()?;
+        assert!(!has_resource_limits(Some(&empty_controllers)));
+
+        let memory = LinuxResourcesBuilder::default()
+            .memory(LinuxMemoryBuilder::default().limit(1 << 20).build()?)
+            .build()?;
+        assert!(has_resource_limits(Some(&memory)));
+
+        let pids = LinuxResourcesBuilder::default()
+            .pids(LinuxPidsBuilder::default().limit(5).build()?)
+            .build()?;
+        assert!(has_resource_limits(Some(&pids)));
+        Ok(())
+    }
 
     #[test]
     fn apply_cgroup_init() -> Result<()> {
