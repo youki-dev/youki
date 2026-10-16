@@ -7,6 +7,8 @@ pub mod container_intermediate_process;
 pub mod container_main_process;
 pub mod cpu_affinity;
 mod fork;
+// A caller that writes a file that a container can exec takes this lock.
+pub use fork::CLONE_LOCK;
 pub mod init;
 pub mod intel_rdt;
 pub mod memory_policy;
