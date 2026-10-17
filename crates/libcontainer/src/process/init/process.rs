@@ -78,7 +78,11 @@ pub fn container_init_process(
     apply_rest_namespaces(&ctx.ns, ctx.spec, ctx.syscall.as_ref())?;
 
     if let Some(true) = ctx.process.no_new_privileges() {
-        let _ = prctl::set_no_new_privileges(true);
+        prctl::set_no_new_privileges(true).map_err(|errno| {
+            let err = nix::errno::Errno::from_raw(errno);
+            tracing::error!(?err, "failed to set no_new_privileges");
+            InitProcessError::NixOther(err)
+        })?;
     }
 
     if matches!(args.container_type, ContainerType::InitContainer) {
@@ -366,7 +370,7 @@ pub fn container_init_process(
     // as close to exec as possible.
     #[cfg(feature = "libseccomp")]
     if let Some(seccomp) = ctx.linux.seccomp() {
-        if ctx.process.no_new_privileges().is_none() {
+        if !ctx.process.no_new_privileges().unwrap_or(false) {
             let notify_fd = seccomp::initialize_seccomp(seccomp).map_err(|err| {
                 tracing::error!(?err, "failed to initialize seccomp");
                 err
@@ -378,7 +382,7 @@ pub fn container_init_process(
         }
     }
     #[cfg(not(feature = "libseccomp"))]
-    if ctx.process.no_new_privileges().is_none() {
+    if !ctx.process.no_new_privileges().unwrap_or(false) {
         tracing::warn!("seccomp not available, unable to enforce no_new_privileges!")
     }
 
@@ -413,7 +417,7 @@ pub fn container_init_process(
     // notify socket will still need network related syscalls.
     #[cfg(feature = "libseccomp")]
     if let Some(seccomp) = ctx.linux.seccomp() {
-        if ctx.process.no_new_privileges().is_some() {
+        if ctx.process.no_new_privileges().unwrap_or(false) {
             let notify_fd = seccomp::initialize_seccomp(seccomp).map_err(|err| {
                 tracing::error!(?err, "failed to initialize seccomp");
                 err
@@ -425,7 +429,7 @@ pub fn container_init_process(
         }
     }
     #[cfg(not(feature = "libseccomp"))]
-    if ctx.process.no_new_privileges().is_some() {
+    if ctx.process.no_new_privileges().unwrap_or(false) {
         tracing::warn!("seccomp not available, unable to set seccomp privileges!")
     }
 
