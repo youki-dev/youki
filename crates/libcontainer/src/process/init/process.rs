@@ -35,7 +35,6 @@ use crate::rootfs::device::{open_device_fd, verify_dev_null};
 #[cfg(feature = "libseccomp")]
 use crate::seccomp;
 use crate::syscall::{Syscall, SyscallError};
-use crate::user_ns::UserNamespaceConfig;
 use crate::{apparmor, capabilities, hooks, tty, utils};
 
 // Some variables are unused in the case where libseccomp feature is not enabled.
@@ -273,12 +272,7 @@ pub fn container_init_process(
         }
     };
 
-    set_supplementary_gids(
-        ctx.process.user(),
-        &args.user_ns_config,
-        ctx.syscall.as_ref(),
-    )
-    .map_err(|err| {
+    set_supplementary_gids(ctx.process.user(), ctx.syscall.as_ref()).map_err(|err| {
         tracing::error!(?err, "failed to set supplementary gids");
         err
     })?;
@@ -813,19 +807,7 @@ fn do_pivot_root(
 //
 // Privileged user starting a normal container: Just add the supplementary groups.
 //
-fn set_supplementary_gids(
-    user: &User,
-    user_ns_config: &Option<UserNamespaceConfig>,
-    syscall: &dyn Syscall,
-) -> Result<()> {
-    let additional_gids = user.additional_gids().as_deref().unwrap_or_default();
-    let privileged = user_ns_config
-        .as_ref()
-        .is_none_or(|config| config.privileged);
-    if additional_gids.is_empty() && !privileged {
-        return Ok(());
-    }
-
+fn set_supplementary_gids(user: &User, syscall: &dyn Syscall) -> Result<()> {
     let mut setgroups = String::new();
     ProcfsHandle::new()?
         .open(ProcfsBase::ProcSelf, "setgroups", OpenFlags::O_RDONLY)?
@@ -835,19 +817,22 @@ fn set_supplementary_gids(
             InitProcessError::Io(err)
         })?;
 
+    set_supplementary_gids_with_setgroups(user, &setgroups, syscall)
+}
+
+pub(crate) fn set_supplementary_gids_with_setgroups(
+    user: &User,
+    setgroups: &str,
+    syscall: &dyn Syscall,
+) -> Result<()> {
+    let additional_gids = user.additional_gids().as_deref().unwrap_or_default();
+
     if setgroups.trim() == "deny" {
         if additional_gids.is_empty() {
             return Ok(());
         }
         tracing::error!("cannot set supplementary gids, setgroup is disabled");
         return Err(InitProcessError::SetGroupDisabled);
-    }
-
-    // this should have been detected during validation
-    if !privileged {
-        unreachable!(
-            "unprivileged users cannot set supplementary gids in containers with new user namespace"
-        );
     }
 
     // An empty list too: the process must not keep the supplementary groups of whoever started
@@ -1174,7 +1159,7 @@ mod tests {
         // No additional GIDs: the caller's supplementary groups are dropped where setgroups is allowed
         let user = UserBuilder::default().build().unwrap();
         let syscall = create_syscall();
-        assert!(set_supplementary_gids(&user, &None, syscall.as_ref()).is_ok());
+        assert!(set_supplementary_gids(&user, syscall.as_ref()).is_ok());
         let calls = syscall
             .as_any()
             .downcast_ref::<TestHelperSyscall>()
@@ -1190,41 +1175,24 @@ mod tests {
                 UserBuilder::default()
                     .additional_gids(vec![33, 34])
                     .build()?,
-                None::<UserNamespaceConfig>,
                 vec![Gid::from_raw(33), Gid::from_raw(34)],
-            ),
-            // unreachable case
-            (
-                UserBuilder::default().build()?,
-                Some(UserNamespaceConfig::default()),
-                vec![],
             ),
             (
                 UserBuilder::default()
                     .additional_gids(vec![37, 38])
                     .build()?,
-                Some(UserNamespaceConfig {
-                    privileged: true,
-                    gid_mappings: None,
-                    newgidmap: None,
-                    newuidmap: None,
-                    uid_mappings: None,
-                    user_namespace: None,
-                    ..Default::default()
-                }),
                 vec![Gid::from_raw(37), Gid::from_raw(38)],
             ),
             (
                 UserBuilder::default()
                     .additional_gids(vec![33, 34, 34])
                     .build()?,
-                None::<UserNamespaceConfig>,
                 vec![Gid::from_raw(33), Gid::from_raw(34), Gid::from_raw(34)],
             ),
         ];
-        for (user, ns_config, want) in tests.into_iter() {
+        for (user, want) in tests.into_iter() {
             let syscall = create_syscall();
-            let result = set_supplementary_gids(&user, &ns_config, syscall.as_ref());
+            let result = set_supplementary_gids(&user, syscall.as_ref());
             match fs::read_to_string("/proc/self/setgroups")?.trim() {
                 "deny" => {
                     assert!(result.is_err());

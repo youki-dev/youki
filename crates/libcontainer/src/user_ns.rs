@@ -148,6 +148,11 @@ pub struct UserNamespaceConfig {
 impl UserNamespaceConfig {
     pub fn new(spec: &Spec) -> Result<Option<Self>> {
         let syscall = create_syscall();
+        let privileged = utils::can_use_setgroups(&*syscall)?;
+        Self::from_spec(spec, &*syscall, privileged)
+    }
+
+    fn from_spec(spec: &Spec, syscall: &dyn Syscall, privileged: bool) -> Result<Option<Self>> {
         let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
         let namespaces = Namespaces::try_from(linux.namespaces().as_ref())
             .map_err(ValidateSpecError::Namespaces)?;
@@ -158,14 +163,24 @@ impl UserNamespaceConfig {
         if user_namespace.is_some() && user_namespace.unwrap().path().is_none() {
             tracing::debug!("container with new user namespace should be created");
 
-            validate_spec_for_new_user_ns(spec, &*syscall).map_err(|err| {
-                tracing::error!("failed to validate spec for new user namespace: {}", err);
-                err
-            })?;
-            let mut user_ns_config = UserNamespaceConfig::try_from(linux)?;
-            // A privileged runtime writes every range itself; newuidmap/newgidmap are for an
-            // unprivileged one.
-            if !user_ns_config.privileged {
+            validate_spec_for_new_user_ns_with_setgroups(spec, syscall, privileged).map_err(
+                |err| {
+                    tracing::error!("failed to validate spec for new user namespace: {}", err);
+                    err
+                },
+            )?;
+            let mut user_ns_config = UserNamespaceConfig {
+                newuidmap: None,
+                newgidmap: None,
+                uid_mappings: linux.uid_mappings().to_owned(),
+                gid_mappings: linux.gid_mappings().to_owned(),
+                user_namespace: user_namespace.cloned(),
+                privileged,
+                id_mapper: UserNamespaceIDMapper::new(),
+            };
+            // A runtime with root in its user namespace writes every range itself;
+            // newuidmap/newgidmap are for an unprivileged one.
+            if !syscall.get_euid().is_root() {
                 if let Some((uid_binary, gid_binary)) = lookup_map_binaries(linux)? {
                     user_ns_config.newuidmap = Some(uid_binary);
                     user_ns_config.newgidmap = Some(gid_binary);
@@ -226,7 +241,7 @@ impl TryFrom<&Linux> for UserNamespaceConfig {
             uid_mappings: linux.uid_mappings().to_owned(),
             gid_mappings: linux.gid_mappings().to_owned(),
             user_namespace: user_namespace.cloned(),
-            privileged: utils::can_map_ids(&*syscall)?,
+            privileged: utils::can_use_setgroups(&*syscall)?,
             id_mapper: UserNamespaceIDMapper::new(),
         })
     }
@@ -254,9 +269,18 @@ pub fn unprivileged_user_ns_enabled() -> Result<bool> {
 
 /// Validates that the spec contains the required information for
 /// creating a new user namespace
+#[cfg(test)]
 fn validate_spec_for_new_user_ns(
     spec: &Spec,
     syscall: &dyn Syscall,
+) -> std::result::Result<(), ValidateSpecError> {
+    validate_spec_for_new_user_ns_with_setgroups(spec, syscall, utils::can_use_setgroups(syscall)?)
+}
+
+fn validate_spec_for_new_user_ns_with_setgroups(
+    spec: &Spec,
+    syscall: &dyn Syscall,
+    privileged: bool,
 ) -> std::result::Result<(), ValidateSpecError> {
     tracing::debug!(
         ?spec,
@@ -293,8 +317,6 @@ fn validate_spec_for_new_user_ns(
         .as_ref()
         .and_then(|process| process.user().additional_gids().as_ref())
     {
-        let privileged = utils::can_map_ids(syscall)?;
-
         match (privileged, additional_gids.is_empty()) {
             (true, false) => {
                 for gid in additional_gids {
@@ -790,6 +812,188 @@ mod tests {
             format!("{container_id} {host_gid} {size}"),
             fs::read_to_string(id_mapper.get_gid_path(&pid))?
         );
+        Ok(())
+    }
+
+    fn build_keep_id_spec(additional_gids: Option<Vec<u32>>) -> Result<Spec> {
+        let userns = LinuxNamespaceBuilder::default()
+            .typ(LinuxNamespaceType::User)
+            .build()?;
+        let linux = LinuxBuilder::default()
+            .namespaces(vec![userns])
+            .uid_mappings(keep_id_mappings())
+            .gid_mappings(keep_id_mappings())
+            .build()?;
+        let mut user = oci_spec::runtime::UserBuilder::default()
+            .uid(1000_u32)
+            .gid(1000_u32);
+        if let Some(gids) = additional_gids {
+            user = user.additional_gids(gids);
+        }
+        let process = oci_spec::runtime::ProcessBuilder::default()
+            .user(user.build()?)
+            .build()?;
+        Ok(SpecBuilder::default()
+            .linux(linux)
+            .process(process)
+            .mounts(vec![])
+            .build()?)
+    }
+
+    #[test]
+    fn test_keep_id_in_nested_user_ns() -> Result<()> {
+        use nix::unistd::{Gid, Uid};
+
+        use crate::process::init::process::set_supplementary_gids_with_setgroups;
+        use crate::syscall::test::TestHelperSyscall;
+
+        // Podman --userns=keep-id runs the runtime as root of an outer user
+        // namespace with setgroups "allow", and passes a 3-range mapping with
+        // additionalGids: [1000].
+        let syscall = create_syscall();
+        syscall.set_id(Uid::from_raw(0), Gid::from_raw(0))?;
+
+        let spec = build_keep_id_spec(Some(vec![1000]))?;
+        let mut config = UserNamespaceConfig::from_spec(&spec, &*syscall, true)?.unwrap();
+        assert!(config.privileged);
+        assert!(config.newuidmap.is_none());
+        assert!(config.newgidmap.is_none());
+
+        let pid = getpid();
+        let tmp = tempfile::tempdir()?;
+        let id_mapper = UserNamespaceIDMapper::new_test(tmp.path().to_path_buf());
+        id_mapper.ensure_uid_path(&pid)?;
+        id_mapper.ensure_gid_path(&pid)?;
+        config.with_id_mapper(id_mapper.clone());
+
+        config.write_uid_mapping(pid)?;
+        config.write_gid_mapping(pid)?;
+        let expected_map = "0 1 1000\n1000 0 1\n1001 1001 64536";
+        assert_eq!(
+            fs::read_to_string(id_mapper.get_uid_path(&pid))?,
+            expected_map
+        );
+        assert_eq!(
+            fs::read_to_string(id_mapper.get_gid_path(&pid))?,
+            expected_map
+        );
+
+        let user = spec.process().as_ref().unwrap().user();
+        set_supplementary_gids_with_setgroups(user, "allow\n", syscall.as_ref())?;
+        let calls = syscall
+            .as_any()
+            .downcast_ref::<TestHelperSyscall>()
+            .unwrap()
+            .get_groups_calls();
+        assert_eq!(calls, vec![vec![Gid::from_raw(1000)]]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_nested_user_ns_without_additional_gids() -> Result<()> {
+        use nix::unistd::{Gid, Uid};
+
+        use crate::process::init::error::InitProcessError;
+        use crate::process::init::process::set_supplementary_gids_with_setgroups;
+        use crate::syscall::test::TestHelperSyscall;
+
+        let expected_map = "0 1 1000\n1000 0 1\n1001 1001 64536";
+
+        // Outer user namespace with euid 0, setgroups "allow", and no additionalGids:
+        // mappings are written directly and init clears supplementary groups.
+        {
+            let syscall = create_syscall();
+            syscall.set_id(Uid::from_raw(0), Gid::from_raw(0))?;
+
+            let spec = build_keep_id_spec(None)?;
+            let mut config = UserNamespaceConfig::from_spec(&spec, &*syscall, true)?.unwrap();
+            assert!(config.privileged);
+            assert!(config.newuidmap.is_none());
+            assert!(config.newgidmap.is_none());
+
+            let pid = getpid();
+            let tmp = tempfile::tempdir()?;
+            let id_mapper = UserNamespaceIDMapper::new_test(tmp.path().to_path_buf());
+            id_mapper.ensure_uid_path(&pid)?;
+            id_mapper.ensure_gid_path(&pid)?;
+            config.with_id_mapper(id_mapper.clone());
+
+            config.write_uid_mapping(pid)?;
+            config.write_gid_mapping(pid)?;
+            assert_eq!(
+                fs::read_to_string(id_mapper.get_uid_path(&pid))?,
+                expected_map
+            );
+            assert_eq!(
+                fs::read_to_string(id_mapper.get_gid_path(&pid))?,
+                expected_map
+            );
+
+            let user = spec.process().as_ref().unwrap().user();
+            set_supplementary_gids_with_setgroups(user, "allow\n", syscall.as_ref())?;
+            let calls = syscall
+                .as_any()
+                .downcast_ref::<TestHelperSyscall>()
+                .unwrap()
+                .get_groups_calls();
+            assert_eq!(calls, vec![Vec::<Gid>::new()]);
+        }
+
+        // Outer user namespace with euid 0 and setgroups "deny":
+        // mappings are still written directly without newuidmap/newgidmap,
+        // config.privileged is false so setup_mapping denies setgroups in the
+        // child, and init skips setgroups when additionalGids is empty.
+        {
+            let syscall = create_syscall();
+            syscall.set_id(Uid::from_raw(0), Gid::from_raw(0))?;
+
+            let spec_with_gids = build_keep_id_spec(Some(vec![1000]))?;
+            assert!(matches!(
+                UserNamespaceConfig::from_spec(&spec_with_gids, &*syscall, false),
+                Err(UserNamespaceError::InvalidSpec(
+                    ValidateSpecError::UnprivilegedUser
+                ))
+            ));
+
+            let spec = build_keep_id_spec(None)?;
+            let mut config = UserNamespaceConfig::from_spec(&spec, &*syscall, false)?.unwrap();
+            assert!(!config.privileged);
+            assert!(config.newuidmap.is_none());
+            assert!(config.newgidmap.is_none());
+
+            let pid = getpid();
+            let tmp = tempfile::tempdir()?;
+            let id_mapper = UserNamespaceIDMapper::new_test(tmp.path().to_path_buf());
+            id_mapper.ensure_uid_path(&pid)?;
+            id_mapper.ensure_gid_path(&pid)?;
+            config.with_id_mapper(id_mapper.clone());
+
+            config.write_uid_mapping(pid)?;
+            config.write_gid_mapping(pid)?;
+            assert_eq!(
+                fs::read_to_string(id_mapper.get_uid_path(&pid))?,
+                expected_map
+            );
+            assert_eq!(
+                fs::read_to_string(id_mapper.get_gid_path(&pid))?,
+                expected_map
+            );
+
+            let user = spec.process().as_ref().unwrap().user();
+            set_supplementary_gids_with_setgroups(user, "deny\n", syscall.as_ref())?;
+            let calls = syscall
+                .as_any()
+                .downcast_ref::<TestHelperSyscall>()
+                .unwrap()
+                .get_groups_calls();
+            assert!(calls.is_empty());
+
+            let user_with_gids = spec_with_gids.process().as_ref().unwrap().user();
+            assert!(matches!(
+                set_supplementary_gids_with_setgroups(user_with_gids, "deny\n", syscall.as_ref()),
+                Err(InitProcessError::SetGroupDisabled)
+            ));
+        }
         Ok(())
     }
 }

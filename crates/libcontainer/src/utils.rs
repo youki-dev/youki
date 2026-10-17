@@ -260,15 +260,14 @@ pub fn is_in_new_userns() -> Result<bool, std::io::Error> {
     Ok(!content.contains("4294967295"))
 }
 
-/// Checks if this process may write a child user namespace's id mappings (several ranges
-/// included) and keep setgroups there, without newuidmap/newgidmap.
+/// Checks if this process may keep setgroups enabled in a child user namespace.
 ///
 /// That holds for root in the initial user namespace, and for root in a user namespace whose
 /// setgroups is "allow", such as the one rootless Podman runs the runtime in (made with
 /// newuidmap/newgidmap from /etc/subuid). An unprivileged user can only map a user namespace
 /// after writing "deny" to its setgroups (CVE-2014-8989), so "allow" means a privileged helper
 /// made the mapping.
-pub fn can_map_ids(syscall: &dyn Syscall) -> Result<bool, std::io::Error> {
+pub fn can_use_setgroups(syscall: &dyn Syscall) -> Result<bool, std::io::Error> {
     if !syscall.get_euid().is_root() {
         return Ok(false);
     }
