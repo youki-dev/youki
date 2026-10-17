@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
@@ -245,6 +246,7 @@ pub struct CheckpointOptions {
     pub manage_cgroups_mode: rust_criu::CgMode,
     pub link_remap: bool,
     pub empty_net_ns: bool,
+    pub page_server: Option<SocketAddr>,
 }
 
 #[cfg(test)]

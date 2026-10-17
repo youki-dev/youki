@@ -23,6 +23,7 @@ pub fn checkpoint(args: Checkpoint, root_path: PathBuf) -> Result<()> {
         manage_cgroups_mode: parse_cgroups_mode(&args.manage_cgroups_mode)?,
         link_remap: args.link_remap,
         empty_net_ns: parse_empty_ns(&args.empty_ns)?,
+        page_server: args.page_server,
     };
     container
         .checkpoint(&opts)
