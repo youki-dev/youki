@@ -23,9 +23,20 @@ pub fn run(args: Run, root_path: PathBuf, systemd_cgroup: bool) -> Result<i32> {
             .with_no_pivot(args.no_pivot)
             .build()?;
 
-    container
-        .start()
-        .with_context(|| format!("failed to start container {}", args.container_id))?;
+    if let Err(err) = container.start() {
+        // A failed start (for example a failing poststart hook) must not leave
+        // the container behind: destroy it and run its poststop hooks, then
+        // report the start error.
+        if let Err(delete_err) = container.delete(true) {
+            tracing::error!(
+                id = args.container_id,
+                ?delete_err,
+                "failed to delete container after a failed start"
+            );
+        }
+        return Err(err)
+            .with_context(|| format!("failed to start container {}", args.container_id));
+    }
 
     if args.detach {
         return Ok(0);

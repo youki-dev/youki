@@ -10,6 +10,7 @@ use oci_spec::runtime::Spec;
 
 use super::{Container, ContainerStatus};
 use crate::error::{CreateContainerError, LibcontainerError, MissingSpecError};
+use crate::hooks;
 use crate::notify_socket::NotifyListener;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::intel_rdt::{cleanup_intel_rdt, setup_intel_rdt};
@@ -80,7 +81,14 @@ impl ContainerBuilderImpl {
                 // Only the init container should be cleaned up in the case of
                 // an error.
                 let cleanup_err = if self.is_init_container() {
-                    self.cleanup_container().err()
+                    let cleanup_err = self.cleanup_container().err();
+                    // The OCI runtime spec (lifecycle steps 4, 5, 12 and 13): when
+                    // a createRuntime or createContainer hook fails, the
+                    // container is destroyed and the poststop hooks are still
+                    // invoked. The same holds for any other failure of create
+                    // once the container state exists.
+                    self.run_poststop_hooks_after_failed_create();
+                    cleanup_err
                 } else {
                     None
                 };
@@ -226,6 +234,30 @@ impl ContainerBuilderImpl {
         }
 
         Ok((init_pid, foreground_pty_fd))
+    }
+
+    /// Runs the poststop hooks for an init container whose creation failed.
+    /// A failing hook is logged, not returned: the caller gets the create error.
+    fn run_poststop_hooks_after_failed_create(&self) {
+        let Some(container) = &self.container else {
+            return;
+        };
+        let Some(hooks) = self.spec.hooks().as_ref() else {
+            return;
+        };
+        if let Err(err) = hooks::run_hooks(
+            hooks.poststop().as_ref(),
+            Some(&container.state),
+            None,
+            None,
+            None,
+        ) {
+            tracing::warn!(
+                id = ?container.id(),
+                ?err,
+                "failed to run post stop hooks after a failed create"
+            );
+        }
     }
 
     fn cleanup_container(&self) -> Result<(), LibcontainerError> {

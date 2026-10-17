@@ -1,3 +1,5 @@
+use nix::sys::signal::Signal;
+
 use super::{Container, ContainerStatus};
 use crate::config::YoukiConfig;
 use crate::error::LibcontainerError;
@@ -54,17 +56,29 @@ impl Container {
         // Run post start hooks. It runs after the container process is started.
         // It is called in the runtime namespace.
         if let Some(hooks) = config.hooks.as_ref() {
-            hooks::run_hooks(
+            if let Err(err) = hooks::run_hooks(
                 hooks.poststart().as_ref(),
                 Some(&self.state),
                 Some(&self.root),
                 None,
                 None,
-            )
-            .map_err(|err| {
+            ) {
+                // The OCI runtime spec (lifecycle step 9): if any poststart hook
+                // fails, the runtime MUST generate an error, stop the container,
+                // and continue the lifecycle at step 12 (destroy). Kill every
+                // process of the container, as `delete` does, so the container
+                // is really stopped, record the state, and then return the hook
+                // error; the caller's `delete` runs the poststop hooks.
                 tracing::error!("failed to run post start hooks: {}", err);
-                err
-            })?;
+                if let Err(kill_err) = self.kill(Signal::SIGKILL, true) {
+                    tracing::error!(
+                        id = ?self.id(),
+                        ?kill_err,
+                        "failed to stop the container after a post start hook failure"
+                    );
+                }
+                return Err(err.into());
+            }
         }
 
         Ok(())
