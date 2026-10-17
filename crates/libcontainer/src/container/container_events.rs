@@ -12,6 +12,7 @@ impl Container {
     /// # Example
     ///
     /// ```no_run
+    /// use std::time::Duration;
     /// use libcontainer::container::builder::ContainerBuilder;
     /// use libcontainer::syscall::syscall::SyscallType;
     ///
@@ -23,11 +24,18 @@ impl Container {
     /// .as_init("/var/run/docker/bundle")
     /// .build()?;
     ///
-    /// container.events(5000, false)?;
+    /// container.events(Duration::from_secs(5), false)?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn events(&mut self, interval: u32, stats: bool) -> Result<(), LibcontainerError> {
+    pub fn events(&mut self, interval: Duration, stats: bool) -> Result<(), LibcontainerError> {
+        if !stats && interval.is_zero() {
+            tracing::error!(id = ?self.id(), "stats collection interval must be greater than 0");
+            return Err(LibcontainerError::InvalidInput(
+                "duration interval must be greater than 0".into(),
+            ));
+        }
+
         self.refresh_status()?;
         if !self.state.status.eq(&ContainerStatus::Running) {
             tracing::error!(id = ?self.id(), status = ?self.state.status, "container is not running");
@@ -56,7 +64,7 @@ impl Container {
                     serde_json::to_string_pretty(&stats)
                         .map_err(LibcontainerError::OtherSerialization)?
                 );
-                thread::sleep(Duration::from_secs(interval as u64));
+                thread::sleep(interval);
             },
         }
 
