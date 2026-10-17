@@ -135,7 +135,11 @@ impl Memory {
                         // a separate value, so the swap value in the runtime spec needs
                         // to be converted from the cgroup v1 value to the cgroup v2 value
                         // by subtracting limit from swap
-                        Memory::set(path.join(CGROUP_MEMORY_SWAP), swap - limit)?;
+                        // An explicit positive total equal to the memory limit
+                        // disables swap. Do not skip the resulting zero value.
+                        if swap != 0 {
+                            common::write_cgroup_file(path.join(CGROUP_MEMORY_SWAP), swap - limit)?;
+                        }
                     }
                     Memory::set(path.join(CGROUP_MEMORY_MAX), limit)?;
                 }
@@ -172,6 +176,52 @@ mod tests {
 
     use super::*;
     use crate::test::set_fixture;
+
+    #[test]
+    fn test_equal_memory_and_swap_limits_disable_swap() {
+        let tmp = tempfile::tempdir().unwrap();
+        set_fixture(tmp.path(), CGROUP_MEMORY_MAX, "max").unwrap();
+        set_fixture(tmp.path(), CGROUP_MEMORY_SWAP, "1").unwrap();
+        let memory = LinuxMemoryBuilder::default()
+            .limit(1024)
+            .swap(1024)
+            .build()
+            .unwrap();
+
+        Memory::apply(tmp.path(), &memory).expect("apply memory limits");
+
+        assert_eq!(
+            read_to_string(tmp.path().join(CGROUP_MEMORY_SWAP)).unwrap(),
+            "0"
+        );
+        assert_eq!(
+            read_to_string(tmp.path().join(CGROUP_MEMORY_MAX)).unwrap(),
+            "1024"
+        );
+    }
+
+    #[test]
+    fn test_zero_memory_and_swap_limits_leave_limits_unchanged() {
+        let tmp = tempfile::tempdir().unwrap();
+        set_fixture(tmp.path(), CGROUP_MEMORY_MAX, "2048").unwrap();
+        set_fixture(tmp.path(), CGROUP_MEMORY_SWAP, "512").unwrap();
+        let memory = LinuxMemoryBuilder::default()
+            .limit(0)
+            .swap(0)
+            .build()
+            .unwrap();
+
+        Memory::apply(tmp.path(), &memory).expect("apply memory limits");
+
+        assert_eq!(
+            read_to_string(tmp.path().join(CGROUP_MEMORY_SWAP)).unwrap(),
+            "512"
+        );
+        assert_eq!(
+            read_to_string(tmp.path().join(CGROUP_MEMORY_MAX)).unwrap(),
+            "2048"
+        );
+    }
 
     #[test]
     fn test_set_memory() {
