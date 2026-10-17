@@ -21,6 +21,8 @@ rand=$(head -c 10 /dev/random | base64)
 log=$(podman run --runtime $runtime fedora echo "$rand")
 echo $log | grep $rand
 
+test "$(podman run --rm --runtime $runtime --userns=keep-id busybox sh -c 'echo "$(id -u):$(id -g):$(id -G)"')" = "$(id -u):$(id -g):$(id -g)"
+
 podman kill exec-test || true # ignore failure for killing
 podman rm --force --ignore exec-test
 podman run -d --runtime $runtime --name exec-test busybox sleep 10m
