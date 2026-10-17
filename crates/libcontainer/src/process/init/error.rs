@@ -45,6 +45,8 @@ pub enum InitProcessError {
     #[error(transparent)]
     #[cfg(feature = "libseccomp")]
     Seccomp(#[from] seccomp::SeccompError),
+    #[error(transparent)]
+    IoUring(#[from] crate::io_uring::IoUringError),
     #[error("invalid executable: {0}")]
     InvalidExecutable(String),
     #[error("io error")]
