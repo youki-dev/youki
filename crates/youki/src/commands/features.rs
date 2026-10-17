@@ -79,8 +79,7 @@ pub fn features(_: Features) -> Result<()> {
         .apparmor(ApparmorBuilder::default().enabled(true).build().unwrap())
         .mount_extensions(
             MountExtensionsBuilder::default()
-                // idmapped mounts is not supported in youki
-                .idmap(IDMapBuilder::default().enabled(false).build().unwrap())
+                .idmap(IDMapBuilder::default().enabled(true).build().unwrap())
                 .build()
                 .unwrap(),
         )

@@ -1,4 +1,4 @@
-use std::fs::Permissions;
+use std::fs::{Permissions, canonicalize};
 use std::io::{BufRead, BufReader, ErrorKind};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -31,8 +31,10 @@ use procfs::{FromRead, ProcessCGroups};
 #[cfg(feature = "v1")]
 use super::symlink::Symlink;
 use super::symlink::SymlinkError;
-use super::utils::{MountOptionConfig, parse_mount};
-use crate::rootfs::utils::is_bind;
+use super::utils::{MountOptionConfig, is_bind, is_recursive_bind, parse_mount};
+use crate::container::mount_validation::mount_requests_idmap;
+use crate::process::channel;
+use crate::process::message::{MountIdMap, MountIdMapUsernsSource, MountMsg};
 use crate::syscall::syscall::create_syscall;
 use crate::syscall::{Syscall, SyscallError, linux};
 use crate::utils::{PathBufExt, retry};
@@ -78,6 +80,11 @@ pub enum MountError {
 }
 
 type Result<T> = std::result::Result<T, MountError>;
+
+pub struct MountChannels<'a> {
+    pub main: &'a mut channel::MainSender,
+    pub init: &'a mut channel::InitReceiver,
+}
 
 pub trait MountInfoProvider {
     fn mountinfo(&self) -> Result<Vec<MountInfo>>;
@@ -143,9 +150,162 @@ impl Mount {
         self
     }
 
-    pub fn setup_mount(&self, mount: &SpecMount, options: &MountOptions) -> Result<()> {
+    fn create_bind_mount_destination(
+        root: &Root,
+        container_dest: &Path,
+        src_is_dir: bool,
+    ) -> Result<()> {
+        let dir_perm = Permissions::from_mode(0o755);
+
+        if src_is_dir {
+            root.mkdir_all(container_dest, &dir_perm)?;
+        } else {
+            let parent = container_dest
+                .parent()
+                .ok_or(MountError::Custom("destination has no parent".to_string()))?;
+            root.mkdir_all(parent, &dir_perm)?;
+
+            match root.create_file(
+                container_dest,
+                OpenFlags::O_EXCL
+                    | OpenFlags::O_CREAT
+                    | OpenFlags::O_NOFOLLOW
+                    | OpenFlags::O_CLOEXEC,
+                &Permissions::from_mode(0o644),
+            ) {
+                Ok(_) => Ok(()),
+                // If we get here, the file is already present, so continue.
+                Err(create_err) => root
+                    .resolve(container_dest)
+                    .map(|_| ())
+                    .map_err(|_| create_err),
+            }?;
+        }
+
+        Ok(())
+    }
+
+    fn mount_idmapped(
+        &self,
+        mount: &SpecMount,
+        options: &MountOptions,
+        mount_option_config: &MountOptionConfig,
+        comm: &mut MountChannels<'_>,
+    ) -> Result<()> {
+        let root = Root::open(options.root)?;
+        let container_dest = mount.destination();
+        let source = mount.source().as_ref().ok_or(MountError::NoSource)?;
+        let src = canonicalize(source).map_err(|err| {
+            tracing::error!("failed to canonicalize {:?}: {}", source, err);
+            err
+        })?;
+        Self::create_bind_mount_destination(&root, container_dest, src.is_dir())?;
+        let dest: OwnedFd = root.resolve(container_dest)?.into();
+        let dest_fd = dest.as_fd();
+
+        let userns_source = match (
+            mount.uid_mappings().as_deref(),
+            mount.gid_mappings().as_deref(),
+        ) {
+            (Some(uid_mappings), Some(gid_mappings)) => MountIdMapUsernsSource::Mappings {
+                uid_mappings: uid_mappings.to_vec(),
+                gid_mappings: gid_mappings.to_vec(),
+            },
+            (None, None) => MountIdMapUsernsSource::ContainerUserns,
+            _ => {
+                return Err(MountError::Custom(
+                    "mount uid/gid mappings must be specified together".to_string(),
+                ));
+            }
+        };
+        let msg = MountMsg {
+            source: src,
+            idmap: Some(MountIdMap {
+                userns_source,
+                apply_idmap_recursively: mount_option_config.apply_recursive_idmap,
+            }),
+            clone_mount_tree_recursively: is_recursive_bind(mount),
+        };
+        comm.main.request_mount_fd(msg).map_err(|err| {
+            tracing::error!("failed to request mount fd: {}", err);
+            MountError::Other(err.into())
+        })?;
+        let mount_fd = match comm.init.wait_for_mount_fd_reply() {
+            Ok(fd) => fd,
+            Err(channel::ChannelError::MountFdError(err)) => {
+                return Err(MountError::Custom(err));
+            }
+            Err(err) => {
+                tracing::error!("failed to receive mount fd: {}", err);
+                return Err(MountError::Other(err.into()));
+            }
+        };
+
+        let attr_set_from_flags = self.mount_flag_to_attr(&mount_option_config.flags);
+        let mut mount_attr = linux::MountAttr {
+            attr_set: attr_set_from_flags,
+            attr_clr: 0,
+            propagation: 0,
+            userns_fd: 0,
+        };
+        self.apply_atime_from_msflags(
+            &mut mount_attr,
+            attr_set_from_flags,
+            mount_option_config.flags,
+        );
+        self.syscall.mount_setattr(
+            mount_fd.as_fd(),
+            Path::new(""),
+            linux::AT_EMPTY_PATH,
+            &mount_attr,
+            mem::size_of::<linux::MountAttr>(),
+        )?;
+
+        if let Some(rec_attr) = &mount_option_config.rec_attr {
+            self.syscall.mount_setattr(
+                mount_fd.as_fd(),
+                Path::new(""),
+                linux::AT_EMPTY_PATH | linux::AT_RECURSIVE,
+                rec_attr,
+                mem::size_of::<linux::MountAttr>(),
+            )?;
+        }
+
+        self.syscall.move_mount(
+            mount_fd.as_fd(),
+            None,
+            dest_fd,
+            None,
+            linux::MOVE_MOUNT_T_EMPTY_PATH | linux::MOVE_MOUNT_F_EMPTY_PATH,
+        )?;
+
+        self.apply_mount_propagation(
+            options.root,
+            container_dest,
+            &mount_option_config.propagation_flags,
+        )?;
+
+        Ok(())
+    }
+
+    pub fn setup_mount(
+        &self,
+        mount: &SpecMount,
+        options: &MountOptions,
+        mut comm: Option<&mut MountChannels<'_>>,
+    ) -> Result<()> {
         tracing::debug!("mounting {:?}", mount);
         let mut mount_option_config = parse_mount(mount)?;
+
+        // Spec validation rejects non-bind idmapped mounts, so returning here cannot
+        // take a cgroup, proc or sysfs mount away from the type match below.
+        if mount_requests_idmap(mount) {
+            let comm = comm.take().ok_or_else(|| {
+                MountError::Custom("idmapped mount requires mount fd channel".to_string())
+            })?;
+            self.mount_idmapped(mount, options, &mount_option_config, comm)?;
+            return Ok(());
+        }
 
         match mount.typ().as_deref() {
             Some("cgroup") => {
@@ -270,7 +430,7 @@ impl Mount {
                 err
             })?;
 
-        self.setup_mount(&tmpfs, options).map_err(|err| {
+        self.setup_mount(&tmpfs, options, None).map_err(|err| {
             tracing::error!("failed to mount tmpfs for cgroup: {}", err);
             err
         })?;
@@ -403,6 +563,7 @@ impl Mount {
             rec_attr: None,
             propagation_flags: vec![],
             tmpcopyup: false,
+            apply_recursive_idmap: false,
         };
 
         self.mount_into_container(
@@ -469,7 +630,7 @@ impl Mount {
                 .build()?;
             tracing::debug!("Mounting emulated cgroup subsystem: {:?}", emulated);
 
-            self.setup_mount(&emulated, options).map_err(|err| {
+            self.setup_mount(&emulated, options, None).map_err(|err| {
                 tracing::error!("failed to mount {subsystem_name} cgroup hierarchy: {}", err);
                 err
             })?;
@@ -608,30 +769,7 @@ impl Mount {
                 })?;
 
             let src_is_dir = fstat(&src_fd)?.st_mode & libc::S_IFMT == libc::S_IFDIR;
-            if src_is_dir {
-                root.mkdir_all(container_dest, &dir_perm)?;
-            } else {
-                let parent = container_dest
-                    .parent()
-                    .ok_or(MountError::Custom("destination has no parent".to_string()))?;
-                root.mkdir_all(parent, &dir_perm)?;
-
-                match root.create_file(
-                    container_dest,
-                    OpenFlags::O_EXCL
-                        | OpenFlags::O_CREAT
-                        | OpenFlags::O_NOFOLLOW
-                        | OpenFlags::O_CLOEXEC,
-                    &Permissions::from_mode(0o644),
-                ) {
-                    Ok(_) => Ok(()),
-                    // If we get here, the file is already present, so continue.
-                    Err(create_err) => root
-                        .resolve(container_dest)
-                        .map(|_| ())
-                        .map_err(|_| create_err),
-                }?;
-            };
+            Self::create_bind_mount_destination(&root, container_dest, src_is_dir)?;
 
             Some(src_fd)
         } else {
@@ -646,15 +784,10 @@ impl Mount {
         // - bind: open_tree -> mount_setattr -> move_mount
         // - nonbind: fsopen -> fsconfig -> fsmount -> mount_setattr -> move_mount
         if let Some(src_fd) = src_fd {
-            let recursive = m
-                .options()
-                .as_ref()
-                .map(|v| v.iter().any(|o| o == "rbind"))
-                .unwrap_or(false);
             let mut open_tree_flags: libc::c_uint = (libc::OPEN_TREE_CLOEXEC as libc::c_uint)
                 | (libc::OPEN_TREE_CLONE as libc::c_uint)
                 | (libc::AT_EMPTY_PATH as libc::c_uint);
-            if recursive {
+            if is_recursive_bind(m) {
                 open_tree_flags |= libc::AT_RECURSIVE as libc::c_uint;
             };
 
@@ -1193,11 +1326,14 @@ mod tests {
     #[cfg(feature = "v1")]
     use std::fs;
     use std::fs::OpenOptions;
+    use std::os::fd::AsRawFd;
     use std::os::unix::fs::symlink;
     use std::os::unix::net::UnixListener;
     use std::str::FromStr;
+    use std::thread;
 
     use anyhow::{Context, Ok, Result};
+    use oci_spec::runtime::LinuxIdMappingBuilder;
 
     use super::*;
     use crate::syscall::test::{ArgName, FsconfigArgs, FsopenArgs, MountArgs, TestHelperSyscall};
@@ -1207,6 +1343,35 @@ mod tests {
             .as_any()
             .downcast_ref::<TestHelperSyscall>()
             .unwrap()
+    }
+
+    fn setup_idmapped_mount_and_capture_request(
+        mounter: &Mount,
+        mount: &SpecMount,
+        options: &MountOptions<'_>,
+    ) -> Result<MountMsg> {
+        let (mut main_sender, mut main_receiver) = channel::main_channel()?;
+        let (mut init_sender, mut init_receiver) = channel::init_channel()?;
+        let service = thread::spawn(move || -> Result<MountMsg> {
+            let request = main_receiver.wait_for_mount_fd_request()?;
+            let mount_fd = tempfile::tempfile()?;
+            init_sender.send_mount_fd_reply(mount_fd.as_raw_fd())?;
+            main_receiver.close()?;
+            init_sender.close()?;
+            Ok(request)
+        });
+        let mut comm = MountChannels {
+            main: &mut main_sender,
+            init: &mut init_receiver,
+        };
+
+        mounter.setup_mount(mount, options, Some(&mut comm))?;
+        main_sender.close()?;
+        init_receiver.close()?;
+
+        service
+            .join()
+            .map_err(|_| anyhow::anyhow!("mount fd service thread panicked"))?
     }
 
     // Helpers to build the expected fsconfig calls of the fd-based mount flow.
@@ -1704,6 +1869,7 @@ mod tests {
             rec_attr: None,
             propagation_flags: vec![],
             tmpcopyup: false,
+            apply_recursive_idmap: false,
         };
         mounter
             .mount_cgroup_v2(&spec_cgroup_mount, &mount_opts, &mount_option_config)
@@ -1835,6 +2001,212 @@ mod tests {
     }
 
     #[test]
+    fn setup_idmapped_mount_requires_mount_channels() -> Result<()> {
+        let rootfs = tempfile::tempdir()?;
+        let mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/mnt"))
+            .typ("bind")
+            .source(PathBuf::from("/src"))
+            .options(vec!["bind".to_string(), "idmap".to_string()])
+            .build()?;
+        let options = MountOptions {
+            root: rootfs.path(),
+            label: None,
+            cgroup_ns: true,
+        };
+
+        let err = Mount::new()
+            .setup_mount(&mount, &options, None)
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            MountError::Custom(msg) if msg == "idmapped mount requires mount fd channel"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn setup_idmapped_mount_constructs_bind_idmap_request() -> Result<()> {
+        let rootfs = tempfile::tempdir()?;
+        let source = tempfile::tempdir()?;
+        let mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/mnt"))
+            .typ("bind")
+            .source(source.path().to_path_buf())
+            .options(vec!["bind".to_string(), "idmap".to_string()])
+            .build()?;
+        let options = MountOptions {
+            root: rootfs.path(),
+            label: None,
+            cgroup_ns: true,
+        };
+
+        let request = setup_idmapped_mount_and_capture_request(&Mount::new(), &mount, &options)?;
+
+        assert_eq!(request.source, canonicalize(source.path())?);
+        assert!(!request.clone_mount_tree_recursively);
+        assert_eq!(
+            request.idmap,
+            Some(MountIdMap {
+                userns_source: MountIdMapUsernsSource::ContainerUserns,
+                apply_idmap_recursively: false,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn setup_idmapped_mount_constructs_rbind_idmap_request() -> Result<()> {
+        let rootfs = tempfile::tempdir()?;
+        let source = tempfile::tempdir()?;
+        let mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/mnt"))
+            .typ("bind")
+            .source(source.path().to_path_buf())
+            .options(vec!["rbind".to_string(), "idmap".to_string()])
+            .build()?;
+        let options = MountOptions {
+            root: rootfs.path(),
+            label: None,
+            cgroup_ns: true,
+        };
+
+        let request = setup_idmapped_mount_and_capture_request(&Mount::new(), &mount, &options)?;
+
+        assert!(request.clone_mount_tree_recursively);
+        assert_eq!(
+            request.idmap,
+            Some(MountIdMap {
+                userns_source: MountIdMapUsernsSource::ContainerUserns,
+                apply_idmap_recursively: false,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn setup_idmapped_mount_constructs_rbind_ridmap_request() -> Result<()> {
+        let rootfs = tempfile::tempdir()?;
+        let source = tempfile::tempdir()?;
+        let mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/mnt"))
+            .typ("bind")
+            .source(source.path().to_path_buf())
+            .options(vec!["rbind".to_string(), "ridmap".to_string()])
+            .build()?;
+        let options = MountOptions {
+            root: rootfs.path(),
+            label: None,
+            cgroup_ns: true,
+        };
+
+        let request = setup_idmapped_mount_and_capture_request(&Mount::new(), &mount, &options)?;
+
+        assert!(request.clone_mount_tree_recursively);
+        assert_eq!(
+            request.idmap,
+            Some(MountIdMap {
+                userns_source: MountIdMapUsernsSource::ContainerUserns,
+                apply_idmap_recursively: true,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn setup_idmapped_mount_constructs_mapping_request() -> Result<()> {
+        let rootfs = tempfile::tempdir()?;
+        let source = tempfile::tempdir()?;
+        let uid_mapping = LinuxIdMappingBuilder::default()
+            .container_id(0_u32)
+            .host_id(1000_u32)
+            .size(1_u32)
+            .build()?;
+        let gid_mapping = LinuxIdMappingBuilder::default()
+            .container_id(0_u32)
+            .host_id(2000_u32)
+            .size(1_u32)
+            .build()?;
+        let mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/mnt"))
+            .typ("bind")
+            .source(source.path().to_path_buf())
+            .options(vec!["bind".to_string(), "idmap".to_string()])
+            .uid_mappings(vec![uid_mapping])
+            .gid_mappings(vec![gid_mapping])
+            .build()?;
+        let options = MountOptions {
+            root: rootfs.path(),
+            label: None,
+            cgroup_ns: true,
+        };
+
+        let request = setup_idmapped_mount_and_capture_request(&Mount::new(), &mount, &options)?;
+
+        assert_eq!(
+            request.idmap,
+            Some(MountIdMap {
+                userns_source: MountIdMapUsernsSource::Mappings {
+                    uid_mappings: vec![uid_mapping],
+                    gid_mappings: vec![gid_mapping],
+                },
+                apply_idmap_recursively: false,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn setup_idmapped_mount_creates_destinations_inside_rootfs() -> Result<()> {
+        let rootfs = tempfile::tempdir()?;
+        let source_dir = tempfile::tempdir()?;
+        let source_file_dir = tempfile::tempdir()?;
+        let source_file = source_file_dir.path().join("source");
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&source_file)?;
+        let options = MountOptions {
+            root: rootfs.path(),
+            label: None,
+            cgroup_ns: true,
+        };
+        let cases = [
+            (source_dir.path(), Path::new("/dir/dest"), true),
+            (source_file.as_path(), Path::new("/file/dest"), false),
+        ];
+
+        for (source, destination, is_dir) in cases {
+            let mount = SpecMountBuilder::default()
+                .destination(destination.to_path_buf())
+                .typ("bind")
+                .source(source.to_path_buf())
+                .options(vec!["bind".to_string(), "idmap".to_string()])
+                .build()?;
+            let mounter = Mount::new();
+
+            setup_idmapped_mount_and_capture_request(&mounter, &mount, &options)?;
+
+            let created = rootfs.path().join(destination.strip_prefix("/")?);
+            assert_eq!(created.is_dir(), is_dir);
+            assert_eq!(created.is_file(), !is_dir);
+            let moves = helper_syscall(&mounter).get_move_mount_args();
+            assert_eq!(moves.len(), 1);
+            assert_eq!(moves[0].to_path, None);
+            assert_eq!(moves[0].to_dirfd_path.as_deref(), Some(created.as_path()));
+            assert_eq!(
+                moves[0].flags,
+                linux::MOVE_MOUNT_T_EMPTY_PATH | linux::MOVE_MOUNT_F_EMPTY_PATH
+            );
+            let attrs = helper_syscall(&mounter).get_mount_setattr_args();
+            assert_eq!(attrs.len(), 1);
+            assert_eq!(attrs[0].dirfd, moves[0].from_dirfd);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn setup_mount_proc_fails_if_destination_is_symlink() -> Result<()> {
         let tmp = tempfile::tempdir()?;
         let rootfs = tmp.path();
@@ -1859,7 +2231,7 @@ mod tests {
 
         let m = Mount::new();
 
-        let res = m.setup_mount(&mount, &options);
+        let res = m.setup_mount(&mount, &options, None);
 
         // proc destination symlink should be rejected
         assert!(res.is_err());
@@ -1894,7 +2266,7 @@ mod tests {
 
         let m = Mount::new();
 
-        let res = m.setup_mount(&mount, &options);
+        let res = m.setup_mount(&mount, &options, None);
 
         // sys destination symlink should be rejected
         assert!(res.is_err());

@@ -29,9 +29,10 @@ use crate::network::link::LinkClient;
 use crate::network::network_device::{resolve_device_name, setup_addresses_in_network_namespace};
 use crate::network::wrapper::create_network_client;
 use crate::process::args::{ContainerArgs, ContainerType};
+use crate::process::idmapped_mount::mount_fd_service_required;
 use crate::process::{channel, memory_policy};
-use crate::rootfs::RootFS;
 use crate::rootfs::device::{open_device_fd, verify_dev_null};
+use crate::rootfs::{MountChannels, RootFS};
 #[cfg(feature = "libseccomp")]
 use crate::seccomp;
 use crate::syscall::{Syscall, SyscallError};
@@ -85,12 +86,18 @@ pub fn container_init_process(
         let in_user_ns = utils::is_in_new_userns().map_err(InitProcessError::Io)?;
         let bind_service = ctx.ns.get(LinuxNamespaceType::User)?.is_some() || in_user_ns;
         let rootfs = RootFS::new();
+        let mut mount_channels = mount_fd_service_required(args.container_type, ctx.spec)
+            .then_some(MountChannels {
+                main: main_sender,
+                init: init_receiver,
+            });
         rootfs
             .prepare_rootfs(
                 ctx.spec,
                 ctx.rootfs,
                 bind_service,
                 ctx.ns.get(LinuxNamespaceType::Cgroup)?.is_some(),
+                mount_channels.as_mut(),
             )
             .map_err(|err| {
                 tracing::error!(?err, "failed to prepare rootfs");
