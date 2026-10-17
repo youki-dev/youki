@@ -1,8 +1,8 @@
 use libcontainer::oci_spec::runtime::Spec;
 use libcontainer::workload::{EMPTY, Executor, ExecutorError, ExecutorValidationError};
-use wasi_common::I32Exit;
-use wasi_common::sync::{WasiCtxBuilder, add_to_linker};
 use wasmtime::{Engine, Linker, Module, Store};
+use wasmtime_wasi::p1::{WasiP1Ctx, add_to_linker_sync};
+use wasmtime_wasi::{I32Exit, WasiCtxBuilder};
 
 const EXECUTOR_NAME: &str = "wasmtime";
 
@@ -58,8 +58,8 @@ impl Executor for WasmtimeExecutor {
             ExecutorError::Other("could not load wasm module from file".to_string())
         })?;
 
-        let mut linker = Linker::new(&engine);
-        add_to_linker(&mut linker, |s| s).map_err(|err| {
+        let mut linker: Linker<WasiP1Ctx> = Linker::new(&engine);
+        add_to_linker_sync(&mut linker, |s| s).map_err(|err| {
             tracing::error!(err = ?err, "cannot add wasi context to linker");
             ExecutorError::Other("cannot add wasi context to linker".to_string())
         })?;
@@ -67,14 +67,8 @@ impl Executor for WasmtimeExecutor {
         let wasi = WasiCtxBuilder::new()
             .inherit_stdio()
             .args(args)
-            .map_err(|err| {
-                ExecutorError::Other(format!("cannot add args to wasi context: {}", err))
-            })?
             .envs(&envs)
-            .map_err(|err| {
-                ExecutorError::Other(format!("cannot add envs to wasi context: {}", err))
-            })?
-            .build();
+            .build_p1();
 
         let mut store = Store::new(&engine, wasi);
 

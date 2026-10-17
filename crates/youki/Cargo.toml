@@ -20,7 +20,7 @@ seccomp = ["libcontainer/libseccomp"]
 
 wasm-wasmer = ["wasmer", "wasmer-wasix", "tokio"]
 wasm-wasmedge = ["wasmedge-sdk/standalone", "wasmedge-sdk/static"]
-wasm-wasmtime = ["wasmtime", "wasi-common"]
+wasm-wasmtime = ["wasmtime", "wasmtime-wasi"]
 
 [dependencies]
 clap = { workspace = true, features = ["std", "suggestions", "derive", "cargo", "help", "usage", "error-context"] }
@@ -42,7 +42,7 @@ wasmer = { workspace = true, features = ["sys", "singlepass"], optional = true }
 wasmer-wasix = { workspace = true, optional = true }
 wasmedge-sdk = { workspace = true, optional = true }
 wasmtime = { workspace = true, optional = true }
-wasi-common = { workspace = true, optional = true }
+wasmtime-wasi = { workspace = true, features = ["p1"], optional = true }
 tracing = { workspace = true, features = ["attributes"] }
 tracing-subscriber = { workspace = true, features = ["json", "env-filter"] }
 tracing-journald = { workspace = true }
