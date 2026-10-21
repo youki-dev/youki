@@ -1405,6 +1405,39 @@ mod tests {
     }
 
     #[test]
+    fn test_mount_into_container_mqueue_label_needs_fsmount() -> Result<()> {
+        let tmp_dir = tempfile::tempdir()?;
+        let selinux = Path::new("/sys/fs/selinux").exists();
+        for label in [None, Some("system_u:object_r:container_file_t:s0")] {
+            let m = Mount::new();
+            let mount = &SpecMountBuilder::default()
+                .destination(PathBuf::from("/dev/mqueue"))
+                .typ("mqueue")
+                .source(PathBuf::from("mqueue"))
+                .options(vec!["nosuid".to_string(), "ro".to_string()])
+                .build()?;
+            let mount_option_config = parse_mount(mount)?;
+            let syscall = helper_syscall(&m);
+            syscall.set_ret_err(ArgName::Fsconfig, || {
+                Err(crate::syscall::SyscallError::Nix(nix::errno::Errno::EINVAL))
+            });
+            let result = m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, label);
+            // The legacy mount(2) is read-only at once, so the xattr label could not be set:
+            // a labelled mqueue refuses the fallback instead of starting unlabelled.
+            assert_eq!(
+                result.is_err(),
+                label.is_some() && selinux,
+                "label {label:?}"
+            );
+            assert_eq!(
+                syscall.get_mount_args().is_empty(),
+                label.is_some() && selinux
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn test_mount_into_container() -> Result<()> {
         let tmp_dir = tempfile::tempdir()?;
         {
