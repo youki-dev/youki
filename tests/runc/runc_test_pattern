@@ -2,7 +2,7 @@
 [skip]runc run with unknown capability
 [skip]runc run with new privileges
 [skip]runc run with some capabilities
-[skip]runc exec --cap
+runc exec --cap
 [skip]runc exec --cap [ambient is set from spec]
 [skip]runc run [ambient caps not set in inheritable result in a warning]
 [skip]runc exec (cgroup v2, ro cgroupfs, new cgroupns) does not chown cgroup # skip test requires systemd
@@ -15,18 +15,18 @@ runc create (no limits + no cgrouppath + no permission) succeeds
 runc exec (limits + cgrouppath + permission on the cgroup dir) succeeds
 [skip]runc exec (cgroup v2 + init process in non-root cgroup) succeeds
 [skip]runc run (cgroup v1 + unified resources should fail) # skip test requires cgroups_v1
-[skip]runc run (blkio weight)
+runc run (blkio weight)
 [skip]runc run (per-device io weight for bfq) # skip BFQ scheduler not available
 [skip]runc run (per-device multiple iops via unified)
 runc run (cpu.idle)
 [skip]runc run (hugetlb limits)
-[skip]runc run (cgroup v2 resources.unified only)
-[skip]runc run (cgroup v2 resources.unified swap)
+runc run (cgroup v2 resources.unified only)
+runc run (cgroup v2 resources.unified swap)
 runc run (cgroup v2 resources.unified override)
-[skip]runc run (cgroupv2 mount inside container)
+runc run (cgroupv2 mount inside container)
 [skip]runc exec (cgroup v1+hybrid joins correct cgroup) # skip test requires cgroups_hybrid
 [skip]runc exec should refuse a paused container
-[skip]runc exec --ignore-paused
+runc exec --ignore-paused
 [skip]runc run/create should error for a non-empty cgroup
 [skip]runc run/create should refuse pre-existing frozen cgroup # This test hangs when running with Youki
 [skip]checkpoint and restore # skip test requires criu
@@ -56,7 +56,7 @@ runc create can chdir if runc has access
 [skip]global --debug to --log
 [skip]global --debug to --log --log-format 'text'
 [skip]global --debug to --log --log-format 'json'
-[skip]runc delete
+runc delete
 runc delete --force
 runc delete --force ignore not exist
 runc delete [host pidns + init gone]
@@ -67,9 +67,9 @@ runc delete --force [paused container]
 [skip]runc delete removes failed systemd unit # skip requires systemd >= v244
 [skip]runc run [redundant default /dev/tty]
 runc run [redundant default /dev/ptmx]
-[skip]runc run/update [device cgroup deny]
-[skip]runc run [device cgroup allow rw char device]
-[skip]runc run [device cgroup allow rm block device]
+runc run/update [device cgroup deny]
+runc run [device cgroup allow rw char device]
+runc run [device cgroup allow rm block device]
 [skip]runc exec vs systemctl daemon-reload # skip test requires systemd
 [skip]runc run [devices vs systemd NeedDaemonReload] # skip requires systemd >= v230
 non-empty HOME env is used
@@ -89,19 +89,19 @@ runc exec
 [skip]runc exec [exit codes] # This test hangs when running with Youki
 runc exec --pid-file
 runc exec --pid-file with new CWD
-[skip]runc exec ls -la
+runc exec ls -la
 runc exec ls -la with --cwd
 runc exec --env
 [skip]runc exec --user
 runc exec --user vs /dev/null ownership
-[skip]runc exec --additional-gids
-[skip]runc exec --preserve-fds
+runc exec --additional-gids
+runc exec --preserve-fds
 [skip]runc --debug exec
 [skip]runc --debug --log exec
 [skip]runc exec --cgroup sub-cgroups [v1] # skip test requires cgroups_v1
 [skip]runc exec --cgroup subcgroup [v2]
 [skip]runc exec [execve error]
-[skip]runc exec check default home
+runc exec check default home
 [skip]runc -h
 [skip]runc command -h
 [skip]runc foo -h
@@ -142,8 +142,8 @@ runc run [host mount ns + hooks]
 [skip]kill KILL [host pidns + init gone]
 kill KILL [shared pidns]
 [skip]list
-[skip]mask paths [file]
-[skip]mask paths [directory]
+mask paths [file]
+mask paths [directory]
 [skip]mask paths [prohibit symlink /proc]
 [skip]mask paths [prohibit symlink /sys]
 [skip]runc run [tmpcopyup]
@@ -160,7 +160,7 @@ runc run [ro /sys/fs/cgroup mounts]
 [skip]runc run [mount order, container idmap source]
 [skip]runc run [mount order, container idmap source] (userns)
 runc run [rootfsPropagation shared]
-[skip]runc run [rbind,ro mount is read-only but not recursively]
+runc run [rbind,ro mount is read-only but not recursively]
 runc run [rbind,rro mount is recursively read-only]
 runc run [rbind,ro,rro mount is recursively read-only too]
 runc run [mount(8)-like behaviour: --bind with no options]
@@ -176,16 +176,16 @@ runc run --no-pivot must not expose bare /proc
 runc pause and resume
 runc pause and resume with nonexist container
 [skip]runc run personality for i686
-[skip]runc run personality with exec for i686
+runc run personality with exec for i686
 runc run personality for x86_64
-[skip]runc run personality with exec for x86_64
+runc run personality with exec for x86_64
 [skip]runc create [ --pidfd-socket ] 
 [skip]runc run [ --pidfd-socket ] 
 [skip]runc exec [ --pidfd-socket ] [cgroups_v1]  # skip test requires cgroups_v1
 [skip]runc exec [ --pidfd-socket ] [cgroups_v2] 
 ps
 ps -f json
-[skip]ps -e -x
+ps -e -x
 ps after the container stopped
 [skip]runc run with RLIMIT_NOFILE(The same as system's hard value)
 runc run with RLIMIT_NOFILE(Bigger than system's hard value)
@@ -256,15 +256,15 @@ state (pause + resume)
 runc run [timens offsets with no timens]
 [skip]runc run [timens with no offsets]
 [skip]runc run [simple timens]
-[skip]runc exec [simple timens]
+runc exec [simple timens]
 [skip]runc run [simple timens + userns]
-[skip]runc run [stdin not a tty]
-[skip]runc run [tty ptsname]
-[skip]runc run [tty owner]
+runc run [stdin not a tty]
+runc run [tty ptsname]
+runc run [tty owner]
 [skip]runc run [tty owner] ({u,g}id != 0)
-[skip]runc exec [stdin not a tty]
-[skip]runc exec [tty ptsname]
-[skip]runc exec [tty owner]
+runc exec [stdin not a tty]
+runc exec [tty ptsname]
+runc exec [tty owner]
 [skip]runc exec [tty owner] ({u,g}id != 0)
 [skip]runc exec [tty consolesize]
 runc create [terminal=false]

@@ -175,10 +175,11 @@ Then, we need to prepare a configuration file. This file contains metadata and s
 ../youki spec  # will generate a spec file named config.json
 ```
 
-We can edit the `config.json` to add customized behaviors for container. Here, we modify the `process` field to run `sleep 30`.
+We can edit the `config.json` to add customized behaviors for container. Here, we modify the `process` field to run `sleep 30`. We also set `terminal` to `false`, because `youki create` runs the container in the background and cannot allocate a terminal without `--console-socket`.
 
 ```json
   "process": {
+    "terminal": false,
     ...
     "args": [
       "sleep", "30"
