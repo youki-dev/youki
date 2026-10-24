@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-ec8aedc2.js";
+            window.path_to_searchindex_js = "../searchindex-1e0e58ce.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-542fda56.js"></script>
@@ -241,8 +241,9 @@ docker export $(docker create busybox) | tar -C rootfs -xvf -
 <p>Now the any container runtime gets the information about the permissions, configurations and constraints for the container process by using a config.json file. Youki has a command which can generate the default config for you. To do this, run</p>
 <pre><code class="language-console">../youki spec
 </code></pre>
-<p>After this, you can manually edit the file to customize the behavior of the container process. For example, to run the desired program inside the container, you can edit the process.args</p>
+<p>After this, you can manually edit the file to customize the behavior of the container process. For example, to run the desired program inside the container, you can edit the process.args. Also set process.terminal to <code>false</code>, because <code>youki create</code> runs the container in the background and cannot allocate a terminal without <code>--console-socket</code>.</p>
 <pre><code class="language-json">"process": {
+"terminal": false,
 ...
 "args": [
   "sleep", "30"
