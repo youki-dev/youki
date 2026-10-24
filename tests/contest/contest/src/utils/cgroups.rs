@@ -1,6 +1,7 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use anyhow::{Context, Result};
 use libcgroups::common::{self, CgroupSetup};
 use libcgroups::v2::controller_type::ControllerType;
 use tracing::debug;
@@ -69,4 +70,39 @@ pub fn cgroup_has_file(cgroup_file: &str) -> bool {
     }
 
     true
+}
+
+/// Lists the block devices the kernel exposes, sorted by name.
+pub fn block_devices() -> Result<Vec<PathBuf>> {
+    let mut entries: Vec<_> = fs::read_dir("/sys/block")
+        .context("failed to read /sys/block")?
+        .flatten()
+        .map(|entry| entry.path())
+        .collect();
+    entries.sort();
+    Ok(entries)
+}
+
+/// Reads a /sys/block device's major:minor pair from its `dev` file.
+pub fn device_numbers(dev_dir: &Path) -> Option<(i64, i64)> {
+    let content = fs::read_to_string(dev_dir.join("dev")).ok()?;
+    let (major, minor) = content.trim().split_once(':')?;
+    Some((major.trim().parse().ok()?, minor.trim().parse().ok()?))
+}
+
+/// The first `count` block devices that expose a `dev` file, as
+/// (major, minor) pairs. Device numbers are host-dependent, so tests that
+/// key cgroup files by device derive them this way rather than hardcoding.
+pub fn block_device_numbers(count: usize) -> Result<Vec<(i64, i64)>> {
+    let mut numbers = Vec::with_capacity(count);
+    for dev_dir in block_devices()? {
+        if let Some(pair) = device_numbers(&dev_dir) {
+            numbers.push(pair);
+            if numbers.len() == count {
+                return Ok(numbers);
+            }
+        }
+    }
+
+    anyhow::bail!("needed {count} block devices with a dev file, found fewer")
 }

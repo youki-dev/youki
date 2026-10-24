@@ -51,7 +51,9 @@ impl Unified {
                     filename: cgroup_file.into(),
                 });
             }
-            if let Err(err) = common::write_cgroup_file_str(cgroup_path.join(cgroup_file), value) {
+            if let Err(err) =
+                common::write_cgroup_file_by_line(cgroup_path.join(cgroup_file), value)
+            {
                 let (subsystem, _) = cgroup_file.split_once('.').unwrap_or((cgroup_file, ""));
 
                 if controllers.iter().any(|c| c.to_string() == subsystem) {
