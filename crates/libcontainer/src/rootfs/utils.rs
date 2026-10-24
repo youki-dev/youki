@@ -257,6 +257,33 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_mount_sync_flags() -> Result<()> {
+        for (options, flags) in [
+            (vec![], MsFlags::empty()),
+            (vec!["sync"], MsFlags::MS_SYNCHRONOUS),
+            (vec!["dirsync"], MsFlags::MS_DIRSYNC),
+            (
+                vec!["sync", "dirsync"],
+                MsFlags::MS_SYNCHRONOUS | MsFlags::MS_DIRSYNC,
+            ),
+            (vec!["sync", "async"], MsFlags::empty()),
+            (vec!["async", "sync"], MsFlags::MS_SYNCHRONOUS),
+            (vec!["sync", "async", "dirsync"], MsFlags::MS_DIRSYNC),
+        ] {
+            let mount = MountBuilder::default()
+                .destination(PathBuf::from("/stack"))
+                .typ("tmpfs")
+                .source(PathBuf::from("tmpfs"))
+                .options(options.into_iter().map(String::from).collect::<Vec<_>>())
+                .build()?;
+            let config = parse_mount(&mount)?;
+            assert_eq!(config.flags, flags);
+            assert!(config.data.is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_mount_tmpcopyup() -> Result<()> {
         let config = parse_mount(
             &MountBuilder::default()

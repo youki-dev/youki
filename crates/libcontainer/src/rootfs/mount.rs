@@ -726,6 +726,22 @@ impl Mount {
                         0,
                     )?;
 
+                    // These are superblock flags, so mount_setattr cannot apply them.
+                    for (flag, option) in [
+                        (MsFlags::MS_SYNCHRONOUS, "sync"),
+                        (MsFlags::MS_DIRSYNC, "dirsync"),
+                    ] {
+                        if mount_option_config.flags.contains(flag) {
+                            self.syscall.fsconfig(
+                                fsfd,
+                                linux::FSCONFIG_SET_FLAG as u32,
+                                Some(option),
+                                None,
+                                0,
+                            )?;
+                        }
+                    }
+
                     for opt in data_options.iter().filter(|s| !s.is_empty()) {
                         if let Some((k, v)) = opt.split_once('=') {
                             self.syscall.fsconfig(
@@ -1274,6 +1290,167 @@ mod tests {
             fs::metadata(to.path().join("sub/file"))?.uid(),
             fs::metadata(from.path().join("sub/file"))?.uid()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_mount_into_container_sync_flags() -> Result<()> {
+        for (options, superblock_options) in [
+            (vec![], vec![]),
+            (vec!["sync"], vec!["sync"]),
+            (vec!["dirsync"], vec!["dirsync"]),
+            (vec!["sync", "dirsync"], vec!["sync", "dirsync"]),
+            (vec!["sync", "async"], vec![]),
+            (vec!["async", "sync"], vec!["sync"]),
+            (vec!["sync", "async", "dirsync"], vec!["dirsync"]),
+        ] {
+            let tmp_dir = tempfile::tempdir()?;
+            let m = Mount::new();
+            let mut options: Vec<String> = options.into_iter().map(String::from).collect();
+            options.extend(
+                [
+                    "size=1m", "mode=777", "ro", "nosuid", "nodev", "noexec", "noatime",
+                ]
+                .into_iter()
+                .map(String::from),
+            );
+            let mount = SpecMountBuilder::default()
+                .destination(PathBuf::from("/stack"))
+                .typ("tmpfs")
+                .source(PathBuf::from("tmpfs"))
+                .options(options)
+                .build()?;
+            let config = parse_mount(&mount)?;
+
+            m.mount_into_container(&mount, tmp_dir.path(), &config, None)?;
+
+            let syscall = helper_syscall(&m);
+            let mut expected = vec![fsc_str("source", "tmpfs")];
+            expected.extend(superblock_options.into_iter().map(fsc_flag));
+            expected.extend([fsc_str("size", "1m"), fsc_str("mode", "777"), fsc_create()]);
+            assert_eq!(syscall.get_fsconfig_args(), expected);
+            let attrs = syscall.get_mount_setattr_args();
+            assert_eq!(attrs.len(), 1);
+            assert_eq!(
+                attrs[0].attr_set,
+                linux::MOUNT_ATTR_RDONLY
+                    | linux::MOUNT_ATTR_NOSUID
+                    | linux::MOUNT_ATTR_NODEV
+                    | linux::MOUNT_ATTR_NOEXEC
+                    | linux::MOUNT_ATTR_NOATIME,
+            );
+            assert_eq!(attrs[0].attr_clr, linux::MOUNT_ATTR__ATIME);
+            assert!(syscall.get_mount_args().is_empty());
+            assert_eq!(syscall.get_fsmount_args().len(), 1);
+            assert_eq!(syscall.get_move_mount_args().len(), 1);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_mount_into_container_sync_flags_fallback() -> Result<()> {
+        for options in [vec!["sync"], vec!["dirsync"], vec!["sync", "dirsync"]] {
+            let tmp_dir = tempfile::tempdir()?;
+            let m = Mount::new();
+            let mount = SpecMountBuilder::default()
+                .destination(PathBuf::from("/stack"))
+                .typ("tmpfs")
+                .source(PathBuf::from("tmpfs"))
+                .options(options.into_iter().map(String::from).collect::<Vec<_>>())
+                .build()?;
+            let config = parse_mount(&mount)?;
+            let syscall = helper_syscall(&m);
+            syscall.set_ret_err(ArgName::Fsconfig, || Err(SyscallError::Nix(Errno::EINVAL)));
+
+            m.mount_into_container(&mount, tmp_dir.path(), &config, None)?;
+
+            let calls = syscall.get_mount_args();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].flags, config.flags);
+            assert!(syscall.get_fsmount_args().is_empty());
+            assert!(syscall.get_move_mount_args().is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_mount_into_container_sync_flags_fallback_error() -> Result<()> {
+        for options in [vec!["sync"], vec!["dirsync"], vec!["sync", "dirsync"]] {
+            let tmp_dir = tempfile::tempdir()?;
+            let m = Mount::new();
+            let mount = SpecMountBuilder::default()
+                .destination(PathBuf::from("/stack"))
+                .typ("tmpfs")
+                .source(PathBuf::from("tmpfs"))
+                .options(options.into_iter().map(String::from).collect::<Vec<_>>())
+                .build()?;
+            let config = parse_mount(&mount)?;
+            let syscall = helper_syscall(&m);
+            syscall.set_ret_err(ArgName::Fsconfig, || Err(SyscallError::Nix(Errno::EINVAL)));
+            // A rejection by the legacy fallback must also fail container creation.
+            syscall.set_ret_err(ArgName::Mount, || Err(SyscallError::Nix(Errno::EOPNOTSUPP)));
+
+            assert!(matches!(
+                m.mount_into_container(&mount, tmp_dir.path(), &config, None),
+                Err(MountError::Syscall(SyscallError::Nix(Errno::EOPNOTSUPP)))
+            ));
+            assert!(syscall.get_fsmount_args().is_empty());
+            assert!(syscall.get_move_mount_args().is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires CAP_SYS_ADMIN in an isolated Linux test environment"]
+    fn test_mount_into_container_sync_flags_kernel() -> Result<()> {
+        crate::test_utils::test_in_child_process(|| {
+            (|| -> Result<()> {
+                nix::sched::unshare(nix::sched::CloneFlags::CLONE_NEWNS)?;
+                nix::mount::mount(
+                    None::<&str>,
+                    "/",
+                    None::<&str>,
+                    MsFlags::MS_REC | MsFlags::MS_PRIVATE,
+                    None::<&str>,
+                )?;
+                let m = Mount {
+                    syscall: Box::new(linux::LinuxSyscall),
+                    ..Mount::new()
+                };
+                for options in [
+                    vec![],
+                    vec!["sync"],
+                    vec!["dirsync"],
+                    vec!["sync", "dirsync"],
+                ] {
+                    let tmp_dir = tempfile::tempdir()?;
+                    let mount = SpecMountBuilder::default()
+                        .destination(PathBuf::from("/stack"))
+                        .typ("tmpfs")
+                        .source(PathBuf::from("tmpfs"))
+                        .options(options.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+                        .build()?;
+                    m.mount_into_container(&mount, tmp_dir.path(), &parse_mount(&mount)?, None)?;
+                    let target = tmp_dir.path().join("stack");
+                    let entry = m
+                        .mountinfo_provider
+                        .mountinfo()?
+                        .into_iter()
+                        .find(|entry| entry.mount_point == target)
+                        .context("tmpfs mount missing from mountinfo")?;
+                    // Check superblock options, not the per-mount options before the separator.
+                    for option in ["sync", "dirsync"] {
+                        assert_eq!(
+                            entry.super_options.contains_key(option),
+                            options.contains(&option)
+                        );
+                    }
+                    nix::mount::umount(&target)?;
+                }
+                Ok(())
+            })()
+            .map_err(|err| err.to_string().into())
+        })?;
         Ok(())
     }
 
