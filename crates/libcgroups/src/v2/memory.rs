@@ -11,6 +11,7 @@ const CGROUP_MEMORY_MAX: &str = "memory.max";
 const CGROUP_MEMORY_LOW: &str = "memory.low";
 const MEMORY_STAT: &str = "memory.stat";
 const MEMORY_PSI: &str = "memory.pressure";
+const MEMORY_SWAP_CURRENT: &str = "memory.swap.current";
 
 #[derive(thiserror::Error, Debug)]
 pub enum V2MemoryControllerError {
@@ -54,9 +55,16 @@ impl StatsProvider for Memory {
     type Stats = MemoryStats;
 
     fn stats(cgroup_path: &Path) -> Result<Self::Stats, Self::Error> {
+        let memory = Self::get_memory_data(cgroup_path, "memory", "oom")?;
+        // The memory.swap files exist only when the kernel supports swap.
+        let memswap = if cgroup_path.join(MEMORY_SWAP_CURRENT).exists() {
+            Self::get_memory_data(cgroup_path, "memory.swap", "fail")?
+        } else {
+            MemoryData::default()
+        };
         let stats = MemoryStats {
-            memory: Self::get_memory_data(cgroup_path, "memory", "oom")?,
-            memswap: Self::get_memory_data(cgroup_path, "memory.swap", "fail")?,
+            memory,
+            memswap,
             hierarchy: true,
             stats: stats::parse_flat_keyed_data(&cgroup_path.join(MEMORY_STAT))?,
             psi: stats::psi_stats(&cgroup_path.join(MEMORY_PSI))?,
@@ -539,5 +547,41 @@ mod tests {
         };
 
         assert_eq!(actual, expected);
+    }
+
+    fn set_memory_stat_fixtures(path: &Path) {
+        set_fixture(path, "memory.current", "4096\n").expect("set memory.current");
+        set_fixture(path, CGROUP_MEMORY_MAX, "max\n").expect("set memory.max");
+        set_fixture(path, "memory.events", "oom 2\n").expect("set memory.events");
+        set_fixture(path, MEMORY_STAT, "anon 1024\n").expect("set memory.stat");
+        set_fixture(path, MEMORY_PSI, "").expect("set memory.pressure");
+    }
+
+    #[test]
+    fn test_stat_memory_with_swap() {
+        let tmp = tempfile::tempdir().unwrap();
+        set_memory_stat_fixtures(tmp.path());
+        set_fixture(tmp.path(), MEMORY_SWAP_CURRENT, "512\n").expect("set memory.swap.current");
+        set_fixture(tmp.path(), CGROUP_MEMORY_SWAP, "max\n").expect("set memory.swap.max");
+        set_fixture(tmp.path(), "memory.swap.events", "fail 1\n").expect("set memory.swap.events");
+
+        let actual = Memory::stats(tmp.path()).expect("get cgroup stats");
+        assert_eq!(actual.memory.usage, 4096);
+        assert_eq!(actual.memory.fail_count, 2);
+        assert_eq!(actual.memswap.usage, 512);
+        assert_eq!(actual.memswap.fail_count, 1);
+    }
+
+    #[test]
+    fn test_stat_memory_without_swap() {
+        let tmp = tempfile::tempdir().unwrap();
+        set_memory_stat_fixtures(tmp.path());
+
+        let actual = Memory::stats(tmp.path()).expect("get cgroup stats");
+        assert_eq!(actual.memory.usage, 4096);
+        assert_eq!(actual.memory.limit, u64::MAX);
+        assert_eq!(actual.memory.fail_count, 2);
+        assert_eq!(actual.stats.get("anon"), Some(&1024));
+        assert_eq!(actual.memswap, MemoryData::default());
     }
 }

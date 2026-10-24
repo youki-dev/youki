@@ -282,7 +282,18 @@ impl CgroupManager for Manager {
     fn stats(&self) -> Result<Stats, Self::Error> {
         let mut stats = Stats::default();
 
+        // a controller's files exist only where it is enabled, so skip the ones missing from
+        // cgroup.controllers; cpu.stat is the exception and is always present
+        let enabled = common::read_cgroup_file(self.full_path.join(util::CGROUP_CONTROLLERS))?;
+        let enabled: Vec<&str> = enabled.split_whitespace().collect();
+
         for subsystem in CONTROLLER_TYPES {
+            if *subsystem != ControllerType::Cpu
+                && !enabled.contains(&subsystem.to_string().as_str())
+            {
+                continue;
+            }
+
             match subsystem {
                 ControllerType::Cpu => stats.cpu = Cpu::stats(&self.full_path)?,
                 ControllerType::HugeTlb => stats.hugetlb = HugeTlb::stats(&self.full_path)?,
@@ -341,5 +352,48 @@ mod tests {
             "{result:?}"
         );
         assert!(tmp.path().join("parent/child").is_dir());
+    }
+
+    #[test]
+    fn test_stats_reads_only_enabled_controllers() -> Result<(), V2ManagerError> {
+        // pids is listed and cpu is not; the hugetlb, io and memory files are absent, as in a
+        // delegated cgroup where those controllers are not enabled.
+        let tmp = tempfile::tempdir().expect("create temp directory for test");
+        set_fixture(tmp.path(), util::CGROUP_CONTROLLERS, "pids").expect("set cgroup.controllers");
+        set_fixture(
+            tmp.path(),
+            "cpu.stat",
+            "usage_usec 10\nuser_usec 6\nsystem_usec 4\n",
+        )
+        .expect("set cpu.stat");
+        set_fixture(tmp.path(), "cpu.pressure", "").expect("set cpu.pressure");
+        set_fixture(tmp.path(), "pids.current", "3\n").expect("set pids.current");
+        set_fixture(tmp.path(), "pids.max", "20\n").expect("set pids.max");
+
+        let stats = Manager::new(tmp.path().to_path_buf(), PathBuf::from("/"))?.stats()?;
+
+        assert_eq!(stats.cpu.usage.usage_total, 10_000);
+        assert_eq!(stats.pids.current, 3);
+        assert_eq!(stats.pids.limit, 20);
+        Ok(())
+    }
+
+    #[test]
+    fn test_stats_fails_when_enabled_controller_file_is_missing() -> Result<(), V2ManagerError> {
+        let tmp = tempfile::tempdir().expect("create temp directory for test");
+        set_fixture(tmp.path(), util::CGROUP_CONTROLLERS, "cpu memory")
+            .expect("set cgroup.controllers");
+        set_fixture(
+            tmp.path(),
+            "cpu.stat",
+            "usage_usec 10\nuser_usec 6\nsystem_usec 4\n",
+        )
+        .expect("set cpu.stat");
+        set_fixture(tmp.path(), "cpu.pressure", "").expect("set cpu.pressure");
+
+        let result = Manager::new(tmp.path().to_path_buf(), PathBuf::from("/"))?.stats();
+
+        assert!(result.is_err(), "{result:?}");
+        Ok(())
     }
 }
