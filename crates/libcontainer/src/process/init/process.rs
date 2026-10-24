@@ -363,10 +363,13 @@ pub fn container_init_process(
 
     // Without no new privileges, seccomp is a privileged operation. We have to
     // do this before dropping capabilities. Otherwise, we should do it later,
-    // as close to exec as possible.
+    // as close to exec as possible. An explicit `false` is the same as unset
+    // here, only `true` allows loading the filter after the capabilities are
+    // dropped (this matches runc).
+    let seccomp_before_cap_drop = ctx.process.no_new_privileges() != Some(true);
     #[cfg(feature = "libseccomp")]
     if let Some(seccomp) = ctx.linux.seccomp() {
-        if ctx.process.no_new_privileges().is_none() {
+        if seccomp_before_cap_drop {
             let notify_fd = seccomp::initialize_seccomp(seccomp).map_err(|err| {
                 tracing::error!(?err, "failed to initialize seccomp");
                 err
@@ -378,7 +381,7 @@ pub fn container_init_process(
         }
     }
     #[cfg(not(feature = "libseccomp"))]
-    if ctx.process.no_new_privileges().is_none() {
+    if seccomp_before_cap_drop {
         tracing::warn!("seccomp not available, unable to enforce no_new_privileges!")
     }
 
@@ -413,7 +416,7 @@ pub fn container_init_process(
     // notify socket will still need network related syscalls.
     #[cfg(feature = "libseccomp")]
     if let Some(seccomp) = ctx.linux.seccomp() {
-        if ctx.process.no_new_privileges().is_some() {
+        if !seccomp_before_cap_drop {
             let notify_fd = seccomp::initialize_seccomp(seccomp).map_err(|err| {
                 tracing::error!(?err, "failed to initialize seccomp");
                 err
@@ -425,7 +428,7 @@ pub fn container_init_process(
         }
     }
     #[cfg(not(feature = "libseccomp"))]
-    if ctx.process.no_new_privileges().is_some() {
+    if !seccomp_before_cap_drop {
         tracing::warn!("seccomp not available, unable to set seccomp privileges!")
     }
 
