@@ -6,7 +6,6 @@ use std::{env, fs};
 use anyhow::{Context, Result, anyhow};
 use flate2::read::GzDecoder;
 use oci_spec::runtime::{Process, Spec};
-use rand::RngExt;
 use tar::Archive;
 use tempfile::TempDir;
 use uuid::Uuid;
@@ -41,20 +40,7 @@ pub fn get_project_path() -> PathBuf {
 
 /// This will generate the UUID needed when creating the container.
 pub fn generate_uuid() -> Uuid {
-    let mut rng = rand::rng();
-    const CHARSET: &[u8] = b"0123456789abcdefABCDEF";
-
-    let rand_string: String = (0..32)
-        .map(|_| {
-            let idx = rng.random_range(0..CHARSET.len());
-            CHARSET[idx] as char
-        })
-        .collect();
-
-    match Uuid::parse_str(&rand_string) {
-        Ok(uuid) => uuid,
-        Err(e) => panic!("can not parse uuid, {e}"),
-    }
+    Uuid::new_v4()
 }
 
 /// Creates a bundle directory in a temp directory
