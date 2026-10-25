@@ -458,6 +458,14 @@ mod tests {
 
     const CONSOLE_SOCKET: &str = "console-socket";
 
+    // openpty() opens /dev/ptmx, and the master only passes verify_ptmx_handle when that
+    // resolves to devpts. On native Ubuntu /dev/ptmx is a symlink to /dev/pts/ptmx, but on
+    // hosts like WSL2 or Arch it is a char device on devtmpfs, so those tests can't pass there.
+    fn host_ptmx_is_devpts() -> bool {
+        nix::sys::statfs::statfs("/dev/ptmx")
+            .is_ok_and(|fs| fs.filesystem_type() == FsType(DEVPTS_SUPER_MAGIC))
+    }
+
     #[test]
     #[serial]
     fn test_setup_console_socket() -> Result<()> {
@@ -496,12 +504,11 @@ mod tests {
     #[test]
     #[serial]
     fn test_setup_console() -> Result<()> {
-        // This test fails when run in WSL2.
-        // When it calls openpty() in setup_console() which opens /dev/ptmx, it must be on a real devpts mount.
-        // On native Ubuntu system, /dev/ptmx is a symlink to /dev/pts/ptmx, so the master is devpts-backed (with proper magic number).
-        // But on WSL2, /dev/ptmx is a real char device node living directly on /dev, which is devtmpfs (different magic number, shared with tmpfs).
-        // Therefore you may skip this test if you are WSL2 user.
         use crate::syscall::syscall::create_syscall;
+
+        if !host_ptmx_is_devpts() {
+            return Ok(());
+        }
 
         let testdir = tempfile::tempdir()?;
         let socket_path = Path::join(testdir.path(), "test-socket");
@@ -564,6 +571,9 @@ mod tests {
 
     #[test]
     fn test_verify_ptmx_handle_with_real_pty() -> Result<()> {
+        if !host_ptmx_is_devpts() {
+            return Ok(());
+        }
         // Allocate a real PTY pair
         let openpty_result =
             pty::openpty(None, None).map_err(|e| TTYError::CreatePseudoTerminal { source: e })?;
