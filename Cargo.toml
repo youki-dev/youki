@@ -28,7 +28,7 @@ pathrs = "0.2.4"
 pentacle = "1.1.0"
 pkg-config = "0.3.33"
 prctl = "1.0.0"
-procfs = "0.18.0"
+procfs = { version = "0.18.0", default-features = false }
 quickcheck = "1"
 rand = "0.10.1"
 rbpf = "0.4.1"
