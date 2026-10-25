@@ -23,7 +23,7 @@ netlink-packet-core = "0.9.0"
 netlink-packet-route = "0.33.0"
 netlink-sys = "0.9.0"
 nix = "0.31.3"
-oci-spec = { version = "0.10.0", features = ["runtime"] }
+oci-spec = { version = "0.10.0", default-features = false, features = ["runtime"] }
 pathrs = "0.2.4"
 pentacle = "1.1.0"
 pkg-config = "0.3.33"
