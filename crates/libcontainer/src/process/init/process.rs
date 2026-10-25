@@ -5,7 +5,6 @@ use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::{env, fs, mem};
 
-use nc;
 use nix::mount::{MntFlags, MsFlags};
 use nix::sched::CloneFlags;
 use nix::sys::stat::Mode;
@@ -903,6 +902,15 @@ fn set_io_priority(syscall: &dyn Syscall, io_priority_op: &Option<LinuxIOPriorit
     Ok(())
 }
 
+/// `libc::sched_attr` ends at `sched_period`. The kernel rejects the util clamp
+/// flags unless the struct also has the two util fields that follow it.
+#[repr(C)]
+struct SchedAttr {
+    base: libc::sched_attr,
+    sched_util_min: u32,
+    sched_util_max: u32,
+}
+
 /// Set the RT priority of a thread
 fn setup_scheduler(sc_op: &Option<Scheduler>) -> Result<()> {
     if let Some(sc) = sc_op {
@@ -929,31 +937,27 @@ fn setup_scheduler(sc_op: &Option<Scheduler>) -> Result<()> {
                 }
             }
         }
-        let a = nc::sched_attr_t {
-            // size of the structure should always be within u32 bounds,
-            // so this unwrap should never fail
-            size: mem::size_of::<nc::sched_attr_t>().try_into().unwrap(),
-            sched_policy: policy,
-            sched_flags: flags_value,
-            sched_nice: sc.nice().unwrap_or(0),
-            sched_priority: sc.priority().unwrap_or(0) as u32,
-            sched_runtime: sc.runtime().unwrap_or(0),
-            sched_deadline: sc.deadline().unwrap_or(0),
-            sched_period: sc.period().unwrap_or(0),
+        let a = SchedAttr {
+            base: libc::sched_attr {
+                // size of the structure should always be within u32 bounds,
+                // so this unwrap should never fail
+                size: mem::size_of::<SchedAttr>().try_into().unwrap(),
+                sched_policy: policy,
+                sched_flags: flags_value,
+                sched_nice: sc.nice().unwrap_or(0),
+                sched_priority: sc.priority().unwrap_or(0) as u32,
+                sched_runtime: sc.runtime().unwrap_or(0),
+                sched_deadline: sc.deadline().unwrap_or(0),
+                sched_period: sc.period().unwrap_or(0),
+            },
             sched_util_min: 0,
             sched_util_max: 0,
         };
-        // TODO when nix or libc support this function, replace nx crates.
-        unsafe {
-            let result = nc::sched_setattr(0, &a, 0);
-            match result {
-                Ok(_) => {}
-                Err(err) => {
-                    tracing::error!(?err, "error setting scheduler");
-                    Err(InitProcessError::SchedSetattr(err.to_string()))?;
-                }
-            }
-        };
+        let result = unsafe { libc::syscall(libc::SYS_sched_setattr, 0, &raw const a, 0) };
+        if let Err(err) = nix::errno::Errno::result(result) {
+            tracing::error!(?err, "error setting scheduler");
+            Err(InitProcessError::SchedSetattr(err.to_string()))?;
+        }
     }
     Ok(())
 }

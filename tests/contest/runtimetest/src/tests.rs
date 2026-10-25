@@ -1,10 +1,10 @@
-use std::env;
 use std::ffi::OsStr;
 use std::fs::{self, File, read_dir};
 use std::io::{self, BufRead};
 use std::os::linux::fs::MetadataExt;
 use std::os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
+use std::{env, mem};
 
 use anyhow::{Result, bail};
 use caps::CapSet;
@@ -400,7 +400,7 @@ pub fn validate_sysctl(spec: &Spec) {
 pub fn validate_scheduler_policy(spec: &Spec) {
     let proc = spec.process().as_ref().unwrap();
     let sc = proc.scheduler().as_ref().unwrap();
-    let mut get_sched_attr = nc::sched_attr_t {
+    let mut get_sched_attr = libc::sched_attr {
         size: 0,
         sched_policy: 0,
         sched_flags: 0,
@@ -409,16 +409,18 @@ pub fn validate_scheduler_policy(spec: &Spec) {
         sched_runtime: 0,
         sched_deadline: 0,
         sched_period: 0,
-        sched_util_min: 0,
-        sched_util_max: 0,
     };
-    unsafe {
-        match nc::sched_getattr(0, &mut get_sched_attr, 0) {
-            Ok(_) => {}
-            Err(e) => {
-                return eprintln!("error due to fail to get sched attr error: {e}");
-            }
-        };
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_sched_getattr,
+            0,
+            &raw mut get_sched_attr,
+            mem::size_of::<libc::sched_attr>() as libc::c_uint,
+            0,
+        )
+    };
+    if let Err(e) = Errno::result(result) {
+        return eprintln!("error due to fail to get sched attr error: {e}");
     }
     let sp = get_sched_attr.sched_policy;
     let want_sp: u32 = match *sc.policy() {
