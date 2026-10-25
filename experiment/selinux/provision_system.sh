@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# This only works for a fedora box there should be a check made
+# and fail if it was ran on another vm, or the file should also include steps
+# for ubuntu and execute them after os detection
+
 set -eux
 
 LOG_FILE="/tmp/system_provision.log"
@@ -33,7 +37,7 @@ for pkg in $CRITICAL_DEV_PACKAGES; do
             command_exists=true
         fi
     elif $installed_by_rpm; then # For non-executable devel libraries, rpm -q is enough
-        command_exists=true 
+        command_exists=true
     fi
 
     if $installed_by_rpm && $command_exists; then
@@ -55,6 +59,16 @@ for pkg in $CRITICAL_DEV_PACKAGES; do
         fi
     fi
 done
+
+echo "Installing youki build dependencies..."
+dnf install -y            \
+    pkg-config            \
+    systemd-devel         \
+    elfutils-libelf-devel \
+    libseccomp-devel      \
+    clang-devel           \
+    openssl-devel         \
+    just
 
 echo "Verifying SELinux status and configuration..."
 sestatus
