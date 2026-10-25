@@ -13,7 +13,7 @@ use crate::hooks;
 use crate::network::network_device::dev_change_net_namespace;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::fork::{self, CloneCb};
-use crate::process::message::Message;
+use crate::process::message::{Message, format_error_chain};
 use crate::process::{channel, container_intermediate_process};
 use crate::syscall::SyscallError;
 use crate::user_ns::UserNamespaceConfig;
@@ -74,8 +74,9 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, Op
             ) {
                 Ok(_) => 0,
                 Err(err) => {
-                    tracing::error!("failed to run intermediate process {}", err);
-                    match intermediate_main_sender.send_error(err.to_string()) {
+                    let error_report = format_error_chain(&err);
+                    tracing::error!("failed to run intermediate process {error_report}");
+                    match intermediate_main_sender.send_error(error_report) {
                         Ok(_) => {}
                         Err(e) => {
                             tracing::error!(

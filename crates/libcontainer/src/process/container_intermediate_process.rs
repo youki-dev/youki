@@ -10,6 +10,7 @@ use super::fork::CloneCb;
 use super::init::process as init_process;
 use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
+use crate::process::message::format_error_chain;
 use crate::process::{channel, cpu_affinity, fork};
 use crate::utils::rootless_required;
 
@@ -178,15 +179,15 @@ pub fn container_intermediate_process(
             match init_process::container_init_process(args, init_main_sender, init_receiver) {
                 Ok(_) => 0,
                 Err(e) => {
-                    tracing::error!("failed to initialize container process: {e}");
-                    if let Err(err) = init_main_sender.exec_failed(e.to_string()) {
+                    let error_report = format_error_chain(&e);
+                    tracing::error!("failed to initialize container process: {error_report}");
+                    if let Err(err) = init_main_sender.exec_failed(error_report.clone()) {
                         tracing::error!(?err, "failed sending error to main sender");
                     }
                     if let ContainerType::TenantContainer { exec_notify_fd } = args.container_type {
-                        let buf = format!("{e}");
                         let exec_notify_fd =
                             unsafe { std::os::fd::OwnedFd::from_raw_fd(exec_notify_fd) };
-                        if let Err(err) = write(&exec_notify_fd, buf.as_bytes()) {
+                        if let Err(err) = write(&exec_notify_fd, error_report.as_bytes()) {
                             tracing::error!(?err, "failed to write to exec notify fd");
                         }
 

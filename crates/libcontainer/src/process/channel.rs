@@ -148,6 +148,14 @@ pub struct MainReceiver {
 }
 
 impl MainReceiver {
+    fn check_for_process_error(msg: Message) -> Result<Message, ChannelError> {
+        match msg {
+            Message::ExecFailed(err) => Err(ChannelError::ExecError(err)),
+            Message::OtherError(err) => Err(ChannelError::OtherError(err)),
+            msg => Ok(msg),
+        }
+    }
+
     /// Waits for associated intermediate process to send ready message
     /// and return the pid of init process which is forked by intermediate process
     pub fn wait_for_intermediate_ready(&mut self) -> Result<Pid, ChannelError> {
@@ -159,10 +167,8 @@ impl MainReceiver {
                 source: err,
             })?;
 
-        match msg {
+        match Self::check_for_process_error(msg)? {
             Message::IntermediateReady(pid) => Ok(Pid::from_raw(pid)),
-            Message::ExecFailed(err) => Err(ChannelError::ExecError(err)),
-            Message::OtherError(err) => Err(ChannelError::OtherError(err)),
             msg => Err(ChannelError::unexpected("IntermediateReady", msg)),
         }
     }
@@ -175,7 +181,7 @@ impl MainReceiver {
                 msg: "waiting for mapping request".to_string(),
                 source: err,
             })?;
-        match msg {
+        match Self::check_for_process_error(msg)? {
             Message::WriteMapping => Ok(()),
             msg => Err(ChannelError::unexpected("WriteMapping", msg)),
         }
@@ -190,7 +196,7 @@ impl MainReceiver {
                 source: err,
             })?;
 
-        match msg {
+        match Self::check_for_process_error(msg)? {
             Message::AskMountFd(req) => Ok(req),
             msg => Err(ChannelError::unexpected("AskMountFd", msg)),
         }
@@ -206,11 +212,8 @@ impl MainReceiver {
             }
         })?;
         let fd = fds.map(|fds| unsafe { OwnedFd::from_raw_fd(fds[0]) });
-        match msg {
-            Message::ExecFailed(err) => Err(ChannelError::ExecError(err)),
-            Message::OtherError(err) => Err(ChannelError::OtherError(err)),
-            msg => Ok((msg, fd)),
-        }
+        let msg = Self::check_for_process_error(msg)?;
+        Ok((msg, fd))
     }
 
     pub fn wait_for_time_offset_request(&mut self) -> Result<(), ChannelError> {
@@ -221,7 +224,7 @@ impl MainReceiver {
                 msg: "waiting for time offset request".to_string(),
                 source: err,
             })?;
-        match msg {
+        match Self::check_for_process_error(msg)? {
             Message::WriteTimeOffsets => Ok(()),
             msg => Err(ChannelError::unexpected("WriteTimeOffsets", msg)),
         }
@@ -235,6 +238,7 @@ impl MainReceiver {
             }
         })?;
 
+        let msg = Self::check_for_process_error(msg)?;
         match msg {
             Message::SeccompNotify => {
                 let fd = match fds {
@@ -261,7 +265,7 @@ impl MainReceiver {
                 msg: "waiting for init ready".to_string(),
                 source: err,
             })?;
-        match msg {
+        match Self::check_for_process_error(msg)? {
             Message::SetupNetworkDeviceReady => Ok(()),
             msg => Err(ChannelError::unexpected("SetupNetworkDeviceReady", msg)),
         }
@@ -277,16 +281,13 @@ impl MainReceiver {
                 source: err,
             }
         })?;
-        match msg {
-            // SAFETY: the fd (if any) was just received via SCM_RIGHTS with
-            // MSG_CMSG_CLOEXEC, so it is a fresh fd that we own.
-            Message::InitReady => Ok(fds
-                .and_then(|f| f.first().copied())
-                .map(|fd| unsafe { OwnedFd::from_raw_fd(fd) })),
-            // this case in unique and known enough to have a special error format
-            Message::ExecFailed(err) => Err(ChannelError::ExecError(format!(
-                "error in executing process : {err}"
-            ))),
+        // SAFETY: the fd (if any) was just received via SCM_RIGHTS with
+        // MSG_CMSG_CLOEXEC, so it is a fresh fd that we own.
+        let fd = fds
+            .and_then(|f| f.first().copied())
+            .map(|fd| unsafe { OwnedFd::from_raw_fd(fd) });
+        match Self::check_for_process_error(msg)? {
+            Message::InitReady => Ok(fd),
             msg => Err(ChannelError::unexpected("InitReady", msg)),
         }
     }
@@ -299,7 +300,7 @@ impl MainReceiver {
                 msg: "waiting for hook request".to_string(),
                 source: err,
             })?;
-        match msg {
+        match Self::check_for_process_error(msg)? {
             Message::HookRequest => Ok(()),
             msg => Err(ChannelError::unexpected("HookRequest", msg)),
         }
@@ -527,6 +528,10 @@ mod tests {
     use serial_test::serial;
 
     use super::*;
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("setup failed")]
+    struct SetupError(#[source] std::io::Error);
 
     // Note: due to cargo test by default runs tests in parallel using a single
     // process, these tests should not be running in parallel with other tests.
@@ -871,9 +876,16 @@ mod tests {
     #[serial]
     fn test_recv_init_message_normalizes_exec_failed() -> Result<()> {
         let (mut sender, mut receiver) = main_channel()?;
-        sender.exec_failed("boom".to_string())?;
+        let error_report = crate::process::message::format_error_chain(&SetupError(
+            std::io::Error::other("permission denied"),
+        ));
+        sender.exec_failed(error_report)?;
         let err = receiver.recv_init_message().unwrap_err();
-        assert!(matches!(err, ChannelError::ExecError(msg) if msg == "boom"));
+        assert!(matches!(&err, ChannelError::ExecError(_)));
+        assert_eq!(
+            err.to_string(),
+            "exec process failed with error setup failed: permission denied"
+        );
         sender.close()?;
         receiver.close()?;
         Ok(())
@@ -881,11 +893,18 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_recv_init_message_normalizes_other_error() -> Result<()> {
+    fn test_wait_for_mapping_request_normalizes_other_error() -> Result<()> {
         let (mut sender, mut receiver) = main_channel()?;
-        sender.send_error("boom".to_string())?;
-        let err = receiver.recv_init_message().unwrap_err();
-        assert!(matches!(err, ChannelError::OtherError(msg) if msg == "boom"));
+        let error_report = crate::process::message::format_error_chain(&SetupError(
+            std::io::Error::other("permission denied"),
+        ));
+        sender.send_error(error_report)?;
+        let err = receiver.wait_for_mapping_request().unwrap_err();
+        assert!(matches!(&err, ChannelError::OtherError(_)));
+        assert_eq!(
+            err.to_string(),
+            "intermediate process error setup failed: permission denied"
+        );
         sender.close()?;
         receiver.close()?;
         Ok(())
