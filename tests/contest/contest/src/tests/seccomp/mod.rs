@@ -8,7 +8,7 @@ use test_framework::{Test, TestGroup, TestResult};
 use crate::utils::test_inside_container;
 use crate::utils::test_utils::CreateOptions;
 
-fn create_spec(seccomp: LinuxSeccomp) -> Spec {
+fn create_spec(seccomp: LinuxSeccomp, check: &str) -> Spec {
     SpecBuilder::default()
         .linux(
             LinuxBuilder::default()
@@ -18,7 +18,7 @@ fn create_spec(seccomp: LinuxSeccomp) -> Spec {
         )
         .process(
             ProcessBuilder::default()
-                .args(vec!["runtimetest".to_string(), "seccomp".to_string()])
+                .args(vec!["runtimetest".to_string(), check.to_string()])
                 .build()
                 .expect("error in creating process config"),
         )
@@ -26,12 +26,12 @@ fn create_spec(seccomp: LinuxSeccomp) -> Spec {
         .unwrap()
 }
 
-fn getcwd_denied() -> LinuxSeccomp {
+fn denied(syscall: &str) -> LinuxSeccomp {
     LinuxSeccompBuilder::default()
         .default_action(LinuxSeccompAction::ScmpActAllow)
         .syscalls(vec![
             LinuxSyscallBuilder::default()
-                .names(vec![String::from("getcwd")])
+                .names(vec![String::from(syscall)])
                 .action(LinuxSeccompAction::ScmpActErrno)
                 .build()
                 .unwrap(),
@@ -41,12 +41,12 @@ fn getcwd_denied() -> LinuxSeccomp {
 }
 
 fn seccomp_test() -> TestResult {
-    let spec = create_spec(getcwd_denied());
+    let spec = create_spec(denied("getcwd"), "seccomp");
     test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
 fn seccomp_without_sys_admin_test(no_new_privileges: Option<bool>) -> TestResult {
-    let mut spec = create_spec(getcwd_denied());
+    let mut spec = create_spec(denied("getpriority"), "seccomp_getpriority");
     let unprivileged = [
         Capability::AuditWrite,
         Capability::Kill,

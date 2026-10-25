@@ -373,6 +373,23 @@ pub fn validate_seccomp(spec: &Spec) {
     }
 }
 
+pub fn validate_seccomp_getpriority(spec: &Spec) {
+    let linux = spec.linux().as_ref().unwrap();
+    if linux.seccomp().is_some() {
+        let result = unsafe { libc::syscall(libc::SYS_getpriority, libc::PRIO_PROCESS, 0) };
+        if result != -1 {
+            eprintln!(
+                "'getpriority()' syscall succeeded. It was expected to fail due to seccomp policies."
+            );
+        } else if Errno::last() != Errno::EPERM {
+            eprintln!(
+                "'getpriority()' failed with unexpected error code '{}', expected  'EPERM'",
+                Errno::last()
+            );
+        }
+    }
+}
+
 pub fn validate_sysctl(spec: &Spec) {
     let linux = spec.linux().as_ref().unwrap();
     if let Some(expected_linux_sysctl) = linux.sysctl() {
