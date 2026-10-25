@@ -215,6 +215,10 @@ pub fn get_terminal_test() -> TestGroup {
             Box::new(run_tests::terminal_no_console_socket_test),
         )),
         Box::new(Test::new(
+            "terminal_newline_rendering",
+            Box::new(run_tests::terminal_newline_rendering_test),
+        )),
+        Box::new(Test::new(
             "terminal_stdin_bridge",
             Box::new(run_tests::terminal_stdin_bridge_test),
         )),

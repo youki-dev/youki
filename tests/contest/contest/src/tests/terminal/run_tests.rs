@@ -60,6 +60,50 @@ pub(crate) fn terminal_no_console_socket_test() -> TestResult {
     }
 }
 
+pub(crate) fn terminal_newline_rendering_test() -> TestResult {
+    let id = generate_uuid().to_string();
+    let bundle = prepare_bundle().unwrap();
+    set_config(
+        &bundle,
+        &terminal_spec("printf 'first\\nsecond\\nthird\\n'"),
+    )
+    .unwrap();
+
+    let pty = match sized_pty(24, 80) {
+        Ok(pty) => pty,
+        Err(e) => return TestResult::Failed(anyhow!("failed to open test pty: {e}")),
+    };
+    let mut child = match spawn_on_pty(run_command(bundle.as_ref(), &id), pty.slave) {
+        Ok(child) => child,
+        Err(e) => return TestResult::Failed(anyhow!("failed to spawn container: {e:?}")),
+    };
+
+    let reader = drain_master(pty.master);
+    let status = match wait_timeout(&mut child, Duration::from_secs(30)) {
+        Ok(status) => status,
+        Err(e) => return TestResult::Failed(anyhow!("failed to wait for container: {e:?}")),
+    };
+    let output = reader.join().unwrap_or_default();
+    let bytes = output.as_bytes();
+
+    let lf_count = bytes.iter().filter(|&&b| b == b'\n').count();
+    let bare_lf_count = bytes
+        .iter()
+        .enumerate()
+        .filter(|&(i, &b)| b == b'\n' && (i == 0 || bytes[i - 1] != b'\r'))
+        .count();
+
+    if lf_count >= 3 && bare_lf_count == 0 && saw_line(&output, "third") {
+        TestResult::Passed
+    } else {
+        TestResult::Failed(anyhow!(
+            "newlines relayed from the container were not rendered as CRLF: \
+             {bare_lf_count} of {lf_count} LF bytes were not preceded by CR, \
+             output={output:?} status={status:?}"
+        ))
+    }
+}
+
 // Host input is bridged into the container's PTY: a line fed to the host pty
 // reaches the container's `read`.
 pub(crate) fn terminal_stdin_bridge_test() -> TestResult {
