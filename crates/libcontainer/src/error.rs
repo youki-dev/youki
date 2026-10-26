@@ -112,8 +112,6 @@ pub enum ErrInvalidSpec {
     MountIdmapNonBind,
     #[error("idmapped mount requires uid/gid mappings or a usable user namespace")]
     MountIdmapMissingMappings,
-    #[error("idmapped mount is not supported")]
-    MountIdmapUnsupported,
     #[error("idmapped mounts are not supported in rootless containers")]
     MountIdmapRootless,
     #[error("invalid netns path: {0}")]
