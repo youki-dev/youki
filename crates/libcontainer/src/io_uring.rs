@@ -200,10 +200,17 @@ impl IoUringPolicy {
                 if !ops.contains(&IORING_OP_SOCKET) {
                     return Err(IoUringError::FamiliesWithoutSocket);
                 }
-                families
-                    .iter()
-                    .map(|f| family_number(f))
-                    .collect::<Result<Vec<u32>>>()
+                // Each family is compared once, in the order first listed.
+                // That also bounds the filter by the families we know, so
+                // its jump distances fit in a u8.
+                let mut numbers = Vec::new();
+                for family in families {
+                    let number = family_number(family)?;
+                    if !numbers.contains(&number) {
+                        numbers.push(number);
+                    }
+                }
+                Ok(numbers)
             })
             .transpose()?;
         Ok(CompiledPolicy {
@@ -472,6 +479,22 @@ mod tests {
                 .filters();
         assert_eq!(filters.len(), 1);
         assert_eq!(filters[0].opcode, IORING_OP_SOCKET);
+        assert_eq!(filters[0].program, socket_family_program(&[2, 1]));
+    }
+
+    #[test]
+    fn socket_families_are_compared_once() {
+        // AF_LOCAL is AF_UNIX. 256 comparisons would overflow the u8 jumps
+        // to the final "ret 1".
+        let families = std::iter::once(r#""AF_INET""#)
+            .chain(std::iter::repeat_n(r#""AF_UNIX""#, 300))
+            .chain([r#""AF_LOCAL""#, r#""AF_INET""#])
+            .collect::<Vec<_>>()
+            .join(",");
+        let filters = policy(&format!(
+            r#"{{"ops":["IORING_OP_SOCKET"],"socketFamilies":[{families}]}}"#
+        ))
+        .filters();
         assert_eq!(filters[0].program, socket_family_program(&[2, 1]));
     }
 
