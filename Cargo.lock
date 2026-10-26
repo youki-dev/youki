@@ -149,9 +149,9 @@ dependencies = [
 
 [[package]]
 name = "async-wasi"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9abe3a40b90f239a8a9141aff1a1b98befb36d5aa23a89ed33e030e520bfd20"
+checksum = "c5a5825496e374b01d26813d522fe644da32028bd7373252715b876c6999ae57"
 dependencies = [
  "bitflags 2.13.0",
  "cfg-if",
@@ -5074,7 +5074,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
@@ -6055,9 +6055,9 @@ dependencies = [
 
 [[package]]
 name = "wasmedge-sdk"
-version = "0.14.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "852257498e8524cb0e2e8e9c7f1540afc2f24f2c3dd77806cf583feba8c19e99"
+checksum = "7a501af650d0811eaf935130000cdc4ad613006d416fc701f809a09f84922e8f"
 dependencies = [
  "anyhow",
  "async-wasi",
@@ -6072,9 +6072,9 @@ dependencies = [
 
 [[package]]
 name = "wasmedge-sys"
-version = "0.19.4"
+version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88da93fb54be1deaa84bc68393f09ba8491e20113465c35a9446e14107f55a6e"
+checksum = "c55328608f789b948e7dc72c1502cfef67f20bf68641cc55fa5925ce6eb86700"
 dependencies = [
  "async-wasi",
  "bindgen 0.69.5",
@@ -6102,9 +6102,9 @@ dependencies = [
 
 [[package]]
 name = "wasmedge-types"
-version = "0.6.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17315f552d26bcfe01fc185b874177592d30aab86a10ed898cc8a3f29815c9c4"
+checksum = "ab6f0990e8801b99aa439aaf3c5b588c5ac6a121bb78c61f47f3e325995398a2"
 dependencies = [
  "thiserror 1.0.69",
  "wat",
