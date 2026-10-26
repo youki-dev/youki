@@ -7,6 +7,13 @@
 //! and can only be tightened, like seccomp. This module applies such a policy
 //! to the container's init process before it execs the workload.
 //!
+//! The kernel must have bc0e8faf90e7 ("io_uring: preserve task restrictions
+//! across exec"): mainline 7.2, or a 7.0/7.1 kernel with the backport. Without
+//! it, a task that has used io_uring loses its restrictions when it execs, so
+//! the workload can drop the policy. [`supported`] doesn't detect this: the
+//! fix is backported without a version change (Ubuntu 26.04: 7.0.0-39), and a
+//! reliable check would have to exec a helper program.
+//!
 //! Until the OCI runtime spec has a field for this, the policy is read from
 //! the `dev.youki.io_uring` annotation as JSON, in the shape proposed for
 //! `linux.ioUring` (opencontainers/runtime-spec#1323):
@@ -359,6 +366,9 @@ fn register_task_filter(filter: &FilterSpec) -> Result<()> {
 /// it (EFAULT), or refuses the caller (EACCES) before that. Older kernels
 /// reject fd -1 (EBADF), or the opcode on the fd -1 path (EINVAL, 6.13+), as
 /// does a 7.x kernel built without CONFIG_IO_URING_BPF.
+///
+/// It doesn't tell whether the restrictions survive exec; see the module
+/// documentation.
 pub fn supported() -> bool {
     // SAFETY: a NULL argument is never dereferenced by userspace; the kernel
     // validates it.
