@@ -2,7 +2,9 @@ use std::error::Error;
 use std::sync::Arc;
 
 use libcontainer::oci_spec::runtime::Spec;
-use libcontainer::workload::{EMPTY, Executor, ExecutorError, ExecutorValidationError};
+use libcontainer::workload::{
+    ContainerExecutor, EMPTY, Executor, ExecutorError, ExecutorValidationError, HostExecutor,
+};
 use wasmer::{Instance, Module, Store};
 use wasmer_wasix::runtime::task_manager::tokio::TokioTaskManager;
 use wasmer_wasix::{PluggableRuntime, WasiEnv, WasiError};
@@ -12,7 +14,7 @@ const EXECUTOR_NAME: &str = "wasmer";
 #[derive(Clone)]
 pub struct WasmerExecutor {}
 
-impl Executor for WasmerExecutor {
+impl ContainerExecutor for WasmerExecutor {
     fn exec(&self, spec: &Spec) -> Result<(), ExecutorError> {
         if !can_handle(spec) {
             return Err(ExecutorError::CantHandle(EXECUTOR_NAME));
@@ -113,6 +115,9 @@ impl Executor for WasmerExecutor {
         Ok(())
     }
 }
+
+impl HostExecutor for WasmerExecutor {}
+impl Executor for WasmerExecutor {}
 
 pub fn get_executor() -> WasmerExecutor {
     WasmerExecutor {}
