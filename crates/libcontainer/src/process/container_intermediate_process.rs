@@ -1,6 +1,7 @@
 use std::os::fd::FromRawFd;
 
 use libcgroups::common::CgroupManager;
+use nix::sys::signal::{Signal, kill};
 use nix::unistd::{Gid, Pid, Uid, close, getpid, write};
 use oci_spec::runtime::{LinuxNamespace, LinuxNamespaceType, LinuxResources};
 
@@ -179,6 +180,13 @@ pub fn container_intermediate_process(
                 Ok(_) => 0,
                 Err(e) => {
                     tracing::error!("failed to initialize container process: {e}");
+                    // Write the error to the container's stderr also, so
+                    // that a reader of that stream can see the cause.
+                    #[cfg(feature = "init-error-stderr")]
+                    {
+                        let line = format!("youki init error: {e:?}\n");
+                        unsafe { libc::write(2, line.as_ptr().cast(), line.len()) };
+                    }
                     if let Err(err) = init_main_sender.exec_failed(e.to_string()) {
                         tracing::error!(?err, "failed sending error to main sender");
                     }
@@ -213,20 +221,13 @@ pub fn container_intermediate_process(
         IntermediateProcessError::InitProcess(err)
     })?;
 
-    // Close the exec_notify_fd in this process
-    if let ContainerType::TenantContainer { exec_notify_fd } = args.container_type {
-        close(exec_notify_fd).map_err(|err| {
-            tracing::error!("failed to close exec notify fd: {}", err);
-            IntermediateProcessError::ExecNotify(err)
-        })?;
-    }
-
-    intermediate_main_sender
-        .intermediate_ready(pid)
-        .map_err(|err| {
-            tracing::error!("failed to wait on intermediate process: {}", err);
-            err
-        })?;
+    // The main process does not have the init pid yet. Kill the init
+    // process here if a step fails.
+    release_init(args, pid, intermediate_main_sender).inspect_err(|_| {
+        if let Err(err) = kill(pid, Signal::SIGKILL) {
+            tracing::error!(?err, "failed to kill the init process");
+        }
+    })?;
 
     // Close unused senders here so we don't have lingering socket around.
     intermediate_main_sender.close().map_err(|err| {
@@ -248,6 +249,31 @@ pub fn container_intermediate_process(
         tracing::error!("failed to close unused init sender: {}", err);
         err
     })?;
+
+    Ok(())
+}
+
+/// Closes the exec notify fd of this process, and then sends the init pid
+/// to the main process.
+fn release_init(
+    args: &ContainerArgs,
+    pid: Pid,
+    intermediate_main_sender: &mut MainSender,
+) -> Result<()> {
+    // Close the exec_notify_fd in this process
+    if let ContainerType::TenantContainer { exec_notify_fd } = args.container_type {
+        close(exec_notify_fd).map_err(|err| {
+            tracing::error!("failed to close exec notify fd: {}", err);
+            IntermediateProcessError::ExecNotify(err)
+        })?;
+    }
+
+    intermediate_main_sender
+        .intermediate_ready(pid)
+        .map_err(|err| {
+            tracing::error!("failed to wait on intermediate process: {}", err);
+            err
+        })?;
 
     Ok(())
 }
