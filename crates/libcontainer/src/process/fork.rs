@@ -117,8 +117,10 @@ fn clone3(cb: &mut CloneCb, flags: u64, exit_signal: Option<u64>) -> Result<Pid,
         -1 => Err(CloneError::Clone(nix::Error::last())),
         0 => {
             // Inside the cloned process, we execute the callback and exit with
-            // the return code.
-            std::process::exit(cb());
+            // the return code. `_exit` skips atexit handlers, which can block on
+            // locks held by the parent's other threads.
+            let ret = cb();
+            unsafe { libc::_exit(ret) }
         }
         ret if ret >= 0 => Ok(Pid::from_raw(ret as i32)),
         ret => Err(CloneError::UnknownErrno(ret as i32)),
@@ -265,6 +267,32 @@ mod test {
             WaitStatus::Exited(p, status) => {
                 assert_eq!(pid, p);
                 assert_eq!(status, 255);
+                Ok(())
+            }
+            _ => bail!("test failed"),
+        }
+    }
+
+    #[test]
+    fn test_container_fork_skips_exit_handlers() -> Result<()> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        static IN_CLONED_CHILD: AtomicBool = AtomicBool::new(false);
+        extern "C" fn handler() {
+            if IN_CLONED_CHILD.load(Ordering::SeqCst) {
+                unsafe { libc::_exit(42) };
+            }
+        }
+        assert_eq!(unsafe { libc::atexit(handler) }, 0);
+
+        let pid = container_clone(Box::new(|| {
+            IN_CLONED_CHILD.store(true, Ordering::SeqCst);
+            0
+        }))?;
+        match waitpid(pid, None).expect("wait pid failed.") {
+            WaitStatus::Exited(p, status) => {
+                assert_eq!(pid, p);
+                assert_eq!(status, 0, "the cloned child ran the parent's exit handlers");
                 Ok(())
             }
             _ => bail!("test failed"),
