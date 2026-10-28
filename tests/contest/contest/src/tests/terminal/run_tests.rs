@@ -10,9 +10,9 @@ use nix::unistd::Pid;
 use test_framework::TestResult;
 
 use super::{
-    console_size_spec, drain_master, poll_size_script, read_master_for, recv_pty_master,
-    run_command, runtime_command, saw_line, set_winsize, sized_pty, spawn_on_pty, terminal_spec,
-    wait_timeout,
+    console_size_spec, drain_master, poll_size_script, read_master_for, read_master_until,
+    recv_pty_master, run_command, runtime_command, saw_line, set_winsize, sized_pty, spawn_on_pty,
+    terminal_spec, wait_timeout,
 };
 use crate::utils::{generate_uuid, prepare_bundle, set_config};
 
@@ -65,7 +65,7 @@ pub(crate) fn terminal_newline_rendering_test() -> TestResult {
     let bundle = prepare_bundle().unwrap();
     set_config(
         &bundle,
-        &terminal_spec("printf 'first\\nsecond\\nthird\\n'"),
+        &terminal_spec("printf 'first\\nsecond\\nthird\\nREADY\\n'; read release"),
     )
     .unwrap();
 
@@ -77,23 +77,34 @@ pub(crate) fn terminal_newline_rendering_test() -> TestResult {
         Ok(child) => child,
         Err(e) => return TestResult::Failed(anyhow!("failed to spawn container: {e:?}")),
     };
-
-    let reader = drain_master(pty.master);
-    let status = match wait_timeout(&mut child, Duration::from_secs(30)) {
-        Ok(status) => status,
-        Err(e) => return TestResult::Failed(anyhow!("failed to wait for container: {e:?}")),
+    let mut writer = match pty.master.try_clone() {
+        Ok(fd) => fs::File::from(fd),
+        Err(e) => return TestResult::Failed(anyhow!("failed to dup pty master: {e}")),
     };
-    let output = reader.join().unwrap_or_default();
-    let bytes = output.as_bytes();
 
+    let output = read_master_until(&pty.master, "READY", Duration::from_secs(10));
+    let bytes = output.as_bytes();
     let lf_count = bytes.iter().filter(|&&b| b == b'\n').count();
     let bare_lf_count = bytes
         .iter()
         .enumerate()
         .filter(|&(i, &b)| b == b'\n' && (i == 0 || bytes[i - 1] != b'\r'))
         .count();
+    let saw_third = saw_line(&output, "third");
 
-    if lf_count >= 3 && bare_lf_count == 0 && saw_line(&output, "third") {
+    let release = writer.write_all(b"release\n");
+    let status = wait_timeout(&mut child, Duration::from_secs(30));
+    let _ = read_master_for(pty.master, Duration::from_secs(10));
+
+    if let Err(e) = release {
+        return TestResult::Failed(anyhow!("failed to release the container: {e}"));
+    }
+    let status = match status {
+        Ok(status) => status,
+        Err(e) => return TestResult::Failed(anyhow!("failed to wait for container: {e:?}")),
+    };
+
+    if lf_count >= 3 && bare_lf_count == 0 && saw_third {
         TestResult::Passed
     } else {
         TestResult::Failed(anyhow!(
