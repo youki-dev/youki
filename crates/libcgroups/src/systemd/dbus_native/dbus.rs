@@ -540,8 +540,30 @@ impl SystemdClient for DbusConnection {
 
         let mut props: Vec<Structure<Variant>> = properties
             .iter()
-            .map(|(k, v)| Structure::new(k.to_string(), v.clone()))
-            .collect();
+            .map(|(k, v)| {
+                // The controller adapters represent a mask as big-endian
+                // numeric bytes. systemd's wire ABI is ay, least-significant
+                // byte first, rather than an array of uint64 values.
+                let value = match (*k, v) {
+                    ("AllowedCPUs" | "AllowedMemoryNodes", Variant::ArrayU64(mask)) => {
+                        let bytes = mask
+                            .iter()
+                            .rev()
+                            .map(|&byte| {
+                                u8::try_from(byte).map_err(|_| {
+                                    super::utils::DbusError::IncorrectMessage(format!(
+                                        "{k} contains a non-byte mask value"
+                                    ))
+                                })
+                            })
+                            .collect::<std::result::Result<Vec<_>, _>>()?;
+                        Variant::ArrayU8(bytes)
+                    }
+                    _ => v.clone(),
+                };
+                Ok(Structure::new(k.to_string(), value))
+            })
+            .collect::<Result<_>>()?;
 
         // systemd appends to a unit's DeviceAllow list, and an empty array is the only
         // way to clear it, so without this a second apply() on the same unit could only
@@ -605,13 +627,112 @@ impl DbusConnection {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::io::Write;
     use std::os::fd::AsRawFd;
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
 
     use nix::sys::socket::{self, AddressFamily, SockFlag, SockType};
     use nix::unistd::getuid;
 
-    use super::super::utils::Result;
+    use super::super::client::SystemdClient;
+    use super::super::message::{Header, HeaderKind, HeaderValue, Message, MessageType};
+    use super::super::serialize::{DbusSerialize, Structure, Variant};
+    use super::super::utils::{DbusError, Result};
     use super::{DbusConnection, SystemdClientError, uid_to_hex_str};
+
+    fn property_test_pair() -> (UnixStream, UnixStream) {
+        let (client, server) = UnixStream::pair().unwrap();
+        for stream in [&client, &server] {
+            let timeout = Some(Duration::from_secs(2));
+            stream.set_read_timeout(timeout).unwrap();
+            stream.set_write_timeout(timeout).unwrap();
+        }
+        (client, server)
+    }
+
+    fn capture_set_unit_properties(properties: &HashMap<&str, Variant>) -> Vec<u8> {
+        let (client, mut server) = property_test_pair();
+        let peer = std::thread::spawn(move || {
+            let connection = DbusConnection::for_test(server.as_raw_fd());
+            let bytes = connection.read_one_message().unwrap();
+            let request = Message::deserialize(&bytes, &mut 0).unwrap();
+            assert_eq!(request.preamble.mtype, MessageType::MethodCall);
+            assert!(request.headers.iter().any(|header| {
+                header.kind == HeaderKind::Member
+                    && header.value == HeaderValue::String("SetUnitProperties".into())
+            }));
+            let reply = Message::new(
+                MessageType::MethodReturn,
+                1,
+                vec![Header {
+                    kind: HeaderKind::ReplySerial,
+                    value: HeaderValue::U32(request.serial),
+                }],
+                vec![],
+            );
+            server.write_all(&reply.serialize()).unwrap();
+            request.body
+        });
+
+        let connection = DbusConnection::for_test(client.as_raw_fd());
+        let result = connection.set_unit_properties("cpuset-test.scope", properties);
+        let body = peer.join().unwrap();
+        result.unwrap();
+        body
+    }
+
+    #[test]
+    fn test_set_unit_properties_encodes_cpuset_byte_arrays() {
+        for name in ["AllowedCPUs", "AllowedMemoryNodes"] {
+            for (mask, expected_bytes) in [
+                (vec![], vec![]),
+                (vec![15], vec![15]),
+                (vec![3, 1], vec![1, 3]),
+                (vec![128, 0, 1], vec![1, 0, 128]),
+            ] {
+                let properties = HashMap::from([(name, Variant::ArrayU64(mask))]);
+                let body = capture_set_unit_properties(&properties);
+                let expected = (
+                    "cpuset-test.scope".to_owned(),
+                    true,
+                    vec![Structure::new(
+                        name.to_owned(),
+                        Variant::ArrayU8(expected_bytes),
+                    )],
+                );
+                let mut expected_body = Vec::new();
+                expected.serialize(&mut expected_body);
+                assert_eq!(body, expected_body, "incorrect wire mask for {name}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_set_unit_properties_rejects_non_byte_cpuset_values() {
+        for name in ["AllowedCPUs", "AllowedMemoryNodes"] {
+            let (client, server) = property_test_pair();
+            let connection = DbusConnection::for_test(client.as_raw_fd());
+            let properties = HashMap::from([(name, Variant::ArrayU64(vec![256]))]);
+
+            let result = connection.set_unit_properties("cpuset-test.scope", &properties);
+            assert!(matches!(
+                result,
+                Err(SystemdClientError::DBus(DbusError::IncorrectMessage(_)))
+            ));
+            let mut byte = [0u8; 1];
+            assert_eq!(
+                socket::recv(
+                    server.as_raw_fd(),
+                    &mut byte,
+                    socket::MsgFlags::MSG_DONTWAIT
+                ),
+                Err(nix::errno::Errno::EAGAIN),
+                "invalid masks must be rejected before sending a request"
+            );
+        }
+    }
 
     #[test]
     fn test_uid_to_hex_str() {

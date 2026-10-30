@@ -98,7 +98,11 @@ pub fn to_bitmask(range: &str) -> Result<Vec<u8>, BitmaskError> {
                 index: cpus[0].into(),
             })?;
             if cpu_index >= bitset.len() {
-                bitset.grow(bitset.len() + 8);
+                bitset.grow(
+                    cpu_index
+                        .checked_add(1)
+                        .ok_or_else(|| BitmaskError::InvalidRange(cpu_set.into()))?,
+                );
             }
             bitset.set(cpu_index, true);
         } else {
@@ -106,7 +110,7 @@ pub fn to_bitmask(range: &str) -> Result<Vec<u8>, BitmaskError> {
                 err,
                 index: cpus[0].into(),
             })?;
-            let end_index = cpus[1].parse().map_err(|err| BitmaskError::InvalidIndex {
+            let end_index: usize = cpus[1].parse().map_err(|err| BitmaskError::InvalidIndex {
                 err,
                 index: cpus[1].into(),
             })?;
@@ -114,19 +118,22 @@ pub fn to_bitmask(range: &str) -> Result<Vec<u8>, BitmaskError> {
                 return Err(BitmaskError::InvalidRange(cpu_set.into()));
             }
 
+            let end = end_index
+                .checked_add(1)
+                .ok_or_else(|| BitmaskError::InvalidRange(cpu_set.into()))?;
             if end_index >= bitset.len() {
-                bitset.grow(end_index + 1);
+                bitset.grow(end);
             }
-
-            bitset.set_range(start_index..end_index + 1, true);
+            bitset.set_range(start_index..end, true);
         }
     }
 
-    // systemd expects a sequence of bytes with no leading zeros, otherwise the values will not be set
-    // with no error message
+    // Keep the controller representation compact and big-endian.
+    // The D-Bus client converts it to systemd's little-endian byte array.
     Ok(bitset
         .as_slice()
         .iter()
+        .rev()
         .flat_map(|b| b.to_be_bytes())
         .skip_while(|b| *b == 0u8)
         .collect())
@@ -150,6 +157,29 @@ mod tests {
         assert_eq!(bitmask.len(), 1);
         assert_eq!(bitmask[0], 1);
         Ok(())
+    }
+
+    #[test]
+    fn to_bitmask_sparse_single_values() -> Result<()> {
+        assert_eq!(to_bitmask("16")?, vec![1, 0, 0]);
+        assert_eq!(to_bitmask("64")?, vec![1, 0, 0, 0, 0, 0, 0, 0, 0]);
+        Ok(())
+    }
+
+    #[test]
+    fn to_bitmask_across_words() -> Result<()> {
+        assert_eq!(to_bitmask("0,64-65")?, vec![3, 0, 0, 0, 0, 0, 0, 0, 1]);
+        Ok(())
+    }
+
+    #[test]
+    fn to_bitmask_overflowing_single_value() {
+        assert!(to_bitmask(&usize::MAX.to_string()).is_err());
+    }
+
+    #[test]
+    fn to_bitmask_overflowing_range() {
+        assert!(to_bitmask(&format!("0-{}", usize::MAX)).is_err());
     }
 
     #[test]
