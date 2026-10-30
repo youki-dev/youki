@@ -53,12 +53,14 @@ pub fn container_intermediate_process(
     let spec = &args.spec;
     let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
     let namespaces = Namespaces::try_from(linux.namespaces().as_ref())?;
-    // like runc, only tolerate cgroup permission errors when the spec neither
-    // names a cgroup nor asks for limits; otherwise the container would run
-    // outside the cgroup it asked for
+    // like runc, the v2 manager only tolerates cgroup permission errors when the
+    // spec neither names a cgroup nor asks for limits; otherwise the container
+    // would run outside the cgroup it asked for. The systemd manager only uses
+    // rootless to treat device rules as best effort, so it keeps it.
     let rootless = rootless_required(command.as_ref()).unwrap_or(false)
-        && linux.cgroups_path().is_none()
-        && !has_resource_limits(linux.resources().as_ref());
+        && (args.cgroup_config.systemd_cgroup
+            || (linux.cgroups_path().is_none()
+                && !has_resource_limits(linux.resources().as_ref())));
     let cgroup_manager = libcgroups::common::create_cgroup_manager(args.cgroup_config.to_owned())
         .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?
         .with_rootless(rootless);
