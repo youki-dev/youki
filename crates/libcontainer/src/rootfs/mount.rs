@@ -220,7 +220,9 @@ impl Mount {
                     })?;
             }
             _ => {
-                if mount.destination() == Path::new("/dev") {
+                self.check_proc_mount(options.root, mount)?;
+
+                if Path::new(mount.destination()).normalize() == Path::new("/dev") {
                     mount_option_config.flags &= !MsFlags::MS_RDONLY;
                     self.mount_into_container(
                         mount,
@@ -1047,14 +1049,16 @@ impl Mount {
         let dest = mount.destination();
 
         let container_proc_path = rootfs.join("proc");
-        let dest_path = rootfs.join_safely(dest).map_err(|err| {
-            tracing::error!(
-                "could not join rootfs path with mount destination {:?}: {}",
-                dest,
-                err
-            );
-            MountError::Other(err.into())
-        })?;
+        let dest_path = rootfs
+            .join_safely(Path::new(dest).normalize())
+            .map_err(|err| {
+                tracing::error!(
+                    "could not join rootfs path with mount destination {:?}: {}",
+                    dest,
+                    err
+                );
+                MountError::Other(err.into())
+            })?;
 
         // If path is Ok, it means dest_path is under /proc.
         // - Ok(p) with p.is_empty(): mount target is exactly /proc.
@@ -1900,6 +1904,38 @@ mod tests {
         assert!(res.is_err());
         let err = format!("{:?}", res.err().unwrap());
         assert!(err.contains("must be mounted on ordinary directory"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn setup_mount_non_proc_fails_on_denied_proc_destination() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let rootfs = tmp.path();
+        let custom = rootfs.join("proc/custom");
+        fs::create_dir_all(custom.parent().unwrap())?;
+
+        let options = MountOptions {
+            root: rootfs,
+            label: None,
+            cgroup_ns: true,
+        };
+        let m = Mount::new();
+
+        let bind_mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/proc/custom"))
+            .typ("bind")
+            .source(&custom)
+            .options(vec!["bind".to_string()])
+            .build()?;
+        assert!(m.setup_mount(&bind_mount, &options).is_err());
+
+        let unnormalized_mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/tmp/../proc/custom"))
+            .typ("tmpfs")
+            .source(PathBuf::from("tmpfs"))
+            .build()?;
+        assert!(m.setup_mount(&unnormalized_mount, &options).is_err());
 
         Ok(())
     }
