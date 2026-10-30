@@ -47,8 +47,6 @@ pub const ANNOTATION: &str = "dev.youki.io_uring";
 
 const IORING_REGISTER_BPF_FILTER: libc::c_uint = 37;
 const IO_URING_BPF_CMD_FILTER: u16 = 1;
-/// Attach a deny filter to every opcode that has no filter yet.
-const IO_URING_BPF_FILTER_DENY_REST: u32 = 1;
 /// Offset of the per-opcode data in `struct io_uring_bpf_ctx`; for
 /// `IORING_OP_SOCKET` the first word is the address family.
 const BPF_CTX_PDU_OFFSET: u32 = 16;
@@ -130,8 +128,9 @@ const OPS: &[&str] = &[
     "IORING_OP_URING_CMD128",
 ];
 
-const IORING_OP_NOP: u32 = 0;
 const IORING_OP_SOCKET: u32 = 45;
+/// The SQE opcode is 8 bits.
+const MAX_OPCODES: u32 = 256;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IoUringError {
@@ -171,14 +170,6 @@ pub struct IoUringPolicy {
 pub struct CompiledPolicy {
     ops: BTreeSet<u32>,
     socket_families: Option<Vec<u32>>,
-}
-
-/// One BPF program to register for one opcode.
-#[derive(Debug, PartialEq, Eq)]
-struct FilterSpec {
-    opcode: u32,
-    flags: u32,
-    program: Vec<libc::sock_filter>,
 }
 
 /// Reads the policy from the spec's annotations, if there is one.
@@ -228,46 +219,20 @@ impl IoUringPolicy {
 }
 
 impl CompiledPolicy {
-    /// The filters to register, in registration order: an allow filter for
-    /// every allowed opcode, the lowest one last. The last one carries
-    /// DENY_REST, which denies every opcode that has no filter yet, so it
-    /// must come last. The lowest opcode is also the one a kernel is most
-    /// likely to know.
-    fn filters(&self) -> Vec<FilterSpec> {
-        let mut filters: Vec<FilterSpec> = self
-            .ops
-            .iter()
-            .rev()
-            .map(|&opcode| FilterSpec {
-                opcode,
-                flags: 0,
-                program: self.allow_program(opcode),
-            })
-            .collect();
-        match filters.last_mut() {
-            Some(last) => last.flags |= IO_URING_BPF_FILTER_DENY_REST,
-            None => filters.push(deny_rest()),
+    /// The program for an opcode: allow the listed ones and deny the rest.
+    /// For `IORING_OP_SOCKET` with `socketFamilies`, allow only these.
+    fn program(&self, opcode: u32) -> Vec<libc::sock_filter> {
+        if !self.ops.contains(&opcode) {
+            return vec![ret(0)];
         }
-        filters
-    }
-
-    /// The program for an allowed opcode: for `IORING_OP_SOCKET`, deny it
-    /// outside the allowed families.
-    fn allow_program(&self, opcode: u32) -> Vec<libc::sock_filter> {
         match (&self.socket_families, opcode) {
             (Some(families), IORING_OP_SOCKET) => socket_family_program(families),
             _ => vec![ret(1)],
         }
     }
-}
 
-/// Denies NOP and, with DENY_REST, every other opcode that has no filter yet.
-/// NOP is never allowed here: as opcode 0 it would carry DENY_REST itself.
-fn deny_rest() -> FilterSpec {
-    FilterSpec {
-        opcode: IORING_OP_NOP,
-        flags: IO_URING_BPF_FILTER_DENY_REST,
-        program: vec![ret(0)],
+    fn has_socket_families(&self) -> bool {
+        self.socket_families.is_some() && self.ops.contains(&IORING_OP_SOCKET)
     }
 }
 
@@ -280,23 +245,29 @@ pub fn apply(policy: &CompiledPolicy) -> Result<()> {
     if !supported() {
         return Err(IoUringError::Unsupported);
     }
-    let filters = policy.filters();
-    tracing::debug!(?policy, filters = filters.len(), "applying io_uring policy");
-    for filter in &filters {
-        match register_task_filter(filter) {
-            // An opcode newer than the kernel: it can't be submitted anyway.
-            // Every filter here only allows, so skipping one can only deny
-            // more, except that DENY_REST must still be registered.
-            Err(IoUringError::Register { op, source })
-                if source.raw_os_error() == Some(libc::EINVAL) =>
-            {
-                tracing::debug!(op, "io_uring opcode unknown to the kernel, skipped");
-                if filter.flags & IO_URING_BPF_FILTER_DENY_REST != 0 {
-                    register_task_filter(&deny_rest())?;
+    tracing::debug!(?policy, "applying io_uring policy");
+    // Every opcode gets a filter: DENY_REST only fills the opcodes without
+    // one, so an opcode that an inherited filter allows would stay allowed.
+    // With a one-instruction program, EINVAL only means that the kernel
+    // doesn't know this opcode, nor the later ones. The socket family
+    // program is registered after the loop, where EINVAL is an error.
+    let mut opcode = 0;
+    while opcode < MAX_OPCODES {
+        if !(opcode == IORING_OP_SOCKET && policy.has_socket_families()) {
+            match register_task_filter(opcode, &policy.program(opcode)) {
+                Err(IoUringError::Register { source, .. })
+                    if opcode > 0 && source.raw_os_error() == Some(libc::EINVAL) =>
+                {
+                    break;
                 }
+                result => result?,
             }
-            result => result?,
         }
+        opcode += 1;
+    }
+    tracing::debug!(opcodes = opcode, "io_uring opcodes known to the kernel");
+    if policy.has_socket_families() && opcode > IORING_OP_SOCKET {
+        register_task_filter(IORING_OP_SOCKET, &policy.program(IORING_OP_SOCKET))?;
     }
     Ok(())
 }
@@ -323,19 +294,19 @@ struct IoUringBpf {
 const _: () = assert!(std::mem::size_of::<IoUringBpfFilter>() == 64);
 const _: () = assert!(std::mem::size_of::<IoUringBpf>() == 72);
 
-fn register_task_filter(filter: &FilterSpec) -> Result<()> {
+fn register_task_filter(opcode: u32, program: &[libc::sock_filter]) -> Result<()> {
     let bpf = IoUringBpf {
         cmd_type: IO_URING_BPF_CMD_FILTER,
         cmd_flags: 0,
         resv: 0,
         filter: IoUringBpfFilter {
-            opcode: filter.opcode,
-            flags: filter.flags,
-            filter_len: filter.program.len() as u32,
+            opcode,
+            flags: 0,
+            filter_len: program.len() as u32,
             // 0 accepts the kernel's per-opcode data size, whatever it is.
             pdu_size: 0,
             resv: [0; 3],
-            filter_ptr: filter.program.as_ptr() as u64,
+            filter_ptr: program.as_ptr() as u64,
             resv2: [0; 5],
         },
     };
@@ -355,7 +326,7 @@ fn register_task_filter(filter: &FilterSpec) -> Result<()> {
         return Ok(());
     }
     Err(IoUringError::Register {
-        op: op_name(filter.opcode),
+        op: op_name(opcode),
         source: io::Error::last_os_error(),
     })
 }
@@ -465,31 +436,31 @@ mod tests {
     }
 
     #[test]
-    fn allows_listed_ops_then_denies_the_rest() {
-        let filters = policy(r#"{"ops":["IORING_OP_READ","IORING_OP_NOP"]}"#).filters();
-        assert_eq!(filters.len(), 2);
-        // The lowest opcode goes last and carries DENY_REST.
-        assert_eq!(filters[0].opcode, 22);
-        assert_eq!(filters[1].opcode, 0);
-        assert!(filters.iter().all(|f| f.program == vec![ret(1)]));
-        assert_eq!(filters[0].flags, 0);
-        assert_eq!(filters[1].flags, IO_URING_BPF_FILTER_DENY_REST);
+    fn allows_listed_ops_and_denies_the_rest() {
+        let policy = policy(r#"{"ops":["IORING_OP_READ","IORING_OP_NOP"]}"#);
+        assert_eq!(policy.program(0), vec![ret(1)]);
+        assert_eq!(policy.program(22), vec![ret(1)]);
+        assert_eq!(policy.program(23), vec![ret(0)]);
+        // Opcodes past the table, as a newer kernel may have.
+        assert_eq!(policy.program(200), vec![ret(0)]);
     }
 
     #[test]
     fn no_ops_denies_everything() {
-        let filters = policy(r#"{"ops":[]}"#).filters();
-        assert_eq!(filters, vec![deny_rest()]);
+        let policy = policy(r#"{"ops":[]}"#);
+        assert!((0..MAX_OPCODES).all(|opcode| policy.program(opcode) == vec![ret(0)]));
     }
 
     #[test]
-    fn socket_families_replace_the_allow_filter_on_socket() {
-        let filters =
-            policy(r#"{"ops":["IORING_OP_SOCKET"],"socketFamilies":["AF_INET","AF_UNIX"]}"#)
-                .filters();
-        assert_eq!(filters.len(), 1);
-        assert_eq!(filters[0].opcode, IORING_OP_SOCKET);
-        assert_eq!(filters[0].program, socket_family_program(&[2, 1]));
+    fn socket_families_replace_the_allow_program_on_socket() {
+        let policy =
+            policy(r#"{"ops":["IORING_OP_SOCKET"],"socketFamilies":["AF_INET","AF_UNIX"]}"#);
+        assert!(policy.has_socket_families());
+        assert_eq!(
+            policy.program(IORING_OP_SOCKET),
+            socket_family_program(&[2, 1])
+        );
+        assert_eq!(policy.program(0), vec![ret(0)]);
     }
 
     #[test]
@@ -501,11 +472,13 @@ mod tests {
             .chain([r#""AF_LOCAL""#, r#""AF_INET""#])
             .collect::<Vec<_>>()
             .join(",");
-        let filters = policy(&format!(
+        let policy = policy(&format!(
             r#"{{"ops":["IORING_OP_SOCKET"],"socketFamilies":[{families}]}}"#
-        ))
-        .filters();
-        assert_eq!(filters[0].program, socket_family_program(&[2, 1]));
+        ));
+        assert_eq!(
+            policy.program(IORING_OP_SOCKET),
+            socket_family_program(&[2, 1])
+        );
     }
 
     #[test]
