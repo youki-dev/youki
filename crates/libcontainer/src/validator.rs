@@ -22,6 +22,7 @@ impl Validator {
             tracing::warn!(name, "unknown name in the io_uring policy ignored");
         }
         crate::io_uring::probe()?;
+        crate::io_uring::check_kept_on_exec()?;
         Ok(())
     }
 

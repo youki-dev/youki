@@ -10,9 +10,10 @@
 //! The kernel must have bc0e8faf90e7 ("io_uring: preserve task restrictions
 //! across exec"): mainline 7.2, or a 7.0/7.1 kernel with the backport. Without
 //! it, a task that has used io_uring loses its restrictions when it execs, so
-//! the workload can drop the policy. [`supported`] doesn't detect this: the
-//! fix is backported without a version change (Ubuntu 26.04: 7.0.0-39), and a
-//! reliable check would have to exec a helper program.
+//! the workload can drop the policy. The fix is backported without a version
+//! change (Ubuntu 26.04: 7.0.0-39), so [`check_kept_on_exec`] checks it on a
+//! child that re-executes the program; [`handle_exec_check`] must be called
+//! first in `main`.
 //!
 //! Until the OCI runtime spec has a field for this, the policy is read from
 //! the `dev.youki.io_uring` annotation as JSON, in the shape proposed for
@@ -43,6 +44,9 @@
 
 use std::collections::BTreeSet;
 use std::io;
+use std::os::unix::process::CommandExt;
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use oci_spec::runtime::Spec;
 use serde::Deserialize;
@@ -50,6 +54,7 @@ use serde::Deserialize;
 /// Annotation that carries the policy until the runtime spec has a field.
 pub const ANNOTATION: &str = "dev.youki.io_uring";
 
+const IORING_REGISTER_RESTRICTIONS: libc::c_uint = 11;
 const IORING_REGISTER_BPF_FILTER: libc::c_uint = 37;
 const IO_URING_BPF_CMD_FILTER: u16 = 1;
 /// Offset of the per-opcode data in `struct io_uring_bpf_ctx`; for
@@ -133,6 +138,7 @@ const OPS: &[&str] = &[
     "IORING_OP_URING_CMD128",
 ];
 
+const IORING_OP_NOP: u32 = 0;
 const IORING_OP_SOCKET: u32 = 45;
 /// The SQE opcode is 8 bits.
 const MAX_OPCODES: u32 = 256;
@@ -149,6 +155,16 @@ pub enum IoUringError {
         "io_uring restrictions are not supported or not permitted (Linux 7.0 or newer is required)"
     )]
     Unsupported(#[source] io::Error),
+    #[error("cannot check that the kernel keeps io_uring restrictions on exec")]
+    ExecCheck(#[source] io::Error),
+    #[error(
+        "cannot check that the kernel keeps io_uring restrictions on exec: call io_uring::handle_exec_check() first in main"
+    )]
+    ExecCheckNotHandled,
+    #[error(
+        "the kernel does not keep io_uring restrictions on exec (Linux 7.0 and 7.1 need commit bc0e8faf90e7)"
+    )]
+    DroppedOnExec,
     #[error("failed to register io_uring filter for {op}")]
     Register {
         op: &'static str,
@@ -374,6 +390,84 @@ pub fn probe() -> Result<()> {
         return Ok(());
     }
     Err(IoUringError::Unsupported(err))
+}
+
+/// Set in the environment of the child that [`check_kept_on_exec`] runs.
+const EXEC_CHECK_ENV: &str = "_YOUKI_IO_URING_EXEC_CHECK";
+
+static EXEC_CHECK_HANDLED: AtomicBool = AtomicBool::new(false);
+
+/// To be called first in `main` by a program that applies io_uring policies:
+/// in the child of [`check_kept_on_exec`], it reports whether the task is
+/// still restricted and exits. Without it, policies are refused, as the child
+/// would run the program instead.
+pub fn handle_exec_check() {
+    if std::env::var_os(EXEC_CHECK_ENV).is_none() {
+        EXEC_CHECK_HANDLED.store(true, Ordering::Relaxed);
+        return;
+    }
+    // With task restrictions, registering classic ones fails with EPERM.
+    // SAFETY: as in `probe`.
+    let ret = unsafe {
+        libc::syscall(
+            libc::SYS_io_uring_register,
+            -1i32,
+            IORING_REGISTER_RESTRICTIONS,
+            std::ptr::null::<u8>(),
+            1u32,
+        )
+    };
+    let kept = ret < 0 && io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+    std::process::exit(if kept { 0 } else { 1 });
+}
+
+/// Checks that the kernel keeps the restrictions of a task that has used
+/// io_uring when it execs: Linux 7.0 and 7.1 drop them without bc0e8faf90e7.
+/// A child restricts itself, creates a ring and re-executes the program,
+/// where [`handle_exec_check`] reports the result.
+pub fn check_kept_on_exec() -> Result<()> {
+    if !EXEC_CHECK_HANDLED.load(Ordering::Relaxed) {
+        return Err(IoUringError::ExecCheckNotHandled);
+    }
+    let mut command = Command::new("/proc/self/exe");
+    command
+        .env_clear()
+        .env(EXEC_CHECK_ENV, "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    // SAFETY: the closure only makes syscalls, with no allocation.
+    unsafe {
+        command.pre_exec(|| {
+            const DENY: [libc::sock_filter; 1] = [libc::sock_filter {
+                code: BPF_RET | BPF_K,
+                jt: 0,
+                jf: 0,
+                k: 0,
+            }];
+            // Room for struct io_uring_params.
+            let mut params = [0u64; 16];
+            if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if let Err(IoUringError::Register { source, .. }) =
+                register_task_filter(IORING_OP_NOP, &DENY)
+            {
+                return Err(source);
+            }
+            // A ring gives the task the io_uring context that exec used to
+            // free together with the restrictions. It is close-on-exec.
+            if libc::syscall(libc::SYS_io_uring_setup, 1u32, params.as_mut_ptr()) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let status = command.status().map_err(IoUringError::ExecCheck)?;
+    if !status.success() {
+        return Err(IoUringError::DroppedOnExec);
+    }
+    Ok(())
 }
 
 /// `ret K`
