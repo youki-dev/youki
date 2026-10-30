@@ -1,4 +1,5 @@
 use std::fs;
+use std::time::Duration;
 
 use anyhow::anyhow;
 use oci_spec::runtime::{
@@ -9,7 +10,8 @@ use test_framework::{Test, TestGroup, TestResult};
 use crate::tests::hooks::{delete_hook_output_file, get_hook_output_path, write_log_hook};
 use crate::utils::test_utils::CreateOptions;
 use crate::utils::{
-    create_container, delete_container, generate_uuid, prepare_bundle, set_config, start_container,
+    LifecycleStatus, WaitTarget, create_container, delete_container, generate_uuid, prepare_bundle,
+    set_config, start_container, wait_for_state,
 };
 
 fn get_spec(host_output_file: &str) -> Spec {
@@ -88,6 +90,16 @@ fn get_test(test_name: &'static str) -> Test {
                 .unwrap();
 
             start_container(&id, &bundle).unwrap().wait().unwrap();
+
+            if let Err(e) = wait_for_state(
+                &id,
+                &bundle,
+                WaitTarget::Status(LifecycleStatus::Stopped),
+                Duration::from_secs(5),
+                Duration::from_millis(100),
+            ) {
+                return TestResult::Failed(e);
+            }
 
             let delete_result = delete_container(&id, &bundle).map(|mut cmd| cmd.wait());
 

@@ -717,36 +717,54 @@ impl Mount {
                     .as_os_str()
                     .to_str()
                     .ok_or(SyscallError::Nix(Errno::EINVAL))?;
-                self.syscall.fsconfig(
-                    fsfd,
-                    linux::FSCONFIG_SET_STRING as u32,
-                    Some("source"),
-                    Some(src_str),
-                    0,
-                )?;
+                let configure = || -> std::result::Result<(), SyscallError> {
+                    self.syscall.fsconfig(
+                        fsfd,
+                        linux::FSCONFIG_SET_STRING as u32,
+                        Some("source"),
+                        Some(src_str),
+                        0,
+                    )?;
 
-                for opt in data_options.iter().filter(|s| !s.is_empty()) {
-                    if let Some((k, v)) = opt.split_once('=') {
-                        self.syscall.fsconfig(
-                            fsfd,
-                            linux::FSCONFIG_SET_STRING as u32,
-                            Some(k),
-                            Some(v),
-                            0,
-                        )?;
-                    } else {
-                        self.syscall.fsconfig(
-                            fsfd,
-                            linux::FSCONFIG_SET_FLAG as u32,
-                            Some(opt),
-                            None,
-                            0,
-                        )?;
-                    };
+                    for opt in data_options.iter().filter(|s| !s.is_empty()) {
+                        if let Some((k, v)) = opt.split_once('=') {
+                            self.syscall.fsconfig(
+                                fsfd,
+                                linux::FSCONFIG_SET_STRING as u32,
+                                Some(k),
+                                Some(v),
+                                0,
+                            )?;
+                        } else {
+                            self.syscall.fsconfig(
+                                fsfd,
+                                linux::FSCONFIG_SET_FLAG as u32,
+                                Some(opt),
+                                None,
+                                0,
+                            )?;
+                        };
+                    }
+
+                    self.syscall
+                        .fsconfig(fsfd, linux::FSCONFIG_CMD_CREATE as u32, None, None, 0)
+                };
+                // fsconfig rejects some options mount(2) takes, e.g. a lowerdir over 255 bytes.
+                if let Err(err) = configure() {
+                    // The copy-up needs the detached mount.
+                    if mount_option_config.tmpcopyup {
+                        return Err(err.into());
+                    }
+                    tracing::debug!(?err, "fsconfig failed, falling back to mount(2)");
+                    return self.legacy_mount(
+                        source,
+                        &root,
+                        container_dest,
+                        typ,
+                        mount_option_config,
+                        &data_options,
+                    );
                 }
-
-                self.syscall
-                    .fsconfig(fsfd, linux::FSCONFIG_CMD_CREATE as u32, None, None, 0)?;
 
                 // fsmount
                 let mount_fd_owned = self.syscall.fsmount(fsfd, 0, None)?;
@@ -830,6 +848,42 @@ impl Mount {
             &mount_option_config.propagation_flags,
         )?;
 
+        Ok(())
+    }
+
+    fn legacy_mount(
+        &self,
+        source: &Path,
+        root: &Root,
+        container_dest: &Path,
+        typ: Option<&str>,
+        mount_option_config: &MountOptionConfig,
+        data_options: &[String],
+    ) -> Result<()> {
+        let data: Vec<&str> = data_options
+            .iter()
+            .map(String::as_str)
+            .filter(|s| !s.is_empty())
+            .collect();
+        let dest: OwnedFd = root.resolve(container_dest)?.into();
+        self.syscall.mount(
+            Some(source),
+            Path::new(&format!("/proc/self/fd/{}", dest.as_raw_fd())),
+            typ,
+            mount_option_config.flags,
+            Some(&data.join(",")),
+        )?;
+
+        if let Some(rec_attr) = &mount_option_config.rec_attr {
+            let mounted: OwnedFd = root.resolve(container_dest)?.into();
+            self.syscall.mount_setattr(
+                mounted.as_fd(),
+                Path::new(""),
+                linux::AT_EMPTY_PATH | linux::AT_RECURSIVE,
+                rec_attr,
+                mem::size_of::<linux::MountAttr>(),
+            )?;
+        }
         Ok(())
     }
 
@@ -1146,7 +1200,7 @@ mod tests {
     use anyhow::{Context, Ok, Result};
 
     use super::*;
-    use crate::syscall::test::{ArgName, FsconfigArgs, FsopenArgs, TestHelperSyscall};
+    use crate::syscall::test::{ArgName, FsconfigArgs, FsopenArgs, MountArgs, TestHelperSyscall};
 
     fn helper_syscall(m: &Mount) -> &TestHelperSyscall {
         m.syscall
@@ -1220,6 +1274,72 @@ mod tests {
             fs::metadata(to.path().join("sub/file"))?.uid(),
             fs::metadata(from.path().join("sub/file"))?.uid()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_mount_into_container_overlay_long_lowerdir() -> Result<()> {
+        let tmp_dir = tempfile::tempdir()?;
+        // Podman's image volumes (--mount type=image) are overlay mounts with only lower
+        // layers, whose paths together are longer than one fsconfig string may be.
+        let lowerdir = format!(
+            "lowerdir=/var/lib/containers/storage/overlay/{}/merged:\
+             /var/lib/containers/storage/overlay-containers/{}/lower",
+            "a".repeat(64),
+            "b".repeat(96)
+        );
+        for fsconfig_fails in [false, true] {
+            let m = Mount::new();
+            let mount = &SpecMountBuilder::default()
+                .destination(PathBuf::from("/guest"))
+                .typ("overlay")
+                .source(PathBuf::from("overlay"))
+                .options(vec![
+                    lowerdir.clone(),
+                    "private".to_string(),
+                    "userxattr".to_string(),
+                ])
+                .build()?;
+            let mount_option_config = parse_mount(mount)?;
+            let syscall = helper_syscall(&m);
+            if fsconfig_fails {
+                syscall.set_ret_err(ArgName::Fsconfig, || {
+                    Err(crate::syscall::SyscallError::Nix(nix::errno::Errno::EINVAL))
+                });
+            }
+
+            assert!(
+                m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, None)
+                    .is_ok()
+            );
+
+            if fsconfig_fails {
+                assert_eq!(
+                    syscall.get_mount_args(),
+                    vec![MountArgs {
+                        source: Some(PathBuf::from("overlay")),
+                        target: tmp_dir.path().join("guest"),
+                        fstype: Some("overlay".to_string()),
+                        flags: mount_option_config.flags,
+                        data: Some(format!("{lowerdir},userxattr")),
+                    }]
+                );
+                assert!(syscall.get_fsmount_args().is_empty());
+                assert!(syscall.get_move_mount_args().is_empty());
+            } else {
+                let (key, val) = lowerdir.split_once('=').unwrap();
+                assert_eq!(
+                    syscall.get_fsconfig_args(),
+                    vec![
+                        fsc_str("source", "overlay"),
+                        fsc_str(key, val),
+                        fsc_flag("userxattr"),
+                        fsc_create(),
+                    ]
+                );
+                assert!(syscall.get_mount_args().is_empty());
+            }
+        }
         Ok(())
     }
 

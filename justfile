@@ -270,7 +270,7 @@ version-up version:
     NEXT_VERSION=$(echo {{version}} | awk -F. -v OFS=. '{$NF += 1 ; print}')
     sed -i "s/{{version}}/$NEXT_VERSION/g" .tagpr
     # Need to update the lockfile.
-    cargo check
+    cargo update --workspace
 
 contest-list: contest
    {{ cwd }}/contest list
