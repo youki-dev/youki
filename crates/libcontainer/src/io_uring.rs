@@ -37,7 +37,9 @@
 //!
 //! The policy is built only from BPF filters, never from the one-shot opcode
 //! allowlist (`IORING_REGISTER_RESTRICTIONS`). That keeps the SQE flags
-//! unrestricted and lets the workload add its own, tighter io_uring filters.
+//! unrestricted. The workload can add its own BPF filters and restrict its
+//! own rings, but it can't register task restrictions with
+//! `IORING_REGISTER_RESTRICTIONS` any more.
 
 use std::collections::BTreeSet;
 use std::io;
@@ -144,9 +146,9 @@ pub enum IoUringError {
     #[error("socketFamilies requires IORING_OP_SOCKET in ops")]
     FamiliesWithoutSocket,
     #[error(
-        "io_uring restrictions are not supported by this kernel (Linux 7.0 or newer is required)"
+        "io_uring restrictions are not supported or not permitted (Linux 7.0 or newer is required)"
     )]
-    Unsupported,
+    Unsupported(#[source] io::Error),
     #[error("failed to register io_uring filter for {op}")]
     Register {
         op: &'static str,
@@ -253,9 +255,7 @@ impl CompiledPolicy {
 /// The caller must have CAP_SYS_ADMIN in its user namespace or have set
 /// no_new_privs, as for seccomp.
 pub fn apply(policy: &CompiledPolicy) -> Result<()> {
-    if !supported() {
-        return Err(IoUringError::Unsupported);
-    }
+    probe()?;
     tracing::debug!(?policy, "applying io_uring policy");
     // Every opcode gets a filter: DENY_REST only fills the opcodes without
     // one, so an opcode that an inherited filter allows would stay allowed.
@@ -343,15 +343,21 @@ fn register_task_filter(opcode: u32, program: &[libc::sock_filter]) -> Result<()
 }
 
 /// Whether the kernel supports task-level io_uring BPF filters.
+pub fn supported() -> bool {
+    probe().is_ok()
+}
+
+/// Checks that task-level io_uring BPF filters can be registered.
 ///
 /// Registers with a NULL argument: a kernel with the feature fails to copy
 /// it (EFAULT), or refuses the caller (EACCES) before that. Older kernels
 /// reject fd -1 (EBADF), or the opcode on the fd -1 path (EINVAL, 6.13+), as
-/// does a 7.x kernel built without CONFIG_IO_URING_BPF.
+/// does a 7.x kernel built without CONFIG_IO_URING_BPF; seccomp may deny the
+/// syscall.
 ///
 /// It doesn't tell whether the restrictions survive exec; see the module
 /// documentation.
-pub fn supported() -> bool {
+pub fn probe() -> Result<()> {
     // SAFETY: a NULL argument is never dereferenced by userspace; the kernel
     // validates it.
     let ret = unsafe {
@@ -363,8 +369,11 @@ pub fn supported() -> bool {
             1u32,
         )
     };
-    let errno = io::Error::last_os_error().raw_os_error();
-    ret < 0 && matches!(errno, Some(libc::EFAULT) | Some(libc::EACCES))
+    let err = io::Error::last_os_error();
+    if ret < 0 && matches!(err.raw_os_error(), Some(libc::EFAULT | libc::EACCES)) {
+        return Ok(());
+    }
+    Err(IoUringError::Unsupported(err))
 }
 
 /// `ret K`

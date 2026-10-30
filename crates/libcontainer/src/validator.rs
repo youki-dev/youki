@@ -21,9 +21,7 @@ impl Validator {
         for name in &policy.ignored {
             tracing::warn!(name, "unknown name in the io_uring policy ignored");
         }
-        if !crate::io_uring::supported() {
-            return Err(crate::io_uring::IoUringError::Unsupported.into());
-        }
+        crate::io_uring::probe()?;
         Ok(())
     }
 
