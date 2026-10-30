@@ -45,11 +45,11 @@ fn io_uring_policy_test() -> TestResult {
     test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
-/// An unknown opcode name must stop the container from being created. The
-/// container runs a check that always passes, so the test can only pass if
-/// the runtime refuses the policy.
+/// An invalid policy, here an empty socketFamilies, must stop the container
+/// from being created. The container runs a check that always passes, so the
+/// test can only pass if the runtime refuses the policy.
 fn io_uring_invalid_policy_test() -> TestResult {
-    let policy = r#"{"ops": ["read"]}"#;
+    let policy = r#"{"ops": ["IORING_OP_SOCKET"], "socketFamilies": []}"#;
     let spec = test_result!(create_spec(policy, "hello_world"));
     match test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(())) {
         TestResult::Passed => TestResult::Failed(anyhow!(

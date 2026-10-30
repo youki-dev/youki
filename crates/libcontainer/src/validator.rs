@@ -15,7 +15,13 @@ impl Validator {
     // A container with an io_uring policy must not start on a kernel that
     // can't enforce it: fail here, before anything is created.
     fn validate_spec_for_io_uring(spec: &Spec) -> Result<(), ErrInvalidSpec> {
-        if crate::io_uring::policy_from_spec(spec)?.is_some() && !crate::io_uring::supported() {
+        let Some(policy) = crate::io_uring::policy_from_spec(spec)? else {
+            return Ok(());
+        };
+        for name in &policy.ignored {
+            tracing::warn!(name, "unknown name in the io_uring policy ignored");
+        }
+        if !crate::io_uring::supported() {
             return Err(crate::io_uring::IoUringError::Unsupported.into());
         }
         Ok(())

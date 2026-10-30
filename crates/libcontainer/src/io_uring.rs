@@ -32,6 +32,9 @@
 //!   address families. It can't be empty, and `ops` must allow
 //!   `IORING_OP_SOCKET`.
 //!
+//! Names youki doesn't know are ignored with a warning: what they would
+//! allow stays denied, and a policy written for a newer youki still works.
+//!
 //! The policy is built only from BPF filters, never from the one-shot opcode
 //! allowlist (`IORING_REGISTER_RESTRICTIONS`). That keeps the SQE flags
 //! unrestricted and lets the workload add its own, tighter io_uring filters.
@@ -136,10 +139,6 @@ const MAX_OPCODES: u32 = 256;
 pub enum IoUringError {
     #[error("invalid {ANNOTATION} annotation")]
     InvalidPolicy(#[source] serde_json::Error),
-    #[error("unknown io_uring opcode {0}")]
-    UnknownOp(String),
-    #[error("unknown socket address family {0}")]
-    UnknownFamily(String),
     #[error("socketFamilies is empty; to deny all sockets, leave IORING_OP_SOCKET out of ops")]
     EmptyFamilies,
     #[error("socketFamilies requires IORING_OP_SOCKET in ops")]
@@ -170,6 +169,9 @@ pub struct IoUringPolicy {
 pub struct CompiledPolicy {
     ops: BTreeSet<u32>,
     socket_families: Option<Vec<u32>>,
+    /// Names youki doesn't know, maybe newer than youki: what they would
+    /// allow stays denied.
+    pub ignored: Vec<String>,
 }
 
 /// Reads the policy from the spec's annotations, if there is one.
@@ -183,37 +185,46 @@ pub fn policy_from_spec(spec: &Spec) -> Result<Option<CompiledPolicy>> {
 
 impl IoUringPolicy {
     pub fn compile(&self) -> Result<CompiledPolicy> {
-        let ops = self
-            .ops
-            .iter()
-            .map(|name| op_number(name).ok_or_else(|| IoUringError::UnknownOp(name.clone())))
-            .collect::<Result<BTreeSet<u32>>>()?;
-        let socket_families = self
-            .socket_families
-            .as_ref()
-            .map(|families| {
-                if families.is_empty() {
-                    return Err(IoUringError::EmptyFamilies);
+        let mut ignored = Vec::new();
+        let mut ops = BTreeSet::new();
+        for name in &self.ops {
+            match op_number(name) {
+                Some(op) => {
+                    ops.insert(op);
                 }
-                if !ops.contains(&IORING_OP_SOCKET) {
-                    return Err(IoUringError::FamiliesWithoutSocket);
+                None => ignored.push(name.clone()),
+            }
+        }
+        let mut socket_families = None;
+        if let Some(families) = &self.socket_families {
+            if families.is_empty() {
+                return Err(IoUringError::EmptyFamilies);
+            }
+            if !ops.contains(&IORING_OP_SOCKET) {
+                return Err(IoUringError::FamiliesWithoutSocket);
+            }
+            // Each family is compared once, in the order first listed.
+            // That also bounds the filter by the families we know, so its
+            // jump distances fit in a u8.
+            let mut numbers = Vec::new();
+            for family in families {
+                match family_number(family) {
+                    Some(number) if !numbers.contains(&number) => numbers.push(number),
+                    Some(_) => {}
+                    None => ignored.push(family.clone()),
                 }
-                // Each family is compared once, in the order first listed.
-                // That also bounds the filter by the families we know, so
-                // its jump distances fit in a u8.
-                let mut numbers = Vec::new();
-                for family in families {
-                    let number = family_number(family)?;
-                    if !numbers.contains(&number) {
-                        numbers.push(number);
-                    }
-                }
-                Ok(numbers)
-            })
-            .transpose()?;
+            }
+            // With no known family, deny IORING_OP_SOCKET: never allow any.
+            if numbers.is_empty() {
+                ops.remove(&IORING_OP_SOCKET);
+            } else {
+                socket_families = Some(numbers);
+            }
+        }
         Ok(CompiledPolicy {
             ops,
             socket_families,
+            ignored,
         })
     }
 }
@@ -399,19 +410,62 @@ fn op_name(opcode: u32) -> &'static str {
         .unwrap_or("unknown opcode")
 }
 
-fn family_number(name: &str) -> Result<u32> {
-    let family = match name {
-        "AF_UNIX" | "AF_LOCAL" => libc::AF_UNIX,
-        "AF_INET" => libc::AF_INET,
-        "AF_INET6" => libc::AF_INET6,
-        "AF_NETLINK" => libc::AF_NETLINK,
-        "AF_PACKET" => libc::AF_PACKET,
-        "AF_VSOCK" => libc::AF_VSOCK,
-        "AF_ALG" => libc::AF_ALG,
-        "AF_XDP" => libc::AF_XDP,
-        _ => return Err(IoUringError::UnknownFamily(name.to_string())),
-    };
-    Ok(family as u32)
+/// Address families by name, from <linux/socket.h> (Linux 7.2).
+const FAMILIES: &[(&str, u32)] = &[
+    ("AF_UNIX", 1),
+    ("AF_LOCAL", 1),
+    ("AF_INET", 2),
+    ("AF_AX25", 3),
+    ("AF_IPX", 4),
+    ("AF_APPLETALK", 5),
+    ("AF_NETROM", 6),
+    ("AF_BRIDGE", 7),
+    ("AF_ATMPVC", 8),
+    ("AF_X25", 9),
+    ("AF_INET6", 10),
+    ("AF_ROSE", 11),
+    ("AF_DECnet", 12),
+    ("AF_NETBEUI", 13),
+    ("AF_SECURITY", 14),
+    ("AF_KEY", 15),
+    ("AF_NETLINK", 16),
+    ("AF_ROUTE", 16),
+    ("AF_PACKET", 17),
+    ("AF_ASH", 18),
+    ("AF_ECONET", 19),
+    ("AF_ATMSVC", 20),
+    ("AF_RDS", 21),
+    ("AF_SNA", 22),
+    ("AF_IRDA", 23),
+    ("AF_PPPOX", 24),
+    ("AF_WANPIPE", 25),
+    ("AF_LLC", 26),
+    ("AF_IB", 27),
+    ("AF_MPLS", 28),
+    ("AF_CAN", 29),
+    ("AF_TIPC", 30),
+    ("AF_BLUETOOTH", 31),
+    ("AF_IUCV", 32),
+    ("AF_RXRPC", 33),
+    ("AF_ISDN", 34),
+    ("AF_PHONET", 35),
+    ("AF_IEEE802154", 36),
+    ("AF_CAIF", 37),
+    ("AF_ALG", 38),
+    ("AF_NFC", 39),
+    ("AF_VSOCK", 40),
+    ("AF_KCM", 41),
+    ("AF_QIPCRTR", 42),
+    ("AF_SMC", 43),
+    ("AF_XDP", 44),
+    ("AF_MCTP", 45),
+];
+
+fn family_number(name: &str) -> Option<u32> {
+    FAMILIES
+        .iter()
+        .find(|&&(family, _)| family == name)
+        .map(|&(_, number)| number)
 }
 
 #[cfg(test)]
@@ -507,20 +561,32 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_names_and_fields() {
-        let unknown_op = serde_json::from_str::<IoUringPolicy>(r#"{"ops":["read"]}"#)
-            .unwrap()
-            .compile();
-        assert!(matches!(unknown_op, Err(IoUringError::UnknownOp(_))));
-        let unknown_family = serde_json::from_str::<IoUringPolicy>(
-            r#"{"ops":["IORING_OP_SOCKET"],"socketFamilies":["AF_FOO"]}"#,
-        )
-        .unwrap()
-        .compile();
-        assert!(matches!(
-            unknown_family,
-            Err(IoUringError::UnknownFamily(_))
-        ));
+    fn ignores_unknown_names() {
+        let known = policy(
+            r#"{"ops":["IORING_OP_NOP","IORING_OP_FOO","IORING_OP_SOCKET"],"socketFamilies":["AF_FOO","AF_INET"]}"#,
+        );
+        assert_eq!(known.ignored, vec!["IORING_OP_FOO", "AF_FOO"]);
+        assert_eq!(known.program(0), vec![ret(1)]);
+        assert_eq!(known.program(IORING_OP_SOCKET), socket_family_program(&[2]));
+        // With no known family, IORING_OP_SOCKET is denied.
+        let unknown = policy(r#"{"ops":["IORING_OP_SOCKET"],"socketFamilies":["AF_FOO"]}"#);
+        assert!(!unknown.has_socket_families());
+        assert_eq!(unknown.program(IORING_OP_SOCKET), vec![ret(0)]);
+    }
+
+    #[test]
+    fn family_table_matches_kernel_numbers() {
+        assert_eq!(family_number("AF_UNIX"), Some(libc::AF_UNIX as u32));
+        assert_eq!(family_number("AF_LOCAL"), Some(libc::AF_UNIX as u32));
+        assert_eq!(family_number("AF_INET6"), Some(libc::AF_INET6 as u32));
+        assert_eq!(family_number("AF_NETLINK"), Some(libc::AF_NETLINK as u32));
+        assert_eq!(family_number("AF_CAN"), Some(libc::AF_CAN as u32));
+        assert_eq!(family_number("AF_XDP"), Some(libc::AF_XDP as u32));
+        assert_eq!(family_number("AF_MCTP"), Some(45));
+    }
+
+    #[test]
+    fn rejects_invalid_policies() {
         let empty_families =
             serde_json::from_str::<IoUringPolicy>(r#"{"ops":[],"socketFamilies":[]}"#)
                 .unwrap()
@@ -529,6 +595,7 @@ mod tests {
         // ops is required, and the fields of the earlier draft are refused.
         for json in [
             r#"{}"#,
+            r#"{"ops":"IORING_OP_READ"}"#,
             r#"{"ops":[],"extra":1}"#,
             r#"{"defaultAction":"deny","ops":[]}"#,
             r#"{"ops":[],"deniedSqeFlags":["IOSQE_BUFFER_SELECT"]}"#,
