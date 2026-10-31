@@ -72,6 +72,10 @@ validate-contest-runc *TESTNAME: contest
 test-rootless-podman:
     {{ cwd }}/tests/rootless-tests/run.sh {{ cwd }}/youki
 
+# test rootless youki stops containers it could not create a cgroup for
+test-rootless-no-cgroup:
+    {{ cwd }}/tests/rootless-tests/no-cgroup.sh {{ cwd }}/youki
+
 # test docker-in-docker works with youki
 test-dind:
     {{ cwd }}/tests/dind/run.sh
