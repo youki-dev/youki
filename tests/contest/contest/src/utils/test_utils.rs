@@ -156,6 +156,17 @@ pub fn delete_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
     Ok(res)
 }
 
+/// `delete --force`: for cleanup paths where the container may still be running.
+pub fn delete_container_force<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
+    let res = runtime_command(dir)
+        .arg("delete")
+        .arg("--force")
+        .arg(id)
+        .spawn()
+        .context("could not force delete container")?;
+    Ok(res)
+}
+
 pub fn get_state<P: AsRef<Path>>(id: &str, dir: P) -> Result<(String, String)> {
     sleep(SLEEP_TIME);
     let output = runtime_command(dir)
