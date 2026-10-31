@@ -91,6 +91,10 @@ pub enum MountOption {
     Norelatime(bool, MsFlags),
     Strictatime(bool, MsFlags),
     Nostrictatime(bool, MsFlags),
+    Iversion(bool, MsFlags),
+    Noiversion(bool, MsFlags),
+    Silent(bool, MsFlags),
+    Loud(bool, MsFlags),
 }
 
 impl MountOption {
@@ -130,6 +134,10 @@ impl MountOption {
             "norelatime",
             "strictatime",
             "nostrictatime",
+            "iversion",
+            "noiversion",
+            "silent",
+            "loud",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -190,6 +198,10 @@ impl FromStr for MountOption {
             "norelatime" => Ok(MountOption::Norelatime(true, MsFlags::MS_RELATIME)),
             "strictatime" => Ok(MountOption::Strictatime(false, MsFlags::MS_STRICTATIME)),
             "nostrictatime" => Ok(MountOption::Nostrictatime(true, MsFlags::MS_STRICTATIME)),
+            "iversion" => Ok(MountOption::Iversion(false, MsFlags::MS_I_VERSION)),
+            "noiversion" => Ok(MountOption::Noiversion(true, MsFlags::MS_I_VERSION)),
+            "silent" => Ok(MountOption::Silent(false, MsFlags::MS_SILENT)),
+            "loud" => Ok(MountOption::Loud(true, MsFlags::MS_SILENT)),
             _ => Err(option.to_string()),
         }
     }
