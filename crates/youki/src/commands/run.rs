@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use libcontainer::container::ContainerStatus;
 use libcontainer::container::builder::ContainerBuilder;
 use libcontainer::syscall::syscall::SyscallType;
 use liboci_cli::Run;
@@ -40,9 +41,18 @@ pub fn run(args: Run, root_path: PathBuf, systemd_cgroup: bool) -> Result<i32> {
     );
     let foreground_result =
         foreground::handle_foreground(container.pid().unwrap(), foreground_pty_fd);
-    // execute the destruction action after the container finishes running.
-    // A cleanup failure must not replace the workload's exit status (runc and crun log it).
-    if let Err(err) = container.delete(true) {
+    // A state or cleanup failure must not replace the workload's exit status.
+    if args.keep {
+        if foreground_result.is_ok() {
+            // Ok also includes nonzero workload exit codes.
+            // INIT has been reaped, so it no longer has a live PID.
+            container.set_status(ContainerStatus::Stopped);
+            container.state.pid = None;
+            if let Err(err) = container.save() {
+                tracing::error!(?err, id = ?args.container_id, "failed to save container status");
+            }
+        }
+    } else if let Err(err) = container.delete(true) {
         tracing::error!(?err, id = ?args.container_id, "failed to delete container");
     }
     foreground_result
