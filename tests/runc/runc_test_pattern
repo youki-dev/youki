@@ -195,8 +195,8 @@ runc run with RLIMIT_NOFILE(Smaller than system's hard value)
 [skip]runc exec with RLIMIT_NOFILE(Smaller than system's hard value)
 global --root
 runc run
-[skip]runc run --keep
-[skip]runc run --keep (check cgroup exists)
+runc run --keep
+runc run --keep (check cgroup exists)
 runc run [hostname domainname]
 [skip]runc run with tmpfs
 [skip]runc run with tmpfs perms
