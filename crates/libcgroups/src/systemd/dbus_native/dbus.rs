@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io::IoSlice;
-use std::os::fd::{AsFd, AsRawFd};
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -45,7 +45,7 @@ pub struct DbusConnection {
     #[allow(dead_code)]
     system: bool,
     /// socket fd
-    socket: i32,
+    socket: OwnedFd,
     /// name id assigned by dbus for the connection
     id: Option<String>,
     /// counter for messages
@@ -192,15 +192,12 @@ impl DbusConnection {
 
     /// Create a Unix socket and connect it to the given dbus address.
     fn connect(addr: &str, system: bool) -> Result<Self> {
-        // NOTE: DbusConnection should own an OwnedFd instead of ManuallyDrop + RawFd
-        // so that fd ownership is explicit and Drop does not need to close manually.
-        // Tracked in https://github.com/youki-dev/youki/issues/3629
-        let socket = std::mem::ManuallyDrop::new(socket::socket(
+        let socket = socket::socket(
             socket::AddressFamily::Unix,
             socket::SockType::Stream,
             socket::SockFlag::SOCK_CLOEXEC,
             None,
-        )?);
+        )?;
 
         let unix_addr = socket::UnixAddr::new(addr)?;
         socket::connect(socket.as_raw_fd(), &unix_addr)?;
@@ -208,13 +205,13 @@ impl DbusConnection {
         // Set SO_RCVTIMEO so that every recv() on this socket times out instead
         // of blocking indefinitely.  See RECV_TIMEOUT_SECS for rationale.
         socket::setsockopt(
-            &socket.as_fd(),
+            &socket,
             socket::sockopt::ReceiveTimeout,
             &TimeVal::new(RECV_TIMEOUT_SECS, 0),
         )?;
 
         Ok(Self {
-            socket: socket.as_raw_fd(),
+            socket,
             msg_ctr: AtomicU32::new(0),
             id: None,
             system,
@@ -227,15 +224,19 @@ impl DbusConnection {
         let mut buf = [0; 64];
 
         // dbus connection always start with a 0 byte sent as first thing
-        socket::send(self.socket, &[0], socket::MsgFlags::empty())?;
+        socket::send(self.socket.as_raw_fd(), &[0], socket::MsgFlags::empty())?;
 
         let msg = format!("AUTH EXTERNAL {}\r\n", uid_to_hex_str(uid));
 
         // then we send our auth with uid
-        socket::send(self.socket, msg.as_bytes(), socket::MsgFlags::empty())?;
+        socket::send(
+            self.socket.as_raw_fd(),
+            msg.as_bytes(),
+            socket::MsgFlags::empty(),
+        )?;
 
         // we get the reply and check if all went well or not
-        socket::recv(self.socket, &mut buf, socket::MsgFlags::empty())?;
+        socket::recv(self.socket.as_raw_fd(), &mut buf, socket::MsgFlags::empty())?;
 
         let reply: Vec<u8> = buf.iter().filter(|v| **v != 0).copied().collect();
 
@@ -255,7 +256,7 @@ impl DbusConnection {
         // we can also send AGREE_UNIX_FD before this if we need to deal with sending/receiving
         // fds over the connection, but because youki doesn't need it, we can skip that
         socket::send(
-            self.socket,
+            self.socket.as_raw_fd(),
             "BEGIN\r\n".as_bytes(),
             socket::MsgFlags::empty(),
         )?;
@@ -327,7 +328,11 @@ impl DbusConnection {
     fn read_exact(&self, buf: &mut [u8]) -> Result<()> {
         let mut total = 0;
         while total < buf.len() {
-            match socket::recv(self.socket, &mut buf[total..], socket::MsgFlags::empty()) {
+            match socket::recv(
+                self.socket.as_raw_fd(),
+                &mut buf[total..],
+                socket::MsgFlags::empty(),
+            ) {
                 Ok(0) => {
                     return Err(DbusError::ConnectionError(
                         "connection closed unexpectedly".into(),
@@ -399,7 +404,7 @@ impl DbusConnection {
         let serialized = message.serialize();
 
         socket::sendmsg::<()>(
-            self.socket,
+            self.socket.as_raw_fd(),
             &[IoSlice::new(&serialized)],
             &[],
             socket::MsgFlags::empty(),
@@ -615,7 +620,7 @@ impl SystemdClient for DbusConnection {
 #[cfg(test)]
 impl DbusConnection {
     /// Construct a DbusConnection wrapping an already-connected fd, for unit tests.
-    fn for_test(fd: i32) -> Self {
+    fn for_test(fd: OwnedFd) -> Self {
         Self {
             system: false,
             socket: fd,
@@ -735,6 +740,23 @@ mod tests {
     }
 
     #[test]
+    fn test_connection_drop_closes_socket() {
+        use std::io::Read;
+        use std::os::unix::net::UnixListener;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dbus.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let conn = DbusConnection::connect(path.to_str().unwrap(), false).unwrap();
+        let (mut peer, _) = listener.accept().unwrap();
+        peer.set_nonblocking(true).unwrap();
+
+        drop(conn);
+
+        assert_eq!(peer.read(&mut [0u8; 1]).unwrap(), 0);
+    }
+
+    #[test]
     fn test_uid_to_hex_str() {
         let uid0 = uid_to_hex_str(0);
         assert_eq!(uid0, "30");
@@ -846,7 +868,7 @@ mod tests {
         let data = [1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
         socket::send(a.as_raw_fd(), &data, socket::MsgFlags::empty()).unwrap();
 
-        let conn = DbusConnection::for_test(b.as_raw_fd());
+        let conn = DbusConnection::for_test(b);
         let mut buf = [0u8; 10];
         conn.read_exact(&mut buf).unwrap();
         assert_eq!(buf, data);
@@ -868,7 +890,7 @@ mod tests {
 
         socket::send(a.as_raw_fd(), msg_bytes, socket::MsgFlags::empty()).unwrap();
 
-        let conn = DbusConnection::for_test(b.as_raw_fd());
+        let conn = DbusConnection::for_test(b);
         let received = conn.read_one_message().unwrap();
         assert_eq!(received, msg_bytes);
     }
@@ -895,7 +917,7 @@ mod tests {
         combined.extend_from_slice(reply_bytes);
         socket::send(a.as_raw_fd(), &combined, socket::MsgFlags::empty()).unwrap();
 
-        let conn = DbusConnection::for_test(b.as_raw_fd());
+        let conn = DbusConnection::for_test(b);
 
         let first = conn.read_one_message().unwrap();
         assert_eq!(first, signal_bytes);
