@@ -102,6 +102,17 @@ pub fn container_intermediate_process(
         }
     }
 
+    // set limits and namespaces to the process
+    let proc = spec.process().as_ref().ok_or(MissingSpecError::Process)?;
+    if let Some(rlimits) = proc.rlimits() {
+        for rlimit in rlimits {
+            command.set_rlimit(rlimit).map_err(|err| {
+                tracing::error!(?err, ?rlimit, "failed to set rlimit");
+                err
+            })?;
+        }
+    }
+
     // if new user is specified in specification, this will be true and new
     // namespace will be created, check
     // https://man7.org/linux/man-pages/man7/user_namespaces.7.html for more
@@ -121,17 +132,6 @@ pub fn container_intermediate_process(
         // root in the user namespace likely is mapped to an non-privileged user
         // on the parent user namespace.
         command.set_id(Uid::from_raw(0), Gid::from_raw(0))?;
-    }
-
-    // set limits and namespaces to the process
-    let proc = spec.process().as_ref().ok_or(MissingSpecError::Process)?;
-    if let Some(rlimits) = proc.rlimits() {
-        for rlimit in rlimits {
-            command.set_rlimit(rlimit).map_err(|err| {
-                tracing::error!(?err, ?rlimit, "failed to set rlimit");
-                err
-            })?;
-        }
     }
 
     if let Some(time_namespace) = namespaces.get(LinuxNamespaceType::Time)? {
