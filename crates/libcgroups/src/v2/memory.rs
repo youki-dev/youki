@@ -10,7 +10,7 @@ const CGROUP_MEMORY_SWAP: &str = "memory.swap.max";
 const CGROUP_MEMORY_MAX: &str = "memory.max";
 const CGROUP_MEMORY_LOW: &str = "memory.low";
 const MEMORY_STAT: &str = "memory.stat";
-const MEMORY_PSI: &str = "memory.pressure";
+pub const MEMORY_PSI: &str = "memory.pressure";
 const MEMORY_SWAP_CURRENT: &str = "memory.swap.current";
 
 #[derive(thiserror::Error, Debug)]

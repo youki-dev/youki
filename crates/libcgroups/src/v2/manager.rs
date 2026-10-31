@@ -17,8 +17,8 @@ use super::cpuset::CpuSet;
 use super::devices::Devices;
 use super::freezer::{Freezer, V2FreezerError};
 use super::hugetlb::{HugeTlb, V2HugeTlbControllerError, V2HugeTlbStatsError};
-use super::io::{Io, V2IoControllerError, V2IoStatsError};
-use super::memory::{Memory, V2MemoryControllerError, V2MemoryStatsError};
+use super::io::{CGROUP_IO_PSI, Io, V2IoControllerError, V2IoStatsError};
+use super::memory::{MEMORY_PSI, Memory, V2MemoryControllerError, V2MemoryStatsError};
 use super::pids::Pids;
 use super::unified::{Unified, V2UnifiedError};
 use super::util::{self, CGROUP_SUBTREE_CONTROL, V2UtilError};
@@ -26,7 +26,7 @@ use crate::common::{
     self, AnyCgroupManager, CGROUP_PROCS, CgroupManager, ControllerOpt, FreezerState,
     JoinSafelyError, PathBufExt, WrapIoResult, WrappedIoError,
 };
-use crate::stats::{PidStatsError, Stats, StatsProvider};
+use crate::stats::{PidStatsError, Stats, StatsProvider, psi_stats};
 
 pub const CGROUP_KILL: &str = "cgroup.kill";
 
@@ -283,7 +283,7 @@ impl CgroupManager for Manager {
         let mut stats = Stats::default();
 
         // a controller's files exist only where it is enabled, so skip the ones missing from
-        // cgroup.controllers; cpu.stat is the exception and is always present
+        // cgroup.controllers; cpu.stat and the pressure files are core files and exist either way
         let enabled = common::read_cgroup_file(self.full_path.join(util::CGROUP_CONTROLLERS))?;
         let enabled: Vec<&str> = enabled.split_whitespace().collect();
 
@@ -291,6 +291,15 @@ impl CgroupManager for Manager {
             if *subsystem != ControllerType::Cpu
                 && !enabled.contains(&subsystem.to_string().as_str())
             {
+                match subsystem {
+                    ControllerType::Memory => {
+                        stats.memory.psi = psi_stats(&self.full_path.join(MEMORY_PSI))?
+                    }
+                    ControllerType::Io => {
+                        stats.blkio.psi = psi_stats(&self.full_path.join(CGROUP_IO_PSI))?
+                    }
+                    _ => {}
+                }
                 continue;
             }
 
@@ -375,6 +384,45 @@ mod tests {
         assert_eq!(stats.cpu.usage.usage_total, 10_000);
         assert_eq!(stats.pids.current, 3);
         assert_eq!(stats.pids.limit, 20);
+        Ok(())
+    }
+
+    #[test]
+    fn test_stats_reads_pressure_of_disabled_controllers() -> Result<(), V2ManagerError> {
+        // memory and io are not listed, so memory.stat and io.stat are absent, but their
+        // pressure files are core files and still report pressure.
+        let tmp = tempfile::tempdir().expect("create temp directory for test");
+        set_fixture(tmp.path(), util::CGROUP_CONTROLLERS, "pids").expect("set cgroup.controllers");
+        set_fixture(
+            tmp.path(),
+            "cpu.stat",
+            "usage_usec 10\nuser_usec 6\nsystem_usec 4\n",
+        )
+        .expect("set cpu.stat");
+        set_fixture(tmp.path(), "cpu.pressure", "").expect("set cpu.pressure");
+        set_fixture(tmp.path(), "pids.current", "3\n").expect("set pids.current");
+        set_fixture(tmp.path(), "pids.max", "20\n").expect("set pids.max");
+        set_fixture(
+            tmp.path(),
+            MEMORY_PSI,
+            "some avg10=1.50 avg60=0.50 avg300=0.10 total=100\n\
+             full avg10=1.00 avg60=0.25 avg300=0.05 total=50\n",
+        )
+        .expect("set memory.pressure");
+        set_fixture(
+            tmp.path(),
+            CGROUP_IO_PSI,
+            "some avg10=21.34 avg60=8.00 avg300=2.00 total=3000\n\
+             full avg10=20.00 avg60=7.50 avg300=1.75 total=2900\n",
+        )
+        .expect("set io.pressure");
+
+        let stats = Manager::new(tmp.path().to_path_buf(), PathBuf::from("/"))?.stats()?;
+
+        assert_eq!(stats.memory.psi.some.avg10, 1.5);
+        assert_eq!(stats.memory.psi.full.avg60, 0.25);
+        assert_eq!(stats.blkio.psi.some.avg10, 21.34);
+        assert_eq!(stats.blkio.psi.full.avg300, 1.75);
         Ok(())
     }
 
