@@ -236,6 +236,39 @@ pub fn write_cgroup_file_str<P: AsRef<Path>>(path: P, data: &str) -> Result<(), 
     Ok(())
 }
 
+/// Writes `data` to a cgroup file one line per write(2) call. Some files, such
+/// as `io.max`, take one entry per write and reject several lines with EINVAL.
+pub fn write_cgroup_file_by_line<P: AsRef<Path>>(
+    path: P,
+    data: &str,
+) -> Result<(), WrappedIoError> {
+    let path = path.as_ref();
+
+    let mut file = fs::OpenOptions::new()
+        .create(false)
+        .write(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|err| WrappedIoError::Open {
+            err,
+            path: path.to_path_buf(),
+        })?;
+
+    write_by_line(&mut file, path, data)
+}
+
+fn write_by_line(w: &mut impl Write, path: &Path, data: &str) -> Result<(), WrappedIoError> {
+    for line in data.split_inclusive('\n') {
+        w.write_all(line.as_bytes())
+            .map_err(|err| WrappedIoError::Write {
+                err,
+                path: path.to_path_buf(),
+                data: line.into(),
+            })?;
+    }
+    Ok(())
+}
+
 #[inline]
 pub fn write_cgroup_file<P: AsRef<Path>, T: ToString>(
     path: P,
@@ -766,6 +799,38 @@ impl Display for MustBePowerOfTwo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_write_by_line_writes_each_line_separately() {
+        struct Recorder(Vec<String>);
+        impl Write for Recorder {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.push(String::from_utf8(buf.to_vec()).unwrap());
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let cases: [(&str, &[&str]); 4] = [
+            ("259:0 riops=333", &["259:0 riops=333"]),
+            (
+                "259:0 riops=333\n259:8 riops=555\n",
+                &["259:0 riops=333\n", "259:8 riops=555\n"],
+            ),
+            (
+                "259:0 riops=333\n259:8 riops=555",
+                &["259:0 riops=333\n", "259:8 riops=555"],
+            ),
+            ("", &[]),
+        ];
+        for (data, want) in cases {
+            let mut w = Recorder(Vec::new());
+            write_by_line(&mut w, Path::new("io.max"), data).unwrap();
+            assert_eq!(w.0, want, "data: {data:?}");
+        }
+    }
 
     #[test]
     fn test_clean_cgroup_path() {
