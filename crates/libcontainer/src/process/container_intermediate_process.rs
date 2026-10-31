@@ -1,6 +1,6 @@
 use std::os::fd::FromRawFd;
 
-use libcgroups::common::CgroupManager;
+use libcgroups::common::{AnyCgroupManager, CgroupManager};
 use nix::unistd::{Gid, Pid, Uid, close, getpid, write};
 use oci_spec::runtime::{LinuxNamespace, LinuxNamespaceType, LinuxResources};
 
@@ -53,10 +53,11 @@ pub fn container_intermediate_process(
     let spec = &args.spec;
     let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
     let namespaces = Namespaces::try_from(linux.namespaces().as_ref())?;
-    let rootless = rootless_required(command.as_ref()).unwrap_or(false);
     let cgroup_manager = libcgroups::common::create_cgroup_manager(args.cgroup_config.to_owned())
-        .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?
-        .with_rootless(rootless);
+        .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?;
+    let rootless = rootless_required(command.as_ref()).unwrap_or(false)
+        && tolerate_rootless_cgroup_errors(&cgroup_manager, &namespaces)?;
+    let cgroup_manager = cgroup_manager.with_rootless(rootless);
 
     let current_pid = Pid::this();
     // setting CPU affinity for tenant container before cgroup move
@@ -320,6 +321,24 @@ fn setup_time_offsets(sender: &mut MainSender, receiver: &mut IntermediateReceiv
     Ok(())
 }
 
+/// Whether the cgroup manager may tolerate the cgroup permission errors of a
+/// rootless container.
+///
+/// The v2 manager then leaves the processes of the container in its parent
+/// cgroup, so that killing the container can only signal its init. In a PID
+/// namespace of its own, killing init kills all of its processes, and in a
+/// joined one they end with that namespace. In the host PID namespace nothing
+/// would stop them, so the container must not run outside of its cgroup. The
+/// systemd manager only uses rootless to treat device rules as best effort, and
+/// the v1 manager ignores it.
+fn tolerate_rootless_cgroup_errors(
+    cgroup_manager: &AnyCgroupManager,
+    namespaces: &Namespaces,
+) -> Result<bool> {
+    Ok(!matches!(cgroup_manager, AnyCgroupManager::V2(_))
+        || namespaces.get(LinuxNamespaceType::Pid)?.is_some())
+}
+
 fn apply_cgroups<
     C: CgroupManager<Error = E> + ?Sized,
     E: std::error::Error + Send + Sync + 'static,
@@ -411,6 +430,35 @@ mod tests {
             Pid::from_raw(Process::myself()?.pid())
         );
         assert!(!cmanager.apply_called());
+        Ok(())
+    }
+
+    #[cfg(feature = "v2")]
+    fn pid_namespaces(path: Option<&str>) -> Result<Vec<LinuxNamespace>> {
+        let mut builder =
+            oci_spec::runtime::LinuxNamespaceBuilder::default().typ(LinuxNamespaceType::Pid);
+        if let Some(path) = path {
+            builder = builder.path(path);
+        }
+        Ok(vec![builder.build()?])
+    }
+
+    #[test]
+    #[cfg(feature = "v2")]
+    fn tolerate_rootless_cgroup_errors_v2() -> Result<()> {
+        let v2 = AnyCgroupManager::V2(libcgroups::v2::manager::Manager::new(
+            "/sys/fs/cgroup".into(),
+            "/youki".into(),
+        )?);
+
+        let host = Namespaces::try_from(Some(&Vec::<LinuxNamespace>::new()))?;
+        assert!(!tolerate_rootless_cgroup_errors(&v2, &host)?);
+
+        let new = Namespaces::try_from(Some(&pid_namespaces(None)?))?;
+        assert!(tolerate_rootless_cgroup_errors(&v2, &new)?);
+
+        let joined = Namespaces::try_from(Some(&pid_namespaces(Some("/proc/1/ns/pid"))?))?;
+        assert!(tolerate_rootless_cgroup_errors(&v2, &joined)?);
         Ok(())
     }
 }
