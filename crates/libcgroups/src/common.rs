@@ -496,6 +496,10 @@ fn create_systemd_cgroup_manager(
 pub fn get_all_pids(path: &Path) -> Result<Vec<Pid>, WrappedIoError> {
     tracing::debug!("scan pids in folder: {:?}", path);
     let mut result = vec![];
+    // a cgroup that a rootless manager could not create has no processes
+    if !path.try_exists().wrap_read(path)? {
+        return Ok(result);
+    }
     walk_dir(path, &mut |p| {
         let file_path = p.join(CGROUP_PROCS);
         if file_path.exists() {
@@ -830,6 +834,20 @@ mod tests {
             write_by_line(&mut w, Path::new("io.max"), data).unwrap();
             assert_eq!(w.0, want, "data: {data:?}");
         }
+    }
+
+    #[test]
+    fn test_get_all_pids() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cgroup = tmp.path().join("container");
+        assert!(get_all_pids(&cgroup).unwrap().is_empty());
+
+        fs::create_dir_all(cgroup.join("child")).unwrap();
+        fs::write(cgroup.join(CGROUP_PROCS), "1\n2\n").unwrap();
+        fs::write(cgroup.join("child").join(CGROUP_PROCS), "3\n").unwrap();
+        let mut pids = get_all_pids(&cgroup).unwrap();
+        pids.sort();
+        assert_eq!(pids, [1, 2, 3].map(Pid::from_raw));
     }
 
     #[test]
