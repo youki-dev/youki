@@ -55,9 +55,11 @@ pub fn container_intermediate_process(
     let namespaces = Namespaces::try_from(linux.namespaces().as_ref())?;
     let cgroup_manager = libcgroups::common::create_cgroup_manager(args.cgroup_config.to_owned())
         .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?;
-    let rootless = rootless_required(command.as_ref()).unwrap_or(false)
-        && tolerate_rootless_cgroup_errors(&cgroup_manager, &namespaces)?;
-    let cgroup_manager = cgroup_manager.with_rootless(rootless);
+    let rootless = rootless_required(command.as_ref()).unwrap_or(false);
+    let needs_cgroup = rootless
+        && matches!(args.container_type, ContainerType::InitContainer)
+        && !tolerate_rootless_cgroup_errors(&cgroup_manager, &namespaces)?;
+    let cgroup_manager = cgroup_manager.with_rootless(rootless && !needs_cgroup);
 
     let current_pid = Pid::this();
     // setting CPU affinity for tenant container before cgroup move
@@ -88,7 +90,15 @@ pub fn container_intermediate_process(
         &cgroup_manager,
         linux.resources().as_ref(),
         matches!(args.container_type, ContainerType::InitContainer),
-    )?;
+    )
+    .map_err(|err| match err {
+        IntermediateProcessError::Cgroup(err) if needs_cgroup => {
+            IntermediateProcessError::Cgroup(format!(
+                "a container without a private PID namespace needs a cgroup to kill all its processes: {err}"
+            ))
+        }
+        err => err,
+    })?;
 
     // setting CPU affinity for tenant container after cgroup move
     if matches!(args.container_type, ContainerType::TenantContainer { .. }) {
@@ -325,18 +335,18 @@ fn setup_time_offsets(sender: &mut MainSender, receiver: &mut IntermediateReceiv
 /// rootless container.
 ///
 /// The v2 manager then leaves the processes of the container in its parent
-/// cgroup, so that killing the container can only signal its init. In a PID
-/// namespace of its own, killing init kills all of its processes, and in a
-/// joined one they end with that namespace. In the host PID namespace nothing
-/// would stop them, so the container must not run outside of its cgroup. The
-/// systemd manager only uses rootless to treat device rules as best effort, and
-/// the v1 manager ignores it.
+/// cgroup, so that killing the container can only signal its init. A container
+/// without a private PID namespace needs a cgroup to kill all of its processes.
+/// The systemd manager only uses rootless to treat device rules as best effort,
+/// and the v1 manager ignores it.
 fn tolerate_rootless_cgroup_errors(
     cgroup_manager: &AnyCgroupManager,
     namespaces: &Namespaces,
 ) -> Result<bool> {
     Ok(!matches!(cgroup_manager, AnyCgroupManager::V2(_))
-        || namespaces.get(LinuxNamespaceType::Pid)?.is_some())
+        || namespaces
+            .get(LinuxNamespaceType::Pid)?
+            .is_some_and(|pid_ns| pid_ns.path().is_none()))
 }
 
 fn apply_cgroups<
@@ -458,7 +468,7 @@ mod tests {
         assert!(tolerate_rootless_cgroup_errors(&v2, &new)?);
 
         let joined = Namespaces::try_from(Some(&pid_namespaces(Some("/proc/1/ns/pid"))?))?;
-        assert!(tolerate_rootless_cgroup_errors(&v2, &joined)?);
+        assert!(!tolerate_rootless_cgroup_errors(&v2, &joined)?);
         Ok(())
     }
 }

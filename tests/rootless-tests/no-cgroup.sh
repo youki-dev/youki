@@ -1,9 +1,9 @@
 #!/bin/bash
 # Check rootless youki when it can not create the container cgroup.
 #
-# youki then runs the container in its parent cgroup, unless the container is
-# in the host PID namespace. "kill --all" and "delete --force" must still stop
-# such a container.
+# youki may then run the container in its parent cgroup only if it has a PID
+# namespace of its own. "kill --all" and "delete --force" must still stop
+# such a container. Host and joined PID namespaces must be refused.
 #
 # usage: no-cgroup.sh <youki>
 # Needs unprivileged user namespaces and a static busybox ($BUSYBOX).
@@ -79,7 +79,7 @@ bundle() {
         process: {
             terminal: false,
             user: {uid: 0, gid: 0},
-            args: ["/bin/busybox", "sh", "-c", "/bin/busybox sleep 1000 & exec /bin/busybox sleep 1001"],
+            args: ["/bin/busybox", "sh", "-c", "echo started > /started; /bin/busybox sleep 1000 & exec /bin/busybox sleep 1001"],
             env: ["PATH=/bin"],
             cwd: "/",
             noNewPrivileges: true
@@ -117,6 +117,25 @@ listed() {
     youki list | grep -qw "$1"
 }
 
+# reject <host|joined>: refusal must be caused by the unavailable cgroup.
+reject() {
+    bundle "$1" "$1"
+    if youki run -d -b "$work/$1" "$1" </dev/null >"$work/$1.log" 2>&1; then
+        init=$(youki state "$1" | jq .pid)
+        sleep 0.5
+        # shellcheck disable=SC2207 # pids are words
+        pids+=("$init" $(pgrep -P "$init"))
+        fail "$1: a container without a private PID namespace ran without a cgroup"
+    fi
+    grep -q "without a private PID namespace needs a cgroup" "$work/$1.log" ||
+        fail "$1: unexpected error: $(cat "$work/$1.log")"
+    grep -q "Read-only file system" "$work/$1.log" ||
+        fail "$1: did not fail because the cgroup is read-only"
+    [ ! -e "$work/$1/rootfs/started" ] || fail "$1: workload ran"
+    ! listed "$1" || fail "$1: still listed"
+    echo "ok: $1 PID namespace, refused"
+}
+
 ns_init=
 for _ in $(seq 50); do
     ns_init=$(pgrep -P "$holder") && break
@@ -124,8 +143,11 @@ for _ in $(seq 50); do
 done
 [ -n "$ns_init" ] || fail "no PID namespace to join"
 joined=/proc/$ns_init/ns/pid
+nsenter --pid="$joined" true || fail "cannot enter the PID namespace to join"
 
 start private-kill private
+youki exec private-kill /bin/busybox true || fail "private-kill: exec"
+echo "ok: private PID namespace, exec without a cgroup"
 youki kill --all private-kill KILL || fail "private-kill: kill --all"
 wait_dead "$init" "$child" || fail "private-kill: processes survived kill --all"
 youki delete private-kill || fail "private-kill: delete"
@@ -137,23 +159,7 @@ wait_dead "$init" "$child" || fail "private-delete: processes survived delete --
 ! listed private-delete || fail "private-delete: still listed"
 echo "ok: private PID namespace, delete --force"
 
-bundle host host
-if youki run -d -b "$work/host" host </dev/null >"$work/host.log" 2>&1; then
-    init=$(youki state host | jq .pid)
-    sleep 0.5
-    # shellcheck disable=SC2207 # pids are words
-    pids+=("$init" $(pgrep -P "$init"))
-    fail "host: a container in the host PID namespace ran without a cgroup"
-fi
-! listed host || fail "host: still listed"
-echo "ok: host PID namespace, refused"
-
-start joined joined
-youki kill --all joined KILL || fail "joined: kill --all"
-wait_dead "$init" || fail "joined: init survived kill --all"
-youki delete --force joined || fail "joined: delete --force"
-! listed joined || fail "joined: still listed"
-# The other processes die with the init of the joined namespace.
-kill -KILL "$ns_init"
-wait_dead "$child" || fail "joined: child survived the joined namespace"
-echo "ok: joined PID namespace, kill --all"
+reject joined
+alive "$ns_init" || fail "joined: namespace init died"
+! pgrep -P "$ns_init" || fail "joined: processes left in the namespace"
+reject host
