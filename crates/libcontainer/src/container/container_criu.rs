@@ -224,6 +224,10 @@ pub(super) fn handle_restoring_external_namespaces(
 /// so they can be inherited by the restored process.
 pub(super) const DESCRIPTORS_JSON: &str = "descriptors.json";
 
+/// Name of the directory under the container state directory that restore
+/// bind-mounts the container rootfs onto while CRIU is running.
+pub(super) const CRIU_ROOT_DIR: &str = "criu-root";
+
 /// Open the CRIU image directory and return its `File`.
 ///
 /// The `File` must stay alive until after `criu.dump()` / `criu.restore()` is

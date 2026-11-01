@@ -61,6 +61,14 @@ impl InitContainerBuilder {
         self
     }
 
+    /// Sets the console socket path. For restore this is required for
+    /// terminal containers, as the PTY master can only be delivered through
+    /// the console socket (see build_for_restore).
+    pub fn with_console_socket<P: Into<PathBuf>>(mut self, path: Option<P>) -> Self {
+        self.base = self.base.with_console_socket(path);
+        self
+    }
+
     pub fn with_no_pivot(mut self, no_pivot: bool) -> Self {
         self.no_pivot = no_pivot;
         self
@@ -154,6 +162,19 @@ impl InitContainerBuilder {
         // For restore, we load the spec without canonicalizing rootfs
         // because the rootfs may not be mounted yet (podman unmounts it after checkpoint)
         let spec = self.load_spec_for_restore()?;
+        // Validate terminal/console-socket before any state is created on disk,
+        // mirroring build(). For restore the PTY master of the restored process
+        // can only be delivered through the console socket (CRIU's
+        // orphan-pts-master notification), so a terminal container always
+        // requires one, regardless of detach. The console socket is passed to
+        // the builder by the restore command for exactly this check.
+        //
+        // TODO: attached restore of a terminal container is not supported yet.
+        // runc creates a private socketpair and relays the PTY between the
+        // restored process and the caller (setupIO in utils_linux.go); until
+        // that plumbing exists, attaching to a restored terminal container
+        // cannot forward its stdio. Ref: runc criu_linux.go / utils_linux.go
+        self.base.check_terminal(&spec, true)?;
         let container_dir = self.create_container_dir()?;
 
         let mut container = self.create_container_state(&container_dir)?;
