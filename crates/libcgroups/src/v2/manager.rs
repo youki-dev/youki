@@ -441,7 +441,15 @@ mod tests {
 
         let result = Manager::new(tmp.path().to_path_buf(), PathBuf::from("/"))?.stats();
 
-        assert!(result.is_err(), "{result:?}");
+        assert!(
+            matches!(
+                &result,
+                Err(V2ManagerError::MemoryStats(V2MemoryStatsError::WrappedIo(
+                    WrappedIoError::Read { path, .. }
+                ))) if path.ends_with("memory.current")
+            ),
+            "{result:?}"
+        );
         Ok(())
     }
 }
