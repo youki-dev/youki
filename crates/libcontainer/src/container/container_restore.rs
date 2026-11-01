@@ -8,8 +8,8 @@ use oci_spec::runtime::Spec;
 use rust_criu::rust_criu_protobuf::rpc::Criu_notify;
 
 use super::container_criu::{
-    CRIU_VERSION_MINIMUM, DESCRIPTORS_JSON, check_cgroup_v1_unsupported, check_criu_version,
-    configure_criu_common_options, handle_restoring_namespaces, open_image_dir,
+    CRIU_ROOT_DIR, CRIU_VERSION_MINIMUM, DESCRIPTORS_JSON, check_cgroup_v1_unsupported,
+    check_criu_version, configure_criu_common_options, handle_restoring_namespaces, open_image_dir,
     resolve_mount_dest_in_rootfs,
 };
 use super::{Container, ContainerStatus};
@@ -19,7 +19,6 @@ use crate::rootfs::utils::is_bind;
 use crate::tty::send_pty_master_to_socket;
 
 const CRIU_RESTORE_LOG_FILE: &str = "restore.log";
-const CRIU_ROOT_DIR: &str = "criu-root";
 
 #[derive(thiserror::Error, Debug)]
 pub enum RestoreError {
@@ -293,7 +292,7 @@ impl Container {
         // a bind-mount destination does not exist in the rootfs image.
         // Ref: runc prepareCriuRestoreMounts() in criu_linux.go
 
-        self.configure_external_mounts(&mut criu, &spec, &rootfs, &criu_root)?;
+        self.configure_external_mounts(&mut criu, &spec, &rootfs)?;
 
         self.register_pipe_descriptors(&mut criu, &opts.image_path)?;
 
@@ -323,6 +322,16 @@ impl Container {
             tracing::error!(?err, id = ?self.id(), logfile = ?opts.image_path.join(CRIU_RESTORE_LOG_FILE), "restoring container failed");
             LibcontainerError::Other(err.to_string())
         });
+
+        // The post-restore callback saved the restored PID both into the
+        // context's container clone and to disk. Copy it into self so callers
+        // have the PID even if the state file cannot be reloaded afterwards
+        // (e.g. when cleaning up a failed post-restore step).
+        let restored_pid =
+            RESTORE_CTX.with(|ctx| ctx.borrow().as_ref().and_then(|c| c.container.pid()));
+        if let Some(pid) = restored_pid {
+            self.set_pid(pid.as_raw());
+        }
 
         RESTORE_CTX.with(|ctx| {
             *ctx.borrow_mut() = None;
@@ -355,6 +364,15 @@ impl Container {
         let descriptors: Vec<String> =
             serde_json::from_str(&data).map_err(LibcontainerError::OtherSerialization)?;
 
+        // KNOWN LIMITATION (rust-criu): rust-criu spawns the CRIU service as
+        // `criu swrk` with stdin wired to Stdio::null(), so the service's fd 0 is
+        // /dev/null. When the checkpointed container's stdin was a pipe (registered
+        // as inherit_fd below), the restored process's stdin therefore ends up as
+        // /dev/null instead of the original pipe. runc avoids this by passing the
+        // container process's stdio to the swrk command (cmd.Stdin = process.Stdin,
+        // criu_linux.go), and crun is unaffected because it uses libcriu
+        // in-process and never spawns swrk. Fixing this requires an upstream
+        // rust-criu change (expose the swrk stdio or embed libcriu).
         for (i, desc) in descriptors.iter().enumerate().take(3) {
             if !desc.starts_with("pipe:") {
                 continue;
@@ -377,13 +395,13 @@ impl Container {
     }
 
     /// Configure external mounts for CRIU restore.
-    /// This follows the runc pattern of addCriuRestoreMount.
+    /// This follows the crun pattern of register_masked_paths_mounts() and
+    /// register_spec_mounts().
     fn configure_external_mounts(
         &self,
         criu: &mut rust_criu::Criu,
         spec: &Spec,
         rootfs: &Path,
-        criu_root: &Path,
     ) -> Result<(), LibcontainerError> {
         if let Some(mounts) = spec.mounts() {
             for m in mounts {
@@ -418,64 +436,32 @@ impl Container {
             //                  CRIU can restore tmpfs autonomously; no external
             //                  mount registration is required.
             //
+            // For file masked paths, register the pair (path, "/dev/null"): the
+            // checkpoint side recorded (path, path) (see container_checkpoint.rs),
+            // so the keys match, and CRIU itself bind-mounts the host's /dev/null
+            // over the restored file, reproducing the original masking mount.
+            // No bind mount is created on the host here, so the resolved key
+            // never resolves to a host path and cannot escape criu-root.
+            //
             // TODO: crun registers masked directories via criu_add_ext_mount() as a
             // shared empty directory. Containers with directory masked paths may fail
-            // to restore until this is implemented. Ref: crun criu_restore_container()
-            //
-            // For file masked paths we must NOT pass "/dev/null" directly as the
-            // CRIU source: CRIU 4.x mnt-v2 uses open_tree(OPEN_TREE_CLONE) on the
-            // source path, which requires a proper mount point.  /dev/null is a char
-            // device file on devtmpfs, not its own mount point, so move_mount fails
-            // with EINVAL.
-            //
-            // Fix: bind-mount /dev/null onto the corresponding file inside criu_root
-            // (which is a bind-copy of the whole rootfs).  That path then becomes an
-            // independent bind mount point that open_tree can clone correctly.
-            // umount2(criu_root, MNT_DETACH) cleans up all sub-mounts lazily.
-            //
-            // Ref: runc addCriuRestoreMount / prepareCriuRestoreMounts in criu_linux.go
+            // to restore until this is implemented.
+            // Ref: crun register_masked_paths_mounts() in criu.c
             if let Some(masked_paths) = linux.masked_paths() {
                 for path in masked_paths {
                     let resolved = resolve_mount_dest_in_rootfs(rootfs, path);
-                    let rel = resolved.trim_start_matches('/');
-                    let path_in_criu_root = criu_root.join(rel);
-
-                    if !path_in_criu_root.exists() || path_in_criu_root.is_dir() {
+                    let full_path = rootfs.join(resolved.trim_start_matches('/'));
+                    // Only register FILE masked paths; directories are tmpfs and
+                    // CRIU handles them without external mount registration.
+                    if !full_path.exists() || full_path.is_dir() {
                         continue;
                     }
 
-                    mount(
-                        Some("/dev/null"),
-                        &path_in_criu_root,
-                        None::<&str>,
-                        MsFlags::MS_BIND,
-                        None::<&str>,
-                    )
-                    .map_err(|err| {
-                        tracing::error!(
-                            ?path_in_criu_root,
-                            ?err,
-                            "failed to bind /dev/null for masked path"
-                        );
-                        LibcontainerError::Other(format!(
-                            "failed to bind /dev/null for masked path {}: {}",
-                            resolved, err
-                        ))
-                    })?;
-
-                    let source = path_in_criu_root.to_str().ok_or_else(|| {
-                        LibcontainerError::Other(format!(
-                            "invalid path for masked path {}",
-                            resolved
-                        ))
-                    })?;
-
                     tracing::debug!(
-                        "Adding masked path external mount: {} -> {}",
-                        resolved,
-                        source
+                        "Adding masked path external mount: {} -> /dev/null",
+                        resolved
                     );
-                    criu.set_external_mount(resolved, source.to_string());
+                    criu.set_external_mount(resolved, "/dev/null".to_string());
                 }
             }
 
@@ -651,7 +637,7 @@ mod tests {
         let spec = SpecBuilder::default().build().unwrap();
         assert!(
             container
-                .configure_external_mounts(&mut criu, &spec, tmp.path(), tmp.path())
+                .configure_external_mounts(&mut criu, &spec, tmp.path())
                 .is_ok()
         );
     }
@@ -671,7 +657,7 @@ mod tests {
         let spec = make_spec_with_devices(vec![device]);
         assert!(
             container
-                .configure_external_mounts(&mut criu, &spec, tmp.path(), tmp.path())
+                .configure_external_mounts(&mut criu, &spec, tmp.path())
                 .is_ok()
         );
     }
@@ -691,7 +677,7 @@ mod tests {
         let spec = make_spec_with_devices(vec![device]);
         assert!(
             container
-                .configure_external_mounts(&mut criu, &spec, tmp.path(), tmp.path())
+                .configure_external_mounts(&mut criu, &spec, tmp.path())
                 .is_ok()
         );
     }
