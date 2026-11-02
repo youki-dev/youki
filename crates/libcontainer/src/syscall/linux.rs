@@ -719,7 +719,7 @@ impl Syscall for LinuxSyscall {
         const EMPTY_PATH: [libc::c_char; 1] = [0];
 
         let from_cstr: Option<CString> = from_path
-            .and_then(|s| if s.is_empty() { None } else { Some(s) })
+            .filter(|s| !s.is_empty())
             .map(|s| CString::new(s).map_err(|_| nix::Error::EINVAL))
             .transpose()?;
         let from_ptr = from_cstr
@@ -727,7 +727,7 @@ impl Syscall for LinuxSyscall {
             .map_or(EMPTY_PATH.as_ptr(), |c| c.as_ptr());
 
         let to_cstr: Option<CString> = to_path
-            .and_then(|s| if s.is_empty() { None } else { Some(s) })
+            .filter(|s| !s.is_empty())
             .map(|s| CString::new(s).map_err(|_| nix::Error::EINVAL))
             .transpose()?;
         let to_ptr = to_cstr.as_ref().map_or(EMPTY_PATH.as_ptr(), |c| c.as_ptr());

@@ -185,7 +185,7 @@ fn checkpoint(
     if !dump_log.exists() {
         return TestResult::Failed(anyhow::anyhow!(
             "resulting checkpoint log file {:?} not found.",
-            &dump_log,
+            dump_log,
         ));
     }
 
@@ -262,7 +262,7 @@ fn create_checkpoint_image_dir() -> Result<(tempfile::TempDir, std::path::PathBu
     std::fs::create_dir(&image_path).map_err(|e| {
         TestResult::Failed(anyhow::anyhow!(
             "failed creating checkpoint directory ({:?}): {}",
-            &image_path,
+            image_path,
             e
         ))
     })?;
@@ -883,7 +883,7 @@ pub fn checkpoint_empty_net_ns(project_path: &Path, id: &str) -> TestResult {
             })
             .map(|entry| entry.path()),
         Err(e) => {
-            return TestResult::Failed(anyhow::anyhow!("failed to read {:?}: {}", &image_path, e));
+            return TestResult::Failed(anyhow::anyhow!("failed to read {:?}: {}", image_path, e));
         }
     };
 
