@@ -5,6 +5,7 @@ pub mod config;
 pub mod container;
 pub mod error;
 pub mod hooks;
+pub mod io_uring;
 pub mod namespaces;
 pub mod network;
 pub mod notify_socket;

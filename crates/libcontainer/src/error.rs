@@ -98,6 +98,8 @@ pub enum ErrInvalidSpec {
     UnsupportedVersion,
     #[error("duplicate namespace type: {0}")]
     DuplicateNamespace(oci_spec::runtime::LinuxNamespaceType),
+    #[error(transparent)]
+    IoUring(#[from] crate::io_uring::IoUringError),
     #[error("apparmor is specified but not enabled on this system")]
     AppArmorNotEnabled,
     #[error("invalid io priority or class.")]

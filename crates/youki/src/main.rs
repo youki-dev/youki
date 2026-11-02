@@ -63,6 +63,10 @@ enum YoukiSubCommand {
 /// This is the entry point in the container runtime. The binary is run by a high-level container runtime,
 /// with various flags passed. This parses the flags, creates and manages appropriate resources.
 fn main() -> Result<()> {
+    // Exits if youki is the child of the io_uring exec check, before the
+    // binary is sealed below.
+    libcontainer::io_uring::handle_exec_check();
+
     // A malicious container can gain access to the host machine by modifying youki's host
     // binary and infect it with malicious code. This vulnerability was first discovered
     // in runc and was assigned as CVE-2019-5736, but it also affects youki.
