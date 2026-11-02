@@ -81,13 +81,14 @@ test-runc-comp *RUNTIME_BINARY:
     {{ cwd }}/tests/runc/runc_integration_test.sh {{RUNTIME_BINARY}}
 
 # run containerd integration tests
-containerd-test: youki-dev
-    vagrant up containerd2youki
-    vagrant provision containerd2youki --provision-with test
+containerd-test:
+    limactl start -y --name youki_containerd_test --set '.param.YOUKI_ROOT="{{ cwd }}"' ./lima/containerd2youki.yaml
+    limactl shell youki_containerd_test sudo /mnt/work/run_test.sh
 
-# run containerd integration tests
+# stop/delete containerd integration tests
 clean-containerd-test:
-    vagrant destroy containerd2youki
+    -limactl stop youki_containerd_test
+    limactl delete -f youki_containerd_test
 
 [private]
 kind-cluster: bin-kind
