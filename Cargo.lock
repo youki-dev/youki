@@ -148,26 +148,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-wasi"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9abe3a40b90f239a8a9141aff1a1b98befb36d5aa23a89ed33e030e520bfd20"
-dependencies = [
- "bitflags 2.13.0",
- "cfg-if",
- "futures",
- "getrandom 0.2.17",
- "libc",
- "log",
- "parking_lot",
- "path-absolutize",
- "serde",
- "slab",
- "socket2 0.4.10",
- "tokio",
-]
-
-[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1551,20 +1531,6 @@ name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
-
-[[package]]
-name = "fiber-for-wasmedge"
-version = "14.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03d7057d9db6e5266b609656724393781a1d75beb1159134420e0a47a7d1fae6"
-dependencies = [
- "cc",
- "cfg-if",
- "rustix 0.38.44",
- "wasmtime-asm-macros",
- "wasmtime-versioned-export-macros",
- "windows-sys 0.48.0",
-]
 
 [[package]]
 name = "filetime"
@@ -3322,28 +3288,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
-name = "path-absolutize"
-version = "3.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4af381fe79fa195b4909485d99f73a80792331df0625188e707854f0b3383f5"
-dependencies = [
- "path-dedot",
-]
-
-[[package]]
 name = "path-clean"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "17359afc20d7ab31fdb42bb844c8b3bb1dabd7dcf7e68428492da7f16966fcef"
-
-[[package]]
-name = "path-dedot"
-version = "3.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07ba0ad7e047712414213ff67533e6dd477af0a4e1d14fb52343e53d30ea9397"
-dependencies = [
- "once_cell",
-]
 
 [[package]]
 name = "pathrs"
@@ -4867,16 +4815,6 @@ dependencies = [
 
 [[package]]
 name = "socket2"
-version = "0.4.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f7916fc008ca5542385b89a3d3ce689953c143e9304a9bf8beec1de48994c0d"
-dependencies = [
- "libc",
- "winapi",
-]
-
-[[package]]
-name = "socket2"
 version = "0.5.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e22376abed350d73dd1cd119b57ffccad95b4e585a7cda43e286245ce23c0678"
@@ -5237,7 +5175,6 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
- "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2 0.6.3",
@@ -6060,7 +5997,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "852257498e8524cb0e2e8e9c7f1540afc2f24f2c3dd77806cf583feba8c19e99"
 dependencies = [
  "anyhow",
- "async-wasi",
  "cfg-if",
  "num-derive",
  "num-traits",
@@ -6076,11 +6012,9 @@ version = "0.19.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88da93fb54be1deaa84bc68393f09ba8491e20113465c35a9446e14107f55a6e"
 dependencies = [
- "async-wasi",
  "bindgen 0.69.5",
  "cfg-if",
  "cmake",
- "fiber-for-wasmedge",
  "flate2",
  "lazy_static",
  "libc",
@@ -6591,15 +6525,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasmtime-asm-macros"
-version = "14.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54984bc0b5689da87a43d7c181d23092b4d5cfcbb7ae3eb6b917dd55865d95e6"
-dependencies = [
- "cfg-if",
-]
-
-[[package]]
 name = "wasmtime-environ"
 version = "48.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6791,17 +6716,6 @@ dependencies = [
  "indexmap",
  "wit-component 0.254.2",
  "wit-parser 0.254.2",
-]
-
-[[package]]
-name = "wasmtime-versioned-export-macros"
-version = "14.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09b5575a75e711ca6c36bb9ad647c93541cdc8e34218031acba5da3f35919dd3"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]
