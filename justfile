@@ -5,26 +5,9 @@ KIND_CLUSTER_NAME := 'youki'
 KIND_SYSTEMD_CLUSTER_NAME := 'youki-systemd'
 KIND_DEPLOY_CLUSTER_NAME := 'youki-deploy'
 YOUKI_INSTALLER_IMAGE := 'youki-installer:latest'
-DEV_VM_NAME := 'fedora'
+DEV_VM_NAME := 'youki-fedora'
 
 cwd := justfile_directory()
-
-destroy_vm:
-  limactl stop -f {{ DEV_VM_NAME }} && limactl remove {{ DEV_VM_NAME }}
-
-# creates a vm using LimaCTL for youki-development
-create_vm:
-  #!/bin/bash
-
-  ScriptDirectory=$(pwd)/experiment/selinux
-  SourceDirectory=$(pwd)
-  limactl create tests/vms/fedora.yaml \
-    --name={{ DEV_VM_NAME }} \
-    --param ScriptDirectory="$ScriptDirectory" \
-    --param SourceDirectory="$SourceDirectory" -y
-
-start_vm: create_vm
-  limactl start {{ DEV_VM_NAME }}
 
 # build
 
@@ -56,7 +39,7 @@ install:
 # run integration tests
 test-integration: test-oci test-contest
 
-# run all tests except rust-oci
+# run all tests except rust-oci 
 test-all: test-basic test-features test-oci containerd-test # currently not doing rust-oci here
 
 # run basic tests
@@ -106,6 +89,32 @@ containerd-test: youki-dev
 # run containerd integration tests
 clean-containerd-test:
     vagrant destroy containerd2youki
+
+# Development environment (Lima)
+
+# create (if needed) and start the Fedora development VM
+dev-vm:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if limactl list --quiet | grep -qx '{{ DEV_VM_NAME }}'; then
+        limactl start '{{ DEV_VM_NAME }}'
+    else
+        limactl start -y --name='{{ DEV_VM_NAME }}' \
+            --set '.param.YOUKI_ROOT="{{ cwd }}"' \
+            '{{ cwd }}/lima/fedora.yaml'
+    fi
+
+# open a shell in the repository inside the development VM
+dev-vm-shell: dev-vm
+    limactl shell --workdir /workdir/youki '{{ DEV_VM_NAME }}'
+
+# stop the development VM
+dev-vm-stop:
+    limactl stop '{{ DEV_VM_NAME }}'
+
+# stop and delete the development VM
+dev-vm-delete:
+    limactl delete -f '{{ DEV_VM_NAME }}'
 
 [private]
 kind-cluster: bin-kind

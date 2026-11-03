@@ -103,7 +103,7 @@ The User and Developer Documentation for youki is hosted at [https://youki-dev.g
 # 🎬 Getting Started
 
 Local build is only supported on Linux.
-For other platforms, please use the [Vagrantfile](#setting-up-vagrant) that we have prepared. You can also spin up a fully preconfigured development environment in the cloud with [GitHub Codespaces](https://docs.github.com/en/codespaces/getting-started/quickstart).
+For other platforms, please use the [Lima template](#setting-up-lima) or the [Vagrantfile](#setting-up-vagrant) that we have prepared. You can also spin up a fully preconfigured development environment in the cloud with [GitHub Codespaces](https://docs.github.com/en/codespaces/getting-started/quickstart).
 
 ## Requires
 
@@ -254,6 +254,29 @@ Go and node-tap are required to run integration tests. See the [opencontainers/r
 git submodule update --init --recursive
 just test-oci
 ```
+
+### Setting up Lima
+
+You can develop youki on platforms other than Linux (or keep your host clean) by using the [Lima](https://lima-vm.io/) template we have prepared in [`lima/fedora.yaml`](lima/fedora.yaml). It creates a Fedora VM with all build dependencies and Rust installed, and mounts this repository at `/workdir/youki` inside the VM.
+
+Install Lima by following [the official instructions](https://lima-vm.io/docs/installation/), then:
+
+```bash
+git clone git@github.com:youki-dev/youki.git
+cd youki
+
+# create (on first run) and start the VM
+just dev-vm
+
+# open a shell inside the VM, in the repository directory
+just dev-vm-shell
+
+# in virtual machine
+just youki-dev # or youki-release
+```
+
+Inside the VM, cargo build artifacts are written to `~/.cache/youki-target` (`CARGO_TARGET_DIR`) instead of the mounted `target/` directory.
+Use `just dev-vm-stop` to stop the VM and `just dev-vm-delete` to remove it.
 
 ### Setting up Vagrant
 

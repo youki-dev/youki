@@ -164,6 +164,31 @@ use liboci_cli::{...}
 
 ---
 
+### Using Lima to run youki on non-Linux Platform
+
+As explained before, youki only support Linux, and to build/use it on non-Linux Platforms, you will need to use some kind of virtualization. The repo provides a [Lima](https://lima-vm.io/) template, `lima/fedora.yaml`, which creates a Fedora VM with all the build dependencies and Rust installed. Lima can be installed from [here](https://lima-vm.io/docs/installation/).
+
+The youki repository is mounted at `/workdir/youki` inside the VM, so changes made on the host are visible in the VM and vice versa.
+
+```console
+# in the youki directory
+
+# create (on first run) and start the VM
+just dev-vm
+
+# open a shell inside the VM, in the repository directory
+just dev-vm-shell
+
+# in virtual machine
+just youki-dev # or youki-release
+
+# back on the host: stop or delete the VM
+just dev-vm-stop
+just dev-vm-delete
+```
+
+Inside the VM, cargo build artifacts are written to `~/.cache/youki-target` (`CARGO_TARGET_DIR`) instead of the mounted `target/` directory, as building on the mount is slow and would conflict with builds made on the host.
+
 ### Using Vagrant to run youki on non-Linux Platform
 
 As explained before, youki only support Linux, and to build/use it on non-Linux Platforms, you will need to use some kind of virtualization. The repo provides a Vagrantfile to do the required VM setup using Vagrant, which can be installed from [here](https://www.vagrantup.com/docs/installation).
