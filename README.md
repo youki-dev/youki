@@ -278,6 +278,25 @@ just youki-dev # or youki-release
 Inside the VM, cargo build artifacts are written to `~/.cache/youki-target` (`CARGO_TARGET_DIR`) instead of the mounted `target/` directory.
 Use `just dev-vm-stop` to stop the VM and `just dev-vm-delete` to remove it.
 
+#### Running a container with youki in the Lima VM
+
+Inside the VM, use containerd's `ctr` to run a container with youki as the runtime:
+
+```bash
+# in virtual machine, from /workdir/youki
+just youki-dev
+sudo install -m 0755 youki /usr/local/bin/youki
+
+sudo dnf install -y containerd
+sudo systemctl enable --now containerd
+sudo ctr image pull docker.io/library/busybox:latest
+sudo ctr run --rm -t --runc-binary /usr/local/bin/youki docker.io/library/busybox:latest youki-test sh
+```
+
+> **Note:** Other tools such as Podman and Docker do not currently work with youki in this VM.
+> SELinux is enabled on Fedora, so they set an SELinux mount label, and the `/dev/mqueue` mount then fails with `EINVAL`.
+> See [#3772](https://github.com/youki-dev/youki/issues/3772) (fix in progress: [#3773](https://github.com/youki-dev/youki/pull/3773)).
+
 ### Setting up Vagrant
 
 You can try youki on platforms other than Linux by using the Vagrantfile we have prepared. We have prepared two environments for vagrant, namely rootless mode and rootful mode
