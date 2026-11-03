@@ -79,6 +79,7 @@ impl Container {
         }
 
         if self.root.exists() {
+            let mut poststop_result = Ok(());
             match YoukiConfig::load(&self.root) {
                 Ok(config) => {
                     tracing::debug!("config: {:?}", config);
@@ -99,7 +100,7 @@ impl Container {
                     })?;
 
                     if let Some(hooks) = config.hooks.as_ref() {
-                        hooks::run_hooks(
+                        poststop_result = hooks::run_hooks(
                             hooks.poststop().as_ref(),
                             Some(&self.state),
                             None,
@@ -109,7 +110,7 @@ impl Container {
                         .map_err(|err| {
                             tracing::error!(err = ?err, "failed to run post stop hooks");
                             err
-                        })?;
+                        });
                     }
                 }
                 Err(err) => {
@@ -129,7 +130,49 @@ impl Container {
                 tracing::error!(?err, path = ?self.root, "failed to remove container dir");
                 LibcontainerError::OtherIO(err)
             })?;
+
+            // Like runc, remove the container state before reporting a
+            // poststop hook failure so the container does not linger.
+            poststop_result?;
         }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::Result;
+    use oci_spec::runtime::{HookBuilder, HooksBuilder};
+    use serial_test::serial;
+
+    use super::*;
+
+    #[test]
+    #[serial]
+    fn test_delete_removes_root_when_poststop_hook_fails() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path().join("container");
+        fs::create_dir(&root)?;
+
+        let hook = HookBuilder::default()
+            .path("/bin/sh")
+            .args(vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "exit 1".to_string(),
+            ])
+            .build()?;
+        YoukiConfig {
+            hooks: Some(HooksBuilder::default().poststop(vec![hook]).build()?),
+            cgroup_path: "/youki-test-nonexistent".into(),
+        }
+        .save(&root)?;
+
+        let mut container =
+            Container::new("test", ContainerStatus::Stopped, None, tmp.path(), &root)?;
+        assert!(container.delete(true).is_err());
+        assert!(!root.exists());
 
         Ok(())
     }
