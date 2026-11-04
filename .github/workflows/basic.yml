@@ -99,7 +99,7 @@ jobs:
       - name: Setup target
         run: |
           echo "CARGO=cross" >> ${GITHUB_ENV}
-          echo "TARGET=${{ matrix.arch }}-unknown-linux-${{ matrix.libc }}" >> ${GITHUB_ENV}
+          echo "CARGO_BUILD_TARGET=${{ matrix.arch }}-unknown-linux-${{ matrix.libc }}" >> ${GITHUB_ENV}
       - name: Check formatting and lints
         run: just lint
       - name: Install cargo machete
@@ -132,7 +132,7 @@ jobs:
       - name: Setup environment variables
         run: |
           echo "CARGO=cross" >> ${GITHUB_ENV}
-          echo "TARGET=${{ matrix.arch }}-unknown-linux-${{ matrix.libc }}" >> ${GITHUB_ENV}
+          echo "CARGO_BUILD_TARGET=${{ matrix.arch }}-unknown-linux-${{ matrix.libc }}" >> ${GITHUB_ENV}
           echo "TEST_NON_ROOT_UID=$(id -u testuser)" >> ${GITHUB_ENV}
       - name: Disable AppArmor restrictions
         run: echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
