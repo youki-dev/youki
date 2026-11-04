@@ -141,7 +141,7 @@ runc run [host mount ns + hooks]
 [skip]kill KILL [host pidns]
 [skip]kill KILL [host pidns + init gone]
 kill KILL [shared pidns]
-[skip]list
+list
 mask paths [file]
 mask paths [directory]
 [skip]mask paths [prohibit symlink /proc]

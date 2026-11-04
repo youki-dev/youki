@@ -51,6 +51,9 @@ const YOUKI_CONFIG_NAME: &str = "youki_config.json";
 pub struct YoukiConfig {
     pub hooks: Option<Hooks>,
     pub cgroup_path: PathBuf,
+    /// Creation-time rootfs path, absent in configurations written by older versions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rootfs: Option<PathBuf>,
 }
 
 impl YoukiConfig {
@@ -70,6 +73,7 @@ impl YoukiConfig {
     ) -> Result<Self> {
         Ok(YoukiConfig {
             hooks: spec.hooks().clone(),
+            rootfs: spec.root().as_ref().map(|root| root.path().to_owned()),
             cgroup_path: utils::get_cgroup_path_for_manager(
                 spec.linux()
                     .as_ref()
@@ -168,6 +172,19 @@ mod tests {
         let invalid_dir = tmp.path().join("invalid");
         let result = YoukiConfig::load(&invalid_dir);
         assert!(matches!(result, Err(ConfigError::LoadIO { .. })));
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_config_without_rootfs() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        fs::write(
+            tmp.path().join(YOUKI_CONFIG_NAME),
+            r#"{"hooks":null,"cgroup_path":"/legacy"}"#,
+        )?;
+        let config = YoukiConfig::load(tmp.path())?;
+        assert_eq!(config.cgroup_path, PathBuf::from("/legacy"));
+        assert!(config.rootfs.is_none());
         Ok(())
     }
 }
