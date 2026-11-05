@@ -114,7 +114,21 @@ impl Container {
             );
         }
 
-        let pids = cmanager.get_all_pids()?;
+        let mut pids = cmanager.get_all_pids()?;
+        // A rootless container may run outside of its cgroup. Signal its init
+        // then: with SIGKILL, that kills all processes of a PID namespace of
+        // its own.
+        if let Some(pid) = self.pid()
+            && self.can_kill()
+            && !pids.contains(&pid)
+        {
+            tracing::warn!(
+                id = ?self.id(),
+                ?pid,
+                "container init is not in the container cgroup, other processes survive unless the container has its own PID namespace",
+            );
+            pids.push(pid);
+        }
         pids.iter()
             .try_for_each(|&pid| {
                 tracing::debug!("kill signal {} to {}", signal, pid);

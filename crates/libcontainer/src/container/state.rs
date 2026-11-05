@@ -106,6 +106,10 @@ pub struct State {
     // Pid is the process ID for the container process.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pid: Option<i32>,
+    // Start time of the container process, in clock ticks after boot, to
+    // detect a later process which reuses its pid.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub init_start_time: Option<u64>,
     // Bundle is the path to the container's bundle directory.
     pub bundle: PathBuf,
     // Annotations are key values associated with the container.
@@ -148,6 +152,7 @@ impl State {
             id: container_id.to_string(),
             status,
             pid,
+            init_start_time: None,
             bundle,
             annotations: Some(HashMap::default()),
             created: None,

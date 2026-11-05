@@ -315,6 +315,11 @@ jobs:
         run: chmod +x ./youki
       - name: Run tests
         run: just test-rootless-podman
+      - name: Run tests without a cgroup
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo apt-get install -y busybox-static
+          just test-rootless-no-cgroup
 
   docker-in-docker:
     runs-on: ubuntu-24.04
