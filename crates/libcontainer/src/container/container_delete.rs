@@ -166,6 +166,7 @@ mod tests {
         YoukiConfig {
             hooks: Some(HooksBuilder::default().poststop(vec![hook]).build()?),
             cgroup_path: "/youki-test-nonexistent".into(),
+            rootfs: None,
         }
         .save(&root)?;
 
