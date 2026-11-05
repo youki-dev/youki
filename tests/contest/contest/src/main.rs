@@ -32,6 +32,7 @@ use crate::tests::linux_masked_paths::get_linux_masked_paths_tests;
 use crate::tests::linux_ns_itype::get_ns_itype_tests;
 use crate::tests::memory_policy::get_linux_memory_policy_tests;
 use crate::tests::misc_props::get_misc_props_test;
+use crate::tests::mount_label::get_mount_label_test;
 use crate::tests::mount_propagation::get_mount_propagation_test;
 use crate::tests::mounts_recursive::get_mounts_recursive_test;
 use crate::tests::net_devices::get_net_devices_test;
@@ -196,6 +197,7 @@ fn main() -> Result<()> {
     let update = get_update_test();
     let time_ns = get_time_ns_test();
     let tmpcopyup = get_tmpcopyup_test();
+    let mount_label = get_mount_label_test();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -263,6 +265,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(update));
     tm.add_test_group(Box::new(time_ns));
     tm.add_test_group(Box::new(tmpcopyup));
+    tm.add_test_group(Box::new(mount_label));
     tm.add_cleanup(Box::new(cgroups::cleanup_v2));
 
     match opts.command {
