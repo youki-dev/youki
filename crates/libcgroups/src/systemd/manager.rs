@@ -190,6 +190,8 @@ pub enum SystemdManagerError {
     Pids(Infallible),
     #[error("in pids unified controller: {0}")]
     Unified(#[from] super::unified::SystemdUnifiedError),
+    #[error("in v2 unified controller: {0}")]
+    V2Unified(#[from] crate::v2::unified::V2UnifiedError),
     #[error(
         "systemd cgroup flag passed, but systemd support for managing cgroups is not available"
     )]
@@ -591,6 +593,15 @@ impl CgroupManager for Manager {
             self.client
                 .set_unit_properties(&self.unit_name, &properties)?;
         }
+
+        // Only some unified keys map to a unit property, so write all of them to the cgroup
+        // as well, as runc does. Keys systemd has just set get the same value again.
+        crate::v2::unified::Unified::apply(
+            controller_opt,
+            &self.full_path,
+            crate::v2::util::get_available_controllers(&self.root_path)
+                .map_err(V2ManagerError::from)?,
+        )?;
 
         // systemd derives a device filter from DeviceAllow and attaches it every time
         // unit properties are set, so this has to run afterwards to replace it. A rule

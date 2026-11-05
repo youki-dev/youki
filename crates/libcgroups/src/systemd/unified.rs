@@ -2,10 +2,9 @@ use std::collections::HashMap;
 use std::num::ParseIntError;
 
 use super::controller::Controller;
-use super::cpu::{self, convert_shares_to_cgroup2};
 use super::cpuset::{self, BitmaskError, to_bitmask};
 use super::dbus_native::serialize::Variant;
-use super::{memory, pids};
+use super::{cpu, memory, pids};
 use crate::common::ControllerOpt;
 
 #[derive(thiserror::Error, Debug)]
@@ -18,6 +17,8 @@ pub enum SystemdUnifiedError {
     CpuQuota { err: ParseIntError, value: String },
     #[error("failed to to parse cpu period {value}: {err}")]
     CpuPeriod { err: ParseIntError, value: String },
+    #[error("cpu period must not be 0: {0}")]
+    CpuPeriodZero(String),
     #[error("setting {0} requires systemd version greater than 243")]
     OldSystemd(String),
     #[error("invalid value for cpuset.cpus {0}")]
@@ -74,17 +75,15 @@ impl Unified {
             }
             match key.as_str() {
                 "cpu.weight" => {
-                    let shares =
+                    // already a cgroup v2 weight, unlike the cgroup v1 shares in resources.cpu
+                    let weight =
                         value
                             .parse::<u64>()
                             .map_err(|err| SystemdUnifiedError::CpuWeight {
                                 err,
                                 value: value.into(),
                             })?;
-                    properties.insert(
-                        cpu::CPU_WEIGHT,
-                        Variant::U64(convert_shares_to_cgroup2(shares)),
-                    );
+                    properties.insert(cpu::CPU_WEIGHT, Variant::U64(weight));
                 }
                 "cpu.max" => {
                     let parts: Vec<&str> = value.split_whitespace().collect();
@@ -92,24 +91,35 @@ impl Unified {
                         return Err(SystemdUnifiedError::CpuMax(value.into()));
                     }
 
-                    let quota =
-                        parts[0]
-                            .parse::<u64>()
-                            .map_err(|err| SystemdUnifiedError::CpuQuota {
-                                err,
-                                value: parts[0].into(),
-                            })?;
-                    properties.insert(cpu::CPU_QUOTA, Variant::U64(quota));
-
+                    let mut period = 100_000;
                     if parts.len() == 2 {
-                        let period = parts[1].parse::<u64>().map_err(|err| {
+                        period = parts[1].parse::<u64>().map_err(|err| {
                             SystemdUnifiedError::CpuPeriod {
                                 err,
                                 value: parts[1].into(),
                             }
                         })?;
+                        if period == 0 {
+                            return Err(SystemdUnifiedError::CpuPeriodZero(value.into()));
+                        }
                         properties.insert(cpu::CPU_PERIOD, Variant::U64(period));
                     }
+
+                    // systemd takes the quota as microseconds per second of cpu time
+                    let quota = match parts[0] {
+                        "max" => u64::MAX,
+                        quota => {
+                            quota
+                                .parse::<u64>()
+                                .map_err(|err| SystemdUnifiedError::CpuQuota {
+                                    err,
+                                    value: quota.into(),
+                                })?
+                                .saturating_mul(cpu::MICROSECS_PER_SEC)
+                                / period
+                        }
+                    };
+                    properties.insert(cpu::CPU_QUOTA, Variant::U64(quota));
                 }
                 cpuset @ ("cpuset.cpus" | "cpuset.mems") => {
                     if systemd_version <= 243 {
@@ -131,14 +141,18 @@ impl Unified {
                     properties.insert(systemd_cpuset, Variant::ArrayU64(bitmask));
                 }
                 memory @ ("memory.min" | "memory.low" | "memory.high" | "memory.max") => {
-                    let value =
-                        value
-                            .parse::<u64>()
-                            .map_err(|err| SystemdUnifiedError::Memory {
-                                err,
-                                name: memory.into(),
-                                value: value.into(),
-                            })?;
+                    let value = match value.as_str() {
+                        "max" => u64::MAX,
+                        value => {
+                            value
+                                .parse::<u64>()
+                                .map_err(|err| SystemdUnifiedError::Memory {
+                                    err,
+                                    name: memory.into(),
+                                    value: value.into(),
+                                })?
+                        }
+                    };
                     let systemd_memory = match memory {
                         "memory.min" => memory::MEMORY_MIN,
                         "memory.low" => memory::MEMORY_LOW,
@@ -149,16 +163,22 @@ impl Unified {
                     properties.insert(systemd_memory, Variant::U64(value));
                 }
                 "pids.max" => {
-                    let pids = value.trim().parse::<i64>().map_err(|err| {
-                        SystemdUnifiedError::PidsMax {
-                            err,
-                            value: value.into(),
-                        }
-                    })?;
-                    properties.insert(pids::TASKS_MAX, Variant::U64(pids as u64));
+                    let pids =
+                        match value.trim() {
+                            "max" => u64::MAX,
+                            value => value.parse::<i64>().map_err(|err| {
+                                SystemdUnifiedError::PidsMax {
+                                    err,
+                                    value: value.into(),
+                                }
+                            })? as u64,
+                        };
+                    properties.insert(pids::TASKS_MAX, Variant::U64(pids));
                 }
 
-                unknown => tracing::warn!("could not apply {}. Unknown property.", unknown),
+                // the systemd manager writes every unified key to cgroupfs after setting the
+                // properties, so a key with no property still takes effect
+                unknown => tracing::debug!("no systemd property for {}", unknown),
             }
         }
 
@@ -178,7 +198,7 @@ mod tests {
     fn test_set() -> Result<()> {
         // arrange
         let unified: HashMap<String, String> = [
-            ("cpu.weight", "22000"),
+            ("cpu.weight", "42"),
             ("cpuset.cpus", "0-3"),
             ("cpuset.mems", "0-3"),
             ("memory.min", "100000"),
@@ -192,7 +212,7 @@ mod tests {
         .collect();
 
         let mut expected: HashMap<&str, Variant> = HashMap::new();
-        expected.insert(cpu::CPU_WEIGHT, Variant::U64(1204));
+        expected.insert(cpu::CPU_WEIGHT, Variant::U64(42));
         expected.insert(cpuset::ALLOWED_CPUS, Variant::ArrayU64(vec![15u64]));
         expected.insert(cpuset::ALLOWED_NODES, Variant::ArrayU64(vec![15u64]));
         expected.insert(memory::MEMORY_MIN, Variant::U64(100000u64));
@@ -237,7 +257,7 @@ mod tests {
         let cpu_period = &actual[cpu::CPU_PERIOD];
         let cpu_quota = &actual[cpu::CPU_QUOTA];
         assert_eq!(recast!(cpu_period, Variant)?, Variant::U64(250000));
-        assert_eq!(recast!(cpu_quota, Variant)?, Variant::U64(500000));
+        assert_eq!(recast!(cpu_quota, Variant)?, Variant::U64(2_000_000));
 
         Ok(())
     }
@@ -259,8 +279,85 @@ mod tests {
         assert!(actual.contains_key(cpu::CPU_QUOTA));
 
         let cpu_quota = &actual[cpu::CPU_QUOTA];
-        assert_eq!(recast!(cpu_quota, Variant)?, Variant::U64(500000));
+        assert_eq!(recast!(cpu_quota, Variant)?, Variant::U64(5_000_000));
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_max_values() -> Result<()> {
+        // arrange
+        let unified: HashMap<String, String> = [
+            ("cpu.max", "max 100000"),
+            ("memory.min", "max"),
+            ("memory.low", "max"),
+            ("memory.high", "max"),
+            ("memory.max", "max"),
+            ("pids.max", "max"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect();
+        let mut actual: HashMap<&str, Variant> = HashMap::new();
+
+        // act
+        Unified::apply(&unified, 245, &mut actual).context("apply unified")?;
+
+        // assert
+        for setting in [
+            cpu::CPU_QUOTA,
+            memory::MEMORY_MIN,
+            memory::MEMORY_LOW,
+            memory::MEMORY_HIGH,
+            memory::MEMORY_MAX,
+            pids::TASKS_MAX,
+        ] {
+            let value = &actual[setting];
+            assert_eq!(
+                recast!(value, Variant)?,
+                Variant::U64(u64::MAX),
+                "{setting}"
+            );
+        }
+        let cpu_period = &actual[cpu::CPU_PERIOD];
+        assert_eq!(recast!(cpu_period, Variant)?, Variant::U64(100_000));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_cpu_max_zero_period_returns_error() {
+        // arrange
+        let unified: HashMap<String, String> = [("cpu.max", "50000 0")]
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect();
+        let mut actual: HashMap<&str, Variant> = HashMap::new();
+
+        // act
+        let result = Unified::apply(&unified, 245, &mut actual);
+
+        // assert
+        assert!(matches!(result, Err(SystemdUnifiedError::CpuPeriodZero(_))));
+    }
+
+    #[test]
+    fn test_key_without_property_is_skipped() -> Result<()> {
+        // arrange: these are written to cgroupfs by the manager, not set as properties
+        let unified: HashMap<String, String> = [
+            ("io.max", "259:0 riops=333 wiops=444"),
+            ("memory.oom.group", "1"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect();
+        let mut actual: HashMap<&str, Variant> = HashMap::new();
+
+        // act
+        Unified::apply(&unified, 245, &mut actual).context("apply unified")?;
+
+        // assert
+        assert!(actual.is_empty());
         Ok(())
     }
 
