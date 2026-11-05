@@ -131,8 +131,7 @@ impl Container {
                 LibcontainerError::OtherIO(err)
             })?;
 
-            // Like runc, remove the container state before reporting a
-            // poststop hook failure so the container does not linger.
+            // Remove the container state even if a poststop hook failed.
             poststop_result?;
         }
 
