@@ -53,8 +53,8 @@ vergen-gitcl = "9.1.0"
 wasmedge-sdk = { version = "0.14.0", default-features = false }
 wasmer = "7.0.1"
 wasmer-wasix = "0.702.1"
-wasmtime = "48.0.2"
-wasmtime-wasi = { version = "48.0.2", default-features = false }
+wasmtime = "50.0.1"
+wasmtime-wasi = { version = "50.0.1", default-features = false }
 which = "8.0.3"
 
 [profile.release]
