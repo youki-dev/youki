@@ -55,7 +55,7 @@ impl TestableGroup for TestGroup {
         if self.parallel {
             thread::scope(|s| {
                 let mut collector = Vec::with_capacity(self.tests.len());
-                for (_, t) in self.tests.iter() {
+                for t in self.tests.values() {
                     let _t = s.spawn(move || {
                         if t.can_run() {
                             (t.get_name(), t.run())
@@ -76,7 +76,7 @@ impl TestableGroup for TestGroup {
                 }
             });
         } else {
-            for (_, t) in self.tests.iter() {
+            for t in self.tests.values() {
                 ret.push(if t.can_run() {
                     (t.get_name(), t.run())
                 } else {
