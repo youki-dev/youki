@@ -5,6 +5,7 @@ KIND_CLUSTER_NAME := 'youki'
 KIND_SYSTEMD_CLUSTER_NAME := 'youki-systemd'
 KIND_DEPLOY_CLUSTER_NAME := 'youki-deploy'
 YOUKI_INSTALLER_IMAGE := 'youki-installer:latest'
+DEV_VM_NAME := 'youki-fedora'
 
 cwd := justfile_directory()
 
@@ -88,6 +89,32 @@ containerd-test: youki-dev
 # run containerd integration tests
 clean-containerd-test:
     vagrant destroy containerd2youki
+
+# Development environment (Lima)
+
+# create (if needed) and start the Fedora development VM
+dev-vm:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if limactl list --quiet | grep -qx '{{ DEV_VM_NAME }}'; then
+        limactl start '{{ DEV_VM_NAME }}'
+    else
+        limactl start -y --name='{{ DEV_VM_NAME }}' \
+            --set '.param.YOUKI_ROOT="{{ cwd }}"' \
+            '{{ cwd }}/lima/fedora.yaml'
+    fi
+
+# open a shell in the repository inside the development VM
+dev-vm-shell: dev-vm
+    limactl shell --workdir /workdir/youki '{{ DEV_VM_NAME }}'
+
+# stop the development VM
+dev-vm-stop:
+    limactl stop '{{ DEV_VM_NAME }}'
+
+# stop and delete the development VM
+dev-vm-delete:
+    limactl delete -f '{{ DEV_VM_NAME }}'
 
 [private]
 kind-cluster: bin-kind
