@@ -94,7 +94,10 @@ pub(crate) fn cgroup_test() -> TestResult {
             return TestResult::Failed(anyhow!("container start failed"));
         }
 
-        // move init to a subcgroup, and check it was moved
+        exec_container(id, dir, &["grep", "^0::/$", "/proc/self/cgroup"], None, &[])
+            .expect("exec failed");
+
+        // move init to a sub-cgroup, and check it was moved
         exec_container(
             id,
             dir,
@@ -104,9 +107,21 @@ pub(crate) fn cgroup_test() -> TestResult {
         )
         .expect("exec failed");
 
-        // the init process is now in "/foo", but an exec process can still join "/" because we haven't enabled any domain controller yet
-        exec_container(id, dir, &["grep", "^0::/$", "/proc/self/cgroup"], None, &[])
-            .expect("exec failed");
+        // the init process is now in "/foobar" sub-cgroup, so the exec process joins "/foobar" sub-cgroup.
+        // note:
+        //   this behavior differs from runc because youki adopts the "proactive inference" approach rather than runc's "retrying" approach.
+        //   see the discussion below for more details.
+        // ref (runc's behavior test): https://github.com/opencontainers/runc/blob/main/tests/integration/cgroups.bats#L99-L103
+        // ref (approach details): https://github.com/youki-dev/youki/pull/3347#issuecomment-4557652166
+        // ref (discussion): https://github.com/youki-dev/youki/pull/3347#issuecomment-5224550358
+        exec_container(
+            id,
+            dir,
+            &["grep", "^0::/foobar$", "/proc/self/cgroup"],
+            None,
+            &[],
+        )
+        .expect("exec failed");
 
         // turn on a domain controller (memory)
         exec_container(
@@ -118,21 +133,15 @@ pub(crate) fn cgroup_test() -> TestResult {
         )
         .expect("exec failed");
 
-        // TODO: Implement the test cases discussed in
-        // https://github.com/youki-dev/youki/pull/3210#discussion_r2554961182.
-        // This depends on changes introduced by PR https://github.com/youki-dev/youki/pull/3347.
-        // // an exec process can no longer join "/" after turning on a domain controller. Check that cgroup v2 fallback to init cgroup works
-        // exec_container(
-        //     id,
-        //     dir,
-        //     &[
-        //         "sh",
-        //         "-euc",
-        //         "cat /proc/self/cgroup && grep '^0::/foobar$' /proc/self/cgroup",
-        //     ],
-        //     None,
-        // )
-        // .expect("exec failed");
+        // the exec process still joins "/foobar" sub-cgroup after the domain controller is enabled.
+        exec_container(
+            id,
+            dir,
+            &["grep", "^0::/foobar$", "/proc/self/cgroup"],
+            None,
+            &[],
+        )
+        .expect("exec failed");
 
         TestResult::Passed
     })
