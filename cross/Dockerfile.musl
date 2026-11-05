@@ -36,6 +36,7 @@ RUN MARCH="${CROSS_CMAKE_SYSTEM_PROCESSOR}" && \
         libseccomp-static libseccomp-dev \
         libelf-static elfutils-dev \
         zlib-dev zlib-static \
+        fmt-dev \
         g++ zstd-static && \
     rm -rf /alpine "${ROOT}"
 
