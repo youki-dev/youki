@@ -48,6 +48,10 @@ pub enum SeccompError {
     SetCtlNnp {
         source: libseccomp::error::SeccompError,
     },
+    #[error("seccomp program is too long: {len} instructions")]
+    ProgramTooLong { len: usize },
+    #[error("failed to load seccomp program")]
+    LoadProgram { source: std::io::Error },
 }
 
 type Result<T> = std::result::Result<T, SeccompError>;
@@ -116,6 +120,23 @@ fn translate_op(op: LinuxSeccompOperator, datum_b: Option<u64>) -> ScmpCompareOp
     }
 }
 
+fn translate_flags(seccomp: &LinuxSeccomp) -> u32 {
+    let mut flags = 0;
+    for flag in seccomp.flags().iter().flatten() {
+        flags |= match flag {
+            LinuxSeccompFilterFlag::SeccompFilterFlagLog => libc::SECCOMP_FILTER_FLAG_LOG,
+            LinuxSeccompFilterFlag::SeccompFilterFlagTsync => libc::SECCOMP_FILTER_FLAG_TSYNC,
+            LinuxSeccompFilterFlag::SeccompFilterFlagSpecAllow => {
+                libc::SECCOMP_FILTER_FLAG_SPEC_ALLOW
+            }
+            LinuxSeccompFilterFlag::SeccompFilterFlagWaitKillableRecv => {
+                libc::SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV
+            }
+        };
+    }
+    flags as u32
+}
+
 fn check_seccomp(seccomp: &LinuxSeccomp) -> Result<()> {
     // We don't support notify as default action. After the seccomp filter is
     // created with notify, the container process will have to communicate the
@@ -146,8 +167,61 @@ fn check_seccomp(seccomp: &LinuxSeccomp) -> Result<()> {
     Ok(())
 }
 
-#[tracing::instrument(level = "trace", skip(seccomp))]
-pub fn initialize_seccomp(seccomp: &LinuxSeccomp) -> Result<Option<io::RawFd>> {
+// Same layout as the kernel's struct sock_filter.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SockFilter {
+    pub code: u16,
+    pub jt: u8,
+    pub jf: u8,
+    pub k: u32,
+}
+
+#[derive(Debug)]
+enum Filter {
+    Libseccomp(ScmpFilterContext),
+    Program(Vec<SockFilter>),
+}
+
+#[derive(Debug)]
+pub struct CompiledSeccomp {
+    pub flags: u32,
+    pub wants_listener: bool,
+    filter: Filter,
+}
+
+impl CompiledSeccomp {
+    pub fn from_program(program: Vec<SockFilter>, flags: u32, wants_listener: bool) -> Self {
+        Self {
+            flags,
+            wants_listener,
+            filter: Filter::Program(program),
+        }
+    }
+}
+
+pub trait SeccompBackend: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn compile(&self, seccomp: &LinuxSeccomp) -> Result<CompiledSeccomp>;
+}
+
+pub struct LibseccompBackend;
+
+impl SeccompBackend for LibseccompBackend {
+    fn name(&self) -> &'static str {
+        "libseccomp"
+    }
+
+    fn compile(&self, seccomp: &LinuxSeccomp) -> Result<CompiledSeccomp> {
+        Ok(CompiledSeccomp {
+            flags: translate_flags(seccomp),
+            wants_listener: is_notify(seccomp),
+            filter: Filter::Libseccomp(build_context(seccomp)?),
+        })
+    }
+}
+
+fn build_context(seccomp: &LinuxSeccomp) -> Result<ScmpFilterContext> {
     check_seccomp(seccomp)?;
 
     tracing::trace!(default_action = ?seccomp.default_action(), errno = ?seccomp.default_errno_ret(), "initializing seccomp");
@@ -297,6 +371,27 @@ pub fn initialize_seccomp(seccomp: &LinuxSeccomp) -> Result<Option<io::RawFd>> {
         }
     }
 
+    Ok(ctx)
+}
+
+#[tracing::instrument(level = "trace", skip(seccomp))]
+pub fn initialize_seccomp(seccomp: &LinuxSeccomp) -> Result<Option<io::RawFd>> {
+    initialize_seccomp_with(&LibseccompBackend, seccomp)
+}
+
+pub fn initialize_seccomp_with(
+    backend: &dyn SeccompBackend,
+    seccomp: &LinuxSeccomp,
+) -> Result<Option<io::RawFd>> {
+    tracing::trace!(backend = backend.name(), "compiling seccomp profile");
+    let compiled = backend.compile(seccomp)?;
+    let ctx = match &compiled.filter {
+        Filter::Libseccomp(ctx) => ctx,
+        Filter::Program(program) => {
+            return load_program(program, compiled.flags, compiled.wants_listener);
+        }
+    };
+
     // In order to use the SECCOMP_SET_MODE_FILTER operation, either the calling
     // thread must have the CAP_SYS_ADMIN capability in its user namespace, or
     // the thread must already have the no_new_privs bit set.
@@ -316,6 +411,56 @@ pub fn initialize_seccomp(seccomp: &LinuxSeccomp) -> Result<Option<io::RawFd>> {
     Ok(fd)
 }
 
+fn load_program(
+    program: &[SockFilter],
+    flags: u32,
+    wants_listener: bool,
+) -> Result<Option<io::RawFd>> {
+    let len = u16::try_from(program.len())
+        .map_err(|_| SeccompError::ProgramTooLong { len: program.len() })?;
+    let prog = libc::sock_fprog {
+        len,
+        filter: program.as_ptr() as *mut libc::sock_filter,
+    };
+
+    let mut flags = libc::c_ulong::from(flags);
+    if wants_listener {
+        flags |= libc::SECCOMP_FILTER_FLAG_NEW_LISTENER;
+        // With TSYNC a failure returns a thread id, which would be taken for
+        // the listener fd. TSYNC_ESRCH makes it an error instead.
+        if flags & libc::SECCOMP_FILTER_FLAG_TSYNC != 0 {
+            flags |= libc::SECCOMP_FILTER_FLAG_TSYNC_ESRCH;
+        }
+    } else {
+        // The kernel only accepts WAIT_KILLABLE_RECV together with a listener.
+        flags &= !libc::SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV;
+    }
+
+    let ret = unsafe {
+        libc::syscall(
+            libc::SYS_seccomp,
+            libc::SECCOMP_SET_MODE_FILTER,
+            flags,
+            &raw const prog,
+        )
+    };
+    if ret < 0 {
+        return Err(SeccompError::LoadProgram {
+            source: std::io::Error::last_os_error(),
+        });
+    }
+    if wants_listener {
+        return Ok(Some(ret as io::RawFd));
+    }
+    if ret > 0 {
+        return Err(SeccompError::LoadProgram {
+            source: std::io::Error::other(format!("failed to sync thread {ret}")),
+        });
+    }
+
+    Ok(None)
+}
+
 pub fn is_notify(seccomp: &LinuxSeccomp) -> bool {
     seccomp
         .syscalls()
@@ -326,6 +471,7 @@ pub fn is_notify(seccomp: &LinuxSeccomp) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Seek};
     use std::path;
 
     use anyhow::{Context, Result};
@@ -587,6 +733,204 @@ mod tests {
             initialize_seccomp(&profile).expect("failed to initialize seccomp");
 
             Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    fn export(ctx: &ScmpFilterContext) -> Result<Vec<SockFilter>> {
+        let mut file = tempfile::tempfile()?;
+        ctx.export_bpf(&file)?;
+        file.rewind()?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        Ok(bytes
+            .chunks_exact(8)
+            .map(|b| SockFilter {
+                code: u16::from_ne_bytes([b[0], b[1]]),
+                jt: b[2],
+                jf: b[3],
+                k: u32::from_ne_bytes([b[4], b[5], b[6], b[7]]),
+            })
+            .collect())
+    }
+
+    #[test]
+    fn test_backend_compiles_same_filter() -> Result<()> {
+        let profiles = [
+            basic_profile()?,
+            moby_profile()?,
+            notify_profile()?,
+            multiple_distinct_args_profile()?,
+            duplicate_arg_index_profile()?,
+            multiple_entries_for_same_name_profile()?,
+        ];
+
+        for profile in &profiles {
+            let expected = export(&build_context(profile)?)?;
+            assert!(!expected.is_empty());
+
+            let compiled = LibseccompBackend.compile(profile)?;
+            let Filter::Libseccomp(ctx) = &compiled.filter else {
+                panic!("libseccomp backend didn't return a libseccomp filter");
+            };
+            assert_eq!(export(ctx)?, expected);
+            assert_eq!(compiled.wants_listener, is_notify(profile));
+            assert_eq!(compiled.flags, 0);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_compile_flags() -> Result<()> {
+        let profile = LinuxSeccompBuilder::default()
+            .default_action(LinuxSeccompAction::ScmpActAllow)
+            .flags(vec![
+                LinuxSeccompFilterFlag::SeccompFilterFlagLog,
+                LinuxSeccompFilterFlag::SeccompFilterFlagSpecAllow,
+            ])
+            .build()?;
+        let compiled = LibseccompBackend.compile(&profile)?;
+        let expected = libc::SECCOMP_FILTER_FLAG_LOG | libc::SECCOMP_FILTER_FLAG_SPEC_ALLOW;
+        assert_eq!(compiled.flags, expected as u32);
+        assert!(!compiled.wants_listener);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_compile_rejects_notify_as_default_action() -> Result<()> {
+        let profile = LinuxSeccompBuilder::default()
+            .default_action(LinuxSeccompAction::ScmpActNotify)
+            .build()?;
+        assert!(matches!(
+            LibseccompBackend.compile(&profile),
+            Err(SeccompError::NotifyAsDefaultAction)
+        ));
+
+        Ok(())
+    }
+
+    // A backend that only has a BPF program.
+    struct ProgramBackend(Vec<SockFilter>);
+
+    impl SeccompBackend for ProgramBackend {
+        fn name(&self) -> &'static str {
+            "program"
+        }
+
+        fn compile(&self, seccomp: &LinuxSeccomp) -> super::Result<CompiledSeccomp> {
+            Ok(CompiledSeccomp::from_program(
+                self.0.clone(),
+                translate_flags(seccomp),
+                is_notify(seccomp),
+            ))
+        }
+    }
+
+    // Returns `action` for getcwd and allows everything else.
+    fn getcwd_program(action: u32) -> Vec<SockFilter> {
+        let insn = |code: u32, jt: u8, jf: u8, k: u32| SockFilter {
+            code: code as u16,
+            jt,
+            jf,
+            k,
+        };
+        vec![
+            // offset 0 of seccomp_data is the syscall number
+            insn(libc::BPF_LD | libc::BPF_W | libc::BPF_ABS, 0, 0, 0),
+            insn(
+                libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K,
+                0,
+                1,
+                libc::SYS_getcwd as u32,
+            ),
+            insn(libc::BPF_RET | libc::BPF_K, 0, 0, action),
+            insn(libc::BPF_RET | libc::BPF_K, 0, 0, libc::SECCOMP_RET_ALLOW),
+        ]
+    }
+
+    #[test]
+    #[serial]
+    fn test_program_backend() -> Result<()> {
+        let backend = ProgramBackend(getcwd_program(
+            libc::SECCOMP_RET_ERRNO | GETCWD_ERRNO as u32,
+        ));
+        let seccomp_profile = basic_profile()?;
+
+        test_utils::test_in_child_process(|| {
+            let _ = prctl::set_no_new_privileges(true);
+            let fd = initialize_seccomp_with(&backend, &seccomp_profile)
+                .expect("failed to initialize seccomp");
+            if fd.is_some() {
+                Err(TestCallbackError::Custom(
+                    "got a seccomp notify fd without a notify seccomp profile".to_string(),
+                ))?;
+            }
+            expect_getcwd_denied()
+        })?;
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_program_backend_notify() -> Result<()> {
+        let backend = ProgramBackend(getcwd_program(libc::SECCOMP_RET_USER_NOTIF));
+        let seccomp_profile = notify_profile()?;
+
+        test_utils::test_in_child_process(|| {
+            let _ = prctl::set_no_new_privileges(true);
+            let fd = initialize_seccomp_with(&backend, &seccomp_profile)
+                .expect("failed to initialize seccomp profile");
+            if fd.is_none() {
+                Err(TestCallbackError::Custom(
+                    "failed to get a seccomp notify fd with notify seccomp profile".to_string(),
+                ))?;
+            }
+
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_program_backend_wait_killable_recv_without_notify() -> Result<()> {
+        let backend = ProgramBackend(getcwd_program(
+            libc::SECCOMP_RET_ERRNO | GETCWD_ERRNO as u32,
+        ));
+        let seccomp_profile = LinuxSeccompBuilder::default()
+            .default_action(LinuxSeccompAction::ScmpActAllow)
+            .flags(vec![
+                LinuxSeccompFilterFlag::SeccompFilterFlagWaitKillableRecv,
+            ])
+            .build()?;
+
+        test_utils::test_in_child_process(|| {
+            let _ = prctl::set_no_new_privileges(true);
+            initialize_seccomp_with(&backend, &seccomp_profile)
+                .expect("failed to initialize seccomp");
+            expect_getcwd_denied()
+        })?;
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_program_backend_with_libseccomp_program() -> Result<()> {
+        // The program libseccomp generates for the profile, loaded by us.
+        let seccomp_profile = basic_profile()?;
+        let backend = ProgramBackend(export(&build_context(&seccomp_profile)?)?);
+
+        test_utils::test_in_child_process(|| {
+            let _ = prctl::set_no_new_privileges(true);
+            initialize_seccomp_with(&backend, &seccomp_profile)
+                .expect("failed to initialize seccomp");
+            expect_getcwd_denied()
         })?;
 
         Ok(())
