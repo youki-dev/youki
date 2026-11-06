@@ -337,108 +337,53 @@ mod tests {
     use super::*;
     use crate::test_utils::{self, TestCallbackError};
 
-    #[test]
-    #[serial]
-    fn test_basic() -> Result<()> {
-        // Note: seccomp profile is really hard to write unit test for. First,
-        // we can't really test default error or kill action, since rust test
-        // actually relies on certain syscalls. Second, some of the syscall will
-        // not return errorno. These syscalls will just send an abort signal or
-        // even just segfaults.  Here we choose to use `getcwd` syscall for
-        // testing, since it will correctly return an error under seccomp rule.
-        // This is more of a sanity check.
+    // Here, we choose an error that getcwd call would never return on its own, so
+    // we can make sure that getcwd failed because of seccomp rule.
+    const GETCWD_ERRNO: i32 = libc::EAGAIN;
 
-        // Here, we choose an error that getcwd call would never return on its own, so
-        // we can make sure that getcwd failed because of seccomp rule.
-        let expect_error = libc::EAGAIN;
-
+    fn basic_profile() -> Result<LinuxSeccomp> {
         let syscall = LinuxSyscallBuilder::default()
             .names(vec![String::from("getcwd")])
             .action(LinuxSeccompAction::ScmpActErrno)
-            .errno_ret(expect_error as u32)
+            .errno_ret(GETCWD_ERRNO as u32)
             .build()?;
-        let seccomp_profile = LinuxSeccompBuilder::default()
+        Ok(LinuxSeccompBuilder::default()
             .default_action(LinuxSeccompAction::ScmpActAllow)
             .architectures(vec![Arch::ScmpArchNative])
             .syscalls(vec![syscall])
-            .build()?;
-
-        test_utils::test_in_child_process(|| {
-            let _ = prctl::set_no_new_privileges(true);
-            initialize_seccomp(&seccomp_profile).expect("failed to initialize seccomp");
-            let ret = nix::unistd::getcwd();
-            if ret.is_ok() {
-                Err(TestCallbackError::Custom(
-                    "getcwd didn't error out as seccomp profile specified".to_string(),
-                ))?;
-            }
-
-            if let Some(errno) = ret.err() {
-                if errno != nix::errno::Errno::from_raw(expect_error) {
-                    Err(TestCallbackError::Custom(format!(
-                        "getcwd failed but we didn't get the expected error from seccomp profile: {}",
-                        errno
-                    )))?;
-                }
-            }
-
-            Ok(())
-        })?;
-
-        Ok(())
+            .build()?)
     }
 
-    #[test]
-    #[serial]
-    fn test_moby() -> Result<()> {
+    fn moby_profile() -> Result<LinuxSeccomp> {
         let fixture_path =
             path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/seccomp/fixture/config.json");
         let spec = oci_spec::runtime::Spec::load(fixture_path)
             .context("Failed to load test spec for seccomp")?;
 
         // We know linux and seccomp exist, so let's just unwrap.
-        let seccomp_profile = spec.linux().as_ref().unwrap().seccomp().as_ref().unwrap();
-        test_utils::test_in_child_process(|| {
-            let _ = prctl::set_no_new_privileges(true);
-            initialize_seccomp(seccomp_profile).expect("failed to initialize seccomp");
-
-            Ok(())
-        })?;
-
-        Ok(())
+        Ok(spec
+            .linux()
+            .as_ref()
+            .unwrap()
+            .seccomp()
+            .as_ref()
+            .unwrap()
+            .clone())
     }
 
-    #[test]
-    #[serial]
-    fn test_seccomp_notify() -> Result<()> {
+    fn notify_profile() -> Result<LinuxSeccomp> {
         let syscall = LinuxSyscallBuilder::default()
             .names(vec![String::from("getcwd")])
             .action(LinuxSeccompAction::ScmpActNotify)
             .build()?;
-        let seccomp_profile = LinuxSeccompBuilder::default()
+        Ok(LinuxSeccompBuilder::default()
             .default_action(LinuxSeccompAction::ScmpActAllow)
             .architectures(vec![Arch::ScmpArchNative])
             .syscalls(vec![syscall])
-            .build()?;
-        test_utils::test_in_child_process(|| {
-            let _ = prctl::set_no_new_privileges(true);
-            let fd =
-                initialize_seccomp(&seccomp_profile).expect("failed to initialize seccomp profile");
-            if fd.is_none() {
-                Err(TestCallbackError::Custom(
-                    "failed to get a seccomp notify fd with notify seccomp profile".to_string(),
-                ))?;
-            }
-
-            Ok(())
-        })?;
-
-        Ok(())
+            .build()?)
     }
 
-    #[test]
-    #[serial]
-    fn test_seccomp_conditional_rule_multiple_distinct_args() -> Result<()> {
+    fn multiple_distinct_args_profile() -> Result<LinuxSeccomp> {
         let syscall = LinuxSyscallBuilder::default()
             .names(vec![String::from("socket")])
             .action(LinuxSeccompAction::ScmpActErrno)
@@ -457,24 +402,14 @@ mod tests {
             ])
             .build()?;
 
-        let seccomp_profile = LinuxSeccompBuilder::default()
+        Ok(LinuxSeccompBuilder::default()
             .default_action(LinuxSeccompAction::ScmpActAllow)
             .architectures(vec![Arch::ScmpArchNative])
             .syscalls(vec![syscall])
-            .build()?;
-
-        test_utils::test_in_child_process(|| {
-            let _ = prctl::set_no_new_privileges(true);
-            initialize_seccomp(&seccomp_profile).expect("failed to initialize seccomp");
-            Ok(())
-        })?;
-
-        Ok(())
+            .build()?)
     }
 
-    #[test]
-    #[serial]
-    fn test_seccomp_conditional_rule_duplicate_arg_index() -> Result<()> {
+    fn duplicate_arg_index_profile() -> Result<LinuxSeccomp> {
         let syscall = LinuxSyscallBuilder::default()
             .names(vec![String::from("socket")])
             .action(LinuxSeccompAction::ScmpActErrno)
@@ -493,24 +428,14 @@ mod tests {
             ])
             .build()?;
 
-        let seccomp_profile = LinuxSeccompBuilder::default()
+        Ok(LinuxSeccompBuilder::default()
             .default_action(LinuxSeccompAction::ScmpActAllow)
             .architectures(vec![Arch::ScmpArchNative])
             .syscalls(vec![syscall])
-            .build()?;
-
-        test_utils::test_in_child_process(|| {
-            let _ = prctl::set_no_new_privileges(true);
-            initialize_seccomp(&seccomp_profile).expect("failed to initialize seccomp");
-            Ok(())
-        })?;
-
-        Ok(())
+            .build()?)
     }
 
-    #[test]
-    #[serial]
-    fn test_seccomp_multiple_syscall_entries_for_same_name() -> Result<()> {
+    fn multiple_entries_for_same_name_profile() -> Result<LinuxSeccomp> {
         let rule1 = LinuxSyscallBuilder::default()
             .names(vec!["socket".into()])
             .action(LinuxSeccompAction::ScmpActErrno)
@@ -542,11 +467,120 @@ mod tests {
             ])
             .build()?;
 
-        let profile = LinuxSeccompBuilder::default()
+        Ok(LinuxSeccompBuilder::default()
             .default_action(LinuxSeccompAction::ScmpActAllow)
             .architectures(vec![Arch::ScmpArchNative])
             .syscalls(vec![rule1, rule2])
-            .build()?;
+            .build()?)
+    }
+
+    fn expect_getcwd_denied() -> std::result::Result<(), TestCallbackError> {
+        let ret = nix::unistd::getcwd();
+        if ret.is_ok() {
+            Err(TestCallbackError::Custom(
+                "getcwd didn't error out as seccomp profile specified".to_string(),
+            ))?;
+        }
+
+        if let Some(errno) = ret.err() {
+            if errno != nix::errno::Errno::from_raw(GETCWD_ERRNO) {
+                Err(TestCallbackError::Custom(format!(
+                    "getcwd failed but we didn't get the expected error from seccomp profile: {}",
+                    errno
+                )))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_basic() -> Result<()> {
+        // Note: seccomp profile is really hard to write unit test for. First,
+        // we can't really test default error or kill action, since rust test
+        // actually relies on certain syscalls. Second, some of the syscall will
+        // not return errorno. These syscalls will just send an abort signal or
+        // even just segfaults.  Here we choose to use `getcwd` syscall for
+        // testing, since it will correctly return an error under seccomp rule.
+        // This is more of a sanity check.
+        let seccomp_profile = basic_profile()?;
+
+        test_utils::test_in_child_process(|| {
+            let _ = prctl::set_no_new_privileges(true);
+            initialize_seccomp(&seccomp_profile).expect("failed to initialize seccomp");
+            expect_getcwd_denied()
+        })?;
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_moby() -> Result<()> {
+        let seccomp_profile = moby_profile()?;
+        test_utils::test_in_child_process(|| {
+            let _ = prctl::set_no_new_privileges(true);
+            initialize_seccomp(&seccomp_profile).expect("failed to initialize seccomp");
+
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_seccomp_notify() -> Result<()> {
+        let seccomp_profile = notify_profile()?;
+        test_utils::test_in_child_process(|| {
+            let _ = prctl::set_no_new_privileges(true);
+            let fd =
+                initialize_seccomp(&seccomp_profile).expect("failed to initialize seccomp profile");
+            if fd.is_none() {
+                Err(TestCallbackError::Custom(
+                    "failed to get a seccomp notify fd with notify seccomp profile".to_string(),
+                ))?;
+            }
+
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_seccomp_conditional_rule_multiple_distinct_args() -> Result<()> {
+        let seccomp_profile = multiple_distinct_args_profile()?;
+
+        test_utils::test_in_child_process(|| {
+            let _ = prctl::set_no_new_privileges(true);
+            initialize_seccomp(&seccomp_profile).expect("failed to initialize seccomp");
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_seccomp_conditional_rule_duplicate_arg_index() -> Result<()> {
+        let seccomp_profile = duplicate_arg_index_profile()?;
+
+        test_utils::test_in_child_process(|| {
+            let _ = prctl::set_no_new_privileges(true);
+            initialize_seccomp(&seccomp_profile).expect("failed to initialize seccomp");
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_seccomp_multiple_syscall_entries_for_same_name() -> Result<()> {
+        let profile = multiple_entries_for_same_name_profile()?;
 
         test_utils::test_in_child_process(|| {
             let _ = prctl::set_no_new_privileges(true);
