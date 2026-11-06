@@ -13,7 +13,7 @@ use crate::stats::{
 const CGROUP_BFQ_IO_WEIGHT: &str = "io.bfq.weight";
 const CGROUP_IO_WEIGHT: &str = "io.weight";
 const CGROUP_IO_STAT: &str = "io.stat";
-const CGROUP_IO_PSI: &str = "io.pressure";
+pub const CGROUP_IO_PSI: &str = "io.pressure";
 
 #[derive(thiserror::Error, Debug)]
 pub enum V2IoControllerError {

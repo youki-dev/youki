@@ -497,4 +497,16 @@ mod tests {
         // assert
         assert!(result.is_ok())
     }
+
+    #[test]
+    fn test_stat_usage_without_psi() {
+        let tmp = tempfile::tempdir().unwrap();
+        let content = ["usage_usec 7730", "user_usec 4387", "system_usec 3498"].join("\n");
+        set_fixture(tmp.path(), CPU_STAT, &content).expect("create stat file");
+
+        let actual = Cpu::stats(tmp.path()).expect("get cgroup stats");
+        assert_eq!(actual.usage.usage_total, 7_730_000);
+        assert_eq!(actual.usage.usage_user, 4_387_000);
+        assert_eq!(actual.usage.usage_kernel, 3_498_000);
+    }
 }
