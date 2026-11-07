@@ -384,6 +384,7 @@ pub fn initialize_seccomp_with(
     seccomp: &LinuxSeccomp,
 ) -> Result<Option<io::RawFd>> {
     tracing::trace!(backend = backend.name(), "compiling seccomp profile");
+    check_seccomp(seccomp)?;
     let compiled = backend.compile(seccomp)?;
     let ctx = match &compiled.filter {
         Filter::Libseccomp(ctx) => ctx,
@@ -806,6 +807,20 @@ mod tests {
             .build()?;
         assert!(matches!(
             LibseccompBackend.compile(&profile),
+            Err(SeccompError::NotifyAsDefaultAction)
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_program_backend_rejects_notify_as_default_action() -> Result<()> {
+        let backend = ProgramBackend(getcwd_program(libc::SECCOMP_RET_ALLOW));
+        let profile = LinuxSeccompBuilder::default()
+            .default_action(LinuxSeccompAction::ScmpActNotify)
+            .build()?;
+        assert!(matches!(
+            initialize_seccomp_with(&backend, &profile),
             Err(SeccompError::NotifyAsDefaultAction)
         ));
 
