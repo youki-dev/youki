@@ -83,10 +83,11 @@ impl InitContainerBuilder {
 
         let container_dir = self.create_container_dir()?;
 
-        let mut container = self.create_container_state(&container_dir)?;
-        container
-            .set_systemd(self.use_systemd)
-            .set_annotations(spec.annotations().clone());
+        let user_ns_config = UserNamespaceConfig::new(&spec)?;
+        let use_systemd = self.cgroup_uses_systemd(user_ns_config.as_ref());
+
+        let mut container = self.create_container_state(&container_dir, use_systemd)?;
+        container.set_annotations(spec.annotations().clone());
 
         let notify_path = container_dir.join(NOTIFY_FILE);
         // convert path of root file system of the container to absolute path
@@ -105,11 +106,8 @@ impl InitContainerBuilder {
             None
         };
 
-        let user_ns_config = UserNamespaceConfig::new(&spec)?;
-        let systemd_cgroup = self.use_systemd || user_ns_config.is_some();
-
         let config =
-            YoukiConfig::from_spec_with_cgroup_manager(&spec, container.id(), systemd_cgroup)?;
+            YoukiConfig::from_spec_with_cgroup_manager(&spec, container.id(), use_systemd)?;
         config.save(&container_dir).map_err(|err| {
             tracing::error!(?container_dir, "failed to save config: {}", err);
             err
@@ -121,7 +119,7 @@ impl InitContainerBuilder {
             container_id: self.base.container_id,
             pid_file: self.base.pid_file,
             console_socket: csocketfd,
-            use_systemd: self.use_systemd,
+            use_systemd,
             spec: Rc::new(spec),
             rootfs,
             user_ns_config,
@@ -248,14 +246,26 @@ impl InitContainerBuilder {
         Ok(())
     }
 
-    fn create_container_state(&self, container_dir: &Path) -> Result<Container, LibcontainerError> {
-        let container = Container::new(
+    /// A new user namespace forces the systemd cgroup manager (see `ContainerBuilderImpl`).
+    /// The state must record the manager actually used, because kill, delete, ps and
+    /// the other commands rebuild it from `Container::systemd()`.
+    fn cgroup_uses_systemd(&self, user_ns_config: Option<&UserNamespaceConfig>) -> bool {
+        self.use_systemd || user_ns_config.is_some()
+    }
+
+    fn create_container_state(
+        &self,
+        container_dir: &Path,
+        use_systemd: bool,
+    ) -> Result<Container, LibcontainerError> {
+        let mut container = Container::new(
             &self.base.container_id,
             ContainerStatus::Creating,
             None,
             &self.bundle,
             container_dir,
         )?;
+        container.set_systemd(use_systemd);
         container.save()?;
         Ok(container)
     }
@@ -276,6 +286,39 @@ mod tests {
             .with_bundle("/new/bundle");
 
         assert_eq!(builder.bundle, PathBuf::from("/new/bundle"));
+    }
+
+    #[test]
+    fn test_user_namespace_records_systemd() {
+        let builder = ContainerBuilder::new("test-id".to_owned(), SyscallType::default())
+            .as_init("/bundle")
+            .with_systemd(false);
+        let user_ns_config = UserNamespaceConfig::default();
+
+        assert!(!builder.cgroup_uses_systemd(None));
+        assert!(builder.cgroup_uses_systemd(Some(&user_ns_config)));
+
+        let builder = builder.with_systemd(true);
+        assert!(builder.cgroup_uses_systemd(None));
+    }
+
+    #[test]
+    fn test_create_container_state_saves_systemd() {
+        let root = tempfile::tempdir().unwrap();
+        let builder = ContainerBuilder::new("test-id".to_owned(), SyscallType::default())
+            .as_init(root.path())
+            .with_systemd(false);
+
+        for use_systemd in [true, false] {
+            let container_dir = root.path().join(use_systemd.to_string());
+            fs::create_dir(&container_dir).unwrap();
+            builder
+                .create_container_state(&container_dir, use_systemd)
+                .unwrap();
+
+            let loaded = Container::load(container_dir).unwrap();
+            assert_eq!(loaded.systemd(), use_systemd);
+        }
     }
 
     #[test]
