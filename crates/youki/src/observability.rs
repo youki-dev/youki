@@ -1,11 +1,17 @@
 use std::borrow::Cow;
+use std::fmt;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::{Context, Result, bail};
-use tracing::Level;
+use serde_json::{Map, Value};
+use tracing::field::{Field, Visit};
+use tracing::{Event, Level, Subscriber};
+use tracing_subscriber::fmt::FmtContext;
+use tracing_subscriber::fmt::format::{FormatEvent, FormatFields, Writer};
 use tracing_subscriber::prelude::*;
+use tracing_subscriber::registry::LookupSpan;
 
 const LOG_FORMAT_TEXT: &str = "text";
 const LOG_FORMAT_JSON: &str = "json";
@@ -122,9 +128,7 @@ where
             subscriber
                 .with(
                     tracing_subscriber::fmt::layer()
-                        .json()
-                        .flatten_event(true)
-                        .with_span_list(false)
+                        .event_format(JsonFormatter)
                         .with_writer(std::io::stderr),
                 )
                 .try_init()
@@ -154,9 +158,7 @@ where
             subscriber
                 .with(
                     tracing_subscriber::fmt::layer()
-                        .json()
-                        .flatten_event(true)
-                        .with_span_list(false)
+                        .event_format(JsonFormatter)
                         .with_writer(file),
                 )
                 .try_init()
@@ -165,6 +167,99 @@ where
     }
 
     Ok(())
+}
+
+// Runc-compatible log format in Json
+struct JsonFormatter;
+
+impl<S, N> FormatEvent<S, N> for JsonFormatter
+where
+    S: Subscriber + for<'lookup> LookupSpan<'lookup>,
+    N: for<'writer> FormatFields<'writer> + 'static,
+{
+    fn format_event(
+        &self,
+        _ctx: &FmtContext<'_, S, N>,
+        mut writer: Writer<'_>,
+        event: &Event<'_>,
+    ) -> fmt::Result {
+        let metadata = event.metadata();
+
+        let mut visitor = JsonVisitor::default();
+        event.record(&mut visitor);
+
+        let mut root = Map::new();
+
+        let time = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+        root.insert("time".to_owned(), Value::String(time));
+        root.insert(
+            "level".to_owned(),
+            Value::String(level_value(metadata.level()).to_owned()),
+        );
+
+        let msg = if visitor.fields.is_empty() {
+            visitor.message
+        } else {
+            let fields = visitor
+                .fields
+                .iter()
+                .map(|(key, value)| format!("{key}={value}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{0}, {fields}", visitor.message)
+        };
+        root.insert("msg".to_owned(), Value::String(msg));
+
+        root.insert(
+            "target".to_owned(),
+            Value::String(metadata.target().to_owned()),
+        );
+
+        let line = serde_json::to_string(&Value::Object(root)).map_err(|_| fmt::Error)?;
+
+        writeln!(writer, "{line}")
+    }
+}
+
+fn level_value(l: &Level) -> &'static str {
+    // return runc(logrus)-compatible string
+    match *l {
+        Level::ERROR => "error",
+        Level::WARN => "warning",
+        Level::INFO => "info",
+        Level::DEBUG => "debug",
+        Level::TRACE => "trace",
+    }
+}
+
+#[derive(Default)]
+struct JsonVisitor {
+    message: String,
+    fields: Vec<(String, String)>,
+}
+
+impl JsonVisitor {
+    fn insert(&mut self, field: String, value: String) {
+        self.fields.push((field, value));
+    }
+}
+
+impl Visit for JsonVisitor {
+    fn record_str(&mut self, field: &Field, value: &str) {
+        if field.name() == "message" {
+            self.message = value.to_owned();
+        } else {
+            self.insert(field.name().to_owned(), format!("{value:?}"));
+        }
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        if field.name() == "message" {
+            self.message = format!("{value:?}");
+        } else {
+            self.insert(field.name().to_owned(), format!("{value:?}"));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -306,8 +401,18 @@ mod tests {
             if data.is_empty() {
                 Err("logfile should not be empty")?;
             }
-            serde_json::from_str::<serde_json::Value>(&data)
+            let log_data = serde_json::from_str::<serde_json::Value>(&data)
                 .map_err(|err| format!("failed to parse {data}: {err:?}"))?;
+            // runc(-compatible) log has the following fields.
+            assert!(log_data.get("time").is_some());
+            assert_eq!(
+                log_data.get("msg").and_then(|v| v.as_str()),
+                Some("testing json log")
+            );
+            assert_eq!(
+                log_data.get("level").and_then(|v| v.as_str()),
+                Some("error")
+            );
             Ok(())
         })?;
 
