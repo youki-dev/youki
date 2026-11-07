@@ -20,7 +20,7 @@ use crate::tests::exec::get_exec_test;
 use crate::tests::exec_cpu_affinity::get_exec_cpu_affinity_test;
 use crate::tests::exec_env::get_exec_env_test;
 use crate::tests::fd_control::get_fd_control_test;
-use crate::tests::hooks::{get_hooks_tests, get_start_container_env_tests};
+use crate::tests::hooks::{get_hook_failure_tests, get_hooks_tests, get_start_container_env_tests};
 use crate::tests::hostname::get_hostname_test;
 use crate::tests::intel_rdt::get_intel_rdt_test;
 use crate::tests::io_priority::get_io_priority_test;
@@ -136,6 +136,7 @@ fn main() -> Result<()> {
     let pidfile = get_pidfile_test();
     let ns_itype = get_ns_itype_tests();
     let hooks = get_hooks_tests();
+    let hooks_failure = get_hook_failure_tests();
     let start_container_env = get_start_container_env_tests();
     let poststart = get_poststart_tests();
     let poststop = get_poststop_tests();
@@ -203,6 +204,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(pidfile));
     tm.add_test_group(Box::new(ns_itype));
     tm.add_test_group(Box::new(hooks));
+    tm.add_test_group(Box::new(hooks_failure));
     tm.add_test_group(Box::new(start_container_env));
     tm.add_test_group(Box::new(poststart));
     tm.add_test_group(Box::new(poststart_fail));
