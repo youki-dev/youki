@@ -660,7 +660,7 @@ mod tests {
     fn capture_set_unit_properties(properties: &HashMap<&str, Variant>) -> Vec<u8> {
         let (client, mut server) = property_test_pair();
         let peer = std::thread::spawn(move || {
-            let connection = DbusConnection::for_test(server.as_raw_fd());
+            let connection = DbusConnection::for_test(server.try_clone().unwrap().into());
             let bytes = connection.read_one_message().unwrap();
             let request = Message::deserialize(&bytes, &mut 0).unwrap();
             assert_eq!(request.preamble.mtype, MessageType::MethodCall);
@@ -681,7 +681,7 @@ mod tests {
             request.body
         });
 
-        let connection = DbusConnection::for_test(client.as_raw_fd());
+        let connection = DbusConnection::for_test(client.into());
         let result = connection.set_unit_properties("cpuset-test.scope", properties);
         let body = peer.join().unwrap();
         result.unwrap();
@@ -718,7 +718,7 @@ mod tests {
     fn test_set_unit_properties_rejects_non_byte_cpuset_values() {
         for name in ["AllowedCPUs", "AllowedMemoryNodes"] {
             let (client, server) = property_test_pair();
-            let connection = DbusConnection::for_test(client.as_raw_fd());
+            let connection = DbusConnection::for_test(client.into());
             let properties = HashMap::from([(name, Variant::ArrayU64(vec![256]))]);
 
             let result = connection.set_unit_properties("cpuset-test.scope", &properties);
