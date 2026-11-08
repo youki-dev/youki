@@ -66,7 +66,7 @@ pub fn features(_: Features) -> Result<()> {
         .capabilities(capabilities)
         .cgroup(
             CgroupBuilder::default()
-                .v1(cfg!(feature = "v1"))
+                .v1(false)
                 .v2(cfg!(feature = "v2"))
                 .systemd(cfg!(feature = "systemd"))
                 .systemd_user(cfg!(feature = "systemd"))

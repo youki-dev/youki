@@ -76,9 +76,8 @@ pub fn container_intermediate_process(
     // this needs to be done before we create the init process, so that the init
     // process will already be captured by the cgroup. It also needs to be done
     // before we enter the user namespace because if a privileged user starts a
-    // rootless container on a cgroup v1 system we can still fulfill resource
-    // restrictions through the cgroup fs support (delegation through systemd is
-    // not supported for v1 by us). This only works if the user has not yet been
+    // rootless container, we can still fulfill resource restrictions through the
+    // cgroup fs support. This only works if the user has not yet been
     // mapped to an unprivileged user by the user namespace however.
     // In addition this needs to be done before we enter the cgroup namespace as
     // the cgroup of the process will form the root of the cgroup hierarchy in

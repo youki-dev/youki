@@ -7,13 +7,13 @@ use std::time::Duration;
 use nix::sys::statfs::{CGROUP2_SUPER_MAGIC, TMPFS_MAGIC, statfs};
 use nix::unistd::Pid;
 use oci_spec::runtime::LinuxResources;
-#[cfg(any(feature = "cgroupsv2_devices", feature = "v1"))]
+#[cfg(feature = "cgroupsv2_devices")]
 use oci_spec::runtime::{
     LinuxDevice, LinuxDeviceBuilder, LinuxDeviceCgroup, LinuxDeviceCgroupBuilder, LinuxDeviceType,
 };
 
 use super::stats::Stats;
-use super::{systemd, v1, v2};
+use super::{systemd, v2};
 
 pub const CGROUP_PROCS: &str = "cgroup.procs";
 pub const DEFAULT_CGROUP_ROOT: &str = "/sys/fs/cgroup";
@@ -58,15 +58,12 @@ pub enum AnyManagerError {
     #[error(transparent)]
     Systemd(#[from] systemd::manager::SystemdManagerError),
     #[error(transparent)]
-    V1(#[from] v1::manager::V1ManagerError),
-    #[error(transparent)]
     V2(#[from] v2::manager::V2ManagerError),
 }
 
 // systemd is boxed due to size lint https://rust-lang.github.io/rust-clippy/master/index.html#/large_enum_variant
 pub enum AnyCgroupManager {
     Systemd(Box<systemd::manager::Manager>),
-    V1(v1::manager::Manager),
     V2(v2::manager::Manager),
 }
 
@@ -76,7 +73,6 @@ impl CgroupManager for AnyCgroupManager {
     fn add_task(&self, pid: Pid) -> Result<(), Self::Error> {
         match self {
             AnyCgroupManager::Systemd(m) => Ok(m.add_task(pid)?),
-            AnyCgroupManager::V1(m) => Ok(m.add_task(pid)?),
             AnyCgroupManager::V2(m) => Ok(m.add_task(pid)?),
         }
     }
@@ -84,7 +80,6 @@ impl CgroupManager for AnyCgroupManager {
     fn apply(&self, controller_opt: &ControllerOpt) -> Result<(), Self::Error> {
         match self {
             AnyCgroupManager::Systemd(m) => Ok(m.apply(controller_opt)?),
-            AnyCgroupManager::V1(m) => Ok(m.apply(controller_opt)?),
             AnyCgroupManager::V2(m) => Ok(m.apply(controller_opt)?),
         }
     }
@@ -92,7 +87,6 @@ impl CgroupManager for AnyCgroupManager {
     fn remove(&self) -> Result<(), Self::Error> {
         match self {
             AnyCgroupManager::Systemd(m) => Ok(m.remove()?),
-            AnyCgroupManager::V1(m) => Ok(m.remove()?),
             AnyCgroupManager::V2(m) => Ok(m.remove()?),
         }
     }
@@ -100,7 +94,6 @@ impl CgroupManager for AnyCgroupManager {
     fn freeze(&self, state: FreezerState) -> Result<(), Self::Error> {
         match self {
             AnyCgroupManager::Systemd(m) => Ok(m.freeze(state)?),
-            AnyCgroupManager::V1(m) => Ok(m.freeze(state)?),
             AnyCgroupManager::V2(m) => Ok(m.freeze(state)?),
         }
     }
@@ -108,7 +101,6 @@ impl CgroupManager for AnyCgroupManager {
     fn stats(&self) -> Result<Stats, Self::Error> {
         match self {
             AnyCgroupManager::Systemd(m) => Ok(m.stats()?),
-            AnyCgroupManager::V1(m) => Ok(m.stats()?),
             AnyCgroupManager::V2(m) => Ok(m.stats()?),
         }
     }
@@ -116,16 +108,12 @@ impl CgroupManager for AnyCgroupManager {
     fn get_all_pids(&self) -> Result<Vec<Pid>, Self::Error> {
         match self {
             AnyCgroupManager::Systemd(m) => Ok(m.get_all_pids()?),
-            AnyCgroupManager::V1(m) => Ok(m.get_all_pids()?),
             AnyCgroupManager::V2(m) => Ok(m.get_all_pids()?),
         }
     }
 }
 
 impl AnyCgroupManager {
-    /// Marks the cgroup manager as operating in a rootless environment.
-    ///
-    /// The v1 manager ignores it.
     #[cfg_attr(not(any(feature = "v2", feature = "systemd")), allow(unused_variables))]
     pub fn with_rootless(self, rootless: bool) -> Self {
         match self {
@@ -135,6 +123,7 @@ impl AnyCgroupManager {
             AnyCgroupManager::Systemd(m) => {
                 AnyCgroupManager::Systemd(Box::new(m.with_rootless(rootless)))
             }
+            #[allow(unreachable_patterns)]
             other => other,
         }
     }
@@ -369,8 +358,8 @@ pub enum CreateCgroupSetupError {
     NonDefault,
     #[error("failed to detect cgroup setup")]
     FailedToDetect,
-    #[error("v1 error: {0}")]
-    V1(#[from] v1::manager::V1ManagerError),
+    #[error("cgroup v1 is not supported (the cgroup setup is {0}), cgroup v2 is required")]
+    CgroupV1NotSupported(CgroupSetup),
     #[error("v2 error: {0}")]
     V2(#[from] v2::manager::V2ManagerError),
     #[error("systemd error: {0}")]
@@ -403,8 +392,8 @@ pub fn create_cgroup_manager_with_root(
     let cgroup_path = config.cgroup_path.as_path();
 
     match cgroup_setup {
-        CgroupSetup::Legacy | CgroupSetup::Hybrid => {
-            Ok(create_v1_cgroup_manager(cgroup_path)?.any())
+        setup @ (CgroupSetup::Legacy | CgroupSetup::Hybrid) => {
+            Err(CreateCgroupSetupError::CgroupV1NotSupported(setup))
         }
         CgroupSetup::Unified => {
             // ref https://github.com/opencontainers/runtime-spec/blob/main/config-linux.md#cgroups-path
@@ -423,21 +412,6 @@ pub fn create_cgroup_manager(
     config: CgroupConfig,
 ) -> Result<AnyCgroupManager, CreateCgroupSetupError> {
     create_cgroup_manager_with_root(Some(Path::new(DEFAULT_CGROUP_ROOT)), config)
-}
-
-#[cfg(feature = "v1")]
-fn create_v1_cgroup_manager(
-    cgroup_path: &Path,
-) -> Result<v1::manager::Manager, v1::manager::V1ManagerError> {
-    tracing::info!("cgroup manager V1 will be used");
-    v1::manager::Manager::new(cgroup_path)
-}
-
-#[cfg(not(feature = "v1"))]
-fn create_v1_cgroup_manager(
-    _cgroup_path: &Path,
-) -> Result<v1::manager::Manager, v1::manager::V1ManagerError> {
-    Err(v1::manager::V1ManagerError::NotEnabled)
 }
 
 #[cfg(feature = "v2")]
@@ -575,7 +549,7 @@ pub(crate) fn clean_cgroup_path(path: &Path) -> PathBuf {
     cleaned
 }
 
-#[cfg(any(feature = "cgroupsv2_devices", feature = "v1"))]
+#[cfg(feature = "cgroupsv2_devices")]
 pub(crate) fn default_allow_devices() -> Vec<LinuxDeviceCgroup> {
     vec![
         LinuxDeviceCgroupBuilder::default()
@@ -627,7 +601,7 @@ pub(crate) fn default_allow_devices() -> Vec<LinuxDeviceCgroup> {
     ]
 }
 
-#[cfg(any(feature = "cgroupsv2_devices", feature = "v1"))]
+#[cfg(feature = "cgroupsv2_devices")]
 pub(crate) fn default_devices() -> Vec<LinuxDevice> {
     vec![
         LinuxDeviceBuilder::default()

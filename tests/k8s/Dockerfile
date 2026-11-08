@@ -21,7 +21,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 WORKDIR /youki
 # Copy source code and build with required features
 COPY . .
-RUN cargo build --release -p youki --features "v1 v2 systemd"
+RUN cargo build --release -p youki --features "v2 systemd"
 
 FROM scratch AS shim
 COPY --from=youki-build /youki/target/release/youki /
