@@ -14,6 +14,7 @@ This module provides the structs for command line arguments for OCI container ru
 | checkpoint |            |                   |  ✅  |  ✅  |       |
 |   events   |     ✅     |                   |  ✅  |      |  ✅   |
 |    exec    |     ✅     |                   |  ✅  |  ✅  |  ✅   |
+|  features  |     ✅     |                   |  ✅  |  ✅  |  ✅   |
 |    list    |     ✅     |                   |  ✅  |  ✅  |  ✅   |
 |   pause    |     ✅     |                   |  ✅  |  ✅  |  ✅   |
 |     ps     |     ✅     |                   |  ✅  |  ✅  |  ✅   |
@@ -21,4 +22,4 @@ This module provides the structs for command line arguments for OCI container ru
 |   resume   |     ✅     |                   |  ✅  |  ✅  |  ✅   |
 |    run     |     ✅     |                   |  ✅  |  ✅  |  ✅   |
 |    spec    |     ✅     |                   |  ✅  |  ✅  |  ✅   |
-|   update   |            |                   |  ✅  |  ✅  |       |
+|   update   |     ✅     |                   |  ✅  |  ✅  |       |
