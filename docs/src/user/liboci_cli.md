@@ -22,6 +22,4 @@ This module provides the structs for command line arguments for OCI container ru
 |   resume   |     ✅     |                   |  ✅  |  ✅  |  ✅   |
 |    run     |     ✅     |                   |  ✅  |  ✅  |  ✅   |
 |    spec    |     ✅     |                   |  ✅  |  ✅  |  ✅   |
-|   update   |     ✅     |                   |  ✅  |  ✅  |  ✅   |
-
-youki's `update` applies `--resources` (which overrides the other flags), or else `--blkio-weight` and `--pids-limit`; it accepts the other resource flags but does not apply them.
+|   update   |     ✅     |                   |  ✅  |  ✅  |       |
