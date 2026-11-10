@@ -84,7 +84,8 @@ pub fn features(_: Features) -> Result<()> {
                 .build()
                 .unwrap(),
         )
-        .selinux(SelinuxBuilder::default().enabled(true).build().unwrap())
+        // SELinux is not supported in youki.
+        .selinux(SelinuxBuilder::default().enabled(false).build().unwrap())
         .intel_rdt(IntelRdtBuilder::default().enabled(true).build().unwrap())
         .build()
         .unwrap();
