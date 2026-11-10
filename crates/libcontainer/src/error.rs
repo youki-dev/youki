@@ -100,6 +100,8 @@ pub enum ErrInvalidSpec {
     DuplicateNamespace(oci_spec::runtime::LinuxNamespaceType),
     #[error("apparmor is specified but not enabled on this system")]
     AppArmorNotEnabled,
+    #[error(transparent)]
+    Selinux(#[from] crate::selinux::SelinuxError),
     #[error("invalid io priority or class.")]
     IoPriority,
     #[error("invalid scheduler config for process: {0}")]

@@ -11,6 +11,8 @@ use pathrs::procfs::{ProcfsBase, ProcfsHandle};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SelinuxError {
+    #[error("selinux label is specified, but selinux is disabled or not supported")]
+    NotEnabled,
     #[error("failed to read /proc/filesystems")]
     Filesystems(#[source] std::io::Error),
     #[error("failed to set the SELinux exec label {label:?}")]

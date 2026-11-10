@@ -456,6 +456,7 @@ impl TenantContainerBuilder {
                 .as_ref()
                 .and_then(|p| p.selinux_label().as_deref()),
         );
+        Validator::validate_selinux_label(label.as_deref())?;
         process.set_selinux_label(label);
 
         let container_pid = container.pid().ok_or(LibcontainerError::Other(
