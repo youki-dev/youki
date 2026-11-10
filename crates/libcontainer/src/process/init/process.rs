@@ -206,14 +206,14 @@ pub fn container_init_process(
         .as_deref()
         .filter(|label| !label.is_empty())
     {
-        if selinux::is_enabled().map_err(InitProcessError::Selinux)? {
-            selinux::set_exec_label(label).map_err(|err| {
-                tracing::error!(?err, "failed to set the SELinux process label");
-                InitProcessError::Selinux(err)
-            })?;
-        } else {
-            tracing::debug!("ignoring the process label because SELinux is disabled");
+        // Checked again here: the validator ran before the container's procfs view existed.
+        if !selinux::is_enabled().map_err(InitProcessError::Selinux)? {
+            return Err(InitProcessError::Selinux(selinux::SelinuxError::NotEnabled));
         }
+        selinux::set_exec_label(label).map_err(|err| {
+            tracing::error!(?err, "failed to set the SELinux process label");
+            InitProcessError::Selinux(err)
+        })?;
     }
 
     if let Some(umask) = ctx.process.user().umask() {
