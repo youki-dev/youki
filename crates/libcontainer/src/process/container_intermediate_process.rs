@@ -53,17 +53,19 @@ pub fn container_intermediate_process(
     let spec = &args.spec;
     let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
     let namespaces = Namespaces::try_from(linux.namespaces().as_ref())?;
-    // like runc, the v2 manager only tolerates cgroup permission errors when the
-    // spec neither names a cgroup nor asks for limits; otherwise the container
-    // would run outside the cgroup it asked for. The systemd manager only uses
-    // rootless to treat device rules as best effort, so it keeps it.
-    let rootless = rootless_required(command.as_ref()).unwrap_or(false)
-        && (args.cgroup_config.systemd_cgroup
-            || (linux.cgroups_path().is_none()
-                && !has_resource_limits(linux.resources().as_ref())));
+    // the systemd manager uses the real rootless state to treat device rules as
+    // best effort; whether the v2 manager tolerates cgroup permission errors is
+    // a separate decision
+    let rootless = rootless_required(command.as_ref()).unwrap_or(false);
+    let permission_fallback = cgroup_permission_fallback(
+        rootless,
+        linux.cgroups_path().is_some(),
+        linux.resources().as_ref(),
+    );
     let cgroup_manager = libcgroups::common::create_cgroup_manager(args.cgroup_config.to_owned())
         .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?
-        .with_rootless(rootless);
+        .with_rootless(rootless)
+        .with_permission_fallback(permission_fallback);
 
     let current_pid = Pid::this();
     // setting CPU affinity for tenant container before cgroup move
@@ -327,6 +329,17 @@ fn setup_time_offsets(sender: &mut MainSender, receiver: &mut IntermediateReceiv
     Ok(())
 }
 
+// like runc, a rootless container may be left in its parent cgroup on a
+// permission error only when the spec neither names a cgroup nor asks for
+// limits; otherwise it would run outside the cgroup it asked for
+fn cgroup_permission_fallback(
+    rootless: bool,
+    names_cgroup: bool,
+    resources: Option<&LinuxResources>,
+) -> bool {
+    rootless && !names_cgroup && !has_resource_limits(resources)
+}
+
 // only settings a v2 controller would write count as limits. Empty objects and
 // lists, v1-only fields such as network, and device rules (the v2 devices
 // controller is a no-op without root) do not.
@@ -451,6 +464,30 @@ mod tests {
             .pids(LinuxPidsBuilder::default().limit(5).build()?)
             .build()?;
         assert!(has_resource_limits(Some(&pids)));
+        Ok(())
+    }
+
+    #[test]
+    fn permission_fallback_needs_rootless_and_nothing_asked() -> Result<()> {
+        use oci_spec::runtime::{LinuxMemoryBuilder, LinuxResourcesBuilder};
+
+        let limits = LinuxResourcesBuilder::default()
+            .memory(LinuxMemoryBuilder::default().limit(1 << 20).build()?)
+            .build()?;
+
+        // rootless, no cgroupsPath, no limits: tolerated
+        assert!(cgroup_permission_fallback(true, false, None));
+        assert!(cgroup_permission_fallback(
+            true,
+            false,
+            Some(&LinuxResources::default())
+        ));
+        // a named cgroup or a limit is never tolerated
+        assert!(!cgroup_permission_fallback(true, true, None));
+        assert!(!cgroup_permission_fallback(true, false, Some(&limits)));
+        assert!(!cgroup_permission_fallback(true, true, Some(&limits)));
+        // not rootless: never tolerated
+        assert!(!cgroup_permission_fallback(false, false, None));
         Ok(())
     }
 
