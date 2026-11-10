@@ -85,6 +85,11 @@ enum SubCommand {
     Run(Run),
     /// list available integration tests
     List,
+    #[command(hide = true)]
+    RootlessNoCgroupWorker {
+        #[command(subcommand)]
+        command: tests::rootless_no_cgroup::Worker,
+    },
 }
 
 #[derive(Parser, Debug)]
@@ -120,6 +125,10 @@ fn parse_tests(tests: &[String]) -> Vec<(&str, Option<Vec<&str>>)> {
 fn main() -> Result<()> {
     let opts: Opts = Opts::parse();
 
+    if let SubCommand::RootlessNoCgroupWorker { command } = opts.command {
+        return tests::rootless_no_cgroup::worker(command);
+    }
+
     if let Err(e) = logger::init(opts.debug) {
         eprintln!("logger could not be initialized: {e:?}");
     }
@@ -129,6 +138,7 @@ fn main() -> Result<()> {
     let example = get_example_test();
     tm.add_test_group(Box::new(example));
     ////////// ANCHOR_END: register_example_test
+    tm.add_test_group(Box::new(tests::rootless_no_cgroup::get_test_group()));
 
     let cl = ContainerLifecycle::new();
     let cc = ContainerCreate::new();
@@ -268,6 +278,7 @@ fn main() -> Result<()> {
     match opts.command {
         SubCommand::Run(args) => run(args, &tm).context("run tests")?,
         SubCommand::List => list(&tm).context("list tests")?,
+        SubCommand::RootlessNoCgroupWorker { .. } => unreachable!("worker was dispatched earlier"),
     }
 
     Ok(())

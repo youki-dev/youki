@@ -23,8 +23,8 @@ use super::pids::Pids;
 use super::unified::{Unified, V2UnifiedError};
 use super::util::{self, CGROUP_SUBTREE_CONTROL, V2UtilError};
 use crate::common::{
-    self, AnyCgroupManager, CGROUP_PROCS, CgroupManager, ControllerOpt, FreezerState,
-    JoinSafelyError, PathBufExt, WrapIoResult, WrappedIoError,
+    self, AnyCgroupManager, CGROUP_PROCS, CgroupAttachment, CgroupManager, ControllerOpt,
+    FreezerState, JoinSafelyError, PathBufExt, WrapIoResult, WrappedIoError,
 };
 use crate::stats::{PidStatsError, Stats, StatsProvider};
 
@@ -116,7 +116,14 @@ impl Manager {
     }
 
     /// Creates a unified cgroup at `self.full_path` and attaches a process to it
-    fn create_unified_cgroup(&self, pid: Pid) -> Result<(), V2ManagerError> {
+    fn create_unified_cgroup(&self, pid: Pid) -> Result<CgroupAttachment, V2ManagerError> {
+        self.create_unified_cgroup_with(|| self.attach_pid(pid))
+    }
+
+    fn create_unified_cgroup_with<F>(&self, attach: F) -> Result<CgroupAttachment, V2ManagerError>
+    where
+        F: FnOnce() -> Result<CgroupAttachment, V2ManagerError>,
+    {
         let controllers: Vec<String> = util::get_available_controllers(&self.root_path)?
             .iter()
             .map(|c| format!("+{c}"))
@@ -124,60 +131,72 @@ impl Manager {
 
         Self::enable_controllers(&self.root_path, &controllers);
 
-        let mut current_path = self.root_path.clone();
-        let mut components = self
-            .cgroup_path
-            .components()
-            .filter(|c| c.ne(&RootDir))
-            .peekable();
-        while let Some(component) = components.next() {
-            current_path = current_path.join(component);
-            // an existing directory is success, including one another container has just
-            // created; checking exists() before create_dir would race with that container
-            match fs::create_dir(&current_path).wrap_create_dir(&current_path) {
-                Ok(()) => {
-                    fs::metadata(&current_path)
-                        .wrap_other(&current_path)?
-                        .permissions()
-                        .set_mode(0o755);
+        let mut created = Vec::new();
+        let result = (|| {
+            let mut current_path = self.root_path.clone();
+            let mut components = self
+                .cgroup_path
+                .components()
+                .filter(|c| c.ne(&RootDir))
+                .peekable();
+            while let Some(component) = components.next() {
+                current_path = current_path.join(component);
+                // An existing directory belongs to someone else. Only a
+                // successful mkdir gives this attempt a directory to undo.
+                match fs::create_dir(&current_path).wrap_create_dir(&current_path) {
+                    Ok(()) => {
+                        created.push(current_path.clone());
+                        fs::metadata(&current_path)
+                            .wrap_other(&current_path)?
+                            .permissions()
+                            .set_mode(0o755);
+                    }
+                    Err(err) if err.inner().kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(err) if self.rootless && Self::is_permission_error(&err) => {
+                        tracing::debug!(
+                            "rootless cgroup: cannot create {current_path:?}: {err}; \
+                             leaving process in its parent cgroup"
+                        );
+                        return Ok(CgroupAttachment::Skipped);
+                    }
+                    Err(err) => return Err(err.into()),
                 }
 
-                Err(err) if err.inner().kind() == std::io::ErrorKind::AlreadyExists => {}
-
-                // in container-in-container environments these paths are often read-only
-                // we do not error here—rather we continue in a best effort
-                Err(err) if self.rootless && Self::is_permission_error(&err) => {
-                    tracing::debug!(
-                        "rootless cgroup: cannot create {current_path:?}: {err}; \
-                         leaving process in its parent cgroup"
-                    );
-                    return Ok(());
+                // The last component cannot enable subtree controllers because
+                // it will contain the attached process.
+                if components.peek().is_some() {
+                    Self::enable_controllers(&current_path, &controllers);
                 }
-                Err(err) => return Err(err.into()),
             }
+            attach()
+        })();
 
-            // last component cannot have subtree_control enabled due to internal process constraint
-            // if this were set, writing to the cgroups.procs file will fail with Erno 16 (device or resource busy)
-            if components.peek().is_some() {
-                Self::enable_controllers(&current_path, &controllers);
+        if !matches!(&result, Ok(CgroupAttachment::Attached)) {
+            for path in created.iter().rev() {
+                // rmdir does not kill tasks or recursively remove a cgroup
+                // populated by another actor while attachment was attempted.
+                if let Err(err) = fs::remove_dir(path)
+                    && err.kind() != std::io::ErrorKind::NotFound
+                {
+                    tracing::warn!(?path, ?err, "failed to roll back created cgroup directory");
+                }
             }
         }
-
-        self.attach_pid(pid)
+        result
     }
 
-    fn attach_pid(&self, pid: Pid) -> Result<(), V2ManagerError> {
+    fn attach_pid(&self, pid: Pid) -> Result<CgroupAttachment, V2ManagerError> {
         // when we encounter an expected write error in delegated cgroups
         // we log and continue rather than error out hard
         match common::write_cgroup_file(self.full_path.join(CGROUP_PROCS), pid) {
-            Ok(()) => Ok(()),
+            Ok(()) => Ok(CgroupAttachment::Attached),
             Err(err) if self.rootless && Self::is_permission_error(&err) => {
                 tracing::debug!(
                     "rootless cgroup: cannot move process into {:?}: {err}; \
                      leaving process in its parent cgroup",
                     self.full_path
                 );
-                Ok(())
+                Ok(CgroupAttachment::Skipped)
             }
             Err(err) => Err(err.into()),
         }
@@ -209,11 +228,14 @@ impl CgroupManager for Manager {
     type Error = V2ManagerError;
 
     fn add_task(&self, pid: Pid) -> Result<(), Self::Error> {
+        self.add_task_with_status(pid).map(|_| ())
+    }
+
+    fn add_task_with_status(&self, pid: Pid) -> Result<CgroupAttachment, Self::Error> {
         if self.full_path.exists() {
             return self.attach_pid(pid);
         }
-        self.create_unified_cgroup(pid)?;
-        Ok(())
+        self.create_unified_cgroup(pid)
     }
 
     fn apply(&self, controller_opt: &ControllerOpt) -> Result<(), Self::Error> {
@@ -321,6 +343,80 @@ mod tests {
     }
 
     #[test]
+    fn test_add_task_reports_attachment_and_preserves_errors() -> Result<(), V2ManagerError> {
+        let tmp = tempfile::tempdir().unwrap();
+        let cgroup = tmp.path().join("container");
+        fs::create_dir(&cgroup).unwrap();
+        set_fixture(&cgroup, CGROUP_PROCS, "").unwrap();
+        let manager = Manager::new(tmp.path().to_owned(), "/container".into())?
+            .with_rootless(true)
+            .any();
+        assert_eq!(
+            manager.add_task_with_status(Pid::from_raw(123)).unwrap(),
+            CgroupAttachment::Attached
+        );
+        assert_eq!(
+            fs::read_to_string(cgroup.join(CGROUP_PROCS)).unwrap(),
+            "123"
+        );
+
+        fs::remove_file(cgroup.join(CGROUP_PROCS)).unwrap();
+        fs::create_dir(cgroup.join(CGROUP_PROCS)).unwrap();
+        assert!(manager.add_task_with_status(Pid::from_raw(123)).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_cgroup_creation_rollback_owns_only_new_directories() -> Result<(), V2ManagerError> {
+        for preexisting in [false, true] {
+            for outcome in [CgroupAttachment::Attached, CgroupAttachment::Skipped] {
+                let tmp = tempfile::tempdir().unwrap();
+                set_fixture(tmp.path(), util::CGROUP_CONTROLLERS, "").unwrap();
+                let target = tmp.path().join("parent/child");
+                if preexisting {
+                    fs::create_dir_all(&target).unwrap();
+                }
+                let manager = Manager::new(tmp.path().to_owned(), "/parent/child".into())?;
+                let result = manager.create_unified_cgroup_with(|| {
+                    assert!(target.is_dir(), "attachment must follow directory creation");
+                    Ok(outcome)
+                })?;
+                assert_eq!(result, outcome);
+                let retained = preexisting || outcome == CgroupAttachment::Attached;
+                assert_eq!(target.is_dir(), retained, "{preexisting:?} {outcome:?}");
+                assert_eq!(tmp.path().join("parent").is_dir(), retained);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_cgroup_rollback_does_not_remove_populated_directory() -> Result<(), V2ManagerError> {
+        let tmp = tempfile::tempdir().unwrap();
+        set_fixture(tmp.path(), util::CGROUP_CONTROLLERS, "").unwrap();
+        let manager = Manager::new(tmp.path().to_owned(), "/parent/child".into())?;
+        let marker = tmp.path().join("parent/child/sentinel");
+        let result = manager.create_unified_cgroup_with(|| {
+            fs::write(&marker, "another actor").unwrap();
+            Ok(CgroupAttachment::Skipped)
+        })?;
+        assert_eq!(result, CgroupAttachment::Skipped);
+        assert_eq!(fs::read_to_string(&marker).unwrap(), "another actor");
+        Ok(())
+    }
+
+    #[test]
+    fn test_add_task_error_removes_created_parents() {
+        let tmp = tempfile::tempdir().unwrap();
+        set_fixture(tmp.path(), util::CGROUP_CONTROLLERS, "").unwrap();
+        let manager = Manager::new(tmp.path().to_owned(), "/new/child".into()).unwrap();
+        // A regular filesystem has no automatic cgroup.procs file, so the
+        // real attachment write fails after both directories were created.
+        assert!(manager.add_task_with_status(Pid::from_raw(1)).is_err());
+        assert!(!tmp.path().join("new").exists());
+    }
+
+    #[test]
     fn test_add_task_with_existing_parent() {
         // A temp dir is not a cgroupfs, so add_task fails at the missing cgroup.procs
         // after creating the directories. Finding the parent already there, as when
@@ -340,6 +436,7 @@ mod tests {
             ),
             "{result:?}"
         );
-        assert!(tmp.path().join("parent/child").is_dir());
+        assert!(tmp.path().join("parent").is_dir());
+        assert!(!tmp.path().join("parent/child").exists());
     }
 }

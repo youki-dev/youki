@@ -47,7 +47,12 @@ pub enum ProcessError {
 
 type Result<T> = std::result::Result<T, ProcessError>;
 
-pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, Option<OwnedFd>)> {
+/// `record_init` receives the init pid and its cgroup attachment as soon as
+/// they are known, so the caller owns init even if a later step fails.
+pub fn container_main_process(
+    container_args: &ContainerArgs,
+    record_init: impl FnOnce(Pid, libcgroups::common::CgroupAttachment),
+) -> Result<(Pid, Option<OwnedFd>)> {
     // We use a set of channels to communicate between parent and child process.
     // Each channel is uni-directional. Because we will pass these channel to
     // cloned process, we have to be deligent about closing any unused channel.
@@ -76,7 +81,15 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, Op
                 Err(err) => {
                     let error_report = format_error_chain(&err);
                     tracing::error!("failed to run intermediate process {error_report}");
-                    match intermediate_main_sender.send_error(error_report) {
+                    let sent = if matches!(
+                        &err,
+                        container_intermediate_process::IntermediateProcessError::CgroupEntry(_)
+                    ) {
+                        intermediate_main_sender.send_cgroup_entry_error(error_report)
+                    } else {
+                        intermediate_main_sender.send_error(error_report)
+                    };
+                    match sent {
                         Ok(_) => {}
                         Err(e) => {
                             tracing::error!(
@@ -161,7 +174,8 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, Op
 
     // The intermediate process will send the init pid once it forks the init
     // process.  The intermediate process should exit after this point.
-    let init_pid = intermediate_main_receiver.wait_for_intermediate_ready()?;
+    let (init_pid, cgroup_attachment) = intermediate_main_receiver.wait_for_intermediate_ready()?;
+    record_init(init_pid, cgroup_attachment);
 
     // if file to write the pid to is specified, write pid of the child
     if let Some(pid_file) = &container_args.pid_file {

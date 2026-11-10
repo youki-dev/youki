@@ -9,7 +9,7 @@ caps = { workspace = true }
 flate2 = { workspace = true }
 libcgroups = { path = "../../../crates/libcgroups" }
 libcontainer = { path = "../../../crates/libcontainer" }
-nix = { workspace = true }
+nix = { workspace = true, features = ["sched", "mount", "fs", "process", "signal", "user"] }
 oci-spec = { workspace = true }
 procfs = { workspace = true }
 rand = { workspace = true }

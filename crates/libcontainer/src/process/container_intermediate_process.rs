@@ -1,6 +1,6 @@
 use std::os::fd::FromRawFd;
 
-use libcgroups::common::CgroupManager;
+use libcgroups::common::{AnyCgroupManager, CgroupAttachment, CgroupManager};
 use nix::unistd::{Gid, Pid, Uid, close, getpid, write};
 use oci_spec::runtime::{LinuxNamespace, LinuxNamespaceType, LinuxResources};
 
@@ -26,6 +26,8 @@ pub enum IntermediateProcessError {
     InitProcess(#[source] fork::CloneError),
     #[error("cgroup error: {0}")]
     Cgroup(String),
+    #[error("cgroup error: {0}")]
+    CgroupEntry(String),
     #[error(transparent)]
     Procfs(#[from] procfs::ProcError),
     #[error("exec notify failed")]
@@ -53,10 +55,6 @@ pub fn container_intermediate_process(
     let spec = &args.spec;
     let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
     let namespaces = Namespaces::try_from(linux.namespaces().as_ref())?;
-    let rootless = rootless_required(command.as_ref()).unwrap_or(false);
-    let cgroup_manager = libcgroups::common::create_cgroup_manager(args.cgroup_config.to_owned())
-        .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?
-        .with_rootless(rootless);
 
     let current_pid = Pid::this();
     // setting CPU affinity for tenant container before cgroup move
@@ -83,11 +81,52 @@ pub fn container_intermediate_process(
     // In addition this needs to be done before we enter the cgroup namespace as
     // the cgroup of the process will form the root of the cgroup hierarchy in
     // the cgroup namespace.
-    apply_cgroups(
-        &cgroup_manager,
-        linux.resources().as_ref(),
-        matches!(args.container_type, ContainerType::InitContainer),
-    )?;
+    let saved_attachment = match args.container_type {
+        ContainerType::InitContainer => None,
+        ContainerType::TenantContainer {
+            cgroup_attachment, ..
+        } => cgroup_attachment,
+    };
+    let cgroup_attachment = if saved_attachment == Some(CgroupAttachment::Skipped) {
+        CgroupAttachment::Skipped
+    } else {
+        let cgroup_manager =
+            libcgroups::common::create_cgroup_manager(args.cgroup_config.to_owned())
+                .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?;
+        let rootless = rootless_required(command.as_ref()).unwrap_or(false);
+        let init = matches!(args.container_type, ContainerType::InitContainer);
+        let needs_cgroup =
+            rootless && init && !tolerate_rootless_cgroup_errors(&cgroup_manager, &namespaces)?;
+        let attached_tenant = !init
+            && matches!(cgroup_manager, AnyCgroupManager::V2(_))
+            && saved_attachment == Some(CgroupAttachment::Attached);
+        let limits_need_cgroup = rootless
+            && init
+            && matches!(cgroup_manager, AnyCgroupManager::V2(_))
+            && resources_require_cgroup(linux.resources().as_ref());
+        let is_v2 = matches!(cgroup_manager, AnyCgroupManager::V2(_));
+        let cgroup_manager = cgroup_manager
+            .with_rootless(rootless && !needs_cgroup && !attached_tenant && !limits_need_cgroup);
+        apply_cgroups(&cgroup_manager, linux.resources().as_ref(), init).map_err(|err| {
+            let (message, entry_failed) = match err {
+                IntermediateProcessError::CgroupEntry(message) => (message, is_v2),
+                IntermediateProcessError::Cgroup(message) => (message, false),
+                other => return other,
+            };
+            let message = if needs_cgroup {
+                format!("a container without a private PID namespace needs a cgroup to kill all its processes: {message}")
+            } else if limits_need_cgroup {
+                format!("requested resource limits require a cgroup: {message}")
+            } else {
+                message
+            };
+            if entry_failed {
+                IntermediateProcessError::CgroupEntry(message)
+            } else {
+                IntermediateProcessError::Cgroup(message)
+            }
+        })?
+    };
 
     // setting CPU affinity for tenant container after cgroup move
     if matches!(args.container_type, ContainerType::TenantContainer { .. }) {
@@ -184,7 +223,9 @@ pub fn container_intermediate_process(
                     if let Err(err) = init_main_sender.exec_failed(error_report.clone()) {
                         tracing::error!(?err, "failed sending error to main sender");
                     }
-                    if let ContainerType::TenantContainer { exec_notify_fd } = args.container_type {
+                    if let ContainerType::TenantContainer { exec_notify_fd, .. } =
+                        args.container_type
+                    {
                         let exec_notify_fd =
                             unsafe { std::os::fd::OwnedFd::from_raw_fd(exec_notify_fd) };
                         if let Err(err) = write(&exec_notify_fd, error_report.as_bytes()) {
@@ -215,7 +256,7 @@ pub fn container_intermediate_process(
     })?;
 
     // Close the exec_notify_fd in this process
-    if let ContainerType::TenantContainer { exec_notify_fd } = args.container_type {
+    if let ContainerType::TenantContainer { exec_notify_fd, .. } = args.container_type {
         close(exec_notify_fd).map_err(|err| {
             tracing::error!("failed to close exec notify fd: {}", err);
             IntermediateProcessError::ExecNotify(err)
@@ -223,7 +264,7 @@ pub fn container_intermediate_process(
     }
 
     intermediate_main_sender
-        .intermediate_ready(pid)
+        .intermediate_ready(pid, cgroup_attachment)
         .map_err(|err| {
             tracing::error!("failed to wait on intermediate process: {}", err);
             err
@@ -320,6 +361,57 @@ fn setup_time_offsets(sender: &mut MainSender, receiver: &mut IntermediateReceiv
     Ok(())
 }
 
+/// Whether the cgroup manager may tolerate the cgroup permission errors of a
+/// rootless container.
+///
+/// The v2 manager then leaves the processes of the container in its parent
+/// cgroup, so that killing the container can only signal its init. A container
+/// without a private PID namespace needs a cgroup to kill all of its processes.
+/// The systemd manager only uses rootless to treat device rules as best effort,
+/// and the v1 manager ignores it.
+fn tolerate_rootless_cgroup_errors(
+    cgroup_manager: &AnyCgroupManager,
+    namespaces: &Namespaces,
+) -> Result<bool> {
+    Ok(!matches!(cgroup_manager, AnyCgroupManager::V2(_))
+        || namespaces
+            .get(LinuxNamespaceType::Pid)?
+            .is_some_and(|pid_ns| pid_ns.path().is_none()))
+}
+
+// Do not turn explicitly requested cgroup settings into best-effort limits.
+fn resources_require_cgroup(resources: Option<&LinuxResources>) -> bool {
+    fn has_items<T>(items: &Option<Vec<T>>) -> bool {
+        items.as_ref().is_some_and(|items| !items.is_empty())
+    }
+
+    let Some(resources) = resources else {
+        return false;
+    };
+    resources.memory().as_ref().is_some_and(|r| r != &Default::default())
+        || resources.cpu().as_ref().is_some_and(|r| r != &Default::default())
+        // Even the default pids value is applied by the v2 pids controller.
+        || resources.pids().is_some()
+        || resources.block_io().as_ref().is_some_and(|io| {
+            io.weight().is_some()
+                || io.leaf_weight().is_some()
+                || has_items(io.weight_device())
+                || has_items(io.throttle_read_bps_device())
+                || has_items(io.throttle_write_bps_device())
+                || has_items(io.throttle_read_iops_device())
+                || has_items(io.throttle_write_iops_device())
+        })
+        || has_items(resources.devices())
+        || has_items(resources.hugepage_limits())
+        || resources.network().as_ref().is_some_and(|network| {
+            network.class_id().is_some() || has_items(network.priorities())
+        })
+        || resources.rdma().as_ref().is_some_and(|rdma| {
+            rdma.values().any(|limits| limits != &Default::default())
+        })
+        || resources.unified().as_ref().is_some_and(|unified| !unified.is_empty())
+}
+
 fn apply_cgroups<
     C: CgroupManager<Error = E> + ?Sized,
     E: std::error::Error + Send + Sync + 'static,
@@ -327,14 +419,17 @@ fn apply_cgroups<
     cmanager: &C,
     resources: Option<&LinuxResources>,
     init: bool,
-) -> Result<()> {
+) -> Result<CgroupAttachment> {
     let pid = getpid();
-    cmanager.add_task(pid).map_err(|err| {
+    let attachment = cmanager.add_task_with_status(pid).map_err(|err| {
         tracing::error!(?pid, ?err, ?init, "failed to add task to cgroup");
-        IntermediateProcessError::Cgroup(err.to_string())
+        IntermediateProcessError::CgroupEntry(err.to_string())
     })?;
 
-    if init && let Some(resources) = resources {
+    if attachment == CgroupAttachment::Attached
+        && init
+        && let Some(resources) = resources
+    {
         let controller_opt = libcgroups::common::ControllerOpt {
             resources,
             freezer_state: None,
@@ -348,7 +443,7 @@ fn apply_cgroups<
         })?;
     }
 
-    Ok(())
+    Ok(attachment)
 }
 
 #[cfg(test)]
@@ -360,6 +455,53 @@ mod tests {
     use procfs::process::Process;
 
     use super::*;
+
+    #[test]
+    fn empty_resources_allow_no_cgroup() -> Result<()> {
+        assert!(!resources_require_cgroup(None));
+        for value in [
+            serde_json::json!({}),
+            serde_json::json!({
+                "devices": [], "memory": {}, "cpu": {},
+                "blockIO": {
+                    "weightDevice": [], "throttleReadBpsDevice": [],
+                    "throttleWriteBpsDevice": [], "throttleReadIOPSDevice": [],
+                    "throttleWriteIOPSDevice": []
+                },
+                "hugepageLimits": [], "network": {"priorities": []},
+                "rdma": {"device": {}}, "unified": {}
+            }),
+        ] {
+            let resources: LinuxResources = serde_json::from_value(value)?;
+            assert!(!resources_require_cgroup(Some(&resources)));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn requested_resources_require_cgroup() -> Result<()> {
+        for value in [
+            serde_json::json!({"memory": {"limit": 67108864}}),
+            serde_json::json!({"memory": {"limit": 0}}),
+            serde_json::json!({"cpu": {"quota": 10000}}),
+            serde_json::json!({"cpu": {"cpus": "0"}}),
+            serde_json::json!({"pids": {"limit": 16}}),
+            serde_json::json!({"pids": {}}),
+            serde_json::json!({"blockIO": {"weight": 100}}),
+            serde_json::json!({"blockIO": {"throttleReadBpsDevice": [
+                {"major": 8, "minor": 0, "rate": 1024}
+            ]}}),
+            serde_json::json!({"devices": [{"allow": false}]}),
+            serde_json::json!({"hugepageLimits": [{"pageSize": "2MB", "limit": 0}]}),
+            serde_json::json!({"network": {"classID": 1}}),
+            serde_json::json!({"rdma": {"device": {"hcaHandles": 0}}}),
+            serde_json::json!({"unified": {"memory.max": ""}}),
+        ] {
+            let resources: LinuxResources = serde_json::from_value(value.clone())?;
+            assert!(resources_require_cgroup(Some(&resources)), "{value}");
+        }
+        Ok(())
+    }
 
     #[test]
     fn apply_cgroup_init() -> Result<()> {
@@ -377,6 +519,19 @@ mod tests {
             Pid::from_raw(Process::myself()?.pid())
         );
         assert!(cmanager.apply_called());
+        Ok(())
+    }
+
+    #[test]
+    fn apply_cgroup_skipped() -> Result<()> {
+        let mut cmanager = TestManager::default();
+        cmanager.attachment = CgroupAttachment::Skipped;
+        assert_eq!(
+            apply_cgroups(&cmanager, Some(&LinuxResources::default()), true)?,
+            CgroupAttachment::Skipped
+        );
+        assert_eq!(cmanager.get_add_task_args().len(), 1);
+        assert!(!cmanager.apply_called());
         Ok(())
     }
 
@@ -411,6 +566,35 @@ mod tests {
             Pid::from_raw(Process::myself()?.pid())
         );
         assert!(!cmanager.apply_called());
+        Ok(())
+    }
+
+    #[cfg(feature = "v2")]
+    fn pid_namespaces(path: Option<&str>) -> Result<Vec<LinuxNamespace>> {
+        let mut builder =
+            oci_spec::runtime::LinuxNamespaceBuilder::default().typ(LinuxNamespaceType::Pid);
+        if let Some(path) = path {
+            builder = builder.path(path);
+        }
+        Ok(vec![builder.build()?])
+    }
+
+    #[test]
+    #[cfg(feature = "v2")]
+    fn tolerate_rootless_cgroup_errors_v2() -> Result<()> {
+        let v2 = AnyCgroupManager::V2(libcgroups::v2::manager::Manager::new(
+            "/sys/fs/cgroup".into(),
+            "/youki".into(),
+        )?);
+
+        let host = Namespaces::try_from(Some(&Vec::<LinuxNamespace>::new()))?;
+        assert!(!tolerate_rootless_cgroup_errors(&v2, &host)?);
+
+        let new = Namespaces::try_from(Some(&pid_namespaces(None)?))?;
+        assert!(tolerate_rootless_cgroup_errors(&v2, &new)?);
+
+        let joined = Namespaces::try_from(Some(&pid_namespaces(Some("/proc/1/ns/pid"))?))?;
+        assert!(!tolerate_rootless_cgroup_errors(&v2, &joined)?);
         Ok(())
     }
 }

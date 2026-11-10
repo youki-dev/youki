@@ -80,7 +80,7 @@ impl ContainerBuilderImpl {
                 // Only the init container should be cleaned up in the case of
                 // an error.
                 let cleanup_err = if self.is_init_container() {
-                    self.cleanup_container().err()
+                    self.cleanup_container(&outer).err()
                 } else {
                     None
                 };
@@ -196,12 +196,23 @@ impl ContainerBuilderImpl {
         };
 
         let (init_pid, foreground_pty_fd) =
-            process::container_main_process::container_main_process(&container_args).map_err(
-                |err| {
-                    tracing::error!("failed to run container process {}", err);
-                    LibcontainerError::MainProcess(err)
+            process::container_main_process::container_main_process(
+                &container_args,
+                |init_pid, cgroup_attachment| {
+                    // Retain init ownership before any later startup step can fail.
+                    if let Some(container) = &mut self.container {
+                        container.state.cgroup_attachment = Some(cgroup_attachment);
+                        container
+                            .set_status(ContainerStatus::Created)
+                            .set_creator(nix::unistd::geteuid().as_raw())
+                            .set_pid(init_pid.as_raw());
+                    }
                 },
-            )?;
+            )
+            .map_err(|err| {
+                tracing::error!("failed to run container process {}", err);
+                LibcontainerError::MainProcess(err)
+            })?;
 
         let mut intel_rdt_dir = None;
         let mut intel_rdt_monitoring_dir = None;
@@ -215,11 +226,7 @@ impl ContainerBuilderImpl {
         }
 
         if let Some(container) = &mut self.container {
-            // update status and pid of the container process
             container
-                .set_status(ContainerStatus::Created)
-                .set_creator(nix::unistd::geteuid().as_raw())
-                .set_pid(init_pid.as_raw())
                 .set_intel_rdt_dir(intel_rdt_dir)
                 .set_intel_rdt_monitoring_dir(intel_rdt_monitoring_dir)
                 .save()?;
@@ -228,47 +235,308 @@ impl ContainerBuilderImpl {
         Ok((init_pid, foreground_pty_fd))
     }
 
-    fn cleanup_container(&self) -> Result<(), LibcontainerError> {
-        let cmanager =
-            libcgroups::common::create_cgroup_manager(libcgroups::common::CgroupConfig {
-                cgroup_path: self.cgroup_path.clone(),
-                systemd_cgroup: self.use_systemd || self.user_ns_config.is_some(),
-                container_name: self.container_id.to_string(),
-            })?;
+    fn cleanup_container(&self, error: &LibcontainerError) -> Result<(), LibcontainerError> {
+        cleanup_failed_container(error, self.container.as_ref(), || {
+            let cmanager =
+                libcgroups::common::create_cgroup_manager(libcgroups::common::CgroupConfig {
+                    cgroup_path: self.cgroup_path.clone(),
+                    systemd_cgroup: self.use_systemd || self.user_ns_config.is_some(),
+                    container_name: self.container_id.to_string(),
+                })?;
+            cmanager.remove().map_err(LibcontainerError::CgroupManager)
+        })
+    }
+}
 
-        let mut errors = Vec::new();
+fn cleanup_failed_container<F>(
+    error: &LibcontainerError,
+    container: Option<&Container>,
+    cleanup_cgroup: F,
+) -> Result<(), LibcontainerError>
+where
+    F: FnOnce() -> Result<(), LibcontainerError>,
+{
+    let mut errors = Vec::new();
 
-        if let Err(e) = cmanager.remove() {
-            tracing::error!(error = ?e, "failed to remove cgroup manager");
+    // Only v2 reports this stage, after undoing its own new directories.
+    // No attachment took place: generic removal could kill someone else's
+    // tasks. Other failures can follow attachment before state is saved.
+    if let Some(container) = container.filter(|container| container.has_no_cgroup()) {
+        if let Err(e) = terminate_failed_init(container) {
+            tracing::error!(pid = ?container.pid(), error = ?e, "failed to terminate ungrouped init");
+            errors.push(e.to_string());
+        }
+    } else if !matches!(
+        error,
+        LibcontainerError::MainProcess(process::container_main_process::ProcessError::Channel(
+            process::channel::ChannelError::CgroupEntry(_)
+        ))
+    ) && let Err(e) = cleanup_cgroup()
+    {
+        tracing::error!(error = ?e, "failed to remove cgroup manager");
+        errors.push(e.to_string());
+    }
+
+    if let Some(container) = container {
+        if let Err(e) = cleanup_intel_rdt(
+            container.intel_rdt_dir().map(|p| p.as_path()),
+            container.intel_rdt_monitoring_dir().map(|p| p.as_path()),
+            container.clean_up_intel_rdt_subdirectory(),
+            container.id(),
+        ) {
+            tracing::error!(id = ?container.id(), error = ?e, "failed to cleanup intel rdt");
             errors.push(e.to_string());
         }
 
-        if let Some(container) = &self.container {
-            if let Err(e) = cleanup_intel_rdt(
-                container.intel_rdt_dir().map(|p| p.as_path()),
-                container.intel_rdt_monitoring_dir().map(|p| p.as_path()),
-                container.clean_up_intel_rdt_subdirectory(),
-                container.id(),
-            ) {
-                tracing::error!(id = ?container.id(), error = ?e, "failed to cleanup intel rdt");
+        if container.root.exists() {
+            if let Err(e) = fs::remove_dir_all(&container.root) {
+                tracing::error!(container_root = ?container.root, error = ?e, "failed to delete container root");
                 errors.push(e.to_string());
             }
+        }
+    }
 
-            if container.root.exists() {
-                if let Err(e) = fs::remove_dir_all(&container.root) {
-                    tracing::error!(container_root = ?container.root, error = ?e, "failed to delete container root");
-                    errors.push(e.to_string());
-                }
+    if !errors.is_empty() {
+        return Err(LibcontainerError::Other(format!(
+            "failed to cleanup container: {}",
+            errors.join(";")
+        )));
+    }
+
+    Ok(())
+}
+
+fn terminate_failed_init(container: &Container) -> Result<(), LibcontainerError> {
+    use nix::errno::Errno;
+    use nix::sys::wait::{WaitPidFlag, waitpid};
+
+    let mut init = container.clone();
+    let pid = init
+        .pid()
+        .ok_or_else(|| LibcontainerError::Other("startup init pid is missing".into()))?;
+    init.refresh_status()?;
+    let flags = if init.can_kill() {
+        init.do_kill(nix::sys::signal::Signal::SIGKILL, true)?;
+        None
+    } else {
+        let stat =
+            match procfs::process::Process::new(pid.as_raw()).and_then(|process| process.stat()) {
+                Ok(stat) => stat,
+                Err(procfs::ProcError::NotFound(_)) => return Ok(()),
+                Err(error) => return Err(error.into()),
+            };
+        // Stopped can mean a reused PID, not an exited init that we own.
+        if init.state.init_start_time != Some(stat.starttime) {
+            return Ok(());
+        }
+        Some(WaitPidFlag::WNOHANG)
+    };
+    loop {
+        match waitpid(pid, flags) {
+            // An as-sibling init belongs to the caller, which must reap it.
+            Ok(_) | Err(Errno::ECHILD) => return Ok(()),
+            Err(Errno::EINTR) => continue,
+            Err(error) => return Err(LibcontainerError::OtherSyscall(error)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::process::Command;
+
+    use super::*;
+    use crate::container::State;
+    use crate::process::container_main_process::ProcessError;
+
+    fn assert_cleanup_after_error(entered: bool) {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("existing-cgroup");
+        let state_dir = tmp.path().join("state");
+        let rdt_dir = tmp.path().join("rdt");
+        for dir in [&target, &state_dir, &rdt_dir] {
+            fs::create_dir(dir).unwrap();
+        }
+        let kill_file = target.join("cgroup.kill");
+        fs::write(&kill_file, "0").unwrap();
+        let container = Container {
+            root: state_dir.clone(),
+            state: State {
+                intel_rdt_dir: Some(rdt_dir.clone()),
+                // Readiness has not saved attachment even if entry succeeded.
+                ..State::default()
+            },
+        };
+        let mut task = scopeguard::guard(
+            Command::new("sleep").arg("60").spawn().unwrap(),
+            |mut task| {
+                let _ = task.kill();
+                let _ = task.wait();
+            },
+        );
+
+        let (mut sender, mut receiver) = process::channel::main_channel().unwrap();
+        let channel_error = if entered {
+            sender.send_error("resource apply failed".into()).unwrap();
+            receiver.wait_for_intermediate_ready().unwrap_err()
+        } else {
+            sender
+                .send_cgroup_entry_error("attach denied".into())
+                .unwrap();
+            receiver.wait_for_mapping_request().unwrap_err()
+        };
+        sender.close().unwrap();
+        receiver.close().unwrap();
+        let error = LibcontainerError::MainProcess(ProcessError::Channel(channel_error));
+        let cleanup_called = Cell::new(false);
+        // This callback models the destructive manager.remove boundary, using
+        // only a test-owned process and regular files, not a real cgroup.
+        cleanup_failed_container(&error, Some(&container), || {
+            cleanup_called.set(true);
+            fs::write(&kill_file, "1").unwrap();
+            task.kill().unwrap();
+            fs::remove_dir_all(&target).unwrap();
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(cleanup_called.get(), entered);
+        assert!(!state_dir.exists());
+        assert!(!rdt_dir.exists());
+        if entered {
+            assert!(!target.exists());
+            task.wait().unwrap();
+        } else {
+            assert!(target.is_dir());
+            assert_eq!(fs::read_to_string(&kill_file).unwrap(), "0");
+            assert!(task.try_wait().unwrap().is_none());
+        }
+    }
+
+    fn assert_exited_init_cleanup(identity_matches: bool) {
+        use libcgroups::common::CgroupAttachment;
+        use nix::sys::wait::{Id, WaitPidFlag, WaitStatus, waitid, waitpid};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("state");
+        fs::create_dir(&root).unwrap();
+        let task = Command::new("true").spawn().unwrap();
+        let pid = Pid::from_raw(task.id() as i32);
+        let mut task = scopeguard::guard(task, |mut task| {
+            if matches!(
+                waitpid(pid, Some(WaitPidFlag::WNOHANG)),
+                Ok(WaitStatus::StillAlive)
+            ) {
+                let _ = task.kill();
+                let _ = task.wait();
             }
+        });
+        assert_eq!(
+            waitid(Id::Pid(pid), WaitPidFlag::WEXITED | WaitPidFlag::WNOWAIT).unwrap(),
+            WaitStatus::Exited(pid, 0)
+        );
+        let mut container = Container {
+            root,
+            state: State {
+                cgroup_attachment: Some(CgroupAttachment::Skipped),
+                ..State::default()
+            },
+        };
+        container
+            .set_status(ContainerStatus::Created)
+            .set_pid(pid.as_raw());
+        if !identity_matches {
+            container.state.init_start_time = Some(container.state.init_start_time.unwrap() + 1);
         }
-
-        if !errors.is_empty() {
-            return Err(LibcontainerError::Other(format!(
-                "failed to cleanup container: {}",
-                errors.join(";")
-            )));
+        cleanup_failed_container(
+            &LibcontainerError::Other("startup failed".into()),
+            Some(&container),
+            || {
+                panic!("Skipped cleanup must not remove a cgroup");
+            },
+        )
+        .unwrap();
+        if identity_matches {
+            assert_eq!(
+                waitpid(pid, Some(WaitPidFlag::WNOHANG)),
+                Err(nix::errno::Errno::ECHILD)
+            );
+        } else {
+            assert_eq!(
+                task.wait()
+                    .expect("must not reap another process identity")
+                    .code(),
+                Some(0)
+            );
         }
+    }
 
-        Ok(())
+    #[test]
+    fn test_skipped_cleanup_does_not_reap_different_identity() {
+        assert_exited_init_cleanup(false);
+    }
+
+    #[test]
+    fn test_skipped_cleanup_reaps_matching_exited_init() {
+        assert_exited_init_cleanup(true);
+    }
+
+    #[test]
+    fn test_skipped_startup_failure_terminates_init_without_cgroup_removal() {
+        use libcgroups::common::CgroupAttachment;
+        use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+        use nix::unistd::Pid;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("state");
+        fs::create_dir(&root).unwrap();
+        let task = Command::new("sleep").arg("60").spawn().unwrap();
+        let pid = Pid::from_raw(task.id() as i32);
+        let _task = scopeguard::guard(task, |mut task| {
+            // The production cleanup may already have reaped this PID.
+            if matches!(
+                waitpid(pid, Some(WaitPidFlag::WNOHANG)),
+                Ok(WaitStatus::StillAlive)
+            ) {
+                let _ = task.kill();
+                let _ = task.wait();
+            }
+        });
+        let mut container = Container {
+            root: root.clone(),
+            state: State {
+                cgroup_attachment: Some(CgroupAttachment::Skipped),
+                ..State::default()
+            },
+        };
+        container
+            .set_status(ContainerStatus::Created)
+            .set_pid(pid.as_raw());
+        let cgroup_removed = Cell::new(false);
+        cleanup_failed_container(
+            &LibcontainerError::Other("startup failed".into()),
+            Some(&container),
+            || {
+                cgroup_removed.set(true);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            waitpid(pid, Some(WaitPidFlag::WNOHANG)),
+            Err(nix::errno::Errno::ECHILD)
+        );
+        assert!(!cgroup_removed.get());
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn test_before_entry_failure_preserves_existing_cgroup() {
+        assert_cleanup_after_error(false);
+    }
+
+    #[test]
+    fn test_after_entry_failure_keeps_normal_cleanup() {
+        assert_cleanup_after_error(true);
     }
 }

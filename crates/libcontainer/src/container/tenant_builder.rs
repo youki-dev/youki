@@ -276,6 +276,7 @@ impl TenantContainerBuilder {
         let mut builder_impl = ContainerBuilderImpl {
             container_type: ContainerType::TenantContainer {
                 exec_notify_fd: write_end.as_raw_fd(),
+                cgroup_attachment: container.state.cgroup_attachment,
             },
             syscall: self.base.syscall,
             container_id: self.base.container_id,

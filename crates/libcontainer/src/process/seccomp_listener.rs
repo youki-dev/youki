@@ -206,7 +206,10 @@ mod tests {
 
         let state = build_container_process_state(
             Some(&container),
-            ContainerType::TenantContainer { exec_notify_fd: -1 },
+            ContainerType::TenantContainer {
+                exec_notify_fd: -1,
+                cgroup_attachment: None,
+            },
             Pid::from_raw(7),
             &seccomp,
         )

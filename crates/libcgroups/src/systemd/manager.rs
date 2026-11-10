@@ -466,11 +466,7 @@ impl Manager {
                     return Ok(());
                 }
             } else if let Err(e) = result {
-                if let V2ManagerError::WrappedIo(ref wrapped_io_error) = e {
-                    if !matches!(wrapped_io_error, WrappedIoError::Read { .. }) {
-                        return Err(e.into());
-                    }
-                } else {
+                if !Self::retry_pid_scan(&e) {
                     return Err(e.into());
                 }
             }
@@ -480,6 +476,14 @@ impl Manager {
         Err(SystemdManagerError::WaitForProcessInCgroupTimeout(
             pid.to_string(),
         ))
+    }
+
+    fn retry_pid_scan(error: &V2ManagerError) -> bool {
+        matches!(
+            error,
+            V2ManagerError::WrappedIo(WrappedIoError::Read { .. })
+        ) || matches!(error, V2ManagerError::WrappedIo(WrappedIoError::Other { err, .. })
+                if err.kind() == std::io::ErrorKind::NotFound)
     }
 
     fn get_available_controllers<P: AsRef<Path>>(
@@ -840,6 +844,43 @@ mod tests {
         // the remove call above should remove the dir, we just do this again
         // for contingency, and thus ignore the result
         let _ = fs::remove_dir(&manager.full_path);
+    }
+
+    #[test]
+    fn test_pid_scan_retry_without_dbus() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("missing");
+        let metadata_error = fs::metadata(&path).wrap_other(&path).unwrap_err();
+        let cases = [
+            (metadata_error, true),
+            (
+                WrappedIoError::Read {
+                    err: std::io::ErrorKind::NotFound.into(),
+                    path: path.clone(),
+                },
+                true,
+            ),
+            (
+                WrappedIoError::Other {
+                    err: std::io::ErrorKind::PermissionDenied.into(),
+                    path: path.clone(),
+                },
+                false,
+            ),
+            (
+                WrappedIoError::Open {
+                    err: std::io::ErrorKind::NotFound.into(),
+                    path,
+                },
+                false,
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(
+                Manager::retry_pid_scan(&V2ManagerError::WrappedIo(error)),
+                expected
+            );
+        }
     }
 
     #[test]

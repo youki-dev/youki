@@ -11,6 +11,7 @@ use oci_spec::runtime::LinuxResources;
 use oci_spec::runtime::{
     LinuxDevice, LinuxDeviceBuilder, LinuxDeviceCgroup, LinuxDeviceCgroupBuilder, LinuxDeviceType,
 };
+use serde::{Deserialize, Serialize};
 
 use super::stats::Stats;
 use super::{systemd, v1, v2};
@@ -31,11 +32,25 @@ fn is_true_root() -> Result<bool, WrappedIoError> {
     })?;
     Ok(content.contains("4294967295"))
 }
+/// Whether a task entered its cgroup or used the rootless no-cgroup fallback.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum CgroupAttachment {
+    Attached,
+    Skipped,
+}
+
 pub trait CgroupManager {
     type Error;
 
     /// Adds a task specified by its pid to the cgroup
     fn add_task(&self, pid: Pid) -> Result<(), Self::Error>;
+
+    /// Adds a task and reports whether it actually entered the cgroup.
+    fn add_task_with_status(&self, pid: Pid) -> Result<CgroupAttachment, Self::Error> {
+        self.add_task(pid)?;
+        Ok(CgroupAttachment::Attached)
+    }
 
     /// Applies resource restrictions to the cgroup
     fn apply(&self, controller_opt: &ControllerOpt) -> Result<(), Self::Error>;
@@ -78,6 +93,14 @@ impl CgroupManager for AnyCgroupManager {
             AnyCgroupManager::Systemd(m) => Ok(m.add_task(pid)?),
             AnyCgroupManager::V1(m) => Ok(m.add_task(pid)?),
             AnyCgroupManager::V2(m) => Ok(m.add_task(pid)?),
+        }
+    }
+
+    fn add_task_with_status(&self, pid: Pid) -> Result<CgroupAttachment, Self::Error> {
+        match self {
+            AnyCgroupManager::Systemd(m) => Ok(m.add_task_with_status(pid)?),
+            AnyCgroupManager::V1(m) => Ok(m.add_task_with_status(pid)?),
+            AnyCgroupManager::V2(m) => Ok(m.add_task_with_status(pid)?),
         }
     }
 
@@ -495,6 +518,8 @@ fn create_systemd_cgroup_manager(
 
 pub fn get_all_pids(path: &Path) -> Result<Vec<Pid>, WrappedIoError> {
     tracing::debug!("scan pids in folder: {:?}", path);
+    // Distinguish a missing scan root from errors while walking its children.
+    fs::metadata(path).wrap_other(path)?;
     let mut result = vec![];
     walk_dir(path, &mut |p| {
         let file_path = p.join(CGROUP_PROCS);
@@ -830,6 +855,41 @@ mod tests {
             write_by_line(&mut w, Path::new("io.max"), data).unwrap();
             assert_eq!(w.0, want, "data: {data:?}");
         }
+    }
+
+    #[test]
+    fn test_get_all_pids() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cgroup = tmp.path().join("container");
+        let error = get_all_pids(&cgroup).unwrap_err();
+        assert_eq!(error.inner().kind(), std::io::ErrorKind::NotFound);
+        assert!(matches!(error, WrappedIoError::Other { .. }));
+
+        fs::create_dir_all(cgroup.join("child")).unwrap();
+        assert!(get_all_pids(&cgroup).unwrap().is_empty());
+        fs::write(cgroup.join(CGROUP_PROCS), "1\n2\n").unwrap();
+        fs::write(cgroup.join("child").join(CGROUP_PROCS), "3\n").unwrap();
+        let mut pids = get_all_pids(&cgroup).unwrap();
+        pids.sort();
+        assert_eq!(pids, [1, 2, 3].map(Pid::from_raw));
+    }
+
+    #[test]
+    fn test_walk_dir_preserves_child_read_errors() {
+        let root = tempfile::tempdir().unwrap();
+        let child = root.path().join("transient");
+        fs::create_dir(&child).unwrap();
+        let error = walk_dir::<_, WrappedIoError>(root.path(), &mut |path| {
+            // Remove the selected child before its directory read, without a race.
+            if path == child {
+                fs::remove_dir(path).wrap_other(path)?;
+            }
+            Ok(())
+        })
+        .unwrap_err();
+        assert!(root.path().is_dir());
+        assert!(matches!(error, WrappedIoError::Read { path, err }
+            if path == child && err.kind() == std::io::ErrorKind::NotFound));
     }
 
     #[test]

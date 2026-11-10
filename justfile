@@ -72,6 +72,14 @@ validate-contest-runc *TESTNAME: contest
 test-rootless-podman:
     {{ cwd }}/tests/rootless-tests/run.sh {{ cwd }}/youki
 
+# test rootless youki stops containers it could not create a cgroup for
+test-rootless-no-cgroup: contest
+    {{ cwd }}/scripts/contest.sh {{ cwd }}/youki rootless_no_cgroup
+    test "$(grep -Ec ' : .* : (ok|skipped)$' "{{ cwd }}/test.log")" -eq 15
+    test "$(grep -c ' : .* : ok$' "{{ cwd }}/test.log")" -ge 12
+    # A leaf-only cgroup mount has no subdirectory to mask.
+    ! grep ' : skipped$' "{{ cwd }}/test.log" | grep -Ev ' : (inaccessible_parent_|hook_failure_cleanup)'
+
 # test docker-in-docker works with youki
 test-dind:
     {{ cwd }}/tests/dind/run.sh

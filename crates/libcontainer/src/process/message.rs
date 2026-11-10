@@ -2,6 +2,7 @@ use core::fmt;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use libcgroups::common::CgroupAttachment;
 use oci_spec::runtime::LinuxIdMapping;
 use serde::{Deserialize, Serialize};
 
@@ -10,7 +11,7 @@ use crate::network::cidr::CidrAddress;
 /// Used as a wrapper for messages to be sent between child and parent processes
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Message {
-    IntermediateReady(i32),
+    IntermediateReady(i32, CgroupAttachment),
     InitReady,
     WriteMapping,
     MappingWritten,
@@ -24,6 +25,7 @@ pub enum Message {
     MountFdReply,
     ExecFailed(String),
     OtherError(String),
+    CgroupEntryFailed(String),
     MountFdError(String),
     HookRequest,
     HookDone,
@@ -32,7 +34,9 @@ pub enum Message {
 impl fmt::Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Message::IntermediateReady(pid) => write!(f, "IntermediateReady({})", pid),
+            Message::IntermediateReady(pid, attachment) => {
+                write!(f, "IntermediateReady({pid}, {attachment:?})")
+            }
             Message::InitReady => write!(f, "InitReady"),
             Message::WriteMapping => write!(f, "WriteMapping"),
             Message::MappingWritten => write!(f, "MappingWritten"),
@@ -49,6 +53,7 @@ impl fmt::Display for Message {
             Message::MountFdError(err) => write!(f, "MountFdError({})", err),
             Message::ExecFailed(err) => write!(f, "ExecFailed({err})"),
             Message::OtherError(err) => write!(f, "OtherError({err})"),
+            Message::CgroupEntryFailed(err) => write!(f, "CgroupEntryFailed({err})"),
         }
     }
 }

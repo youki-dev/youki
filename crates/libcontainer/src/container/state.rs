@@ -7,6 +7,7 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
+use libcgroups::common::CgroupAttachment;
 use oci_spec::OciSpecError;
 use oci_spec::runtime::{
     ContainerState as OciContainerState, State as OciState, StateBuilder as OciStateBuilder,
@@ -106,6 +107,13 @@ pub struct State {
     // Pid is the process ID for the container process.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pid: Option<i32>,
+    // Start time of the container process, in clock ticks after boot, to
+    // detect a later process which reuses its pid.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub init_start_time: Option<u64>,
+    // Actual cgroup entry result. Absence preserves legacy cleanup behavior.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cgroup_attachment: Option<CgroupAttachment>,
     // Bundle is the path to the container's bundle directory.
     pub bundle: PathBuf,
     // Annotations are key values associated with the container.
@@ -148,6 +156,8 @@ impl State {
             id: container_id.to_string(),
             status,
             pid,
+            init_start_time: None,
+            cgroup_attachment: None,
             bundle,
             annotations: Some(HashMap::default()),
             created: None,

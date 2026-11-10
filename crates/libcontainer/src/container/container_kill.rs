@@ -1,4 +1,6 @@
-use libcgroups::common::{CgroupManager, get_cgroup_setup};
+use std::error::Error;
+
+use libcgroups::common::{AnyManagerError, CgroupManager, WrappedIoError, get_cgroup_setup};
 use nix::sys::signal::{self};
 
 use super::{Container, ContainerStatus};
@@ -98,6 +100,13 @@ impl Container {
     }
 
     fn kill_all_processes<S: Into<Signal>>(&self, signal: S) -> Result<(), LibcontainerError> {
+        if self.has_no_cgroup() {
+            return if self.can_kill() {
+                self.kill_one_process(signal)
+            } else {
+                Ok(())
+            };
+        }
         let signal = signal.into().into_raw();
         let cmanager =
             libcgroups::common::create_cgroup_manager(libcgroups::common::CgroupConfig {
@@ -114,7 +123,28 @@ impl Container {
             );
         }
 
-        let pids = cmanager.get_all_pids()?;
+        let mut pids = match cmanager.get_all_pids() {
+            Ok(pids) => pids,
+            // Missing directories are tolerated only for legacy init fallback.
+            Err(err) if self.state.cgroup_attachment.is_none() && is_missing_cgroup_root(&err) => {
+                Vec::new()
+            }
+            Err(err) => return Err(err.into()),
+        };
+        // Preserve the previous init fallback only for legacy state files.
+        // New containers record whether cgroup attachment actually succeeded.
+        if self.state.cgroup_attachment.is_none()
+            && let Some(pid) = self.pid()
+            && self.can_kill()
+            && !pids.contains(&pid)
+        {
+            tracing::warn!(
+                id = ?self.id(),
+                ?pid,
+                "container init is not in the container cgroup, other processes survive unless the container has its own PID namespace",
+            );
+            pids.push(pid);
+        }
         pids.iter()
             .try_for_each(|&pid| {
                 tracing::debug!("kill signal {} to {}", signal, pid);
@@ -137,5 +167,65 @@ impl Container {
         }
 
         Ok(())
+    }
+}
+
+fn is_missing_cgroup_root(error: &AnyManagerError) -> bool {
+    error
+        .source()
+        .and_then(|error| error.downcast_ref::<WrappedIoError>())
+        .is_some_and(|error| {
+            matches!(error, WrappedIoError::Other { err, .. }
+                if err.kind() == std::io::ErrorKind::NotFound)
+        })
+}
+
+#[cfg(all(test, feature = "v2"))]
+mod tests {
+    use std::io::{Error, ErrorKind};
+
+    use libcgroups::v2::manager::V2ManagerError;
+
+    use super::*;
+
+    #[test]
+    fn test_missing_root_does_not_include_scan_errors() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("missing");
+        let cases = [
+            (libcgroups::common::get_all_pids(&path).unwrap_err(), true),
+            (
+                WrappedIoError::Read {
+                    err: ErrorKind::NotFound.into(),
+                    path: path.clone(),
+                },
+                false,
+            ),
+            (
+                WrappedIoError::Other {
+                    err: ErrorKind::PermissionDenied.into(),
+                    path: path.clone(),
+                },
+                false,
+            ),
+            (
+                WrappedIoError::Open {
+                    err: ErrorKind::NotFound.into(),
+                    path: path.clone(),
+                },
+                false,
+            ),
+            (
+                WrappedIoError::Other {
+                    err: Error::new(ErrorKind::InvalidData, "bad pid"),
+                    path,
+                },
+                false,
+            ),
+        ];
+        for (error, expected) in cases {
+            let error = AnyManagerError::V2(V2ManagerError::WrappedIo(error));
+            assert_eq!(is_missing_cgroup_root(&error), expected, "{error}");
+        }
     }
 }

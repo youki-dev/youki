@@ -46,6 +46,7 @@ pub mod prohibit_symlink;
 pub mod readonly_paths;
 pub mod root_readonly_true;
 pub mod rootfs_propagation;
+pub mod rootless_no_cgroup;
 pub mod scheduler;
 pub mod seccomp;
 pub mod seccomp_notify;

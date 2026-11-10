@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::os::unix::prelude::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
+use libcgroups::common::CgroupAttachment;
 use nix::unistd::Pid;
 
 use crate::channel::{Receiver, Sender, channel};
@@ -30,6 +31,8 @@ pub enum ChannelError {
     ExecError(String),
     #[error("intermediate process error {0}")]
     OtherError(String),
+    #[error("intermediate process error {0}")]
+    CgroupEntry(String),
     #[error("missing fd from mount request")]
     MissingMountFds,
     #[error("mount request failed: {0}")]
@@ -102,10 +105,18 @@ impl MainSender {
         Ok(())
     }
 
-    pub fn intermediate_ready(&mut self, pid: Pid) -> Result<(), ChannelError> {
-        // Send over the IntermediateReady follow by the pid.
-        tracing::debug!("sending init pid ({:?})", pid);
-        self.sender.send(Message::IntermediateReady(pid.as_raw()))?;
+    pub fn intermediate_ready(
+        &mut self,
+        pid: Pid,
+        attachment: CgroupAttachment,
+    ) -> Result<(), ChannelError> {
+        tracing::debug!(
+            "sending init pid ({:?}) and cgroup status ({:?})",
+            pid,
+            attachment
+        );
+        self.sender
+            .send(Message::IntermediateReady(pid.as_raw(), attachment))?;
 
         Ok(())
     }
@@ -123,6 +134,11 @@ impl MainSender {
 
     pub fn exec_failed(&mut self, err: String) -> Result<(), ChannelError> {
         self.sender.send(Message::ExecFailed(err))?;
+        Ok(())
+    }
+
+    pub fn send_cgroup_entry_error(&mut self, err: String) -> Result<(), ChannelError> {
+        self.sender.send(Message::CgroupEntryFailed(err))?;
         Ok(())
     }
 
@@ -152,13 +168,14 @@ impl MainReceiver {
         match msg {
             Message::ExecFailed(err) => Err(ChannelError::ExecError(err)),
             Message::OtherError(err) => Err(ChannelError::OtherError(err)),
+            Message::CgroupEntryFailed(err) => Err(ChannelError::CgroupEntry(err)),
             msg => Ok(msg),
         }
     }
 
     /// Waits for associated intermediate process to send ready message
     /// and return the pid of init process which is forked by intermediate process
-    pub fn wait_for_intermediate_ready(&mut self) -> Result<Pid, ChannelError> {
+    pub fn wait_for_intermediate_ready(&mut self) -> Result<(Pid, CgroupAttachment), ChannelError> {
         let msg = self
             .receiver
             .recv()
@@ -168,7 +185,7 @@ impl MainReceiver {
             })?;
 
         match Self::check_for_process_error(msg)? {
-            Message::IntermediateReady(pid) => Ok(Pid::from_raw(pid)),
+            Message::IntermediateReady(pid, attachment) => Ok((Pid::from_raw(pid), attachment)),
             msg => Err(ChannelError::unexpected("IntermediateReady", msg)),
         }
     }
@@ -547,15 +564,16 @@ mod tests {
         match unsafe { unistd::fork()? } {
             unistd::ForkResult::Parent { child } => {
                 wait::waitpid(child, None)?;
-                let pid = receiver
+                let (pid, attachment) = receiver
                     .wait_for_intermediate_ready()
                     .with_context(|| "Failed to wait for intermadiate ready")?;
                 receiver.close()?;
                 assert_eq!(pid, child);
+                assert_eq!(attachment, CgroupAttachment::Skipped);
             }
             unistd::ForkResult::Child => {
                 let pid = unistd::getpid();
-                sender.intermediate_ready(pid)?;
+                sender.intermediate_ready(pid, CgroupAttachment::Skipped)?;
                 sender.close()?;
                 std::process::exit(0);
             }

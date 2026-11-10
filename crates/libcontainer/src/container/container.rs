@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
+use libcgroups::common::CgroupAttachment;
 use nix::unistd::Pid;
 use procfs::process::Process;
 
@@ -58,6 +59,10 @@ impl Container {
         &self.state.id
     }
 
+    pub(crate) fn has_no_cgroup(&self) -> bool {
+        self.state.cgroup_attachment == Some(CgroupAttachment::Skipped)
+    }
+
     pub fn can_start(&self) -> bool {
         self.state.status.can_start()
     }
@@ -97,6 +102,10 @@ impl Container {
 
     pub fn set_pid(&mut self, pid: i32) -> &mut Self {
         self.state.pid = Some(pid);
+        self.state.init_start_time = Process::new(pid)
+            .and_then(|proc| proc.stat())
+            .map(|stat| stat.starttime)
+            .ok();
         self
     }
 
@@ -182,8 +191,17 @@ impl Container {
                 if let Ok(proc) = Process::new(pid.as_raw()) {
                     use procfs::process::ProcState;
 
-                    match proc.stat()?.state()? {
+                    let stat = proc.stat()?;
+                    match stat.state()? {
                         ProcState::Zombie | ProcState::Dead => ContainerStatus::Stopped,
+                        // another process has reused the pid
+                        _ if self
+                            .state
+                            .init_start_time
+                            .is_some_and(|start_time| start_time != stat.starttime) =>
+                        {
+                            ContainerStatus::Stopped
+                        }
                         _ => match self.status() {
                             ContainerStatus::Creating
                             | ContainerStatus::Created
@@ -403,6 +421,15 @@ mod tests {
         container.set_status(ContainerStatus::Running);
         container.refresh_status()?;
         assert_eq!(container.status(), ContainerStatus::Running);
+
+        // with PID case but the PID was reused by another process
+        let start_time = container
+            .state
+            .init_start_time
+            .expect("start time of PID 1");
+        container.state.init_start_time = Some(start_time + 1);
+        container.refresh_status()?;
+        assert_eq!(container.status(), ContainerStatus::Stopped);
 
         Ok(())
     }

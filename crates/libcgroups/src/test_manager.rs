@@ -3,13 +3,14 @@ use std::convert::Infallible;
 
 use nix::unistd::Pid;
 
-use crate::common::{CgroupManager, ControllerOpt, FreezerState};
+use crate::common::{CgroupAttachment, CgroupManager, ControllerOpt, FreezerState};
 use crate::stats::Stats;
 
 #[derive(Debug)]
 pub struct TestManager {
     add_task_args: RefCell<Vec<Pid>>,
     pub apply_called: RefCell<bool>,
+    pub attachment: CgroupAttachment,
 }
 
 impl Default for TestManager {
@@ -17,6 +18,7 @@ impl Default for TestManager {
         Self {
             add_task_args: RefCell::new(vec![]),
             apply_called: RefCell::new(false),
+            attachment: CgroupAttachment::Attached,
         }
     }
 }
@@ -27,6 +29,11 @@ impl CgroupManager for TestManager {
     fn add_task(&self, pid: Pid) -> Result<(), Infallible> {
         self.add_task_args.borrow_mut().push(pid);
         Ok(())
+    }
+
+    fn add_task_with_status(&self, pid: Pid) -> Result<CgroupAttachment, Infallible> {
+        self.add_task(pid)?;
+        Ok(self.attachment)
     }
 
     // NOTE: The argument cannot be stored due to lifetime.
