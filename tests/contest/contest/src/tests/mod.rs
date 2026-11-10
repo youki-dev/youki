@@ -49,6 +49,7 @@ pub mod rootfs_propagation;
 pub mod scheduler;
 pub mod seccomp;
 pub mod seccomp_notify;
+pub mod selinux;
 pub mod state;
 pub mod sysctl;
 pub mod terminal;
