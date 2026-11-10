@@ -97,6 +97,26 @@ fn test_key_without_property_is_written() -> TestResult {
     })
 }
 
+/// systemd enables only the controllers it manages for the unit, so the others, such as
+/// hugetlb, misc or rdma, have to be enabled for a unified key of theirs to be written.
+fn test_root_controllers_are_enabled() -> TestResult {
+    let cgroup_name = "systemd_unified_root_controllers";
+    run_test(cgroup_name, &[], &|| {
+        let root_path = PathBuf::from(CGROUP_ROOT).join("cgroup.controllers");
+        let root = fs::read_to_string(&root_path)
+            .with_context(|| format!("failed to read {root_path:?}"))?;
+        let container = read_unit_cgroup_file(cgroup_name, "cgroup.controllers")?;
+        let missing: Vec<&str> = root
+            .split_whitespace()
+            .filter(|controller| !container.split_whitespace().any(|c| c == *controller))
+            .collect();
+        if !missing.is_empty() {
+            bail!("expected {missing:?} to be enabled for the container, got {container:?}");
+        }
+        Ok(())
+    })
+}
+
 /// cpu.weight is already a cgroup v2 weight and must not go through the shares conversion.
 fn test_cpu_weight_is_not_converted() -> TestResult {
     let cgroup_name = "systemd_unified_cpu_weight";
@@ -174,6 +194,11 @@ pub fn get_test_group() -> TestGroup {
         Box::new(can_run),
         Box::new(test_key_without_property_is_written),
     );
+    let root_controllers = ConditionalTest::new(
+        "root_controllers_are_enabled",
+        Box::new(can_run),
+        Box::new(test_root_controllers_are_enabled),
+    );
     let cpu_weight = ConditionalTest::new(
         "cpu_weight_is_not_converted",
         Box::new(can_run),
@@ -193,6 +218,7 @@ pub fn get_test_group() -> TestGroup {
     );
     test_group.add(vec![
         Box::new(key_without_property),
+        Box::new(root_controllers),
         Box::new(cpu_weight),
         Box::new(cpu_max_quota),
         Box::new(max_values),

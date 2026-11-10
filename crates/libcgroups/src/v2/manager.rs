@@ -187,7 +187,7 @@ impl Manager {
     // Writing an already-enabled controller is idempotent in cgroup v2, so we
     // simply attempt to write each one and ignore errors.
     // See https://github.com/youki-dev/youki/issues/3597#issuecomment-4749947856
-    fn enable_controllers(path: &Path, controllers: &[String]) {
+    pub(crate) fn enable_controllers(path: &Path, controllers: &[String]) {
         for controller in controllers {
             if let Err(err) =
                 common::write_cgroup_file_str(path.join(CGROUP_SUBTREE_CONTROL), controller)
