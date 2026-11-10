@@ -449,15 +449,13 @@ impl TenantContainerBuilder {
             process_builder.build()?
         };
 
-        // The exec'd process gets the SELinux label asked for (--process-label or the process
-        // file), else the container's, as runc and crun do.
-        let label = exec_selinux_label([
+        let label = exec_selinux_label(
+            self.process.is_some().then_some(&process),
             self.process_label.as_deref(),
-            process.selinux_label().as_deref(),
             spec.process()
                 .as_ref()
                 .and_then(|p| p.selinux_label().as_deref()),
-        ]);
+        );
         process.set_selinux_label(label);
 
         let container_pid = container.pid().ok_or(LibcontainerError::Other(
@@ -624,9 +622,18 @@ impl TenantContainerBuilder {
     }
 }
 
-// An empty label counts as absent, so it does not hide the next one.
-fn exec_selinux_label(labels: [Option<&str>; 3]) -> Option<String> {
-    labels
+// With --process the label comes from the process file and --process-label is ignored, as in
+// runc; else --process-label. An empty or missing one falls back to the container's label.
+fn exec_selinux_label(
+    process_file: Option<&Process>,
+    process_label: Option<&str>,
+    container: Option<&str>,
+) -> Option<String> {
+    let requested = match process_file {
+        Some(process) => process.selinux_label().as_deref(),
+        None => process_label,
+    };
+    [requested, container]
         .into_iter()
         .flatten()
         .find(|l| !l.is_empty())
@@ -941,18 +948,34 @@ mod tests {
     #[test]
     fn test_exec_selinux_label() {
         let container = Some("container_t");
+        let file = |label: Option<&str>| {
+            let mut process = Process::default();
+            process.set_selinux_label(label.map(str::to_owned));
+            process
+        };
+        let (file_t, no_label, empty) = (file(Some("file_t")), file(None), file(Some("")));
+
+        // The process file wins over --process-label, as in runc.
         assert_eq!(
-            exec_selinux_label([Some("cli_t"), Some("file_t"), container]).as_deref(),
-            Some("cli_t")
-        );
-        assert_eq!(
-            exec_selinux_label([None, Some("file_t"), container]).as_deref(),
+            exec_selinux_label(Some(&file_t), Some("cli_t"), container).as_deref(),
             Some("file_t")
         );
         assert_eq!(
-            exec_selinux_label([Some(""), Some(""), container]).as_deref(),
+            exec_selinux_label(Some(&no_label), Some("cli_t"), container).as_deref(),
             container
         );
-        assert_eq!(exec_selinux_label([None, None, None]), None);
+        assert_eq!(
+            exec_selinux_label(Some(&empty), None, container).as_deref(),
+            container
+        );
+        assert_eq!(
+            exec_selinux_label(None, Some("cli_t"), container).as_deref(),
+            Some("cli_t")
+        );
+        assert_eq!(
+            exec_selinux_label(None, Some(""), container).as_deref(),
+            container
+        );
+        assert_eq!(exec_selinux_label(None, None, None), None);
     }
 }
