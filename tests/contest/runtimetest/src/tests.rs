@@ -1731,6 +1731,58 @@ pub fn validate_tmpcopyup(spec: &Spec) {
     }
 }
 
+pub fn validate_mount_label(spec: &Spec) {
+    let Some(label) = spec
+        .linux()
+        .as_ref()
+        .and_then(|l| l.mount_label().as_deref())
+    else {
+        return eprintln!("the spec has no linux.mountLabel");
+    };
+    for mount in spec.mounts().as_deref().unwrap_or_default() {
+        if mount.typ().as_deref() != Some("mqueue") {
+            continue;
+        }
+        let dest = mount.destination();
+
+        let path = std::ffi::CString::new(dest.as_os_str().as_encoded_bytes()).unwrap();
+        let mut buf = [0u8; 256];
+        // SAFETY: path and name are NUL-terminated, buf is writable for its length.
+        let n = unsafe {
+            libc::getxattr(
+                path.as_ptr(),
+                c"security.selinux".as_ptr(),
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+            )
+        };
+        if n < 0 {
+            eprintln!("getxattr {dest:?}: {}", io::Error::last_os_error());
+        } else {
+            let got = &buf[..n as usize];
+            let got = got.strip_suffix(b"\0").unwrap_or(got);
+            if got != label.as_bytes() {
+                eprintln!(
+                    "{dest:?} is labelled {:?}, want {label:?}",
+                    String::from_utf8_lossy(got)
+                );
+            }
+        }
+
+        let readonly = mount
+            .options()
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .any(|o| o == "ro");
+        match nix::sys::statvfs::statvfs(dest) {
+            Ok(st) if st.flags().contains(nix::sys::statvfs::FsFlags::ST_RDONLY) == readonly => {}
+            Ok(_) => eprintln!("{dest:?}: read-only is not {readonly}"),
+            Err(e) => eprintln!("statvfs {dest:?}: {e}"),
+        }
+    }
+}
+
 fn device_rules(spec: &Spec) -> impl Iterator<Item = &oci_spec::runtime::LinuxDeviceCgroup> {
     spec.linux()
         .as_ref()

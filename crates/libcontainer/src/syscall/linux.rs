@@ -947,6 +947,22 @@ impl Syscall for LinuxSyscall {
         Ok(())
     }
 
+    fn fsetxattr(&self, fd: BorrowedFd<'_>, name: &str, value: &[u8]) -> Result<()> {
+        let name = CString::new(name).map_err(|_| nix::Error::EINVAL)?;
+        // SAFETY: name is NUL-terminated and value outlives the call.
+        let ret = unsafe {
+            libc::fsetxattr(
+                fd.as_raw_fd(),
+                name.as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+            )
+        };
+        nix::Error::result(ret)?;
+        Ok(())
+    }
+
     fn set_io_priority(&self, class: i64, priority: i64) -> Result<()> {
         let ioprio_who_progress: libc::c_int = 1;
         let ioprio_who_pid = 0;

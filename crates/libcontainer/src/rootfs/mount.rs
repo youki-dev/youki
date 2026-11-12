@@ -122,6 +122,7 @@ pub struct MountOptions<'a> {
 pub struct Mount {
     syscall: Box<dyn Syscall>,
     mountinfo_provider: Box<dyn MountInfoProvider>,
+    selinux_enabled: bool,
 }
 
 impl Default for Mount {
@@ -135,6 +136,7 @@ impl Mount {
         Mount {
             syscall: create_syscall(),
             mountinfo_provider: Box::new(ProcMountInfoProvider::new()),
+            selinux_enabled: Path::new("/sys/fs/selinux").exists(),
         }
     }
 
@@ -586,13 +588,16 @@ impl Mount {
         let typ = m.typ().as_deref();
         let mut data_options = mount_option_config.data.clone();
 
+        let mut xattr_label = None;
         if let Some(l) = label {
-            if typ != Some("proc") && typ != Some("sysfs") {
-                if Path::new("/sys/fs/selinux").exists() {
-                    data_options.push(format!("context={}", l));
-                } else {
-                    tracing::debug!("ignoring mount label because SELinux is disabled");
+            if self.selinux_enabled {
+                match mount_label_how(typ) {
+                    MountLabelHow::None => {}
+                    MountLabelHow::Context => data_options.push(format!("context={}", l)),
+                    MountLabelHow::Xattr => xattr_label = Some(l),
                 }
+            } else {
+                tracing::debug!("ignoring mount label because SELinux is disabled");
             }
         }
 
@@ -751,8 +756,8 @@ impl Mount {
                 };
                 // fsconfig rejects some options mount(2) takes, e.g. a lowerdir over 255 bytes.
                 if let Err(err) = configure() {
-                    // The copy-up needs the detached mount.
-                    if mount_option_config.tmpcopyup {
+                    // The copy-up and the xattr label need the detached mount.
+                    if mount_option_config.tmpcopyup || xattr_label.is_some() {
                         return Err(err.into());
                     }
                     tracing::debug!(?err, "fsconfig failed, falling back to mount(2)");
@@ -778,6 +783,11 @@ impl Mount {
                             source,
                         }
                     })?;
+                }
+
+                // Before mount_setattr: setxattr on a read-only mount fails with EROFS.
+                if let Some(l) = xattr_label {
+                    set_root_label(self.syscall.as_ref(), mount_fd, l)?;
                 }
 
                 // mount_setattr
@@ -1115,7 +1125,6 @@ impl Mount {
         }
     }
 }
-
 /// Copies what the directory `src` holds into the directory `dst`, keeping owners and modes:
 /// regular files, directories, symlinks, and device nodes, fifos and sockets as nodes. Like crun's
 /// copy_recursive_fd_to_fd(), it works on directory fds and never follows a symlink in `src`.
@@ -1170,6 +1179,45 @@ fn copy_recursive_fd_to_fd(src: BorrowedFd, dst: BorrowedFd) -> std::io::Result<
         }
     }
     Ok(())
+}
+
+/// How a mount gets its SELinux mount label, as in crun's get_mount_label_how().
+#[derive(Debug, PartialEq, Eq)]
+enum MountLabelHow {
+    /// proc and sysfs keep the kernel's labels.
+    None,
+    /// The `context=` mount option.
+    Context,
+    /// mqueue's superblock belongs to the IPC namespace, so the kernel refuses `context=`
+    /// (EINVAL); its root inode is labelled with the security.selinux xattr instead.
+    Xattr,
+}
+
+fn mount_label_how(typ: Option<&str>) -> MountLabelHow {
+    match typ {
+        Some("proc" | "sysfs") => MountLabelHow::None,
+        Some("mqueue") => MountLabelHow::Xattr,
+        _ => MountLabelHow::Context,
+    }
+}
+
+/// Sets the SELinux label of a detached mount's root. The fsmount fd is O_PATH, so it is
+/// reopened through the verified procfs for fsetxattr, as crun does.
+fn set_root_label(
+    syscall: &dyn Syscall,
+    mount_fd: BorrowedFd,
+    label: &str,
+) -> std::result::Result<(), SyscallError> {
+    let root = ProcfsHandle::new()?.open_follow(
+        ProcfsBase::ProcSelf,
+        format!("fd/{}", mount_fd.as_raw_fd()),
+        OpenFlags::O_RDONLY | OpenFlags::O_CLOEXEC,
+    )?;
+    syscall
+        .fsetxattr(root.as_fd(), "security.selinux", label.as_bytes())
+        .inspect_err(|err| {
+            tracing::error!(?err, label, "failed to set the SELinux label of the mount")
+        })
 }
 
 /// Find parent mount of rootfs in given mount infos
@@ -1340,6 +1388,122 @@ mod tests {
                 assert!(syscall.get_mount_args().is_empty());
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_mount_label_how() {
+        assert_eq!(mount_label_how(Some("proc")), MountLabelHow::None);
+        assert_eq!(mount_label_how(Some("sysfs")), MountLabelHow::None);
+        assert_eq!(mount_label_how(Some("mqueue")), MountLabelHow::Xattr);
+        assert_eq!(mount_label_how(Some("tmpfs")), MountLabelHow::Context);
+        assert_eq!(mount_label_how(Some("devpts")), MountLabelHow::Context);
+        assert_eq!(mount_label_how(None), MountLabelHow::Context);
+    }
+
+    #[test]
+    fn test_mount_into_container_mqueue_label_needs_fsmount() -> Result<()> {
+        let tmp_dir = tempfile::tempdir()?;
+        for (selinux, label) in [
+            (false, Some("system_u:object_r:container_file_t:s0")),
+            (true, None),
+            (true, Some("system_u:object_r:container_file_t:s0")),
+        ] {
+            let mut m = Mount::new();
+            m.selinux_enabled = selinux;
+            let mount = &SpecMountBuilder::default()
+                .destination(PathBuf::from("/dev/mqueue"))
+                .typ("mqueue")
+                .source(PathBuf::from("mqueue"))
+                .options(vec!["nosuid".to_string(), "ro".to_string()])
+                .build()?;
+            let mount_option_config = parse_mount(mount)?;
+            let syscall = helper_syscall(&m);
+            syscall.set_ret_err(ArgName::Fsconfig, || {
+                Err(crate::syscall::SyscallError::Nix(nix::errno::Errno::EINVAL))
+            });
+            // Every fsconfig fails: mount_into_container retries once on EINVAL.
+            syscall.set_ret_err_times(ArgName::Fsconfig, usize::MAX);
+            let result = m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, label);
+            // The legacy mount(2) is read-only at once, so the xattr label could not be set:
+            // a labelled mqueue refuses the fallback instead of starting unlabelled.
+            assert_eq!(
+                result.is_err(),
+                label.is_some() && selinux,
+                "selinux {selinux} label {label:?}"
+            );
+            assert_eq!(
+                syscall.get_mount_args().is_empty(),
+                label.is_some() && selinux
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_mount_into_container_mqueue_xattr_label() -> Result<()> {
+        let tmp_dir = tempfile::tempdir()?;
+        let label = "system_u:object_r:container_file_t:s0";
+        let mount = &SpecMountBuilder::default()
+            .destination(PathBuf::from("/dev/mqueue"))
+            .typ("mqueue")
+            .source(PathBuf::from("mqueue"))
+            .options(vec!["nosuid".to_string(), "ro".to_string()])
+            .build()?;
+        let mount_option_config = parse_mount(mount)?;
+
+        for selinux in [false, true] {
+            let mut m = Mount::new();
+            m.selinux_enabled = selinux;
+            m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, Some(label))?;
+            let s = helper_syscall(&m);
+            assert!(
+                !s.get_fsconfig_args()
+                    .iter()
+                    .any(|a| a.key.as_deref() == Some("context")),
+                "mqueue refuses context="
+            );
+            let xattrs = s.get_fsetxattr_args();
+            if selinux {
+                assert_eq!(xattrs.len(), 1);
+                assert_eq!(xattrs[0].name, "security.selinux");
+                assert_eq!(xattrs[0].value, label.as_bytes());
+                // The mock fsmount fd is /dev/null; the label goes to its reopened fd.
+                assert_eq!(xattrs[0].fd_path.as_deref(), Some(Path::new("/dev/null")));
+            } else {
+                assert!(xattrs.is_empty());
+            }
+            let setattr = s.get_mount_setattr_args();
+            assert_eq!(setattr.len(), 1);
+            assert_ne!(setattr[0].attr_set & linux::MOUNT_ATTR_RDONLY, 0);
+        }
+
+        // A failed label fails the mount before it is made read-only and attached.
+        let mut m = Mount::new();
+        m.selinux_enabled = true;
+        let s = helper_syscall(&m);
+        s.set_ret_err(ArgName::Fsetxattr, || {
+            Err(crate::syscall::SyscallError::Nix(nix::errno::Errno::EROFS))
+        });
+        assert!(
+            m.mount_into_container(mount, tmp_dir.path(), &mount_option_config, Some(label))
+                .is_err()
+        );
+        assert!(s.get_mount_setattr_args().is_empty());
+        assert!(s.get_move_mount_args().is_empty());
+
+        // Other filesystems keep context=.
+        let mut m = Mount::new();
+        m.selinux_enabled = true;
+        let tmpfs = &SpecMountBuilder::default()
+            .destination(PathBuf::from("/dev/shm"))
+            .typ("tmpfs")
+            .source(PathBuf::from("shm"))
+            .build()?;
+        m.mount_into_container(tmpfs, tmp_dir.path(), &parse_mount(tmpfs)?, Some(label))?;
+        let s = helper_syscall(&m);
+        assert!(s.get_fsconfig_args().contains(&fsc_str("context", label)));
+        assert!(s.get_fsetxattr_args().is_empty());
         Ok(())
     }
 
