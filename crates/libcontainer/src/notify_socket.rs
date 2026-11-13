@@ -1,6 +1,5 @@
 use std::env;
 use std::io::prelude::*;
-use std::os::fd::FromRawFd;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -100,17 +99,10 @@ impl NotifyListener {
 
 impl Clone for NotifyListener {
     fn clone(&self) -> Self {
-        let fd = self.socket.as_raw_fd();
-        // This is safe because we just duplicate a valid fd. Theoretically, to
-        // truly clone a unix listener, we have to use dup(2) to duplicate the
-        // fd, and then use from_raw_fd to create a new UnixListener. However,
-        // for our purposes, fd is just an integer to pass around for the same
-        // socket. Our main usage is to pass the notify_listener across process
-        // boundary. Since fd tables are cloned during clone/fork calls, this
-        // should be safe to use, as long as we be careful with not closing the
-        // same fd in different places. If we observe an issue, we will switch
-        // to `dup`.
-        let socket = unsafe { UnixListener::from_raw_fd(fd) };
+        let socket = self
+            .socket
+            .try_clone()
+            .expect("failed to duplicate the notify listener fd");
         Self { socket }
     }
 }
@@ -187,5 +179,17 @@ mod test {
 
         socket.notify_container_start().unwrap();
         thread_handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_notify_listener_works_after_clone_is_dropped() {
+        let tempdir = tempdir().unwrap();
+        let socket_path = tempdir.path().join("notify.sock");
+        let listener = NotifyListener::new(&socket_path).unwrap();
+        drop(listener.clone());
+
+        let mut socket = NotifySocket::new(socket_path);
+        socket.notify_container_start().unwrap();
+        listener.wait_for_container_start().unwrap();
     }
 }
