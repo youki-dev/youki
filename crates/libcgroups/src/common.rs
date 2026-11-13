@@ -138,6 +138,20 @@ impl AnyCgroupManager {
             other => other,
         }
     }
+
+    /// Sets whether the v2 manager tolerates permission errors when it creates
+    /// or joins the cgroup, and leaves the process in its parent cgroup.
+    ///
+    /// `with_rootless` sets this too, so call this after it to decide the two
+    /// separately. The v1 and systemd managers ignore it.
+    #[cfg_attr(not(feature = "v2"), allow(unused_variables))]
+    pub fn with_permission_fallback(self, tolerate: bool) -> Self {
+        match self {
+            #[cfg(feature = "v2")]
+            AnyCgroupManager::V2(m) => AnyCgroupManager::V2(m.with_rootless(tolerate)),
+            other => other,
+        }
+    }
 }
 
 #[derive(Debug)]
