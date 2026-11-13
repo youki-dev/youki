@@ -12,7 +12,8 @@ RUN dpkg --add-architecture ${CROSS_DEB_ARCH} && \
     libelf-dev:${CROSS_DEB_ARCH} \
     zlib1g-dev:${CROSS_DEB_ARCH} \
     # dependencies to build wasmedge-sys
-    libzstd-dev:${CROSS_DEB_ARCH}
+    libzstd-dev:${CROSS_DEB_ARCH} \
+    libfmt-dev:${CROSS_DEB_ARCH}
 
 COPY hack/busctl.sh /bin/busctl
 RUN chmod +x /bin/busctl
