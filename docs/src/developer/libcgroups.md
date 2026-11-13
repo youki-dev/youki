@@ -6,11 +6,11 @@ The initial version of cgroups is called the version 1 was implemented in kernel
 
 This crates exposes several functions and modules that can be used to work with cgroups :
 
-- Common traits and functions which are used by both v1 and v2 such as
+- Common traits and functions which are used by the v2 and systemd cgroup managers such as
 
-  - Trait `CgroupManager`, this abstracts over the underlying implementation of interacting with specific version of cgroups, and gives functions to add certain process to a certain cgroup, apply resource restrictions, get statistics of a cgroups, freeze a cgroup, remove a cgroup or get list of all processes belonging to a cgroup. v1 and v2 modules both contain a version specific cgroup manager which implements this trait, and thus either can be given to functions or structs which expects a cgroup manager, depending on which cgroups the host system uses.
+  - Trait `CgroupManager`, this abstracts over the underlying implementation of interacting with cgroups, and gives functions to add certain process to a certain cgroup, apply resource restrictions, get statistics of a cgroups, freeze a cgroup, remove a cgroup or get list of all processes belonging to a cgroup. The v2 and systemd modules each contain a cgroup manager which implements this trait, and thus either can be given to functions or structs which expects a cgroup manager.
   - Apart from the trait, this also contains functions which help with reading cgroups files, and write data to a cgroup file, which are used throughout this crate.
-  - Functions to detect which cgroup setup (v1, v2 or hybrid) is on the host system with/without specified mounted cgroup root path, as well as functions to get the corresponding cgroups manager w/o cgroup root path.
+  - Functions to detect which cgroup setup (legacy, hybrid or unified) is on the host system with/without specified mounted cgroup root path, as well as functions to get the corresponding cgroups manager w/o cgroup root path. Only the unified (cgroup v2) setup is supported, and creating a manager on a legacy or hybrid system returns an error.
 
 - Functions and structs to get and store the statistics of a cgroups such as
 
@@ -24,8 +24,8 @@ This crates exposes several functions and modules that can be used to work with 
   - Function to parse flat keyed data and nested keyed data that can be in a cgroups file
   - Parse a device number
 
-- Cgroups V1 module which deal with implementing a cgroup manager for systems which have cgroups v1 or hybrid cgroups
 - Cgroups V2 module which deal with implementing a cgroup manager for systems which have cgroups v2
+- Cgroups V1 (the legacy and hybrid setups) is not supported. Creating a cgroup manager on such a system returns an error.
 
 As youki currently depends on systemd as an init system, this crate also exposes module systemd, which provides interface for working with systemd related operations. [systemd resource control](https://www.freedesktop.org/software/systemd/man/systemd.resource-control.html) is a good place to read more about systemd and its involvement in resource control.
 

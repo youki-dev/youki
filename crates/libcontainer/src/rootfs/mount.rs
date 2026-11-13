@@ -4,13 +4,9 @@ use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-#[cfg(feature = "v1")]
-use std::{borrow::Cow, collections::HashMap};
 use std::{fs, mem};
 
 use libcgroups::common::CgroupSetup::{Hybrid, Legacy, Unified};
-#[cfg(feature = "v1")]
-use libcgroups::common::DEFAULT_CGROUP_ROOT;
 use nix::NixPath;
 use nix::dir::Dir;
 use nix::errno::Errno;
@@ -23,13 +19,9 @@ use oci_spec::runtime::{Mount as SpecMount, MountBuilder as SpecMountBuilder};
 use pathrs::Root;
 use pathrs::flags::OpenFlags;
 use pathrs::procfs::{ProcfsBase, ProcfsHandle};
-#[cfg(feature = "v1")]
-use procfs::process::Process;
 use procfs::process::{MountInfo, MountOptFields};
 use procfs::{FromRead, ProcessCGroups};
 
-#[cfg(feature = "v1")]
-use super::symlink::Symlink;
 use super::symlink::SymlinkError;
 use super::utils::{MountOptionConfig, parse_mount};
 use crate::rootfs::utils::is_bind;
@@ -155,15 +147,9 @@ impl Mount {
                 })?;
                 match cgroup_setup {
                     Legacy | Hybrid => {
-                        #[cfg(not(feature = "v1"))]
-                        panic!(
-                            "libcontainer can't run in a Legacy or Hybrid cgroup setup without the v1 feature"
-                        );
-                        #[cfg(feature = "v1")]
-                        self.mount_cgroup_v1(mount, options).map_err(|err| {
-                            tracing::error!("failed to mount cgroup v1: {}", err);
-                            err
-                        })?
+                        return Err(MountError::Custom(format!(
+                            "cgroup v1 is not supported (the cgroup setup is {cgroup_setup})"
+                        )));
                     }
                     Unified => {
                         #[cfg(not(feature = "v2"))]
@@ -245,236 +231,6 @@ impl Mount {
                     })?;
                 }
             }
-        }
-
-        Ok(())
-    }
-
-    #[cfg(feature = "v1")]
-    fn mount_cgroup_v1(&self, cgroup_mount: &SpecMount, options: &MountOptions) -> Result<()> {
-        tracing::debug!("mounting cgroup v1 filesystem");
-        // create tmpfs into which the cgroup subsystems will be mounted
-        let tmpfs = SpecMountBuilder::default()
-            .source("tmpfs")
-            .typ("tmpfs")
-            .destination(cgroup_mount.destination())
-            .options(
-                ["noexec", "nosuid", "nodev", "mode=755"]
-                    .iter()
-                    .map(|o| o.to_string())
-                    .collect::<Vec<String>>(),
-            )
-            .build()
-            .map_err(|err| {
-                tracing::error!("failed to build tmpfs for cgroup: {}", err);
-                err
-            })?;
-
-        self.setup_mount(&tmpfs, options).map_err(|err| {
-            tracing::error!("failed to mount tmpfs for cgroup: {}", err);
-            err
-        })?;
-
-        // get all cgroup mounts on the host system
-        let host_mounts: Vec<PathBuf> = libcgroups::v1::util::list_subsystem_mount_points()
-            .map_err(|err| {
-                tracing::error!("failed to get subsystem mount points: {}", err);
-                MountError::Other(err.into())
-            })?
-            .into_iter()
-            .filter(|p| p.as_path().starts_with(DEFAULT_CGROUP_ROOT))
-            .collect();
-        tracing::debug!("cgroup mounts: {:?}", host_mounts);
-
-        // get process cgroups
-        let ppid = std::os::unix::process::parent_id();
-        // The non-zero ppid means that the PID Namespace is not separated.
-        let ppid = if ppid == 0 { std::process::id() } else { ppid };
-        let root_cgroups = Process::new(ppid as i32)?.cgroups()?.0;
-        let process_cgroups: HashMap<String, String> =
-            ProcessCGroups::from_read(ProcfsHandle::new()?.open(
-                ProcfsBase::ProcSelf,
-                "cgroup",
-                OpenFlags::O_RDONLY | OpenFlags::O_CLOEXEC,
-            )?)?
-            .into_iter()
-            .map(|c| {
-                let hierarchy = c.hierarchy;
-                // When youki itself is running inside a container, the cgroup path
-                // will include the path of pid-1, which needs to be stripped before
-                // mounting.
-                let root_pathname = root_cgroups
-                    .iter()
-                    .find(|c| c.hierarchy == hierarchy)
-                    .map(|c| c.pathname.as_ref())
-                    .unwrap_or("");
-                let path = c
-                    .pathname
-                    .strip_prefix(root_pathname)
-                    .unwrap_or(&c.pathname);
-                (c.controllers.join(","), path.to_owned())
-            })
-            .collect();
-        tracing::debug!("Process cgroups: {:?}", process_cgroups);
-
-        let cgroup_root = options
-            .root
-            .join_safely(cgroup_mount.destination())
-            .map_err(|err| {
-                tracing::error!(
-                    "could not join rootfs path with cgroup mount destination: {}",
-                    err
-                );
-                MountError::Other(err.into())
-            })?;
-        tracing::debug!("cgroup root: {:?}", cgroup_root);
-
-        let symlink = Symlink::new();
-
-        // setup cgroup mounts for container
-        for host_mount in &host_mounts {
-            if let Some(subsystem_name) = host_mount.file_name().and_then(|n| n.to_str()) {
-                if options.cgroup_ns {
-                    self.setup_namespaced_subsystem(
-                        cgroup_mount,
-                        options,
-                        subsystem_name,
-                        subsystem_name == "systemd",
-                    )?;
-                } else {
-                    self.setup_emulated_subsystem(
-                        cgroup_mount,
-                        options,
-                        subsystem_name,
-                        subsystem_name == "systemd",
-                        host_mount,
-                        &process_cgroups,
-                    )?;
-                }
-
-                symlink.setup_comount_symlinks(&cgroup_root, subsystem_name)?;
-            } else {
-                tracing::warn!("could not get subsystem name from {:?}", host_mount);
-            }
-        }
-
-        Ok(())
-    }
-
-    // On some distros cgroup subsystems are comounted e.g. cpu,cpuacct or net_cls,net_prio. These systems
-    // have to be comounted in the container as well as the kernel will reject trying to mount them separately.
-    #[cfg(feature = "v1")]
-    fn setup_namespaced_subsystem(
-        &self,
-        cgroup_mount: &SpecMount,
-        options: &MountOptions,
-        subsystem_name: &str,
-        named: bool,
-    ) -> Result<()> {
-        tracing::debug!(
-            "Mounting (namespaced) {:?} cgroup subsystem",
-            subsystem_name
-        );
-        let subsystem_mount = SpecMountBuilder::default()
-            .source("cgroup")
-            .typ("cgroup")
-            .destination(cgroup_mount.destination().join(subsystem_name))
-            .options(
-                ["noexec", "nosuid", "nodev"]
-                    .iter()
-                    .map(|o| o.to_string())
-                    .collect::<Vec<String>>(),
-            )
-            .build()
-            .map_err(|err| {
-                tracing::error!("failed to build {subsystem_name} mount: {err}");
-                err
-            })?;
-
-        let data: Cow<str> = if named {
-            format!("name={subsystem_name}").into()
-        } else {
-            subsystem_name.into()
-        };
-
-        let mount_options_config = MountOptionConfig {
-            flags: MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
-            data: vec![data.into_owned()],
-            rec_attr: None,
-            propagation_flags: vec![],
-            tmpcopyup: false,
-        };
-
-        self.mount_into_container(
-            &subsystem_mount,
-            options.root,
-            &mount_options_config,
-            options.label,
-        )
-        .map_err(|err| {
-            tracing::error!("failed to mount {subsystem_mount:?}: {err}");
-            err
-        })
-    }
-
-    #[cfg(feature = "v1")]
-    fn setup_emulated_subsystem(
-        &self,
-        cgroup_mount: &SpecMount,
-        options: &MountOptions,
-        subsystem_name: &str,
-        named: bool,
-        host_mount: &Path,
-        process_cgroups: &HashMap<String, String>,
-    ) -> Result<()> {
-        tracing::debug!("Mounting (emulated) {:?} cgroup subsystem", subsystem_name);
-        let named_hierarchy: Cow<str> = if named {
-            format!("name={subsystem_name}").into()
-        } else {
-            subsystem_name.into()
-        };
-
-        if let Some(proc_path) = process_cgroups.get(named_hierarchy.as_ref()) {
-            let emulated = SpecMountBuilder::default()
-                .source(
-                    host_mount
-                        .join_safely(proc_path.as_str())
-                        .map_err(|err| {
-                            tracing::error!(
-                                "failed to join mount source for {subsystem_name} subsystem: {}",
-                                err
-                            );
-                            MountError::Other(err.into())
-                        })?,
-                )
-                .destination(
-                    cgroup_mount
-                        .destination()
-                        .join_safely(subsystem_name)
-                        .map_err(|err| {
-                            tracing::error!(
-                                "failed to join mount destination for {subsystem_name} subsystem: {}",
-                                err
-                            );
-                            MountError::Other(err.into())
-                        })?,
-                )
-                .typ("bind")
-                .options(
-                    ["rw", "rbind"]
-                        .iter()
-                        .map(|o| o.to_string())
-                        .collect::<Vec<String>>(),
-                )
-                .build()?;
-            tracing::debug!("Mounting emulated cgroup subsystem: {:?}", emulated);
-
-            self.setup_mount(&emulated, options).map_err(|err| {
-                tracing::error!("failed to mount {subsystem_name} cgroup hierarchy: {}", err);
-                err
-            })?;
-        } else {
-            tracing::warn!("Could not mount {:?} cgroup subsystem", subsystem_name);
         }
 
         Ok(())
@@ -1211,8 +967,6 @@ pub fn find_parent_mount(
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "v1")]
-    use std::fs;
     use std::fs::OpenOptions;
     use std::os::unix::fs::symlink;
     use std::os::unix::net::UnixListener;

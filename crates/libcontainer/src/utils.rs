@@ -220,9 +220,6 @@ fn resolve_cgroup_path(
             .parent()
             .unwrap_or_else(|| Path::new("/"))
             .join(container_id),
-        // cgroup v1 has no unified hierarchy entry. Use a controller-root-relative
-        // path so the v1 manager can resolve the container ID separately under each
-        // mounted controller hierarchy.
         None => PathBuf::from(container_id),
     }
 }
