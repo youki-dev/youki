@@ -1,0 +1,75 @@
+# Lima template for a Fedora based youki development environment.
+#
+# Usage (from the repository root):
+#   just dev-vm        # create/start the VM and provision it
+#   just dev-vm-shell  # open a shell in /workdir/youki inside the VM
+#
+# The repository is mounted (writable) at /workdir/youki, so edits made on
+# the host are visible inside the VM and vice versa.
+
+minimumLimaVersion: 2.0.0
+
+base: template:_images/fedora-44
+
+cpus: 4
+memory: "8GiB"
+disk: "50GiB"
+
+param:
+  # Absolute path of the youki repository on the host. Set by the justfile.
+  YOUKI_ROOT: ""
+
+mounts:
+  - location: "{{.Param.YOUKI_ROOT}}"
+    mountPoint: "/workdir/youki"
+    writable: true
+
+# youki is the container runtime under development, so don't install
+# the default containerd/nerdctl stack.
+containerd:
+  system: false
+  user: false
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+
+      # Build dependencies, kept in sync with README.md
+      dnf install -y            \
+          git                   \
+          gcc                   \
+          make                  \
+          just                  \
+          pkg-config            \
+          systemd-devel         \
+          elfutils-libelf-devel \
+          libseccomp-devel      \
+          clang-devel           \
+          openssl-devel
+  - mode: user
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+
+      # The toolchain version itself is pinned by rust-toolchain.toml and
+      # installed by rustup on the first cargo invocation in the repository.
+      if [ ! -x "${HOME}/.cargo/bin/rustup" ]; then
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+          | sh -s -- -y --no-modify-path --profile minimal
+      fi
+
+      # Repository is owned by the host user, avoid git "dubious ownership" errors.
+      git config --global --get-all safe.directory | grep -qx /workdir/youki \
+        || git config --global --add safe.directory /workdir/youki
+
+      if ! grep -q '# youki-dev-env' "${HOME}/.bashrc"; then
+        cat >> "${HOME}/.bashrc" <<'EOF'
+      # youki-dev-env
+      source "${HOME}/.cargo/env"
+      # Keep build artifacts on the VM disk: building on the host mount is slow
+      # and would clobber the host's own target/ directory.
+      export CARGO_TARGET_DIR="${HOME}/.cache/youki-target"
+      EOF
+      fi
