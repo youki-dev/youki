@@ -10,10 +10,11 @@ use libcgroups::v2::controller_type::ControllerType;
 use oci_spec::runtime::{LinuxBuilder, LinuxResourcesBuilder, ProcessBuilder, Spec, SpecBuilder};
 use test_framework::{ConditionalTest, TestGroup, TestResult, test_result};
 
-use super::{SCOPE_PREFIX, can_run, show_property, unit_name};
+use super::{SCOPE_PREFIX, can_run, show_property, systemd_version, unit_name};
 use crate::utils::test_utils::{CGROUP_ROOT, CreateOptions, check_container_created};
 use crate::utils::{
-    block_device_numbers, is_cgroup_v2_with_controller, test_outside_container_with_options,
+    block_device_numbers, cgroup_has_file, is_cgroup_v2_with_controller, is_runtime_runc,
+    test_outside_container_with_options,
 };
 
 fn create_spec(cgroup_name: &str, unified: &[(&str, &str)]) -> Result<Spec> {
@@ -154,6 +155,53 @@ fn test_max_values() -> TestResult {
     )
 }
 
+/// memory.swap.max has a property of its own, MemorySwapMax.
+fn test_memory_swap_max() -> TestResult {
+    let cgroup_name = "systemd_unified_memory_swap_max";
+    run_test(cgroup_name, &[("memory.swap.max", "104857600")], &|| {
+        check_file(cgroup_name, "memory.swap.max", "104857600")?;
+        check_property(cgroup_name, "MemorySwapMax", "104857600")
+    })
+}
+
+/// systemd knows MemoryZSwapMax since 253. runc 1.5.2, which the validation job uses, does
+/// not send the zswap properties yet, so only the file is checked for it.
+fn test_memory_zswap_max() -> TestResult {
+    let cgroup_name = "systemd_unified_memory_zswap_max";
+    run_test(cgroup_name, &[("memory.zswap.max", "52428800")], &|| {
+        check_file(cgroup_name, "memory.zswap.max", "52428800")?;
+        if !is_runtime_runc() && systemd_version()? >= 253 {
+            check_property(cgroup_name, "MemoryZSwapMax", "52428800")?;
+        }
+        Ok(())
+    })
+}
+
+/// systemd knows MemoryZSwapWriteback since 256.
+fn test_memory_zswap_writeback() -> TestResult {
+    let cgroup_name = "systemd_unified_memory_zswap_writeback";
+    run_test(cgroup_name, &[("memory.zswap.writeback", "0")], &|| {
+        check_file(cgroup_name, "memory.zswap.writeback", "0")?;
+        if !is_runtime_runc() && systemd_version()? >= 256 {
+            check_property(cgroup_name, "MemoryZSwapWriteback", "no")?;
+        }
+        Ok(())
+    })
+}
+
+/// systemd has no property for cpu.idle. Since 252 a CPUWeight of 0, shown as "idle", makes
+/// it set cpu.idle to 1.
+fn test_cpu_idle() -> TestResult {
+    let cgroup_name = "systemd_unified_cpu_idle";
+    run_test(cgroup_name, &[("cpu.idle", "1")], &|| {
+        check_file(cgroup_name, "cpu.idle", "1")?;
+        if systemd_version()? >= 252 {
+            check_property(cgroup_name, "CPUWeight", "idle")?;
+        }
+        Ok(())
+    })
+}
+
 /// One io.max value with a line per device; each line needs its own write.
 fn test_io_max_multi_device() -> TestResult {
     let cgroup_name = "systemd_unified_io_max_multi_device";
@@ -181,6 +229,22 @@ fn test_io_max_multi_device() -> TestResult {
         }
         Ok(())
     })
+}
+
+fn can_run_memory_swap_max() -> bool {
+    can_run() && cgroup_has_file("memory.swap.max")
+}
+
+fn can_run_memory_zswap_max() -> bool {
+    can_run() && cgroup_has_file("memory.zswap.max")
+}
+
+fn can_run_memory_zswap_writeback() -> bool {
+    can_run() && cgroup_has_file("memory.zswap.writeback")
+}
+
+fn can_run_cpu_idle() -> bool {
+    can_run() && cgroup_has_file("cpu.idle")
 }
 
 fn can_run_io_max_multi_device() -> bool {
@@ -211,6 +275,26 @@ pub fn get_test_group() -> TestGroup {
     );
     let max_values =
         ConditionalTest::new("max_values", Box::new(can_run), Box::new(test_max_values));
+    let memory_swap_max = ConditionalTest::new(
+        "memory_swap_max",
+        Box::new(can_run_memory_swap_max),
+        Box::new(test_memory_swap_max),
+    );
+    let memory_zswap_max = ConditionalTest::new(
+        "memory_zswap_max",
+        Box::new(can_run_memory_zswap_max),
+        Box::new(test_memory_zswap_max),
+    );
+    let memory_zswap_writeback = ConditionalTest::new(
+        "memory_zswap_writeback",
+        Box::new(can_run_memory_zswap_writeback),
+        Box::new(test_memory_zswap_writeback),
+    );
+    let cpu_idle = ConditionalTest::new(
+        "cpu_idle",
+        Box::new(can_run_cpu_idle),
+        Box::new(test_cpu_idle),
+    );
     let io_max_multi_device = ConditionalTest::new(
         "io_max_multi_device",
         Box::new(can_run_io_max_multi_device),
@@ -222,6 +306,10 @@ pub fn get_test_group() -> TestGroup {
         Box::new(cpu_weight),
         Box::new(cpu_max_quota),
         Box::new(max_values),
+        Box::new(memory_swap_max),
+        Box::new(memory_zswap_max),
+        Box::new(memory_zswap_writeback),
+        Box::new(cpu_idle),
         Box::new(io_max_multi_device),
     ]);
     test_group

@@ -11,6 +11,8 @@ pub const MEMORY_LOW: &str = "MemoryLow";
 pub const MEMORY_HIGH: &str = "MemoryHigh";
 pub const MEMORY_MAX: &str = "MemoryMax";
 pub const MEMORY_SWAP: &str = "MemorySwapMax";
+pub const MEMORY_ZSWAP_MAX: &str = "MemoryZSwapMax";
+pub const MEMORY_ZSWAP_WRITEBACK: &str = "MemoryZSwapWriteback";
 
 #[derive(thiserror::Error, Debug)]
 pub enum SystemdMemoryError {
