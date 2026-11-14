@@ -184,7 +184,7 @@ fn clone(cb: CloneCb, flags: u64, exit_signal: Option<u64>) -> Result<Pid, Clone
 
     // Since the child stack for clone grows downward, we need to pass in
     // the top of the stack address.
-    let child_stack_top = unsafe { child_stack.as_ptr().add(default_stack_size) };
+    let child_stack_top = child_stack.as_ptr().wrapping_add(default_stack_size);
 
     // Combine the clone flags with exit signals.
     let combined_flags = (flags | exit_signal.unwrap_or(0)) as c_int;
