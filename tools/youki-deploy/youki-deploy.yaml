@@ -1,4 +1,5 @@
 ---
+# containerd
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -83,6 +84,8 @@ spec:
                   fieldPath: spec.nodeName
             - name: HOST_BIN_DIR
               value: /host/usr/local/bin
+            - name: CRI_RUNTIME
+              value: containerd
             - name: HOST_CONTAINERD_CONFIG
               value: /host/etc/containerd/config.toml
             - name: RUNTIME_HANDLER
