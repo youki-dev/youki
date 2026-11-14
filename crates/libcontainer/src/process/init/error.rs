@@ -38,6 +38,8 @@ pub enum InitProcessError {
     SyscallOther(#[source] SyscallError),
     #[error("failed apparmor")]
     AppArmor(#[source] apparmor::AppArmorError),
+    #[error("failed selinux")]
+    Selinux(#[source] crate::selinux::SelinuxError),
     #[error(transparent)]
     Pathrs(#[from] pathrs::error::Error),
     #[error("invalid umask")]

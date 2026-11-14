@@ -59,6 +59,7 @@ use crate::tests::rootfs_propagation::get_rootfs_propagation_test;
 use crate::tests::scheduler::get_scheduler_test;
 use crate::tests::seccomp::get_seccomp_test;
 use crate::tests::seccomp_notify::get_seccomp_notify_test;
+use crate::tests::selinux::get_selinux_test;
 use crate::tests::state::get_state_test;
 use crate::tests::sysctl::get_sysctl_test;
 use crate::tests::terminal::get_terminal_test;
@@ -155,6 +156,7 @@ fn main() -> Result<()> {
     let cgroup_systemd_unified = cgroups::systemd::unified::get_test_group();
     let seccomp = get_seccomp_test();
     let seccomp_notify = get_seccomp_notify_test();
+    let selinux = get_selinux_test();
     let state = get_state_test();
     let ro_paths = get_ro_paths_test();
     let hostname = get_hostname_test();
@@ -224,6 +226,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(cgroup_systemd_unified));
     tm.add_test_group(Box::new(seccomp));
     tm.add_test_group(Box::new(seccomp_notify));
+    tm.add_test_group(Box::new(selinux));
     tm.add_test_group(Box::new(state));
     tm.add_test_group(Box::new(ro_paths));
     tm.add_test_group(Box::new(hostname));

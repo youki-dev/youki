@@ -35,7 +35,7 @@ use crate::rootfs::device::{open_device_fd, verify_dev_null};
 use crate::seccomp;
 use crate::syscall::{Syscall, SyscallError};
 use crate::user_ns::UserNamespaceConfig;
-use crate::{apparmor, capabilities, hooks, tty, utils};
+use crate::{apparmor, capabilities, hooks, selinux, tty, utils};
 
 // Some variables are unused in the case where libseccomp feature is not enabled.
 #[allow(unused_variables)]
@@ -196,6 +196,22 @@ pub fn container_init_process(
         apparmor::apply_profile(profile).map_err(|err| {
             tracing::error!(?err, "failed to apply apparmor profile");
             InitProcessError::AppArmor(err)
+        })?;
+    }
+
+    if let Some(label) = ctx
+        .process
+        .selinux_label()
+        .as_deref()
+        .filter(|label| !label.is_empty())
+    {
+        // Checked again here: the validator ran before the container's procfs view existed.
+        if !selinux::is_enabled().map_err(InitProcessError::Selinux)? {
+            return Err(InitProcessError::Selinux(selinux::SelinuxError::NotEnabled));
+        }
+        selinux::set_exec_label(label).map_err(|err| {
+            tracing::error!(?err, "failed to set the SELinux process label");
+            InitProcessError::Selinux(err)
         })?;
     }
 
