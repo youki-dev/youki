@@ -34,7 +34,6 @@ const CONNECT_BASE_DELAY_MS: u64 = 100;
 const CONNECT_JITTER_DIVISOR: u64 = 8; // jitter up to 1/8 of delay (~12.5%)
 
 const CGROUP_CONTROLLERS: &str = "cgroup.controllers";
-const CGROUP_SUBTREE_CONTROL: &str = "cgroup.subtree_control";
 pub const PROCESS_IN_CGROUP_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
 
 pub struct Manager {
@@ -190,6 +189,8 @@ pub enum SystemdManagerError {
     Pids(Infallible),
     #[error("in pids unified controller: {0}")]
     Unified(#[from] super::unified::SystemdUnifiedError),
+    #[error("in v2 unified controller: {0}")]
+    V2Unified(#[from] crate::v2::unified::V2UnifiedError),
     #[error(
         "systemd cgroup flag passed, but systemd support for managing cgroups is not available"
     )]
@@ -413,13 +414,12 @@ impl Manager {
     fn ensure_controllers_attached(&self) -> Result<(), SystemdManagerError> {
         let full_boundary_path = self.root_path.join_safely(&self.delegation_boundary)?;
 
-        let controllers: Vec<String> = self
-            .get_available_controllers(&full_boundary_path)?
+        let controllers: Vec<String> = Self::get_available_controllers(&full_boundary_path)?
             .into_iter()
-            .map(|c| format!("{}{}", "+", c))
+            .map(|c| format!("+{c}"))
             .collect();
 
-        Self::write_controllers(&full_boundary_path, &controllers)?;
+        FsManager::enable_controllers(&full_boundary_path, &controllers);
 
         let mut current_path = full_boundary_path;
         let mut components = self
@@ -448,7 +448,7 @@ impl Manager {
             // last component cannot have subtree_control enabled due to internal process constraint
             // if this were set, writing to the cgroups.procs file will fail with Erno 16 (device or resource busy)
             if components.peek().is_some() {
-                Self::write_controllers(&current_path, &controllers)?;
+                FsManager::enable_controllers(&current_path, &controllers);
             }
         }
 
@@ -482,37 +482,20 @@ impl Manager {
         ))
     }
 
-    fn get_available_controllers<P: AsRef<Path>>(
-        &self,
-        cgroups_path: P,
-    ) -> Result<Vec<ControllerType>, SystemdManagerError> {
-        let controllers_path = self.root_path.join(cgroups_path).join(CGROUP_CONTROLLERS);
+    /// Returns every controller listed for the cgroup, including those systemd does not
+    /// manage, such as hugetlb, misc or rdma. systemd enables its own controllers for the
+    /// delegated unit, but nothing else enables the others.
+    fn get_available_controllers(cgroup_path: &Path) -> Result<Vec<String>, SystemdManagerError> {
+        let controllers_path = cgroup_path.join(CGROUP_CONTROLLERS);
         if !controllers_path.exists() {
             return Err(SystemdManagerError::FileNotFound(controllers_path));
         }
 
-        let mut controllers = Vec::new();
-        for controller in fs::read_to_string(&controllers_path)
+        Ok(fs::read_to_string(&controllers_path)
             .wrap_read(controllers_path)?
             .split_whitespace()
-        {
-            match controller {
-                "cpu" => controllers.push(ControllerType::Cpu),
-                "memory" => controllers.push(ControllerType::Memory),
-                "pids" => controllers.push(ControllerType::Pids),
-                _ => continue,
-            }
-        }
-
-        Ok(controllers)
-    }
-
-    fn write_controllers(path: &Path, controllers: &[String]) -> Result<(), SystemdManagerError> {
-        for controller in controllers {
-            common::write_cgroup_file_str(path.join(CGROUP_SUBTREE_CONTROL), controller)?;
-        }
-
-        Ok(())
+            .map(str::to_owned)
+            .collect())
     }
 
     pub fn any(self) -> AnyCgroupManager {
@@ -591,6 +574,15 @@ impl CgroupManager for Manager {
             self.client
                 .set_unit_properties(&self.unit_name, &properties)?;
         }
+
+        // Only some unified keys map to a unit property, so write all of them to the cgroup
+        // as well, as runc does. Keys systemd has just set get the same value again.
+        crate::v2::unified::Unified::apply(
+            controller_opt,
+            &self.full_path,
+            crate::v2::util::get_available_controllers(&self.root_path)
+                .map_err(V2ManagerError::from)?,
+        )?;
 
         // systemd derives a device filter from DeviceAllow and attaches it every time
         // unit properties are set, so this has to run afterwards to replace it. A rule
@@ -805,6 +797,28 @@ mod tests {
             PathBuf::from("/system.slice/docker-foo.scope"),
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_available_controllers_keeps_every_controller() -> Result<()> {
+        // arrange
+        let tmp = tempfile::tempdir()?;
+        fs::write(
+            tmp.path().join(CGROUP_CONTROLLERS),
+            "cpuset cpu io memory hugetlb pids rdma misc\n",
+        )?;
+
+        // act
+        let controllers = Manager::get_available_controllers(tmp.path())?;
+
+        // assert
+        assert_eq!(
+            controllers,
+            [
+                "cpuset", "cpu", "io", "memory", "hugetlb", "pids", "rdma", "misc"
+            ]
+        );
         Ok(())
     }
 
