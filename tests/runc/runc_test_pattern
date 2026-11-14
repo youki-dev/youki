@@ -17,7 +17,7 @@ runc exec (limits + cgrouppath + permission on the cgroup dir) succeeds
 [skip]runc run (cgroup v1 + unified resources should fail) # skip test requires cgroups_v1
 runc run (blkio weight)
 [skip]runc run (per-device io weight for bfq) # skip BFQ scheduler not available
-[skip]runc run (per-device multiple iops via unified)
+runc run (per-device multiple iops via unified)
 runc run (cpu.idle)
 [skip]runc run (hugetlb limits)
 runc run (cgroup v2 resources.unified only)
