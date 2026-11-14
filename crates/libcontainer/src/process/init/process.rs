@@ -80,11 +80,12 @@ pub fn container_init_process(
         let _ = prctl::set_no_new_privileges(true);
     }
 
+    let mut deferred_ro_fds = Vec::new();
     if matches!(args.container_type, ContainerType::InitContainer) {
         let in_user_ns = utils::is_in_new_userns().map_err(InitProcessError::Io)?;
         let bind_service = ctx.ns.get(LinuxNamespaceType::User)?.is_some() || in_user_ns;
         let rootfs = RootFS::new();
-        rootfs
+        deferred_ro_fds = rootfs
             .prepare_rootfs(
                 ctx.spec,
                 ctx.rootfs,
@@ -171,6 +172,13 @@ pub fn container_init_process(
     } else {
         None
     };
+
+    RootFS::new()
+        .finalize_rootfs(deferred_ro_fds)
+        .map_err(|err| {
+            tracing::error!(?err, "failed to finalize rootfs");
+            InitProcessError::RootFS(err)
+        })?;
 
     if let Some(personality) = ctx.linux.personality() {
         if let Some(flags) = personality.flags() {

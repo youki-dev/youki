@@ -143,9 +143,14 @@ impl Mount {
         self
     }
 
-    pub fn setup_mount(&self, mount: &SpecMount, options: &MountOptions) -> Result<()> {
+    pub fn setup_mount(
+        &self,
+        mount: &SpecMount,
+        options: &MountOptions,
+    ) -> Result<Option<OwnedFd>> {
         tracing::debug!("mounting {:?}", mount);
         let mut mount_option_config = parse_mount(mount)?;
+        let mut deferred_ro_fd = None;
 
         match mount.typ().as_deref() {
             Some("cgroup") => {
@@ -220,34 +225,28 @@ impl Mount {
                     })?;
             }
             _ => {
-                if mount.destination() == Path::new("/dev") {
-                    mount_option_config.flags &= !MsFlags::MS_RDONLY;
-                    self.mount_into_container(
-                        mount,
-                        options.root,
-                        &mount_option_config,
-                        options.label,
-                    )
-                    .map_err(|err| {
-                        tracing::error!("failed to mount /dev: {}", err);
-                        err
-                    })?;
-                } else {
-                    self.mount_into_container(
-                        mount,
-                        options.root,
-                        &mount_option_config,
-                        options.label,
-                    )
+                let defer_readonly = defers_readonly(mount, mount_option_config.flags);
+                if defer_readonly {
+                    // Made read-only by finalize_rootfs once the rootfs is set up.
+                    mount_option_config.flags.remove(MsFlags::MS_RDONLY);
+                }
+                self.mount_into_container(mount, options.root, &mount_option_config, options.label)
                     .map_err(|err| {
                         tracing::error!("failed to mount {:?}: {}", mount, err);
                         err
                     })?;
+                if defer_readonly {
+                    // Keep an fd to this mount so that finalize_rootfs() can make it read-only
+                    // later. The path cannot be used for that: if another mount is stacked on
+                    // the same destination, the path would resolve to that mount instead of
+                    // this one.
+                    let root = Root::open(options.root)?;
+                    deferred_ro_fd = Some(root.resolve(mount.destination())?.into());
                 }
             }
         }
 
-        Ok(())
+        Ok(deferred_ro_fd)
     }
 
     #[cfg(feature = "v1")]
@@ -1193,6 +1192,13 @@ fn existing_dest_mode(root: &Root, dest: &Path) -> Result<Option<u32>> {
     }
 }
 
+/// Whether a read-only tmpfs or /dev mount should be remounted read-only
+/// after rootfs setup, as in runc's `IsReadonlyDeferred()`.
+fn defers_readonly(mount: &SpecMount, flags: MsFlags) -> bool {
+    flags.contains(MsFlags::MS_RDONLY)
+        && (mount.typ().as_deref() == Some("tmpfs") || mount.destination() == Path::new("/dev"))
+}
+
 /// Find parent mount of rootfs in given mount infos
 pub fn find_parent_mount(
     rootfs: &Path,
@@ -1971,6 +1977,78 @@ mod tests {
         let err = format!("{:?}", res.err().unwrap());
         assert!(err.contains("must be mounted on ordinary directory"));
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_defers_readonly() -> Result<()> {
+        for (typ, dest, opts, want) in [
+            ("tmpfs", "/etc", &["ro"][..], true),
+            ("tmpfs", "/etc", &["rw"][..], false),
+            ("tmpfs", "/dev", &["ro"][..], true),
+            ("bind", "/dev", &["rbind", "ro"][..], true),
+            ("bind", "/dev/", &["rbind", "ro"][..], true),
+            ("bind", "/dev/shm", &["rbind", "ro"][..], false),
+            ("bind", "/etc", &["rbind", "ro"][..], false),
+            ("mqueue", "/dev/mqueue", &["ro"][..], false),
+        ] {
+            let mount = SpecMountBuilder::default()
+                .destination(PathBuf::from(dest))
+                .typ(typ)
+                .source(typ)
+                .options(opts.iter().map(|o| o.to_string()).collect::<Vec<_>>())
+                .build()?;
+            let flags = parse_mount(&mount)?.flags;
+            assert_eq!(
+                defers_readonly(&mount, flags),
+                want,
+                "{typ} {dest} {opts:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn setup_mount_ro_tmpfs_is_mounted_rw() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let options = MountOptions {
+            root: tmp.path(),
+            label: None,
+            cgroup_ns: true,
+        };
+        let mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/etc"))
+            .typ("tmpfs")
+            .source("tmpfs")
+            .options(vec!["ro".to_string(), "nosuid".to_string()])
+            .build()?;
+
+        let m = Mount::new();
+        let deferred_ro_fd = m.setup_mount(&mount, &options)?;
+        assert!(deferred_ro_fd.is_some());
+
+        let setattr = helper_syscall(&m).get_mount_setattr_args();
+        assert_eq!(setattr.len(), 1);
+        assert_eq!(setattr[0].attr_set, linux::MOUNT_ATTR_NOSUID);
+        Ok(())
+    }
+
+    #[test]
+    fn setup_mount_rw_tmpfs_is_not_deferred() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let options = MountOptions {
+            root: tmp.path(),
+            label: None,
+            cgroup_ns: true,
+        };
+        let mount = SpecMountBuilder::default()
+            .destination(PathBuf::from("/run"))
+            .typ("tmpfs")
+            .source("tmpfs")
+            .options(vec!["rw".to_string()])
+            .build()?;
+
+        assert!(Mount::new().setup_mount(&mount, &options)?.is_none());
         Ok(())
     }
 }

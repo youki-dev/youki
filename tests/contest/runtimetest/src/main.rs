@@ -67,6 +67,7 @@ fn main() {
         "default_symlinks" => tests::validate_default_symlinks(&spec),
         "tmpcopyup" => tests::validate_tmpcopyup(&spec),
         "tmpfs" => tests::validate_tmpfs(&spec),
+        "tmpfs_readonly" => tests::validate_tmpfs_readonly(&spec),
         _ => eprintln!("error due to unexpected execute test name: {execute_test}"),
     }
 }

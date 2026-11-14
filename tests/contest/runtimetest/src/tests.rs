@@ -1776,6 +1776,40 @@ pub fn validate_tmpfs(spec: &Spec) {
     }
 }
 
+/// Checks that every tmpfs in the spec can be written to or refuses writes with EROFS as its
+/// "ro" option says, and that a read-only /dev still got its devices.
+pub fn validate_tmpfs_readonly(spec: &Spec) {
+    for mount in spec.mounts().as_deref().unwrap_or_default() {
+        if mount.typ().as_deref() != Some("tmpfs") {
+            continue;
+        }
+        let dest = mount.destination();
+        let readonly = mount
+            .options()
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .any(|o| o == "ro");
+        match (test_dir_write_access(dest.to_str().unwrap()), readonly) {
+            (Ok(()), false) => {}
+            (Err(e), true) if e.raw_os_error() == Some(libc::EROFS) => {}
+            (Ok(()), true) => eprintln!("{dest:?} is writable but mounted ro"),
+            (Err(e), _) => eprintln!("write to {dest:?}: {e}"),
+        }
+
+        if dest == Path::new("/dev") {
+            if let Err(e) = test_write_access("/dev/null") {
+                eprintln!("write to /dev/null: {e}");
+            }
+            match fs::metadata("/dev/pts/ptmx") {
+                Ok(m) if m.file_type().is_char_device() => {}
+                Ok(_) => eprintln!("/dev/pts/ptmx is not a char device"),
+                Err(e) => eprintln!("/dev/pts/ptmx: {e}"),
+            }
+        }
+    }
+}
+
 fn device_rules(spec: &Spec) -> impl Iterator<Item = &oci_spec::runtime::LinuxDeviceCgroup> {
     spec.linux()
         .as_ref()
