@@ -40,19 +40,24 @@ fn show_property(unit: &str, property: &str) -> Result<String> {
         .to_string())
 }
 
-/// The major version of the running systemd, from the first line of `systemctl --version`,
-/// which reads `systemd 255 (255.4-1ubuntu8)`.
+/// The major version of the running systemd manager, which is the version the runtime
+/// checks before it sends a property. `systemctl --version` is not used because it reports
+/// the installed client, and the manager can be older until it is re-executed.
 fn systemd_version() -> Result<u32> {
     let output = Command::new("systemctl")
-        .arg("--version")
+        .args(["show", "--property=Version", "--value"])
         .output()
-        .context("failed to run systemctl --version")?;
+        .context("failed to run systemctl show --property=Version")?;
     let stdout = String::from_utf8(output.stdout).context("systemctl output was not utf-8")?;
 
+    // "255.4-1ubuntu8" or "v255"
     stdout
-        .split_whitespace()
-        .nth(1)
-        .and_then(|version| version.parse().ok())
+        .trim()
+        .chars()
+        .skip_while(|c| c.is_alphabetic())
+        .take_while(|c| c.is_numeric())
+        .collect::<String>()
+        .parse()
         .with_context(|| format!("failed to read the systemd version from {stdout:?}"))
 }
 

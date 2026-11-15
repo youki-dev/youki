@@ -34,8 +34,6 @@ pub enum SystemdUnifiedError {
         name: String,
         value: String,
     },
-    #[error("invalid value for memory.zswap.writeback, expected 0 or 1: {0}")]
-    MemoryZswapWriteback(String),
     #[error("failed to to parse pids.max {value}: {err}")]
     PidsMax { err: ParseIntError, value: String },
     #[error("unified resource {filename} must be a file name (no slashes)")]
@@ -167,18 +165,7 @@ impl Unified {
 
                     properties.insert(systemd_cpuset, Variant::ArrayU64(bitmask));
                 }
-                memory @ ("memory.min" | "memory.low" | "memory.high" | "memory.max"
-                | "memory.swap.max" | "memory.zswap.max") => {
-                    if memory == "memory.zswap.max"
-                        && systemd_version < MEMORY_ZSWAP_MAX_MIN_VERSION
-                    {
-                        tracing::debug!(
-                            "systemd {systemd_version} does not support {}",
-                            memory::MEMORY_ZSWAP_MAX
-                        );
-                        continue;
-                    }
-
+                memory @ ("memory.min" | "memory.low" | "memory.high" | "memory.max") => {
                     let value = match value.as_str() {
                         "max" => u64::MAX,
                         value => {
@@ -196,17 +183,49 @@ impl Unified {
                         "memory.low" => memory::MEMORY_LOW,
                         "memory.high" => memory::MEMORY_HIGH,
                         "memory.max" => memory::MEMORY_MAX,
+                        file_name => unreachable!("{} was not matched", file_name),
+                    };
+                    properties.insert(systemd_memory, Variant::U64(value));
+                }
+                // The keys below were written to the cgroup as given before they had a
+                // property, and the kernel takes more than this can turn into one, such as
+                // "100M" or surrounding whitespace. A value without a property is left to
+                // the cgroupfs write, so it fails only if the kernel rejects it.
+                memory @ ("memory.swap.max" | "memory.zswap.max") => {
+                    let systemd_memory = match memory {
                         "memory.swap.max" => memory::MEMORY_SWAP,
                         "memory.zswap.max" => memory::MEMORY_ZSWAP_MAX,
                         file_name => unreachable!("{} was not matched", file_name),
                     };
-                    properties.insert(systemd_memory, Variant::U64(value));
+                    if memory == "memory.zswap.max"
+                        && systemd_version < MEMORY_ZSWAP_MAX_MIN_VERSION
+                    {
+                        tracing::debug!(
+                            "systemd {systemd_version} does not support {systemd_memory}"
+                        );
+                        continue;
+                    }
+
+                    let limit = match value.trim() {
+                        "max" => u64::MAX,
+                        limit => match limit.parse::<u64>() {
+                            Ok(limit) => limit,
+                            Err(_) => {
+                                tracing::debug!("no systemd property for {memory}={value:?}");
+                                continue;
+                            }
+                        },
+                    };
+                    properties.insert(systemd_memory, Variant::U64(limit));
                 }
                 "memory.zswap.writeback" => {
                     let writeback = match value.trim() {
                         "0" => false,
                         "1" => true,
-                        _ => return Err(SystemdUnifiedError::MemoryZswapWriteback(value.into())),
+                        _ => {
+                            tracing::debug!("no systemd property for {key}={value:?}");
+                            continue;
+                        }
                     };
                     if systemd_version < MEMORY_ZSWAP_WRITEBACK_MIN_VERSION {
                         tracing::debug!(
@@ -422,6 +441,50 @@ mod tests {
     }
 
     #[test]
+    fn test_swap_and_zswap_values_with_whitespace() -> Result<()> {
+        // arrange: as read from a cgroup file, with the trailing newline
+        let unified = unified_map(&[
+            ("memory.swap.max", "104857600\n"),
+            ("memory.zswap.max", " max\n"),
+            ("memory.zswap.writeback", "0\n"),
+        ]);
+        let mut actual: HashMap<&str, Variant> = HashMap::new();
+
+        // act
+        Unified::apply(&unified, MEMORY_ZSWAP_WRITEBACK_MIN_VERSION, &mut actual)
+            .context("apply unified")?;
+
+        // assert
+        let swap = &actual[memory::MEMORY_SWAP];
+        assert_eq!(recast!(swap, Variant)?, Variant::U64(104_857_600));
+        let zswap = &actual[memory::MEMORY_ZSWAP_MAX];
+        assert_eq!(recast!(zswap, Variant)?, Variant::U64(u64::MAX));
+        let writeback = &actual[memory::MEMORY_ZSWAP_WRITEBACK];
+        assert_eq!(recast!(writeback, Variant)?, Variant::Bool(false));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_swap_and_zswap_values_without_property_are_skipped() -> Result<()> {
+        // arrange: the kernel accepts these, so they are left to the cgroupfs write
+        let unified = unified_map(&[
+            ("memory.swap.max", "100M"),
+            ("memory.zswap.max", "0x3200000"),
+            ("memory.zswap.writeback", "01"),
+        ]);
+        let mut actual: HashMap<&str, Variant> = HashMap::new();
+
+        // act
+        Unified::apply(&unified, MEMORY_ZSWAP_WRITEBACK_MIN_VERSION, &mut actual)
+            .context("apply unified")?;
+
+        // assert
+        assert!(actual.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn test_memory_zswap_max() -> Result<()> {
         for (value, expected) in [("52428800", 52_428_800), ("max", u64::MAX)] {
             // arrange
@@ -495,22 +558,6 @@ mod tests {
         // assert
         assert!(actual.is_empty());
         Ok(())
-    }
-
-    #[test]
-    fn test_memory_zswap_writeback_invalid_value_returns_error() {
-        // arrange
-        let unified = unified_map(&[("memory.zswap.writeback", "2")]);
-        let mut actual: HashMap<&str, Variant> = HashMap::new();
-
-        // act
-        let result = Unified::apply(&unified, MEMORY_ZSWAP_WRITEBACK_MIN_VERSION, &mut actual);
-
-        // assert
-        assert!(matches!(
-            result,
-            Err(SystemdUnifiedError::MemoryZswapWriteback(_))
-        ));
     }
 
     #[test]
