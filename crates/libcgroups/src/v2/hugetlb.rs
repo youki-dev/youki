@@ -27,18 +27,27 @@ pub struct HugeTlb {}
 
 impl Controller for HugeTlb {
     type Error = V2HugeTlbControllerError;
+    type Resource = Vec<LinuxHugepageLimit>;
 
     fn apply(
         controller_opt: &ControllerOpt,
         cgroup_root: &std::path::Path,
     ) -> Result<(), Self::Error> {
         tracing::debug!("Apply hugetlb cgroup v2 config");
-        if let Some(hugepage_limits) = controller_opt.resources.hugepage_limits() {
+        if let Some(hugepage_limits) = Self::needs_to_handle(controller_opt) {
             for hugetlb in hugepage_limits {
                 Self::apply(cgroup_root, hugetlb)?
             }
         }
         Ok(())
+    }
+
+    fn needs_to_handle<'a>(controller_opt: &'a ControllerOpt) -> Option<&'a Self::Resource> {
+        controller_opt
+            .resources
+            .hugepage_limits()
+            .as_ref()
+            .filter(|l| !l.is_empty())
     }
 }
 

@@ -200,6 +200,18 @@ impl Manager {
         }
     }
 
+    /// Whether any controller would write a limit for this request. Device
+    /// rules do not count: the devices controller applies its defaults either way.
+    pub fn needs_to_handle(controller_opt: &ControllerOpt) -> bool {
+        Cpu::needs_to_handle(controller_opt).is_some()
+            || CpuSet::needs_to_handle(controller_opt).is_some()
+            || HugeTlb::needs_to_handle(controller_opt).is_some()
+            || Io::needs_to_handle(controller_opt).is_some()
+            || Memory::needs_to_handle(controller_opt).is_some()
+            || Pids::needs_to_handle(controller_opt).is_some()
+            || Unified::needs_to_handle(controller_opt).is_some()
+    }
+
     pub fn any(self) -> AnyCgroupManager {
         AnyCgroupManager::V2(self)
     }
@@ -305,8 +317,66 @@ impl CgroupManager for Manager {
 
 #[cfg(test)]
 mod tests {
+    use oci_spec::runtime::LinuxResources;
+
     use super::*;
     use crate::test::set_fixture;
+
+    fn opt(resources: &LinuxResources) -> ControllerOpt<'_> {
+        ControllerOpt {
+            resources,
+            freezer_state: None,
+            oom_score_adj: None,
+            disable_oom_killer: false,
+        }
+    }
+
+    #[test]
+    fn needs_to_handle_counts_only_v2_writes() -> Result<(), Box<dyn std::error::Error>> {
+        use oci_spec::runtime::{
+            LinuxBlockIoBuilder, LinuxCpuBuilder, LinuxDeviceCgroupBuilder, LinuxMemoryBuilder,
+            LinuxNetworkBuilder, LinuxPidsBuilder, LinuxResourcesBuilder,
+        };
+
+        assert!(!Manager::needs_to_handle(&opt(&LinuxResources::default())));
+
+        let devices_only = LinuxResourcesBuilder::default()
+            .devices(vec![
+                LinuxDeviceCgroupBuilder::default()
+                    .allow(false)
+                    .access("rwm".to_string())
+                    .build()?,
+            ])
+            .build()?;
+        assert!(!Manager::needs_to_handle(&opt(&devices_only)));
+
+        let empty_controllers = LinuxResourcesBuilder::default()
+            .memory(LinuxMemoryBuilder::default().build()?)
+            .cpu(LinuxCpuBuilder::default().build()?)
+            .block_io(LinuxBlockIoBuilder::default().build()?)
+            .network(LinuxNetworkBuilder::default().class_id(1u32).build()?)
+            .build()?;
+        assert!(!Manager::needs_to_handle(&opt(&empty_controllers)));
+
+        let memory = LinuxResourcesBuilder::default()
+            .memory(LinuxMemoryBuilder::default().limit(1 << 20).build()?)
+            .build()?;
+        assert!(Manager::needs_to_handle(&opt(&memory)));
+
+        let pids = LinuxResourcesBuilder::default()
+            .pids(LinuxPidsBuilder::default().limit(5).build()?)
+            .build()?;
+        assert!(Manager::needs_to_handle(&opt(&pids)));
+
+        let unified = LinuxResourcesBuilder::default()
+            .unified(std::collections::HashMap::from([(
+                "memory.high".to_string(),
+                "1024".to_string(),
+            )]))
+            .build()?;
+        assert!(Manager::needs_to_handle(&opt(&unified)));
+        Ok(())
+    }
 
     #[test]
     fn test_new_keeps_cgroup_path_under_root() -> Result<(), V2ManagerError> {

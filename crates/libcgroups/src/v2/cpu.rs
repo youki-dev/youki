@@ -29,13 +29,26 @@ pub struct Cpu {}
 
 impl Controller for Cpu {
     type Error = V2CpuControllerError;
+    type Resource = LinuxCpu;
 
     fn apply(controller_opt: &ControllerOpt, path: &Path) -> Result<(), Self::Error> {
-        if let Some(cpu) = &controller_opt.resources.cpu() {
+        if let Some(cpu) = Self::needs_to_handle(controller_opt) {
             Self::apply(path, cpu)?;
         }
 
         Ok(())
+    }
+
+    fn needs_to_handle<'a>(controller_opt: &'a ControllerOpt) -> Option<&'a Self::Resource> {
+        controller_opt.resources.cpu().as_ref().filter(|c| {
+            c.shares().is_some()
+                || c.quota().is_some()
+                || c.period().is_some()
+                || c.burst().is_some()
+                || c.idle().is_some()
+                || c.realtime_runtime().is_some()
+                || c.realtime_period().is_some()
+        })
     }
 }
 

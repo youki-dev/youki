@@ -34,13 +34,18 @@ pub struct Freezer {}
 
 impl Controller for Freezer {
     type Error = V2FreezerError;
+    type Resource = FreezerState;
 
     fn apply(controller_opt: &ControllerOpt, cgroup_path: &Path) -> Result<(), Self::Error> {
-        if let Some(freezer_state) = controller_opt.freezer_state {
-            Self::apply(freezer_state, cgroup_path)?;
+        if let Some(freezer_state) = Self::needs_to_handle(controller_opt) {
+            Self::apply(*freezer_state, cgroup_path)?;
         }
 
         Ok(())
+    }
+
+    fn needs_to_handle<'a>(controller_opt: &'a ControllerOpt) -> Option<&'a Self::Resource> {
+        controller_opt.freezer_state.as_ref()
     }
 }
 
