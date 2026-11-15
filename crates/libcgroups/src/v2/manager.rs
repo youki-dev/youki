@@ -208,7 +208,8 @@ impl Manager {
             || HugeTlb::needs_to_handle(controller_opt).is_some()
             || Io::needs_to_handle(controller_opt).is_some()
             || Memory::needs_to_handle(controller_opt).is_some()
-            || Pids::needs_to_handle(controller_opt).is_some()
+            // a negative limit is written as "max", so it is not a limit
+            || Pids::needs_to_handle(controller_opt).is_some_and(|p| p.limit() >= 0)
             || Unified::needs_to_handle(controller_opt).is_some()
     }
 
@@ -367,6 +368,11 @@ mod tests {
             .pids(LinuxPidsBuilder::default().limit(5).build()?)
             .build()?;
         assert!(Manager::needs_to_handle(&opt(&pids)));
+
+        let pids_unlimited = LinuxResourcesBuilder::default()
+            .pids(LinuxPidsBuilder::default().limit(-1).build()?)
+            .build()?;
+        assert!(!Manager::needs_to_handle(&opt(&pids_unlimited)));
 
         let unified = LinuxResourcesBuilder::default()
             .unified(std::collections::HashMap::from([(
