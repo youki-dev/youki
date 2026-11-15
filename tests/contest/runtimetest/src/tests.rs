@@ -551,6 +551,41 @@ fn validate_device(device: &LinuxDevice, description: &str) {
     }
 }
 
+pub fn validate_device_missing_parent_dirs(spec: &Spec) {
+    validate_devices(spec);
+
+    let devices = spec
+        .linux()
+        .as_ref()
+        .and_then(|linux| linux.devices().as_ref())
+        .cloned()
+        .unwrap_or_default();
+    for device in devices {
+        for dir in device
+            .path()
+            .ancestors()
+            .skip(1)
+            .take_while(|dir| *dir != Path::new("/") && *dir != Path::new("/dev"))
+        {
+            match fs::metadata(dir) {
+                Ok(dir_data) => {
+                    let dir_mode = dir_data.permissions().mode() & 0o7777;
+                    if dir_mode & 0o022 != 0 {
+                        eprintln!(
+                            "error due to device parent dir {dir:?} being group/world writable, got mode {dir_mode:o}"
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "error due to fail to get metadata for device parent dir {dir:?}, error: {e}"
+                    );
+                }
+            }
+        }
+    }
+}
+
 pub fn test_io_priority_class(spec: &Spec, io_priority_class: IOPriorityClass) {
     let io_priority_spec = spec
         .process()
