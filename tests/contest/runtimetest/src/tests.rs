@@ -373,7 +373,7 @@ pub fn validate_seccomp(spec: &Spec) {
     }
 }
 
-pub fn validate_seccomp_getpriority(spec: &Spec) {
+pub fn validate_seccomp_enforced(spec: &Spec) {
     let linux = spec.linux().as_ref().unwrap();
     if linux.seccomp().is_some() {
         let result = unsafe { libc::syscall(libc::SYS_getpriority, libc::PRIO_PROCESS, 0) };

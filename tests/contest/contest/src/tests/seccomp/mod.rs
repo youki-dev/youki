@@ -46,7 +46,7 @@ fn seccomp_test() -> TestResult {
 }
 
 fn seccomp_without_sys_admin_test(no_new_privileges: Option<bool>) -> TestResult {
-    let mut spec = create_spec(denied("getpriority"), "seccomp_getpriority");
+    let mut spec = create_spec(denied("getpriority"), "seccomp_enforced");
     let unprivileged = [
         Capability::AuditWrite,
         Capability::Kill,
