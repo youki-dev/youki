@@ -34,6 +34,8 @@ pub enum SystemdUnifiedError {
         name: String,
         value: String,
     },
+    #[error("invalid value for memory.zswap.writeback, expected 0 or 1: {0}")]
+    MemoryZswapWriteback(String),
     #[error("failed to to parse pids.max {value}: {err}")]
     PidsMax { err: ParseIntError, value: String },
     #[error("unified resource {filename} must be a file name (no slashes)")]
@@ -165,8 +167,12 @@ impl Unified {
 
                     properties.insert(systemd_cpuset, Variant::ArrayU64(bitmask));
                 }
-                memory @ ("memory.min" | "memory.low" | "memory.high" | "memory.max") => {
-                    let value = match value.as_str() {
+                memory @ ("memory.min" | "memory.low" | "memory.high" | "memory.max"
+                | "memory.swap.max" | "memory.zswap.max") => {
+                    // A value systemd cannot hold as a property is rejected rather than only
+                    // written to cgroupfs, where systemd would reset it the next time it
+                    // applies the unit's properties. The kernel allows whitespace around it.
+                    let value = match value.trim() {
                         "max" => u64::MAX,
                         value => {
                             value
@@ -183,16 +189,6 @@ impl Unified {
                         "memory.low" => memory::MEMORY_LOW,
                         "memory.high" => memory::MEMORY_HIGH,
                         "memory.max" => memory::MEMORY_MAX,
-                        file_name => unreachable!("{} was not matched", file_name),
-                    };
-                    properties.insert(systemd_memory, Variant::U64(value));
-                }
-                // The keys below were written to the cgroup as given before they had a
-                // property, and the kernel takes more than this can turn into one, such as
-                // "100M" or surrounding whitespace. A value without a property is left to
-                // the cgroupfs write, so it fails only if the kernel rejects it.
-                memory @ ("memory.swap.max" | "memory.zswap.max") => {
-                    let systemd_memory = match memory {
                         "memory.swap.max" => memory::MEMORY_SWAP,
                         "memory.zswap.max" => memory::MEMORY_ZSWAP_MAX,
                         file_name => unreachable!("{} was not matched", file_name),
@@ -205,27 +201,13 @@ impl Unified {
                         );
                         continue;
                     }
-
-                    let limit = match value.trim() {
-                        "max" => u64::MAX,
-                        limit => match limit.parse::<u64>() {
-                            Ok(limit) => limit,
-                            Err(_) => {
-                                tracing::debug!("no systemd property for {memory}={value:?}");
-                                continue;
-                            }
-                        },
-                    };
-                    properties.insert(systemd_memory, Variant::U64(limit));
+                    properties.insert(systemd_memory, Variant::U64(value));
                 }
                 "memory.zswap.writeback" => {
                     let writeback = match value.trim() {
                         "0" => false,
                         "1" => true,
-                        _ => {
-                            tracing::debug!("no systemd property for {key}={value:?}");
-                            continue;
-                        }
+                        _ => return Err(SystemdUnifiedError::MemoryZswapWriteback(value.into())),
                     };
                     if systemd_version < MEMORY_ZSWAP_WRITEBACK_MIN_VERSION {
                         tracing::debug!(
@@ -441,11 +423,12 @@ mod tests {
     }
 
     #[test]
-    fn test_swap_and_zswap_values_with_whitespace() -> Result<()> {
+    fn test_memory_values_with_whitespace() -> Result<()> {
         // arrange: as read from a cgroup file, with the trailing newline
         let unified = unified_map(&[
-            ("memory.swap.max", "104857600\n"),
-            ("memory.zswap.max", " max\n"),
+            ("memory.max", "104857600\n"),
+            ("memory.swap.max", " 104857600\n"),
+            ("memory.zswap.max", "max\n"),
             ("memory.zswap.writeback", "0\n"),
         ]);
         let mut actual: HashMap<&str, Variant> = HashMap::new();
@@ -455,33 +438,50 @@ mod tests {
             .context("apply unified")?;
 
         // assert
-        let swap = &actual[memory::MEMORY_SWAP];
-        assert_eq!(recast!(swap, Variant)?, Variant::U64(104_857_600));
-        let zswap = &actual[memory::MEMORY_ZSWAP_MAX];
-        assert_eq!(recast!(zswap, Variant)?, Variant::U64(u64::MAX));
-        let writeback = &actual[memory::MEMORY_ZSWAP_WRITEBACK];
-        assert_eq!(recast!(writeback, Variant)?, Variant::Bool(false));
+        for (setting, expected) in [
+            (memory::MEMORY_MAX, Variant::U64(104_857_600)),
+            (memory::MEMORY_SWAP, Variant::U64(104_857_600)),
+            (memory::MEMORY_ZSWAP_MAX, Variant::U64(u64::MAX)),
+            (memory::MEMORY_ZSWAP_WRITEBACK, Variant::Bool(false)),
+        ] {
+            let value = &actual[setting];
+            assert_eq!(recast!(value, Variant)?, expected, "{setting}");
+        }
 
         Ok(())
     }
 
     #[test]
-    fn test_swap_and_zswap_values_without_property_are_skipped() -> Result<()> {
-        // arrange: the kernel accepts these, so they are left to the cgroupfs write
-        let unified = unified_map(&[
+    fn test_memory_values_without_property_return_error() {
+        // the kernel takes these, but systemd would reset a value it holds no property for;
+        // they fail on a systemd too old for the property as well
+        for (key, value) in [
             ("memory.swap.max", "100M"),
             ("memory.zswap.max", "0x3200000"),
             ("memory.zswap.writeback", "01"),
-        ]);
-        let mut actual: HashMap<&str, Variant> = HashMap::new();
+        ] {
+            for systemd_version in [
+                MEMORY_ZSWAP_MAX_MIN_VERSION - 1,
+                MEMORY_ZSWAP_WRITEBACK_MIN_VERSION,
+            ] {
+                // arrange
+                let unified = unified_map(&[(key, value)]);
+                let mut actual: HashMap<&str, Variant> = HashMap::new();
 
-        // act
-        Unified::apply(&unified, MEMORY_ZSWAP_WRITEBACK_MIN_VERSION, &mut actual)
-            .context("apply unified")?;
+                // act
+                let result = Unified::apply(&unified, systemd_version, &mut actual);
 
-        // assert
-        assert!(actual.is_empty());
-        Ok(())
+                // assert
+                assert!(
+                    matches!(
+                        result,
+                        Err(SystemdUnifiedError::Memory { .. }
+                            | SystemdUnifiedError::MemoryZswapWriteback(_))
+                    ),
+                    "{key}={value} on systemd {systemd_version}: {result:?}"
+                );
+            }
+        }
     }
 
     #[test]
