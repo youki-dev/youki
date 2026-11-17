@@ -2536,9 +2536,9 @@ dependencies = [
 
 [[package]]
 name = "libbpf-sys"
-version = "1.7.0+v1.7.0"
+version = "1.7.1+v1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a109478760b2900aa2a6f2087e9d0de1d9c535b1758602af2845d5d2ccfaed7c"
+checksum = "222dd409cbd4db5e9d40410d17a168e1f80446386ae7bafbefa9bd0c1183ff64"
 dependencies = [
  "cc",
  "nix",
@@ -3881,9 +3881,9 @@ dependencies = [
 
 [[package]]
 name = "rbpf"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c7fd1b4fdf96615efe17cfd01307737988fd17ece498e36f34d30e98726027d"
+checksum = "c669cb566b33d7c2d8751f96cd9e57b03a09b3bba4383413961e2dbadbd29121"
 dependencies = [
  "byteorder",
  "combine",
@@ -4962,7 +4962,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.52.0",
