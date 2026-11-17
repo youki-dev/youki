@@ -153,11 +153,13 @@ impl NotifySocket {
 
 #[cfg(test)]
 mod test {
+    use serial_test::serial;
     use tempfile::tempdir;
 
     use super::*;
 
     #[test]
+    #[serial]
     /// Test that the listener can be cloned and function correctly. This test
     /// also serves as a test for the normal case.
     fn test_notify_listener_clone() {
@@ -182,6 +184,7 @@ mod test {
     }
 
     #[test]
+    #[serial]
     fn test_notify_listener_works_after_clone_is_dropped() {
         let tempdir = tempdir().unwrap();
         let socket_path = tempdir.path().join("notify.sock");
