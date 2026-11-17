@@ -1,6 +1,6 @@
 //! Implements Command trait for Linux systems
 use std::any::Any;
-use std::ffi::{CStr, CString, OsStr};
+use std::ffi::{CString, OsStr};
 use std::os::fd::{BorrowedFd, FromRawFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::symlink;
@@ -8,7 +8,6 @@ use std::os::unix::io::{AsRawFd, OwnedFd};
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::{mem, ptr};
 
 use caps::{CapSet, CapsHashSet};
 use libc::{c_char, setdomainname, uid_t};
@@ -24,8 +23,8 @@ use pathrs::flags::OpenFlags;
 use pathrs::procfs::{ProcfsBase, ProcfsHandle};
 
 use super::{Result, Syscall, SyscallError};
-use crate::capabilities;
 use crate::config::PersonalityDomain;
+use crate::{capabilities, utils};
 
 // Flags used in mount_setattr(2).
 // see https://man7.org/linux/man-pages/man2/mount_setattr.2.html.
@@ -311,19 +310,6 @@ impl MountAttr {
 pub struct LinuxSyscall;
 
 impl LinuxSyscall {
-    unsafe fn from_raw_buf<'a, T>(p: *const c_char) -> T
-    where
-        T: From<&'a OsStr>,
-    {
-        unsafe { T::from(OsStr::from_bytes(CStr::from_ptr(p).to_bytes())) }
-    }
-
-    /// Reads data from the `c_passwd` and returns it as a `User`.
-    unsafe fn passwd_to_user(passwd: libc::passwd) -> Arc<OsStr> {
-        let name: Arc<OsStr> = unsafe { Self::from_raw_buf(passwd.pw_name) };
-        name
-    }
-
     fn emulate_close_range(preserve_fds: i32) -> Result<()> {
         let open_fds = Self::get_open_fds()?;
         // Include stdin, stdout, and stderr for fd 0, 1, and 2 respectively.
@@ -593,38 +579,8 @@ impl Syscall for LinuxSyscall {
         Ok(())
     }
 
-    // taken from https://crates.io/crates/users
     fn get_pwuid(&self, uid: uid_t) -> Option<Arc<OsStr>> {
-        let mut passwd = unsafe { mem::zeroed::<libc::passwd>() };
-        let mut buf = vec![0; 2048];
-        let mut result = ptr::null_mut::<libc::passwd>();
-
-        loop {
-            let r = unsafe {
-                libc::getpwuid_r(uid, &mut passwd, buf.as_mut_ptr(), buf.len(), &mut result)
-            };
-
-            if r != libc::ERANGE {
-                break;
-            }
-
-            let newsize = buf.len().checked_mul(2)?;
-            buf.resize(newsize, 0);
-        }
-
-        if result.is_null() {
-            // There is no such user, or an error has occurred.
-            // errno gets set if there's an error.
-            return None;
-        }
-
-        if result != &mut passwd {
-            // The result of getpwuid_r should be its input passwd.
-            return None;
-        }
-
-        let user = unsafe { Self::passwd_to_user(result.read()) };
-        Some(user)
+        utils::get_unix_user(Uid::from_raw(uid)).map(|user| Arc::from(OsStr::new(&user.name)))
     }
 
     fn chroot(&self, path: &Path) -> Result<()> {
@@ -1094,6 +1050,13 @@ mod tests {
 
         unistd::close(fd)?;
         Ok(())
+    }
+
+    #[test]
+    fn test_get_pwuid() {
+        let syscall = LinuxSyscall {};
+        assert_eq!(syscall.get_pwuid(0).unwrap().to_str(), Some("root"));
+        assert_eq!(syscall.get_pwuid(u32::MAX - 1), None);
     }
 
     #[test]
