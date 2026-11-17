@@ -44,7 +44,7 @@ impl Controller for Io {
             v.as_ref().is_some_and(|v| !v.is_empty())
         }
         controller_opt.resources.block_io().as_ref().filter(|b| {
-            b.weight().is_some()
+            b.weight().is_some_and(|w| w != 0)
                 || b.leaf_weight().is_some()
                 || non_empty(b.weight_device())
                 || non_empty(b.throttle_read_bps_device())

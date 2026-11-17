@@ -43,11 +43,11 @@ impl Controller for Memory {
     }
 
     fn needs_to_handle<'a>(controller_opt: &'a ControllerOpt) -> Option<&'a Self::Resource> {
-        controller_opt
-            .resources
-            .memory()
-            .as_ref()
-            .filter(|m| m.limit().is_some() || m.reservation().is_some() || m.swap().is_some())
+        controller_opt.resources.memory().as_ref().filter(|m| {
+            m.limit().is_some_and(|v| v != 0)
+                || m.reservation().is_some_and(|v| v != 0)
+                || m.swap().is_some_and(|v| v != 0)
+        })
     }
 }
 #[derive(thiserror::Error, Debug)]

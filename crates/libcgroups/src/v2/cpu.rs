@@ -41,9 +41,9 @@ impl Controller for Cpu {
 
     fn needs_to_handle<'a>(controller_opt: &'a ControllerOpt) -> Option<&'a Self::Resource> {
         controller_opt.resources.cpu().as_ref().filter(|c| {
-            c.shares().is_some()
-                || c.quota().is_some()
-                || c.period().is_some()
+            c.shares().is_some_and(|v| v != 0)
+                || c.quota().is_some_and(|v| v != 0)
+                || c.period().is_some_and(|v| v != 0)
                 || c.burst().is_some()
                 || c.idle().is_some()
                 || c.realtime_runtime().is_some()

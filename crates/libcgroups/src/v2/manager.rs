@@ -208,8 +208,7 @@ impl Manager {
             || HugeTlb::needs_to_handle(controller_opt).is_some()
             || Io::needs_to_handle(controller_opt).is_some()
             || Memory::needs_to_handle(controller_opt).is_some()
-            // a negative limit is written as "max", so it is not a limit
-            || Pids::needs_to_handle(controller_opt).is_some_and(|p| p.limit() >= 0)
+            || Pids::needs_to_handle(controller_opt).is_some()
             || Unified::needs_to_handle(controller_opt).is_some()
     }
 
@@ -372,7 +371,21 @@ mod tests {
         let pids_unlimited = LinuxResourcesBuilder::default()
             .pids(LinuxPidsBuilder::default().limit(-1).build()?)
             .build()?;
-        assert!(!Manager::needs_to_handle(&opt(&pids_unlimited)));
+        assert!(Manager::needs_to_handle(&opt(&pids_unlimited)));
+
+        // zero means unset, as in runc
+        let zeros = LinuxResourcesBuilder::default()
+            .memory(LinuxMemoryBuilder::default().limit(0).build()?)
+            .cpu(
+                LinuxCpuBuilder::default()
+                    .shares(0u64)
+                    .quota(0)
+                    .period(0u64)
+                    .build()?,
+            )
+            .block_io(LinuxBlockIoBuilder::default().weight(0u16).build()?)
+            .build()?;
+        assert!(!Manager::needs_to_handle(&opt(&zeros)));
 
         let unified = LinuxResourcesBuilder::default()
             .unified(std::collections::HashMap::from([(
