@@ -187,7 +187,7 @@ pub enum SystemdManagerError {
     Memory(#[from] super::memory::SystemdMemoryError),
     #[error("in pids controller: {0}")]
     Pids(Infallible),
-    #[error("in pids unified controller: {0}")]
+    #[error("in unified controller: {0}")]
     Unified(#[from] super::unified::SystemdUnifiedError),
     #[error("in v2 unified controller: {0}")]
     V2Unified(#[from] crate::v2::unified::V2UnifiedError),
