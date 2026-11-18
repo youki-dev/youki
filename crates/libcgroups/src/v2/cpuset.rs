@@ -12,13 +12,21 @@ pub struct CpuSet {}
 
 impl Controller for CpuSet {
     type Error = WrappedIoError;
+    type Resource = LinuxCpu;
 
     fn apply(controller_opt: &ControllerOpt, cgroup_path: &Path) -> Result<(), Self::Error> {
-        if let Some(cpuset) = &controller_opt.resources.cpu() {
+        if let Some(cpuset) = Self::needs_to_handle(controller_opt) {
             Self::apply(cgroup_path, cpuset)?;
         }
 
         Ok(())
+    }
+
+    fn needs_to_handle<'a>(controller_opt: &'a ControllerOpt) -> Option<&'a Self::Resource> {
+        controller_opt.resources.cpu().as_ref().filter(|c| {
+            c.cpus().as_ref().is_some_and(|s| !s.is_empty())
+                || c.mems().as_ref().is_some_and(|s| !s.is_empty())
+        })
     }
 }
 

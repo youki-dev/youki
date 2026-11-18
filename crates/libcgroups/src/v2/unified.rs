@@ -27,11 +27,21 @@ impl Unified {
         cgroup_path: &Path,
         controllers: Vec<ControllerType>,
     ) -> Result<(), V2UnifiedError> {
-        if let Some(unified) = &controller_opt.resources.unified() {
+        if let Some(unified) = Self::needs_to_handle(controller_opt) {
             Self::apply_impl(unified, cgroup_path, &controllers)?;
         }
 
         Ok(())
+    }
+
+    pub fn needs_to_handle<'a>(
+        controller_opt: &'a ControllerOpt,
+    ) -> Option<&'a HashMap<String, String>> {
+        controller_opt
+            .resources
+            .unified()
+            .as_ref()
+            .filter(|u| !u.is_empty())
     }
 
     fn apply_impl(

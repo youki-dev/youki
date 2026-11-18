@@ -1,6 +1,6 @@
 use std::os::fd::FromRawFd;
 
-use libcgroups::common::CgroupManager;
+use libcgroups::common::{CgroupManager, ControllerOpt};
 use nix::unistd::{Gid, Pid, Uid, close, getpid, write};
 use oci_spec::runtime::{LinuxNamespace, LinuxNamespaceType, LinuxResources};
 
@@ -53,10 +53,19 @@ pub fn container_intermediate_process(
     let spec = &args.spec;
     let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
     let namespaces = Namespaces::try_from(linux.namespaces().as_ref())?;
+    // the systemd manager uses the real rootless state to treat device rules as
+    // best effort; whether the v2 manager tolerates cgroup permission errors is
+    // a separate decision
     let rootless = rootless_required(command.as_ref()).unwrap_or(false);
+    let permission_fallback = cgroup_permission_fallback(
+        rootless,
+        linux.cgroups_path().is_some(),
+        linux.resources().as_ref(),
+    );
     let cgroup_manager = libcgroups::common::create_cgroup_manager(args.cgroup_config.to_owned())
         .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?
-        .with_rootless(rootless);
+        .with_rootless(rootless)
+        .with_permission_fallback(permission_fallback);
 
     let current_pid = Pid::this();
     // setting CPU affinity for tenant container before cgroup move
@@ -322,6 +331,27 @@ fn setup_time_offsets(sender: &mut MainSender, receiver: &mut IntermediateReceiv
     Ok(())
 }
 
+// like runc, a rootless container may be left in its parent cgroup on a
+// permission error only when the spec neither names a cgroup nor asks for
+// limits; otherwise it would run outside the cgroup it asked for
+fn cgroup_permission_fallback(
+    rootless: bool,
+    names_cgroup: bool,
+    resources: Option<&LinuxResources>,
+) -> bool {
+    if !rootless || names_cgroup {
+        return false;
+    }
+    let default = LinuxResources::default();
+    let controller_opt = ControllerOpt {
+        resources: resources.unwrap_or(&default),
+        freezer_state: None,
+        oom_score_adj: None,
+        disable_oom_killer: false,
+    };
+    !libcgroups::v2::manager::Manager::needs_to_handle(&controller_opt)
+}
+
 fn apply_cgroups<
     C: CgroupManager<Error = E> + ?Sized,
     E: std::error::Error + Send + Sync + 'static,
@@ -362,6 +392,30 @@ mod tests {
     use procfs::process::Process;
 
     use super::*;
+
+    #[test]
+    fn permission_fallback_needs_rootless_and_nothing_asked() -> Result<()> {
+        use oci_spec::runtime::{LinuxMemoryBuilder, LinuxResourcesBuilder};
+
+        let limits = LinuxResourcesBuilder::default()
+            .memory(LinuxMemoryBuilder::default().limit(1 << 20).build()?)
+            .build()?;
+
+        // rootless, no cgroupsPath, no limits: tolerated
+        assert!(cgroup_permission_fallback(true, false, None));
+        assert!(cgroup_permission_fallback(
+            true,
+            false,
+            Some(&LinuxResources::default())
+        ));
+        // a named cgroup or a limit is never tolerated
+        assert!(!cgroup_permission_fallback(true, true, None));
+        assert!(!cgroup_permission_fallback(true, false, Some(&limits)));
+        assert!(!cgroup_permission_fallback(true, true, Some(&limits)));
+        // not rootless: never tolerated
+        assert!(!cgroup_permission_fallback(false, false, None));
+        Ok(())
+    }
 
     #[test]
     fn apply_cgroup_init() -> Result<()> {

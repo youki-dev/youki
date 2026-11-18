@@ -29,13 +29,29 @@ pub struct Io {}
 
 impl Controller for Io {
     type Error = V2IoControllerError;
+    type Resource = LinuxBlockIo;
 
     fn apply(controller_opt: &ControllerOpt, cgroup_root: &Path) -> Result<(), Self::Error> {
         tracing::debug!("Apply io cgroup v2 config");
-        if let Some(io) = &controller_opt.resources.block_io() {
+        if let Some(io) = Self::needs_to_handle(controller_opt) {
             Self::apply(cgroup_root, io)?;
         }
         Ok(())
+    }
+
+    fn needs_to_handle<'a>(controller_opt: &'a ControllerOpt) -> Option<&'a Self::Resource> {
+        fn non_empty<T>(v: &Option<Vec<T>>) -> bool {
+            v.as_ref().is_some_and(|v| !v.is_empty())
+        }
+        controller_opt.resources.block_io().as_ref().filter(|b| {
+            b.weight().is_some_and(|w| w != 0)
+                || b.leaf_weight().is_some()
+                || non_empty(b.weight_device())
+                || non_empty(b.throttle_read_bps_device())
+                || non_empty(b.throttle_write_bps_device())
+                || non_empty(b.throttle_read_iops_device())
+                || non_empty(b.throttle_write_iops_device())
+        })
     }
 }
 
