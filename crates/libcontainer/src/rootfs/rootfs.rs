@@ -1,4 +1,6 @@
 use std::collections::HashSet;
+use std::mem;
+use std::os::fd::{AsFd, OwnedFd};
 use std::path::Path;
 
 use nix::mount::MsFlags;
@@ -10,8 +12,8 @@ use super::symlink::Symlink;
 use super::utils::default_devices;
 use super::{Result, RootfsError};
 use crate::error::MissingSpecError;
-use crate::syscall::Syscall;
 use crate::syscall::syscall::create_syscall;
+use crate::syscall::{Syscall, linux};
 
 /// Holds information about rootfs
 pub struct RootFS {
@@ -42,7 +44,7 @@ impl RootFS {
         spec: &Spec,
         rootfs: &Path,
         cgroup_ns: bool,
-    ) -> Result<()> {
+    ) -> Result<Vec<OwnedFd>> {
         let flags = prepare_root_propagation(linux.rootfs_propagation().as_deref())?;
 
         self.syscall
@@ -81,12 +83,13 @@ impl RootFS {
             cgroup_ns,
         };
 
+        let mut deferred_ro_fds = Vec::new();
         if let Some(mounts) = spec.mounts() {
             for mount in mounts {
-                mounter.setup_mount(mount, &global_options)?;
+                deferred_ro_fds.extend(mounter.setup_mount(mount, &global_options)?);
             }
         }
-        Ok(())
+        Ok(deferred_ro_fds)
     }
 
     pub fn prepare_rootfs(
@@ -95,11 +98,11 @@ impl RootFS {
         rootfs: &Path,
         bind_devices: bool,
         cgroup_ns: bool,
-    ) -> Result<()> {
+    ) -> Result<Vec<OwnedFd>> {
         tracing::debug!(?rootfs, "prepare rootfs");
         let linux = spec.linux().as_ref().ok_or(MissingSpecError::Linux)?;
 
-        self.mount_to_rootfs(linux, spec, rootfs, cgroup_ns)?;
+        let deferred_ro_fds = self.mount_to_rootfs(linux, spec, rootfs, cgroup_ns)?;
 
         let symlinker = Symlink::new();
         symlinker.setup_kcore_symlink(rootfs)?;
@@ -119,6 +122,33 @@ impl RootFS {
         }?;
 
         symlinker.setup_ptmx(rootfs)?;
+        Ok(deferred_ro_fds)
+    }
+
+    /// Remounts deferred read-only mounts after rootfs setup.
+    ///
+    /// Must be called after `prepare_rootfs()`.
+    pub fn finalize_rootfs(&self, deferred_ro_fds: Vec<OwnedFd>) -> Result<()> {
+        let mount_attr = linux::MountAttr {
+            attr_set: linux::MOUNT_ATTR_RDONLY,
+            attr_clr: 0,
+            propagation: 0,
+            userns_fd: 0,
+        };
+        for fd in deferred_ro_fds {
+            self.syscall
+                .mount_setattr(
+                    fd.as_fd(),
+                    Path::new(""),
+                    linux::AT_EMPTY_PATH,
+                    &mount_attr,
+                    mem::size_of::<linux::MountAttr>(),
+                )
+                .map_err(|err| {
+                    tracing::error!(?err, "failed to make a mount read-only");
+                    err
+                })?;
+        }
         Ok(())
     }
 
@@ -251,6 +281,38 @@ mod tests {
         )?;
         assert_root_mount_propagation(Some("rslave"), None)?;
         assert_root_mount_propagation(Some("rprivate"), None)
+    }
+
+    #[test]
+    fn test_finalize_rootfs_makes_mounts_readonly() -> Result<()> {
+        use crate::syscall::linux;
+
+        let tmp = tempfile::tempdir()?;
+        let deferred_ro_fds = ["dev", "etc"]
+            .iter()
+            .map(|dir| {
+                let path = tmp.path().join(dir);
+                std::fs::create_dir(&path)?;
+                Ok(std::fs::File::open(path)?.into())
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let rootfs = RootFS::new_with_syscall(Box::<TestHelperSyscall>::default());
+        rootfs.finalize_rootfs(deferred_ro_fds)?;
+
+        let helper = rootfs
+            .syscall
+            .as_any()
+            .downcast_ref::<TestHelperSyscall>()
+            .unwrap();
+        let setattr = helper.get_mount_setattr_args();
+        assert_eq!(setattr.len(), 2);
+        for args in setattr {
+            assert_eq!(args.flags, linux::AT_EMPTY_PATH);
+            assert_eq!(args.attr_set, linux::MOUNT_ATTR_RDONLY);
+            assert_eq!(args.attr_clr, 0);
+        }
+        Ok(())
     }
 
     #[test]

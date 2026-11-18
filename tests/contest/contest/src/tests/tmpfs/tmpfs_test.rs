@@ -1,9 +1,12 @@
 use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 
 use anyhow::{Context, Result};
-use oci_spec::runtime::{MountBuilder, ProcessBuilder, Spec, SpecBuilder, get_default_mounts};
+use oci_spec::runtime::{
+    Mount, MountBuilder, ProcessBuilder, Spec, SpecBuilder, get_default_mounts,
+};
 use test_framework::{Test, TestGroup, TestResult, test_result};
 
 use crate::utils::test_inside_container;
@@ -88,6 +91,62 @@ fn mode_option_on_new_dir_test() -> TestResult {
     check_tmpfs_mode(&["mode=0444"], None, 0o444)
 }
 
+fn tmpfs_mount(destination: &str, options: &[&str]) -> Result<Mount> {
+    MountBuilder::default()
+        .destination(destination)
+        .typ("tmpfs")
+        .source("tmpfs")
+        .options(options.iter().map(|o| o.to_string()).collect::<Vec<_>>())
+        .build()
+        .context("failed to build tmpfs mount")
+}
+
+fn check_tmpfs_readonly(mounts: Vec<Mount>) -> TestResult {
+    let spec = test_result!(
+        SpecBuilder::default()
+            .mounts(mounts)
+            .process(test_result!(
+                ProcessBuilder::default()
+                    .args(vec![
+                        "runtimetest".to_string(),
+                        "tmpfs_readonly".to_string()
+                    ])
+                    .build()
+                    .context("failed to build process")
+            ))
+            .build()
+            .context("failed to build spec")
+    );
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
+}
+
+// Verify that the parent tmpfs is read-only even with a submount.
+fn ro_with_submount_test() -> TestResult {
+    let mut mounts = get_default_mounts();
+    mounts.push(test_result!(tmpfs_mount(TMPFS, &["ro", "nosuid"])));
+    mounts.push(test_result!(tmpfs_mount("/tmpfs/sub", &["rw"])));
+    check_tmpfs_readonly(mounts)
+}
+
+// Verify that /dev is read-only when mounted as tmpfs with the ro option.
+fn ro_dev_test() -> TestResult {
+    let dev = test_result!(tmpfs_mount(
+        "/dev",
+        &["nosuid", "strictatime", "mode=755", "size=65536k", "ro"]
+    ));
+    let mounts = get_default_mounts()
+        .into_iter()
+        .map(|m| {
+            if m.destination() == Path::new("/dev") {
+                dev.clone()
+            } else {
+                m
+            }
+        })
+        .collect();
+    check_tmpfs_readonly(mounts)
+}
+
 pub fn get_tmpfs_test() -> TestGroup {
     let mut tg = TestGroup::new("tmpfs");
     tg.add(vec![
@@ -108,6 +167,11 @@ pub fn get_tmpfs_test() -> TestGroup {
             "mode_option_on_new_dir_test",
             Box::new(mode_option_on_new_dir_test),
         )),
+        Box::new(Test::new(
+            "ro_with_submount_test",
+            Box::new(ro_with_submount_test),
+        )),
+        Box::new(Test::new("ro_dev_test", Box::new(ro_dev_test))),
     ]);
     tg
 }
