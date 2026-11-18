@@ -84,6 +84,13 @@ pub struct MountSetattrArgs {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
+pub struct FsetxattrArgs {
+    pub fd_path: Option<PathBuf>,
+    pub name: String,
+    pub value: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct MknodArgs {
     pub path: PathBuf,
     pub kind: SFlag,
@@ -146,6 +153,7 @@ pub enum ArgName {
     Fsmount,
     OpenTree,
     MountSetattr,
+    Fsetxattr,
 }
 
 impl ArgName {
@@ -170,6 +178,7 @@ impl ArgName {
             ArgName::Fsmount,
             ArgName::OpenTree,
             ArgName::MountSetattr,
+            ArgName::Fsetxattr,
         ]
         .iter()
         .copied()
@@ -497,6 +506,17 @@ impl Syscall for TestHelperSyscall {
         )
     }
 
+    fn fsetxattr(&self, fd: BorrowedFd<'_>, name: &str, value: &[u8]) -> Result<()> {
+        self.mocks.act(
+            ArgName::Fsetxattr,
+            Box::new(FsetxattrArgs {
+                fd_path: read_link(format!("/proc/self/fd/{}", fd.as_raw_fd())).ok(),
+                name: name.to_owned(),
+                value: value.to_vec(),
+            }),
+        )
+    }
+
     fn set_io_priority(&self, class: i64, priority: i64) -> Result<()> {
         self.mocks.act(
             ArgName::IoPriority,
@@ -635,6 +655,15 @@ impl TestHelperSyscall {
             .iter()
             .map(|x| x.downcast_ref::<MountSetattrArgs>().unwrap().clone())
             .collect::<Vec<MountSetattrArgs>>()
+    }
+
+    pub fn get_fsetxattr_args(&self) -> Vec<FsetxattrArgs> {
+        self.mocks
+            .fetch(ArgName::Fsetxattr)
+            .values
+            .iter()
+            .map(|x| x.downcast_ref::<FsetxattrArgs>().unwrap().clone())
+            .collect::<Vec<FsetxattrArgs>>()
     }
 
     pub fn get_move_mount_args(&self) -> Vec<MoveMountArgs> {
