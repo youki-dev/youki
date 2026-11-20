@@ -70,6 +70,7 @@ fn main() {
         "tmpcopyup" => tests::validate_tmpcopyup(&spec),
         "tmpfs" => tests::validate_tmpfs(&spec),
         "mount_label" => tests::validate_mount_label(&spec),
+        "cgroup_mount_label" => tests::validate_cgroup_mount_label(&spec),
         _ => eprintln!("error due to unexpected execute test name: {execute_test}"),
     }
 }

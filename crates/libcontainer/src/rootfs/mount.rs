@@ -1205,7 +1205,8 @@ fn existing_dest_mode(root: &Root, dest: &Path) -> Result<Option<u32>> {
 /// How a mount gets its SELinux mount label, as in crun's get_mount_label_how().
 #[derive(Debug, PartialEq, Eq)]
 enum MountLabelHow {
-    /// proc and sysfs keep the kernel's labels.
+    /// proc, sysfs and cgroup2 keep the kernel's labels. The kernel refuses `context=` on
+    /// cgroup2, and runc and crun mount it without a label.
     None,
     /// The `context=` mount option.
     Context,
@@ -1216,7 +1217,7 @@ enum MountLabelHow {
 
 fn mount_label_how(typ: Option<&str>) -> MountLabelHow {
     match typ {
-        Some("proc" | "sysfs") => MountLabelHow::None,
+        Some("proc" | "sysfs" | "cgroup2") => MountLabelHow::None,
         Some("mqueue") => MountLabelHow::Xattr,
         _ => MountLabelHow::Context,
     }
@@ -1416,6 +1417,7 @@ mod tests {
     fn test_mount_label_how() {
         assert_eq!(mount_label_how(Some("proc")), MountLabelHow::None);
         assert_eq!(mount_label_how(Some("sysfs")), MountLabelHow::None);
+        assert_eq!(mount_label_how(Some("cgroup2")), MountLabelHow::None);
         assert_eq!(mount_label_how(Some("mqueue")), MountLabelHow::Xattr);
         assert_eq!(mount_label_how(Some("tmpfs")), MountLabelHow::Context);
         assert_eq!(mount_label_how(Some("devpts")), MountLabelHow::Context);
