@@ -5917,9 +5917,9 @@ dependencies = [
 
 [[package]]
 name = "wasmedge-sdk"
-version = "0.14.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "852257498e8524cb0e2e8e9c7f1540afc2f24f2c3dd77806cf583feba8c19e99"
+checksum = "7a501af650d0811eaf935130000cdc4ad613006d416fc701f809a09f84922e8f"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -5933,9 +5933,9 @@ dependencies = [
 
 [[package]]
 name = "wasmedge-sys"
-version = "0.19.4"
+version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88da93fb54be1deaa84bc68393f09ba8491e20113465c35a9446e14107f55a6e"
+checksum = "c55328608f789b948e7dc72c1502cfef67f20bf68641cc55fa5925ce6eb86700"
 dependencies = [
  "bindgen 0.69.5",
  "cfg-if",
@@ -5961,9 +5961,9 @@ dependencies = [
 
 [[package]]
 name = "wasmedge-types"
-version = "0.6.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17315f552d26bcfe01fc185b874177592d30aab86a10ed898cc8a3f29815c9c4"
+checksum = "ab6f0990e8801b99aa439aaf3c5b588c5ac6a121bb78c61f47f3e325995398a2"
 dependencies = [
  "thiserror 1.0.69",
  "wat",
