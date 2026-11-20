@@ -1880,6 +1880,24 @@ pub fn validate_mount_label(spec: &Spec) {
     }
 }
 
+/// With a mount label, the cgroup mount must still be the container's own cgroup. The
+/// process is the only thing known to be in it, so its pid is looked up in cgroup.procs:
+/// a mount of another cgroup, such as the host's root, does not list it.
+pub fn validate_cgroup_mount_label(spec: &Spec) {
+    let pid = std::process::id().to_string();
+    for mount in spec.mounts().as_deref().unwrap_or_default() {
+        if mount.typ().as_deref() != Some("cgroup") {
+            continue;
+        }
+        let procs = mount.destination().join("cgroup.procs");
+        match fs::read_to_string(&procs) {
+            Ok(content) if content.lines().any(|line| line == pid) => {}
+            Ok(_) => eprintln!("{procs:?} does not list this process ({pid})"),
+            Err(e) => eprintln!("read {procs:?}: {e}"),
+        }
+    }
+}
+
 fn device_rules(spec: &Spec) -> impl Iterator<Item = &oci_spec::runtime::LinuxDeviceCgroup> {
     spec.linux()
         .as_ref()
