@@ -140,6 +140,10 @@ fn is_executable(path: &Path) -> std::result::Result<bool, std::io::Error> {
 mod tests {
     use std::collections::HashMap;
     use std::env;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     use serial_test::serial;
 
@@ -212,5 +216,94 @@ mod tests {
         original_envs.iter().for_each(|(key, value)| {
             unsafe { env::set_var(key, value) };
         });
+    }
+
+    // `setup_envs` runs in a forked child, where only the forking thread
+    // survives. It must not wait on a lock that another thread of the parent
+    // process held when the fork happened, such as the one `std::env` takes
+    // while reading the environment.
+    #[test]
+    #[serial]
+    fn test_executor_set_envs_does_not_deadlock_after_fork() {
+        const HOST_ENV: &str = "YOUKI_TEST_HOST_ENV";
+        unsafe { env::set_var(HOST_ENV, "host") };
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let readers: Vec<_> = (0..8)
+            .map(|_| {
+                let stop = stop.clone();
+                thread::spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        std::hint::black_box(env::vars().count());
+                    }
+                })
+            })
+            .collect();
+
+        let executor = get_executor();
+        let mut hung = 0;
+        let mut failed = 0;
+        for _ in 0..20 {
+            let envs = HashMap::from([("FOO".to_owned(), "bar".to_owned())]);
+            let pid = unsafe { libc::fork() };
+            if pid == 0 {
+                let ok = executor.setup_envs(envs).is_ok()
+                    && unsafe { !libc::getenv(c"FOO".as_ptr()).is_null() }
+                    && unsafe { libc::getenv(c"YOUKI_TEST_HOST_ENV".as_ptr()).is_null() };
+                unsafe { libc::_exit(if ok { 0 } else { 1 }) };
+            }
+            assert!(pid > 0, "fork failed");
+
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut status = 0;
+            loop {
+                if unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) } == pid {
+                    if !(libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0) {
+                        failed += 1;
+                    }
+                    break;
+                }
+                if Instant::now() > deadline {
+                    hung += 1;
+                    unsafe {
+                        libc::kill(pid, libc::SIGKILL);
+                        libc::waitpid(pid, &mut status, 0);
+                    }
+                    break;
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
+
+        stop.store(true, Ordering::Relaxed);
+        for reader in readers {
+            reader.join().unwrap();
+        }
+        unsafe { env::remove_var(HOST_ENV) };
+
+        assert_eq!(hung, 0, "setup_envs blocked in the forked child");
+        assert_eq!(failed, 0, "setup_envs did not reset the environment");
+    }
+
+    #[test]
+    #[serial]
+    fn test_executor_set_envs_rejects_invalid_envs() {
+        let executor = get_executor();
+        let original_envs: HashMap<String, String> = env::vars().collect();
+
+        // Invalid entries are rejected before the environment is touched.
+        for (key, value) in [
+            ("KEY\0NAME", "bar"),
+            ("KEY", "va\0lue"),
+            ("", "bar"),
+            ("KEY=NAME", "bar"),
+        ] {
+            let envs = HashMap::from([
+                ("VALID".to_owned(), "yes".to_owned()),
+                (key.to_owned(), value.to_owned()),
+            ]);
+            assert!(executor.setup_envs(envs).is_err(), "{key:?}={value:?}");
+            assert_eq!(env::vars().collect::<HashMap<_, _>>(), original_envs);
+        }
     }
 }

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::env;
+use std::ffi::CString;
+use std::io;
 
 use oci_spec::runtime::Spec;
 
@@ -80,12 +81,60 @@ pub trait Executor: CloneBoxExecutor {
     /// They should be cleared explicitly if needed.
     fn setup_envs(&self, envs: HashMap<String, String>) -> Result<(), ExecutorSetEnvsError> {
         // The default implementation resets the process env based on the OCI spec.
+        //
+        // This runs in the container init process, which is forked from a
+        // process that may have other threads (e.g. a tokio runtime embedding
+        // libcontainer). The fork only keeps the calling thread, so if one of
+        // the other threads was inside `std::env::vars()` at that moment, the
+        // lock that `std::env` takes would never be released in the child, and
+        // `std::env::{remove_var, set_var}` would block forever. Go through
+        // libc directly to avoid that lock.
+
+        // Validate the spec's envs up front so that an invalid entry does not
+        // leave the process with a half reset environment.
+        let envs = envs
+            .into_iter()
+            .map(|(key, value)| {
+                if key.is_empty() || key.contains('=') {
+                    return Err(ExecutorSetEnvsError::Other(format!(
+                        "invalid environment variable name {key:?}"
+                    )));
+                }
+                let c_key = CString::new(key.as_str()).map_err(|err| {
+                    ExecutorSetEnvsError::Other(format!(
+                        "invalid environment variable name {key:?}: {err}"
+                    ))
+                })?;
+                let c_value = CString::new(value).map_err(|err| {
+                    ExecutorSetEnvsError::Other(format!(
+                        "invalid value for environment variable {key:?}: {err}"
+                    ))
+                })?;
+                Ok((c_key, c_value))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         // First, clear all host's envs.
-        env::vars().for_each(|(key, _value)| unsafe { env::remove_var(key) });
+        // SAFETY: the init process is single threaded, so nothing else can
+        // access the environment concurrently.
+        if unsafe { libc::clearenv() } != 0 {
+            return Err(ExecutorSetEnvsError::Other(format!(
+                "failed to clear the environment: {}",
+                io::Error::last_os_error()
+            )));
+        }
 
         // Next, set envs based on the spec
-        envs.iter()
-            .for_each(|(key, value)| unsafe { env::set_var(key, value) });
+        for (key, value) in &envs {
+            // SAFETY: both pointers are valid NUL terminated strings, and
+            // setenv copies them.
+            if unsafe { libc::setenv(key.as_ptr(), value.as_ptr(), 1) } != 0 {
+                return Err(ExecutorSetEnvsError::Other(format!(
+                    "failed to set environment variable {key:?}: {}",
+                    io::Error::last_os_error()
+                )));
+            }
+        }
 
         Ok(())
     }
