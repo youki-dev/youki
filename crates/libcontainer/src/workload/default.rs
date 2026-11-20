@@ -293,10 +293,10 @@ mod tests {
 
         // Invalid entries are rejected before the environment is touched.
         for (key, value) in [
-            ("FO\0O", "bar"),
-            ("FOO", "ba\0r"),
+            ("KEY\0NAME", "bar"),
+            ("KEY", "va\0lue"),
             ("", "bar"),
-            ("FO=O", "bar"),
+            ("KEY=NAME", "bar"),
         ] {
             let envs = HashMap::from([
                 ("VALID".to_owned(), "yes".to_owned()),
