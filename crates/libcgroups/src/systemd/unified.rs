@@ -11,6 +11,10 @@ use crate::common::ControllerOpt;
 const CPU_WEIGHT_IDLE_MIN_VERSION: u32 = 252;
 const MEMORY_ZSWAP_MAX_MIN_VERSION: u32 = 253;
 const MEMORY_ZSWAP_WRITEBACK_MIN_VERSION: u32 = 256;
+const OOM_POLICY_MIN_VERSION: u32 = 253;
+
+pub const MEMORY_OOM_GROUP: &str = "memory.oom.group";
+pub const OOM_POLICY: &str = "OOMPolicy";
 
 #[derive(thiserror::Error, Debug)]
 pub enum SystemdUnifiedError {
@@ -36,6 +40,8 @@ pub enum SystemdUnifiedError {
     },
     #[error("invalid value for memory.zswap.writeback, expected 0 or 1: {0}")]
     MemoryZswapWriteback(String),
+    #[error("invalid value for memory.oom.group, expected 0 or 1: {0}")]
+    MemoryOomGroup(String),
     #[error("failed to to parse pids.max {value}: {err}")]
     PidsMax { err: ParseIntError, value: String },
     #[error("unified resource {filename} must be a file name (no slashes)")]
@@ -64,6 +70,27 @@ impl Controller for Unified {
 }
 
 impl Unified {
+    /// Returns the OOMPolicy that stands for a unified memory.oom.group value, as in runc.
+    ///
+    /// systemd does not allow changing OOMPolicy on a running unit, so this cannot be one
+    /// of the properties `apply` sets. The manager sends it when it creates the unit.
+    pub(super) fn oom_policy(
+        oom_group: &str,
+        systemd_version: u32,
+    ) -> Result<Option<&'static str>, SystemdUnifiedError> {
+        let policy = match oom_group.trim().parse::<u64>() {
+            Ok(0) => "continue",
+            Ok(1) => "kill",
+            _ => return Err(SystemdUnifiedError::MemoryOomGroup(oom_group.into())),
+        };
+        if systemd_version < OOM_POLICY_MIN_VERSION {
+            tracing::debug!("systemd {systemd_version} does not support {OOM_POLICY} for scopes");
+            return Ok(None);
+        }
+
+        Ok(Some(policy))
+    }
+
     fn apply(
         unified: &HashMap<String, String>,
         systemd_version: u32,
@@ -231,6 +258,8 @@ impl Unified {
                         };
                     properties.insert(pids::TASKS_MAX, Variant::U64(pids));
                 }
+                // sent as OOMPolicy when the unit was created, systemd refuses it here
+                MEMORY_OOM_GROUP => {}
 
                 // the systemd manager writes every unified key to cgroupfs after setting the
                 // properties, so a key with no property still takes effect
@@ -249,6 +278,41 @@ mod tests {
     use super::super::dbus_native::serialize::DbusSerialize;
     use super::*;
     use crate::recast;
+
+    #[test]
+    fn test_oom_policy() -> Result<()> {
+        for (value, systemd_version, expected) in [
+            ("0", 253, Some("continue")),
+            ("1", 253, Some("kill")),
+            ("1\n", 262, Some("kill")),
+            ("01", 262, Some("kill")),
+            // OOMPolicy is only accepted for scopes since systemd 253
+            ("0", 252, None),
+            ("1", 252, None),
+        ] {
+            assert_eq!(
+                Unified::oom_policy(value, systemd_version)?,
+                expected,
+                "memory.oom.group {value:?} with systemd {systemd_version}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_oom_policy_rejects_invalid_values() {
+        // checked before the systemd version, as for the other memory keys
+        for (value, systemd_version) in [("2", 253), ("", 253), ("kill", 253), ("2", 252)] {
+            assert!(
+                matches!(
+                    Unified::oom_policy(value, systemd_version),
+                    Err(SystemdUnifiedError::MemoryOomGroup(_))
+                ),
+                "memory.oom.group {value:?} with systemd {systemd_version}"
+            );
+        }
+    }
 
     #[test]
     fn test_set() -> Result<()> {

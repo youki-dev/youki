@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use libcgroups::v2::controller_type::ControllerType;
@@ -93,8 +94,8 @@ fn run_test(
 /// A key with no systemd property must still reach the cgroup.
 fn test_key_without_property_is_written() -> TestResult {
     let cgroup_name = "systemd_unified_key_without_property";
-    run_test(cgroup_name, &[("memory.oom.group", "1")], &|| {
-        check_file(cgroup_name, "memory.oom.group", "1")
+    run_test(cgroup_name, &[("cgroup.max.depth", "5")], &|| {
+        check_file(cgroup_name, "cgroup.max.depth", "5")
     })
 }
 
@@ -202,6 +203,31 @@ fn test_cpu_idle() -> TestResult {
     })
 }
 
+/// systemd sets memory.oom.group from OOMPolicy whenever it applies the unit's cgroup
+/// settings, so the key also has to reach the unit as OOMPolicy. systemd takes OOMPolicy only
+/// when the unit is created; a scope accepts it since 253.
+fn test_memory_oom_group() -> TestResult {
+    let cgroup_name = "systemd_unified_memory_oom_group";
+    run_test(cgroup_name, &[("memory.oom.group", "1")], &|| {
+        check_property(cgroup_name, "OOMPolicy", "kill")?;
+        check_file(cgroup_name, "memory.oom.group", "1")?;
+
+        // changing a cgroup property makes systemd apply the unit's cgroup settings again
+        let unit = unit_name(cgroup_name);
+        let output = Command::new("systemctl")
+            .args(["set-property", "--runtime", &unit, "CPUWeight=50"])
+            .output()
+            .with_context(|| format!("failed to run systemctl set-property for {unit}"))?;
+        if !output.status.success() {
+            bail!(
+                "systemctl set-property {unit} failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        check_file(cgroup_name, "memory.oom.group", "1")
+    })
+}
+
 /// One io.max value with a line per device; each line needs its own write.
 fn test_io_max_multi_device() -> TestResult {
     let cgroup_name = "systemd_unified_io_max_multi_device";
@@ -245,6 +271,10 @@ fn can_run_memory_zswap_writeback() -> bool {
 
 fn can_run_cpu_idle() -> bool {
     can_run() && cgroup_has_file("cpu.idle")
+}
+
+fn can_run_memory_oom_group() -> bool {
+    can_run() && cgroup_has_file("memory.oom.group") && systemd_version().is_ok_and(|v| v >= 253)
 }
 
 fn can_run_io_max_multi_device() -> bool {
@@ -295,6 +325,11 @@ pub fn get_test_group() -> TestGroup {
         Box::new(can_run_cpu_idle),
         Box::new(test_cpu_idle),
     );
+    let memory_oom_group = ConditionalTest::new(
+        "memory_oom_group",
+        Box::new(can_run_memory_oom_group),
+        Box::new(test_memory_oom_group),
+    );
     let io_max_multi_device = ConditionalTest::new(
         "io_max_multi_device",
         Box::new(can_run_io_max_multi_device),
@@ -310,6 +345,7 @@ pub fn get_test_group() -> TestGroup {
         Box::new(memory_zswap_max),
         Box::new(memory_zswap_writeback),
         Box::new(cpu_idle),
+        Box::new(memory_oom_group),
         Box::new(io_max_multi_device),
     ]);
     test_group

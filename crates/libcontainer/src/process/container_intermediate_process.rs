@@ -65,7 +65,8 @@ pub fn container_intermediate_process(
     let cgroup_manager = libcgroups::common::create_cgroup_manager(args.cgroup_config.to_owned())
         .map_err(|e| IntermediateProcessError::Cgroup(e.to_string()))?
         .with_rootless(rootless)
-        .with_permission_fallback(permission_fallback);
+        .with_permission_fallback(permission_fallback)
+        .with_initial_resources(linux.resources().as_ref());
 
     let current_pid = Pid::this();
     // setting CPU affinity for tenant container before cgroup move
