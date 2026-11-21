@@ -265,7 +265,7 @@ mod tests {
     fn build_bpf_program(rules: &Option<Vec<LinuxDeviceCgroup>>) -> Result<Program> {
         let mut em = crate::v2::devices::emulator::Emulator::with_default_allow(false);
         if let Some(rules) = rules {
-            em.add_rules(rules);
+            em.add_rules(rules)?;
         }
 
         Ok(Program::from_rules(&em.rules, em.default_allow)?)

@@ -79,7 +79,7 @@ mod bpf {
                 let input_file = submatch.get_one::<String>("input_file").unwrap();
                 let rules = parse_cgroupv1_device_rules(input_file)?;
                 let mut emulator = emulator::Emulator::with_default_allow(false);
-                emulator.add_rules(&rules);
+                emulator.add_rules(&rules)?;
                 let prog = program::Program::from_rules(&emulator.rules, emulator.default_allow)?;
                 let prog_fd = bpf::prog::load(LICENSE, prog.bytecodes())?;
                 bpf::prog::attach(prog_fd, cgroup_fd.as_raw_fd())?;
