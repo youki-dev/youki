@@ -1,0 +1,131 @@
+base: template:_images/ubuntu-26.04
+
+cpus: 4
+memory: "4GiB"
+disk: "20GiB"
+
+param:
+  GO_VERSION: "1.24.3"
+  CONTAINERD_VERSION: "2.2.3"
+  YOUKI_ROOT: "none"
+  WORK_DIR: "/mnt/work"
+
+mounts:
+  - location: "{{.Param.YOUKI_ROOT}}"
+    mountPoint: "/mnt/youki"
+    writable: false
+
+containerd:
+  system: false
+  user: false
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+
+      install -d -o "${LIMA_CIDATA_USER}" -m 0755 "${PARAM_WORK_DIR:?}"
+
+      # install dependencies
+      apt update
+      apt install -y \
+        git \
+        curl \
+        rsync \
+        pkgconf  \
+        build-essential \
+        just \
+        libseccomp-dev \
+        libelf-dev
+
+      # install Go
+      if [ ! -f /usr/local/go/bin/go ]; then
+        ARCH=$(uname -m)
+        case "$ARCH" in
+          x86_64)
+            GOARCH="amd64"
+            ;;
+          aarch64)
+            GOARCH="arm64"
+            ;;
+          *)
+            echo "Unsupported architecture: $ARCH" >&2
+            exit 1
+            ;;
+        esac
+
+        GO_TAR="https://go.dev/dl/go${PARAM_GO_VERSION}.linux-${GOARCH}.tar.gz"
+        curl -sSfL ${GO_TAR} | tar -C /usr/local -xzf -
+      fi
+      export PATH=/usr/local/go/bin:${PATH}
+      export HOME=/root
+      export GOPATH=${HOME}/go
+
+      # for user
+      echo "export PATH=/usr/local/go/bin:\${PATH}" >> ${LIMA_CIDATA_HOME}/.bashrc
+      echo 'export GOPATH=~/go' >> ${LIMA_CIDATA_HOME}/.bashrc
+
+      # install containerd
+      if [ ! -f /usr/local/bin/containerd ]; then
+        rm -rf ${PARAM_WORK_DIR}/containerd
+        git clone --depth=1 https://github.com/containerd/containerd \
+          ${PARAM_WORK_DIR}/containerd \
+          -b v${PARAM_CONTAINERD_VERSION}
+
+        cd ${PARAM_WORK_DIR}/containerd
+        make
+        make install
+        ./script/setup/install-cni
+        ./script/setup/install-critools
+      fi
+
+      cat > ${PARAM_WORK_DIR}/run_test.sh <<EOF
+      #!/bin/bash
+      if [ "\$(id -u)" -ne 0 ]; then
+        echo "This script must be run as root"
+        exit 1
+      fi
+
+      set -eux -o pipefail
+
+      export PATH=/usr/local/go/bin:\${PATH}
+      export GOPATH=/root/go
+
+      cd ${PARAM_WORK_DIR}/containerd
+      export RUNC_FLAVOR=crun
+      export TEST_RUNTIME=io.containerd.runc.v2
+      make integration TESTFLAGS="-timeout 40m -skip 'TestCheckpoint|TestRuntimeInfo|TestUserNamespaces/.*MultipleMap'"
+      EOF
+
+      chmod a+x ${PARAM_WORK_DIR}/run_test.sh
+
+      cat > ${PARAM_WORK_DIR}/sync_youki.sh <<EOF
+      #!/bin/bash
+      set -eux -o pipefail
+
+      rm -rf ${PARAM_WORK_DIR}/youki
+      rsync -av --no-o --exclude='.git' --filter=':- .gitignore' /mnt/youki/ ${PARAM_WORK_DIR}/youki/
+      git -C ${PARAM_WORK_DIR}/youki init
+
+      cd ${PARAM_WORK_DIR}/youki
+      just youki-dev
+      sudo ln -sf ${PARAM_WORK_DIR}/youki/youki /usr/bin/runc
+      EOF
+
+      chmod a+x ${PARAM_WORK_DIR}/sync_youki.sh
+
+  - mode: user
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+
+      # install Rust
+      if [ ! -f ~/.cargo/bin/cargo ]; then
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      fi
+
+      export PATH=~/.cargo/bin:${PATH}
+
+      # copy and build youki
+      ${PARAM_WORK_DIR}/sync_youki.sh
