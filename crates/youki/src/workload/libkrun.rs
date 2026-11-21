@@ -92,6 +92,9 @@ impl HostExecutor for LibkrunExecutor {
         if !can_handle(&spec) {
             return Err(ExecutorError::CantHandle(EXECUTOR_NAME));
         }
+        // Validate the krun annotations here (host side) so that an invalid value
+        // fails `create` with a clear error instead of failing later in the container.
+        read_krun_vm_config(&spec)?;
         validate_kvm().map_err(|e| {
             ExecutorError::Other(format!("validate kvm error in host executor: {e}"))
         })?;
@@ -351,20 +354,32 @@ fn make_oci_spec_device(
 //      than the cgroup allows and get OOM-killed
 //   3. DEFAULT_RAM_MIB
 fn read_krun_vm_config(spec: &Spec) -> Result<(u8, u32), ExecutorError> {
-    let ann = spec.annotations().as_ref();
-    let vcpus = ann
-        .and_then(|a| a.get("krun.cpus"))
-        .and_then(|s| s.trim().parse::<u8>().ok())
-        .unwrap_or(DEFAULT_VCPUS);
-    let ram_mib = match ann
-        .and_then(|a| a.get("krun.ram_mib"))
-        .and_then(|s| s.trim().parse::<u32>().ok())
-    {
+    let vcpus = parse_annotation::<u8>(spec, "krun.cpus")?.unwrap_or(DEFAULT_VCPUS);
+    let ram_mib = match parse_annotation::<u32>(spec, "krun.ram_mib")? {
         Some(v) => v,
         None => ram_mib_from_memory_limit(spec)?.unwrap_or(DEFAULT_RAM_MIB),
     };
     tracing::debug!(vcpus, ram_mib, "libkrun VM config");
     Ok((vcpus, ram_mib))
+}
+
+// Parse a positive integer annotation.
+// Returns None only when the key is missing; a present but invalid value
+// (not an integer, out of range, or zero) is an error so that it is not
+// silently replaced by the default.
+fn parse_annotation<T>(spec: &Spec, key: &str) -> Result<Option<T>, ExecutorError>
+where
+    T: std::str::FromStr + PartialEq + Default,
+{
+    let Some(raw) = spec.annotations().as_ref().and_then(|a| a.get(key)) else {
+        return Ok(None);
+    };
+    match raw.trim().parse::<T>() {
+        Ok(v) if v != T::default() => Ok(Some(v)),
+        _ => Err(ExecutorError::Other(format!(
+            "invalid value for annotation {key}: {raw:?} (must be a positive integer)"
+        ))),
+    }
 }
 
 // Convert `linux.resources.memory.limit` (bytes) to MiB.
@@ -402,9 +417,18 @@ mod tests {
     const MIB: i64 = 1024 * 1024;
 
     fn spec_with(ram_mib_annotation: Option<&str>, memory_limit: Option<i64>) -> Spec {
+        spec_with_annotations(
+            ram_mib_annotation
+                .map(|v| vec![("krun.ram_mib", v)])
+                .unwrap_or_default(),
+            memory_limit,
+        )
+    }
+
+    fn spec_with_annotations(extra: Vec<(&str, &str)>, memory_limit: Option<i64>) -> Spec {
         let mut annotations = HashMap::from([("run.oci.handler".to_string(), "krun".to_string())]);
-        if let Some(v) = ram_mib_annotation {
-            annotations.insert("krun.ram_mib".to_string(), v.to_string());
+        for (k, v) in extra {
+            annotations.insert(k.to_string(), v.to_string());
         }
         let mut linux = LinuxBuilder::default();
         if let Some(limit) = memory_limit {
@@ -455,5 +479,41 @@ mod tests {
     #[test]
     fn ram_memory_limit_below_one_mib_is_error() {
         assert!(read_krun_vm_config(&spec_with(None, Some(MIB - 1))).is_err());
+    }
+
+    #[test]
+    fn cpus_default_when_missing() {
+        let (vcpus, _) = read_krun_vm_config(&spec_with(None, None)).unwrap();
+        assert_eq!(vcpus, DEFAULT_VCPUS);
+    }
+
+    #[test]
+    fn cpus_from_annotation() {
+        let spec = spec_with_annotations(vec![("krun.cpus", "4")], None);
+        let (vcpus, _) = read_krun_vm_config(&spec).unwrap();
+        assert_eq!(vcpus, 4);
+    }
+
+    #[test]
+    fn invalid_cpus_is_error() {
+        for v in ["abc", "", "0", "-1", "1.5", "256"] {
+            let spec = spec_with_annotations(vec![("krun.cpus", v)], None);
+            assert!(
+                read_krun_vm_config(&spec).is_err(),
+                "krun.cpus={v:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_ram_mib_is_error() {
+        // An invalid value must not fall back to the memory limit or the default.
+        for v in ["abc", "", "0", "-1", "2GiB", "4294967296"] {
+            let spec = spec_with_annotations(vec![("krun.ram_mib", v)], Some(512 * MIB));
+            assert!(
+                read_krun_vm_config(&spec).is_err(),
+                "krun.ram_mib={v:?} should be rejected"
+            );
+        }
     }
 }

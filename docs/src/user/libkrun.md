@@ -82,7 +82,7 @@ LD_LIBRARY_PATH=/usr/local/lib64 youki run -b tutorial container
 
 You can configure the libkrun handler via the following annotations:
 
-`run.oci.handler` is the only required annotation; all other annotations are optional.
+`run.oci.handler` is the only required annotation; all other annotations are optional. If `krun.cpus` or `krun.ram_mib` is set, it must be a positive integer; otherwise the container fails to be created.
 
 ```json
 {
