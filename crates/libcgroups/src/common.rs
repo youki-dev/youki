@@ -152,6 +152,22 @@ impl AnyCgroupManager {
             other => other,
         }
     }
+
+    /// Hands the manager the resources the container starts with, before `add_task`.
+    ///
+    /// The systemd manager needs them to create the unit, since systemd takes some
+    /// properties, such as OOMPolicy, only at that point. `apply` is still what applies
+    /// the resources. The v1 and v2 managers ignore it.
+    #[cfg_attr(not(feature = "systemd"), allow(unused_variables))]
+    pub fn with_initial_resources(self, resources: Option<&LinuxResources>) -> Self {
+        match self {
+            #[cfg(feature = "systemd")]
+            AnyCgroupManager::Systemd(m) => {
+                AnyCgroupManager::Systemd(Box::new(m.with_initial_resources(resources)))
+            }
+            other => other,
+        }
+    }
 }
 
 #[derive(Debug)]

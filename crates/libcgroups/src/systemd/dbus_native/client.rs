@@ -16,6 +16,7 @@ pub trait SystemdClient {
         pid: u32,
         parent: &str,
         unit_name: &str,
+        extra_properties: &[(&str, Variant)],
     ) -> Result<(), SystemdClientError>;
 
     fn stop_transient_unit(&self, unit_name: &str) -> Result<(), SystemdClientError>;
