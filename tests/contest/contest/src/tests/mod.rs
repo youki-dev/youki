@@ -23,6 +23,7 @@ pub mod linux_ns_itype;
 pub mod memory_policy;
 pub mod misc_props;
 pub mod mount_propagation;
+pub mod mount_sync_flags;
 pub mod mounts_recursive;
 pub mod net_devices;
 pub mod no_pivot;

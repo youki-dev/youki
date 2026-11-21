@@ -1401,60 +1401,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires CAP_SYS_ADMIN in an isolated Linux test environment"]
-    fn test_mount_into_container_sync_flags_kernel() -> Result<()> {
-        crate::test_utils::test_in_child_process(|| {
-            (|| -> Result<()> {
-                nix::sched::unshare(nix::sched::CloneFlags::CLONE_NEWNS)?;
-                nix::mount::mount(
-                    None::<&str>,
-                    "/",
-                    None::<&str>,
-                    MsFlags::MS_REC | MsFlags::MS_PRIVATE,
-                    None::<&str>,
-                )?;
-                let m = Mount {
-                    syscall: Box::new(linux::LinuxSyscall),
-                    ..Mount::new()
-                };
-                for options in [
-                    vec![],
-                    vec!["sync"],
-                    vec!["dirsync"],
-                    vec!["sync", "dirsync"],
-                ] {
-                    let tmp_dir = tempfile::tempdir()?;
-                    let mount = SpecMountBuilder::default()
-                        .destination(PathBuf::from("/stack"))
-                        .typ("tmpfs")
-                        .source(PathBuf::from("tmpfs"))
-                        .options(options.iter().map(|s| s.to_string()).collect::<Vec<_>>())
-                        .build()?;
-                    m.mount_into_container(&mount, tmp_dir.path(), &parse_mount(&mount)?, None)?;
-                    let target = tmp_dir.path().join("stack");
-                    let entry = m
-                        .mountinfo_provider
-                        .mountinfo()?
-                        .into_iter()
-                        .find(|entry| entry.mount_point == target)
-                        .context("tmpfs mount missing from mountinfo")?;
-                    // Check superblock options, not the per-mount options before the separator.
-                    for option in ["sync", "dirsync"] {
-                        assert_eq!(
-                            entry.super_options.contains_key(option),
-                            options.contains(&option)
-                        );
-                    }
-                    nix::mount::umount(&target)?;
-                }
-                Ok(())
-            })()
-            .map_err(|err| err.to_string().into())
-        })?;
-        Ok(())
-    }
-
-    #[test]
     fn test_mount_into_container_overlay_long_lowerdir() -> Result<()> {
         let tmp_dir = tempfile::tempdir()?;
         // Podman's image volumes (--mount type=image) are overlay mounts with only lower
