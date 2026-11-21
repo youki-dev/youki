@@ -1,12 +1,53 @@
 use std::time::Duration;
 
-use anyhow::anyhow;
+use anyhow::{Result, anyhow};
+use oci_spec::runtime::{
+    LinuxBuilder, LinuxIdMappingBuilder, LinuxNamespaceBuilder, LinuxNamespaceType, ProcessBuilder,
+    Spec, SpecBuilder, get_default_namespaces,
+};
 use test_framework::{Test, TestGroup, TestResult};
 
 use crate::tests::lifecycle::ContainerLifecycle;
 
 // Default timeout for state transitions
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(75);
+
+fn create_userns_spec() -> Result<Spec> {
+    let mut namespaces = get_default_namespaces();
+    namespaces.push(
+        LinuxNamespaceBuilder::default()
+            .typ(LinuxNamespaceType::User)
+            .build()?,
+    );
+
+    let uid_mapping = LinuxIdMappingBuilder::default()
+        .host_id(100000_u32)
+        .container_id(0_u32)
+        .size(65534_u32)
+        .build()?;
+    let gid_mapping = LinuxIdMappingBuilder::default()
+        .host_id(200000_u32)
+        .container_id(0_u32)
+        .size(65534_u32)
+        .build()?;
+
+    let spec = SpecBuilder::default()
+        .process(
+            ProcessBuilder::default()
+                .args(vec!["sleep".to_string(), "10".to_string()])
+                .build()?,
+        )
+        .linux(
+            LinuxBuilder::default()
+                .namespaces(namespaces)
+                .uid_mappings(vec![uid_mapping])
+                .gid_mappings(vec![gid_mapping])
+                .build()?,
+        )
+        .build()?;
+
+    Ok(spec)
+}
 
 /// Test deleting a non-existent container
 fn delete_non_existed_container() -> TestResult {
@@ -152,6 +193,65 @@ fn delete_stopped_container_test() -> TestResult {
     }
 }
 
+/// Test force-deleting a running container with a new user namespace.
+///
+/// A new user namespace forces the systemd cgroup manager, and the state has to
+/// record that. Otherwise `delete --force` rebuilds a cgroupfs manager, fails to
+/// remove the cgroup and leaves the container running with its state behind.
+fn delete_force_running_userns_container_test() -> TestResult {
+    let spec = match create_userns_spec() {
+        Ok(spec) => spec,
+        Err(err) => return TestResult::Failed(err),
+    };
+    let container = ContainerLifecycle::new();
+
+    match container.create_with_spec(spec) {
+        TestResult::Passed => {}
+        _ => return TestResult::Failed(anyhow!("Failed to create container")),
+    }
+
+    match container.start() {
+        TestResult::Passed => {}
+        _ => {
+            let _ = container.delete_force();
+            return TestResult::Failed(anyhow!("Failed to start container"));
+        }
+    }
+
+    match container.wait_for_state("running", DEFAULT_TIMEOUT) {
+        TestResult::Passed => {}
+        result => {
+            let _ = container.delete_force();
+            return result;
+        }
+    }
+
+    match container.delete_force() {
+        TestResult::Passed => {}
+        TestResult::Failed(err) => {
+            let _ = container.kill();
+            let _ = container.delete();
+            return TestResult::Failed(anyhow!(
+                "Failed to force-delete running container with a user namespace: {}",
+                err
+            ));
+        }
+        _ => return TestResult::Failed(anyhow!("Unexpected test result")),
+    }
+
+    let container_dir = container
+        .get_project_path()
+        .join("runtime")
+        .join(container.get_id());
+    if container_dir.exists() {
+        return TestResult::Failed(anyhow!(
+            "Container directory still exists after delete --force"
+        ));
+    }
+
+    TestResult::Passed
+}
+
 /// Create and return the delete_container test group
 pub fn get_delete_test() -> TestGroup {
     let mut test_group = TestGroup::new("delete");
@@ -172,12 +272,17 @@ pub fn get_delete_test() -> TestGroup {
         "delete_stopped_container_test",
         Box::new(delete_stopped_container_test),
     );
+    let delete_force_running_userns_container_test = Test::new(
+        "delete_force_running_userns_container_test",
+        Box::new(delete_force_running_userns_container_test),
+    );
 
     test_group.add(vec![
         Box::new(delete_non_existed_container),
         Box::new(delete_created_container_test),
         Box::new(delete_running_container_test),
         Box::new(delete_stopped_container_test),
+        Box::new(delete_force_running_userns_container_test),
     ]);
 
     test_group

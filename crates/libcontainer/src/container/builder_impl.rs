@@ -115,7 +115,7 @@ impl ContainerBuilderImpl {
 
         let cgroup_config = libcgroups::common::CgroupConfig {
             cgroup_path: final_cgroups_path,
-            systemd_cgroup: self.use_systemd || self.user_ns_config.is_some(),
+            systemd_cgroup: self.use_systemd,
             container_name: self.container_id.to_owned(),
         };
         let process = self
@@ -232,7 +232,7 @@ impl ContainerBuilderImpl {
         let cmanager =
             libcgroups::common::create_cgroup_manager(libcgroups::common::CgroupConfig {
                 cgroup_path: self.cgroup_path.clone(),
-                systemd_cgroup: self.use_systemd || self.user_ns_config.is_some(),
+                systemd_cgroup: self.use_systemd,
                 container_name: self.container_id.to_string(),
             })?;
 

@@ -81,10 +81,10 @@ impl InitContainerBuilder {
         // (mirrors runc's checkTerminal called at the top of runner.run())
         self.base.check_terminal(&spec, self.detached)?;
 
-        let container_dir = self.create_container_dir()?;
-
         let user_ns_config = UserNamespaceConfig::new(&spec)?;
         let use_systemd = self.cgroup_uses_systemd(user_ns_config.as_ref());
+
+        let container_dir = self.create_container_dir()?;
 
         let mut container = self.create_container_state(&container_dir, use_systemd)?;
         container.set_annotations(spec.annotations().clone());
