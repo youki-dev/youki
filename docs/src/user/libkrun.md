@@ -98,6 +98,14 @@ You can configure the libkrun handler via the following annotations:
 * `krun.cpus`: Number of vCPUs assigned to the guest (default: 1)
 * `krun.ram_mib`: Guest RAM in MiB. If not set, `linux.resources.memory.limit` is used (rounded down to MiB) so the guest stays within the cgroup memory limit; if no limit is set either, 2048 is used.
 
+## seccomp
+
+youki applies `linux.seccomp` in the container init process before starting the workload.
+With libkrun, that process becomes the VMM on the host, so the seccomp profile filters the VMM's syscalls, not the workload's:
+
+* The profile must allow the syscalls the VMM needs. In particular, blocking `ioctl` stops the KVM ioctls on `/dev/kvm`, and the VM fails to start (`Building the microVM failed: Internal(KvmContext(KvmApiVersion(-1)))`).
+* Syscalls made by the workload inside the guest are handled by the guest kernel, so the profile does not restrict them.
+
 ## Limitations
 
 * `exec` is not supported.
