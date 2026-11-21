@@ -1,8 +1,9 @@
 //! This exposes the main control wrapper to control the tests
 use std::collections::BTreeMap;
+use std::num::NonZeroUsize;
+use std::thread;
 
 use anyhow::Result;
-use crossbeam::thread;
 
 use crate::testable::{TestResult, TestableGroup};
 
@@ -68,13 +69,13 @@ impl TestManager {
             .filter(|(_, tg)| tg.parallel())
             .collect();
 
-        let batch_size = num_cpus::get().max(1);
+        let batch_size = thread::available_parallelism().map_or(1, NonZeroUsize::get);
 
         for batch in parallel_groups.chunks(batch_size) {
             thread::scope(|s| {
                 let mut collector = Vec::with_capacity(batch.len());
                 for (name, tg) in batch {
-                    let r = s.spawn(move |_| tg.run_all());
+                    let r = s.spawn(move || tg.run_all());
                     collector.push((name, r));
                 }
 
@@ -82,8 +83,7 @@ impl TestManager {
                     let result = handle.join().unwrap();
                     self.print_test_result(name, &result);
                 }
-            })
-            .unwrap();
+            });
         }
 
         for (name, tg) in &self.test_groups {
@@ -110,8 +110,8 @@ impl TestManager {
                         continue;
                     }
                     let r = match tests {
-                        None => s.spawn(move |_| tg.run_all()),
-                        Some(tests) => s.spawn(move |_| tg.run_selected(tests)),
+                        None => s.spawn(move || tg.run_all()),
+                        Some(tests) => s.spawn(move || tg.run_selected(tests)),
                     };
                     collector.push((test_group_name, r));
                 } else {
@@ -121,8 +121,7 @@ impl TestManager {
             for (name, handle) in collector {
                 self.print_test_result(name, &handle.join().unwrap());
             }
-        })
-        .unwrap();
+        });
         for (test_group_name, tests) in &tests {
             if let Some(tg) = self.test_groups.get(test_group_name) {
                 if tg.parallel() {

@@ -3,7 +3,7 @@ use clap::Args;
 /// List created containers
 #[derive(Args, Debug)]
 pub struct List {
-    /// Specify the format (default or table)
+    /// Specify the format (table or json)
     #[arg(long, default_value = "table")]
     pub format: String,
 

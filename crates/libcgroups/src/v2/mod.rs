@@ -10,5 +10,5 @@ mod io;
 pub mod manager;
 mod memory;
 mod pids;
-mod unified;
+pub(crate) mod unified;
 pub mod util;

@@ -171,6 +171,34 @@ fn recv_pty_master(listener: &UnixListener) -> Result<OwnedFd> {
     Err(anyhow!("no fd received on the console socket"))
 }
 
+// Read the master until the marker appears or the deadline expires.
+fn read_master_until(master: &OwnedFd, marker: &str, timeout: Duration) -> String {
+    let _ = fcntl(master, FcntlArg::F_SETFL(OFlag::O_NONBLOCK));
+    let mut file = match master.try_clone() {
+        Ok(fd) => fs::File::from(fd),
+        Err(_) => return String::new(),
+    };
+    let deadline = Instant::now() + timeout;
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    while Instant::now() < deadline {
+        match file.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                buf.extend_from_slice(&chunk[..n]);
+                if String::from_utf8_lossy(&buf).contains(marker) {
+                    break;
+                }
+            }
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(_) => break,
+        }
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
 // Read the master until EOF or the deadline (the container may stay alive on failure).
 fn read_master_for(master: OwnedFd, timeout: Duration) -> String {
     let _ = fcntl(&master, FcntlArg::F_SETFL(OFlag::O_NONBLOCK));
@@ -213,6 +241,10 @@ pub fn get_terminal_test() -> TestGroup {
         Box::new(Test::new(
             "terminal_no_console_socket",
             Box::new(run_tests::terminal_no_console_socket_test),
+        )),
+        Box::new(Test::new(
+            "terminal_newline_rendering",
+            Box::new(run_tests::terminal_newline_rendering_test),
         )),
         Box::new(Test::new(
             "terminal_stdin_bridge",

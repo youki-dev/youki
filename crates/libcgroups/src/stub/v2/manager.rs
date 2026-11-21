@@ -9,6 +9,10 @@ pub enum V2ManagerError {
 pub struct Manager {}
 
 impl Manager {
+    pub fn needs_to_handle(_controller_opt: &crate::common::ControllerOpt) -> bool {
+        false
+    }
+
     pub fn any(self) -> AnyCgroupManager {
         crate::common::AnyCgroupManager::V2(self)
     }

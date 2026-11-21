@@ -17,8 +17,8 @@ use super::cpuset::CpuSet;
 use super::devices::Devices;
 use super::freezer::{Freezer, V2FreezerError};
 use super::hugetlb::{HugeTlb, V2HugeTlbControllerError, V2HugeTlbStatsError};
-use super::io::{Io, V2IoControllerError, V2IoStatsError};
-use super::memory::{Memory, V2MemoryControllerError, V2MemoryStatsError};
+use super::io::{CGROUP_IO_PSI, Io, V2IoControllerError, V2IoStatsError};
+use super::memory::{MEMORY_PSI, Memory, V2MemoryControllerError, V2MemoryStatsError};
 use super::pids::Pids;
 use super::unified::{Unified, V2UnifiedError};
 use super::util::{self, CGROUP_SUBTREE_CONTROL, V2UtilError};
@@ -26,7 +26,7 @@ use crate::common::{
     self, AnyCgroupManager, CGROUP_PROCS, CgroupManager, ControllerOpt, FreezerState,
     JoinSafelyError, PathBufExt, WrapIoResult, WrappedIoError,
 };
-use crate::stats::{PidStatsError, Stats, StatsProvider};
+use crate::stats::{PidStatsError, Stats, StatsProvider, psi_stats};
 
 pub const CGROUP_KILL: &str = "cgroup.kill";
 
@@ -187,7 +187,7 @@ impl Manager {
     // Writing an already-enabled controller is idempotent in cgroup v2, so we
     // simply attempt to write each one and ignore errors.
     // See https://github.com/youki-dev/youki/issues/3597#issuecomment-4749947856
-    fn enable_controllers(path: &Path, controllers: &[String]) {
+    pub(crate) fn enable_controllers(path: &Path, controllers: &[String]) {
         for controller in controllers {
             if let Err(err) =
                 common::write_cgroup_file_str(path.join(CGROUP_SUBTREE_CONTROL), controller)
@@ -198,6 +198,18 @@ impl Manager {
                 );
             }
         }
+    }
+
+    /// Whether any controller would write a limit for this request. Device
+    /// rules do not count: the devices controller applies its defaults either way.
+    pub fn needs_to_handle(controller_opt: &ControllerOpt) -> bool {
+        Cpu::needs_to_handle(controller_opt).is_some()
+            || CpuSet::needs_to_handle(controller_opt).is_some()
+            || HugeTlb::needs_to_handle(controller_opt).is_some()
+            || Io::needs_to_handle(controller_opt).is_some()
+            || Memory::needs_to_handle(controller_opt).is_some()
+            || Pids::needs_to_handle(controller_opt).is_some()
+            || Unified::needs_to_handle(controller_opt).is_some()
     }
 
     pub fn any(self) -> AnyCgroupManager {
@@ -282,7 +294,27 @@ impl CgroupManager for Manager {
     fn stats(&self) -> Result<Stats, Self::Error> {
         let mut stats = Stats::default();
 
+        // a controller's files exist only where it is enabled, so skip the ones missing from
+        // cgroup.controllers; cpu.stat and the pressure files are core files and exist either way
+        let enabled = common::read_cgroup_file(self.full_path.join(util::CGROUP_CONTROLLERS))?;
+        let enabled: Vec<&str> = enabled.split_whitespace().collect();
+
         for subsystem in CONTROLLER_TYPES {
+            if *subsystem != ControllerType::Cpu
+                && !enabled.contains(&subsystem.to_string().as_str())
+            {
+                match subsystem {
+                    ControllerType::Memory => {
+                        stats.memory.psi = psi_stats(&self.full_path.join(MEMORY_PSI))?
+                    }
+                    ControllerType::Io => {
+                        stats.blkio.psi = psi_stats(&self.full_path.join(CGROUP_IO_PSI))?
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+
             match subsystem {
                 ControllerType::Cpu => stats.cpu = Cpu::stats(&self.full_path)?,
                 ControllerType::HugeTlb => stats.hugetlb = HugeTlb::stats(&self.full_path)?,
@@ -305,8 +337,85 @@ impl CgroupManager for Manager {
 
 #[cfg(test)]
 mod tests {
+    use oci_spec::runtime::LinuxResources;
+
     use super::*;
     use crate::test::set_fixture;
+
+    fn opt(resources: &LinuxResources) -> ControllerOpt<'_> {
+        ControllerOpt {
+            resources,
+            freezer_state: None,
+            oom_score_adj: None,
+            disable_oom_killer: false,
+        }
+    }
+
+    #[test]
+    fn needs_to_handle_counts_only_v2_writes() -> Result<(), Box<dyn std::error::Error>> {
+        use oci_spec::runtime::{
+            LinuxBlockIoBuilder, LinuxCpuBuilder, LinuxDeviceCgroupBuilder, LinuxMemoryBuilder,
+            LinuxNetworkBuilder, LinuxPidsBuilder, LinuxResourcesBuilder,
+        };
+
+        assert!(!Manager::needs_to_handle(&opt(&LinuxResources::default())));
+
+        let devices_only = LinuxResourcesBuilder::default()
+            .devices(vec![
+                LinuxDeviceCgroupBuilder::default()
+                    .allow(false)
+                    .access("rwm".to_string())
+                    .build()?,
+            ])
+            .build()?;
+        assert!(!Manager::needs_to_handle(&opt(&devices_only)));
+
+        let empty_controllers = LinuxResourcesBuilder::default()
+            .memory(LinuxMemoryBuilder::default().build()?)
+            .cpu(LinuxCpuBuilder::default().build()?)
+            .block_io(LinuxBlockIoBuilder::default().build()?)
+            .network(LinuxNetworkBuilder::default().class_id(1u32).build()?)
+            .build()?;
+        assert!(!Manager::needs_to_handle(&opt(&empty_controllers)));
+
+        let memory = LinuxResourcesBuilder::default()
+            .memory(LinuxMemoryBuilder::default().limit(1 << 20).build()?)
+            .build()?;
+        assert!(Manager::needs_to_handle(&opt(&memory)));
+
+        let pids = LinuxResourcesBuilder::default()
+            .pids(LinuxPidsBuilder::default().limit(5).build()?)
+            .build()?;
+        assert!(Manager::needs_to_handle(&opt(&pids)));
+
+        let pids_unlimited = LinuxResourcesBuilder::default()
+            .pids(LinuxPidsBuilder::default().limit(-1).build()?)
+            .build()?;
+        assert!(Manager::needs_to_handle(&opt(&pids_unlimited)));
+
+        // zero means unset, as in runc
+        let zeros = LinuxResourcesBuilder::default()
+            .memory(LinuxMemoryBuilder::default().limit(0).build()?)
+            .cpu(
+                LinuxCpuBuilder::default()
+                    .shares(0u64)
+                    .quota(0)
+                    .period(0u64)
+                    .build()?,
+            )
+            .block_io(LinuxBlockIoBuilder::default().weight(0u16).build()?)
+            .build()?;
+        assert!(!Manager::needs_to_handle(&opt(&zeros)));
+
+        let unified = LinuxResourcesBuilder::default()
+            .unified(std::collections::HashMap::from([(
+                "memory.high".to_string(),
+                "1024".to_string(),
+            )]))
+            .build()?;
+        assert!(Manager::needs_to_handle(&opt(&unified)));
+        Ok(())
+    }
 
     #[test]
     fn test_new_keeps_cgroup_path_under_root() -> Result<(), V2ManagerError> {
@@ -341,5 +450,95 @@ mod tests {
             "{result:?}"
         );
         assert!(tmp.path().join("parent/child").is_dir());
+    }
+
+    #[test]
+    fn test_stats_reads_only_enabled_controllers() -> Result<(), V2ManagerError> {
+        // pids is listed and cpu is not; the hugetlb, io and memory files are absent, as in a
+        // delegated cgroup where those controllers are not enabled.
+        let tmp = tempfile::tempdir().expect("create temp directory for test");
+        set_fixture(tmp.path(), util::CGROUP_CONTROLLERS, "pids").expect("set cgroup.controllers");
+        set_fixture(
+            tmp.path(),
+            "cpu.stat",
+            "usage_usec 10\nuser_usec 6\nsystem_usec 4\n",
+        )
+        .expect("set cpu.stat");
+        set_fixture(tmp.path(), "cpu.pressure", "").expect("set cpu.pressure");
+        set_fixture(tmp.path(), "pids.current", "3\n").expect("set pids.current");
+        set_fixture(tmp.path(), "pids.max", "20\n").expect("set pids.max");
+
+        let stats = Manager::new(tmp.path().to_path_buf(), PathBuf::from("/"))?.stats()?;
+
+        assert_eq!(stats.cpu.usage.usage_total, 10_000);
+        assert_eq!(stats.pids.current, 3);
+        assert_eq!(stats.pids.limit, 20);
+        Ok(())
+    }
+
+    #[test]
+    fn test_stats_reads_pressure_of_disabled_controllers() -> Result<(), V2ManagerError> {
+        // memory and io are not listed, so memory.stat and io.stat are absent, but their
+        // pressure files are core files and still report pressure.
+        let tmp = tempfile::tempdir().expect("create temp directory for test");
+        set_fixture(tmp.path(), util::CGROUP_CONTROLLERS, "pids").expect("set cgroup.controllers");
+        set_fixture(
+            tmp.path(),
+            "cpu.stat",
+            "usage_usec 10\nuser_usec 6\nsystem_usec 4\n",
+        )
+        .expect("set cpu.stat");
+        set_fixture(tmp.path(), "cpu.pressure", "").expect("set cpu.pressure");
+        set_fixture(tmp.path(), "pids.current", "3\n").expect("set pids.current");
+        set_fixture(tmp.path(), "pids.max", "20\n").expect("set pids.max");
+        set_fixture(
+            tmp.path(),
+            MEMORY_PSI,
+            "some avg10=1.50 avg60=0.50 avg300=0.10 total=100\n\
+             full avg10=1.00 avg60=0.25 avg300=0.05 total=50\n",
+        )
+        .expect("set memory.pressure");
+        set_fixture(
+            tmp.path(),
+            CGROUP_IO_PSI,
+            "some avg10=21.34 avg60=8.00 avg300=2.00 total=3000\n\
+             full avg10=20.00 avg60=7.50 avg300=1.75 total=2900\n",
+        )
+        .expect("set io.pressure");
+
+        let stats = Manager::new(tmp.path().to_path_buf(), PathBuf::from("/"))?.stats()?;
+
+        assert_eq!(stats.memory.psi.some.avg10, 1.5);
+        assert_eq!(stats.memory.psi.full.avg60, 0.25);
+        assert_eq!(stats.blkio.psi.some.avg10, 21.34);
+        assert_eq!(stats.blkio.psi.full.avg300, 1.75);
+        Ok(())
+    }
+
+    #[test]
+    fn test_stats_fails_when_enabled_controller_file_is_missing() -> Result<(), V2ManagerError> {
+        let tmp = tempfile::tempdir().expect("create temp directory for test");
+        set_fixture(tmp.path(), util::CGROUP_CONTROLLERS, "cpu memory")
+            .expect("set cgroup.controllers");
+        set_fixture(
+            tmp.path(),
+            "cpu.stat",
+            "usage_usec 10\nuser_usec 6\nsystem_usec 4\n",
+        )
+        .expect("set cpu.stat");
+        set_fixture(tmp.path(), "cpu.pressure", "").expect("set cpu.pressure");
+
+        let result = Manager::new(tmp.path().to_path_buf(), PathBuf::from("/"))?.stats();
+
+        assert!(
+            matches!(
+                &result,
+                Err(V2ManagerError::MemoryStats(V2MemoryStatsError::WrappedIo(
+                    WrappedIoError::Read { path, .. }
+                ))) if path.ends_with("memory.current")
+            ),
+            "{result:?}"
+        );
+        Ok(())
     }
 }

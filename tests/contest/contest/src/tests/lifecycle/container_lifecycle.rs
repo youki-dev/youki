@@ -204,6 +204,14 @@ impl ContainerLifecycle {
         checkpoint::checkpoint_empty_net_ns(self.project_path.path(), &self.container_id)
     }
 
+    pub fn checkpoint_page_server(&self) -> TestResult {
+        if !criu_installed() {
+            return TestResult::Skipped("CRIU is not installed".to_string());
+        }
+
+        checkpoint::checkpoint_page_server(self.project_path.path(), &self.container_id)
+    }
+
     // NOTE: The following two methods (`checkpoint_link_remap` and
     // `checkpoint_with_external_namespaces`) deviate from the pattern used by
     // the other checkpoint methods in this impl block. The typical pattern is:
@@ -345,6 +353,7 @@ impl TestableGroup for ContainerLifecycle {
                 "checkpoint with empty network namespace",
                 self.checkpoint_empty_net_ns(),
             ),
+            ("checkpoint with page-server", self.checkpoint_page_server()),
             ("checkpoint with link-remap", Self::checkpoint_link_remap()),
             (
                 "checkpoint with tcp-skip-in-flight",
@@ -386,6 +395,9 @@ impl TestableGroup for ContainerLifecycle {
                     "checkpoint with empty network namespace",
                     self.checkpoint_empty_net_ns(),
                 )),
+                "checkpoint_page_server" => {
+                    ret.push(("checkpoint with page-server", self.checkpoint_page_server()))
+                }
                 "checkpoint_link_remap" => {
                     ret.push(("checkpoint with link-remap", Self::checkpoint_link_remap()))
                 }

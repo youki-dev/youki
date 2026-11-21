@@ -426,7 +426,20 @@ pub fn pid_stats(cgroup_path: &Path) -> Result<PidStats, PidStatsError> {
 pub fn psi_stats(psi_file: &Path) -> Result<PSIStats, WrappedIoError> {
     let mut stats = PSIStats::default();
 
-    let psi = common::read_cgroup_file(psi_file)?;
+    // The pressure files are missing when the kernel has no PSI or it is
+    // turned off for the cgroup (cgroup.pressure set to 0), and some kernels
+    // return EOPNOTSUPP on read unless booted with psi=1. runc returns empty
+    // PSI in these cases too.
+    let psi = match common::read_cgroup_file(psi_file) {
+        Ok(psi) => psi,
+        Err(err)
+            if err.inner().kind() == std::io::ErrorKind::NotFound
+                || err.inner().raw_os_error() == Some(nix::errno::Errno::EOPNOTSUPP as i32) =>
+        {
+            return Ok(stats);
+        }
+        Err(err) => return Err(err),
+    };
     for line in psi.lines() {
         match &line[0..4] {
             "some" => stats.some = parse_psi(&line[4..], psi_file)?,
@@ -709,5 +722,13 @@ mod tests {
                 full: PSIData::default(),
             }
         )
+    }
+
+    #[test]
+    fn test_psi_stats_missing_file() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let result = psi_stats(&tmp.path().join("cpu.pressure")).unwrap();
+        assert_eq!(result, PSIStats::default());
     }
 }

@@ -14,7 +14,7 @@
 
 use std::env;
 use std::io::IoSlice;
-use std::os::fd::{BorrowedFd, OwnedFd};
+use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::os::unix::fs::{OpenOptionsExt, symlink};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::prelude::RawFd;
@@ -329,7 +329,7 @@ pub fn setup_console(
     };
 
     // Connect stdio to PTY slave
-    connect_stdio(&slave.as_raw_fd(), &slave.as_raw_fd(), &slave.as_raw_fd())?;
+    connect_stdio(slave.as_fd(), slave.as_fd(), slave.as_fd())?;
 
     Ok(match console_fd {
         Some(console_fd) => {
@@ -422,22 +422,18 @@ fn mount_console(syscall: &dyn Syscall, slave: &OwnedFd, console_path: &Path) ->
     Ok(())
 }
 
-fn connect_stdio(stdin: &RawFd, stdout: &RawFd, stderr: &RawFd) -> Result<()> {
-    let stdin_fd = unsafe { BorrowedFd::borrow_raw(*stdin) };
-    let stdout_fd = unsafe { BorrowedFd::borrow_raw(*stdout) };
-    let stderr_fd = unsafe { BorrowedFd::borrow_raw(*stderr) };
-
-    dup2_stdin(stdin_fd).map_err(|err| TTYError::ConnectStdIO {
+fn connect_stdio(stdin: BorrowedFd, stdout: BorrowedFd, stderr: BorrowedFd) -> Result<()> {
+    dup2_stdin(stdin).map_err(|err| TTYError::ConnectStdIO {
         source: err,
         stdio: StdIO::Stdin,
     })?;
-    dup2_stdout(stdout_fd).map_err(|err| TTYError::ConnectStdIO {
+    dup2_stdout(stdout).map_err(|err| TTYError::ConnectStdIO {
         source: err,
         stdio: StdIO::Stdout,
     })?;
     // FIXME: Rarely does it fail.
     // error message: `Error: Resource temporarily unavailable (os error 11)`
-    dup2_stderr(stderr_fd).map_err(|err| TTYError::ConnectStdIO {
+    dup2_stderr(stderr).map_err(|err| TTYError::ConnectStdIO {
         source: err,
         stdio: StdIO::Stderr,
     })?;
@@ -457,6 +453,14 @@ mod tests {
     use super::*;
 
     const CONSOLE_SOCKET: &str = "console-socket";
+
+    // openpty() opens /dev/ptmx, and the master only passes verify_ptmx_handle when that
+    // resolves to devpts. On native Ubuntu /dev/ptmx is a symlink to /dev/pts/ptmx, but on
+    // hosts like WSL2 or Arch it is a char device on devtmpfs, so those tests can't pass there.
+    fn host_ptmx_is_devpts() -> bool {
+        nix::sys::statfs::statfs("/dev/ptmx")
+            .is_ok_and(|fs| fs.filesystem_type() == FsType(DEVPTS_SUPER_MAGIC))
+    }
 
     #[test]
     #[serial]
@@ -496,12 +500,11 @@ mod tests {
     #[test]
     #[serial]
     fn test_setup_console() -> Result<()> {
-        // This test fails when run in WSL2.
-        // When it calls openpty() in setup_console() which opens /dev/ptmx, it must be on a real devpts mount.
-        // On native Ubuntu system, /dev/ptmx is a symlink to /dev/pts/ptmx, so the master is devpts-backed (with proper magic number).
-        // But on WSL2, /dev/ptmx is a real char device node living directly on /dev, which is devtmpfs (different magic number, shared with tmpfs).
-        // Therefore you may skip this test if you are WSL2 user.
         use crate::syscall::syscall::create_syscall;
+
+        if !host_ptmx_is_devpts() {
+            return Ok(());
+        }
 
         let testdir = tempfile::tempdir()?;
         let socket_path = Path::join(testdir.path(), "test-socket");
@@ -509,9 +512,9 @@ mod tests {
         // duplicate the existing std* fds
         // we need to restore them later, and we cannot simply store them
         // as they themselves get modified in setup_console
-        let old_stdin = nix::unistd::dup(unsafe { BorrowedFd::borrow_raw(StdIO::Stdin.into()) })?;
-        let old_stdout = nix::unistd::dup(unsafe { BorrowedFd::borrow_raw(StdIO::Stdout.into()) })?;
-        let old_stderr = nix::unistd::dup(unsafe { BorrowedFd::borrow_raw(StdIO::Stderr.into()) })?;
+        let old_stdin = std::io::stdin().as_fd().try_clone_to_owned()?;
+        let old_stdout = std::io::stdout().as_fd().try_clone_to_owned()?;
+        let old_stderr = std::io::stderr().as_fd().try_clone_to_owned()?;
 
         let lis = UnixListener::bind(&socket_path);
         assert!(lis.is_ok());
@@ -564,6 +567,9 @@ mod tests {
 
     #[test]
     fn test_verify_ptmx_handle_with_real_pty() -> Result<()> {
+        if !host_ptmx_is_devpts() {
+            return Ok(());
+        }
         // Allocate a real PTY pair
         let openpty_result =
             pty::openpty(None, None).map_err(|e| TTYError::CreatePseudoTerminal { source: e })?;
@@ -578,7 +584,6 @@ mod tests {
     #[test]
     fn test_verify_ptmx_handle_with_regular_file() {
         use std::fs::File;
-        use std::os::fd::AsFd;
 
         use tempfile::tempfile;
 
@@ -605,7 +610,6 @@ mod tests {
     #[test]
     fn test_verify_pty_slave_with_regular_file() {
         use std::fs::File;
-        use std::os::fd::AsFd;
 
         use tempfile::tempfile;
 

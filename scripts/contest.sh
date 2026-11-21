@@ -35,9 +35,9 @@ fi
 touch ${LOGFILE}
 
 if [ $# -gt 0 ]; then
-    ${ROOT}/contest run --runtime "$RUNTIME" --runtimetest "${ROOT}/runtimetest" -t "$@" 2>&1 | tee "$LOGFILE"
+    { ${ROOT}/contest run --runtime "$RUNTIME" --runtimetest "${ROOT}/runtimetest" -t "$@" || echo "not ok - contest exited with status $?"; } 2>&1 | tee "$LOGFILE"
 else
-    ${ROOT}/contest run --runtime "$RUNTIME" --runtimetest "${ROOT}/runtimetest" 2>&1 | tee "$LOGFILE"
+    { ${ROOT}/contest run --runtime "$RUNTIME" --runtimetest "${ROOT}/runtimetest" || echo "not ok - contest exited with status $?"; } 2>&1 | tee "$LOGFILE"
 fi
 
 if [ 0 -ne $(grep "not ok" $LOGFILE | wc -l ) ]; then

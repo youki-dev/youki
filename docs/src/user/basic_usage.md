@@ -114,10 +114,11 @@ Now the any container runtime gets the information about the permissions, config
 ../youki spec
 ```
 
-After this, you can manually edit the file to customize the behavior of the container process. For example, to run the desired program inside the container, you can edit the process.args
+After this, you can manually edit the file to customize the behavior of the container process. For example, to run the desired program inside the container, you can edit the process.args. Also set process.terminal to `false`, because `youki create` runs the container in the background and cannot allocate a terminal without `--console-socket`.
 
 ```json
 "process": {
+"terminal": false,
 ...
 "args": [
   "sleep", "30"

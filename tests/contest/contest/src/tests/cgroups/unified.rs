@@ -12,10 +12,12 @@ use test_framework::{ConditionalTest, TestGroup, TestResult, assert_result_eq, t
 
 use crate::utils::test_utils::{CGROUP_ROOT, check_container_created};
 use crate::utils::{
-    cgroup_has_file, is_cgroup_v2, is_cgroup_v2_with_controller, test_outside_container,
+    block_device_numbers, cgroup_has_file, is_cgroup_v2, is_cgroup_v2_with_controller,
+    test_outside_container,
 };
 
 const MEMORY_SWAP_MAX: &str = "memory.swap.max";
+const IO_MAX: &str = "io.max";
 
 // SPEC: each key in linux.resources.unified names a file in the container's
 // cgroup, and the runtime writes the value to that file, including keys that
@@ -23,7 +25,9 @@ const MEMORY_SWAP_MAX: &str = "memory.swap.max";
 // when a key refers to a controller that is not present. The spec does not say
 // which value wins when a unified key and another resource field set the same
 // file; youki follows runc and applies the unified map last, so the unified
-// value wins.
+// value wins. io.max is keyed per device, so one value can carry a line for
+// each throttled device; the kernel echoes every field back, with unset
+// fields as "max", so the assertions match fields rather than whole lines.
 //
 // The tests use the values of the runc tests they port. The memory values are
 // multiples of 64 KiB: the kernel keeps memory limits in whole pages, so a
@@ -181,6 +185,67 @@ fn test_unified_unavailable_controller() -> TestResult {
     })
 }
 
+/// Tests that one io.max value with a line per device throttles every listed
+/// device. The devices are the first two the host exposes, and the two lines
+/// use different rates, so a value written to the wrong device's line fails
+/// here.
+/// Port of runc's "runc run (per-device multiple iops via unified)".
+fn test_unified_io_max_multi_device() -> TestResult {
+    const CGROUP_NAME: &str = "test_unified_io_max_multi_device";
+    let devices = test_result!(block_device_numbers(2));
+    let ((major1, minor1), (major2, minor2)) = (devices[0], devices[1]);
+    let value =
+        format!("{major1}:{minor1} riops=333 wiops=444\n{major2}:{minor2} riops=555 wiops=666\n");
+    let expected = [
+        (major1, minor1, "riops=333", "wiops=444"),
+        (major2, minor2, "riops=555", "wiops=666"),
+    ];
+
+    let resources = test_result!(
+        LinuxResourcesBuilder::default()
+            .unified(unified_map(&[(IO_MAX, &value)]))
+            .build()
+            .context("failed to build resource spec")
+    );
+    let spec = test_result!(create_spec(CGROUP_NAME, resources));
+
+    test_outside_container(&spec, &|data| {
+        test_result!(check_container_created(&data));
+        for (major, minor, read, write) in expected {
+            test_result!(check_io_max_entry(CGROUP_NAME, major, minor, read, write));
+        }
+        TestResult::Passed
+    })
+}
+
+fn check_io_max_entry(
+    cgroup_name: &str,
+    major: i64,
+    minor: i64,
+    expected_read: &str,
+    expected_write: &str,
+) -> Result<()> {
+    let cgroup_path = PathBuf::from(CGROUP_ROOT)
+        .join("runtime-test")
+        .join(cgroup_name)
+        .join(IO_MAX);
+
+    let content = fs::read_to_string(&cgroup_path)
+        .with_context(|| format!("failed to read {cgroup_path:?}"))?;
+    let prefix = format!("{major}:{minor} ");
+    let line = content
+        .lines()
+        .find(|line| line.starts_with(&prefix))
+        .with_context(|| format!("no io.max entry for {major}:{minor} in {content:?}"))?;
+
+    for expected in [expected_read, expected_write] {
+        if !line.split_whitespace().any(|field| field == expected) {
+            anyhow::bail!("io.max entry {line:?} does not contain {expected:?}");
+        }
+    }
+    Ok(())
+}
+
 fn check_cgroup_file(cgroup_name: &str, cgroup_file: &str, expected: &str) -> Result<()> {
     let cgroup_path = PathBuf::from(CGROUP_ROOT)
         .join("runtime-test")
@@ -200,6 +265,12 @@ fn can_run() -> bool {
 
 fn can_run_swap() -> bool {
     is_cgroup_v2_with_controller(ControllerType::Memory) && cgroup_has_file(MEMORY_SWAP_MAX)
+}
+
+fn can_run_io_max_multi_device() -> bool {
+    is_cgroup_v2_with_controller(ControllerType::Io)
+        && cgroup_has_file(IO_MAX)
+        && block_device_numbers(2).is_ok()
 }
 
 pub fn get_test_group() -> TestGroup {
@@ -229,11 +300,18 @@ pub fn get_test_group() -> TestGroup {
         Box::new(test_unified_unavailable_controller),
     );
 
+    let unified_io_max_multi_device = ConditionalTest::new(
+        "test_unified_io_max_multi_device",
+        Box::new(can_run_io_max_multi_device),
+        Box::new(test_unified_io_max_multi_device),
+    );
+
     test_group.add(vec![
         Box::new(unified_set),
         Box::new(unified_swap_set),
         Box::new(unified_override),
         Box::new(unified_unavailable_controller),
+        Box::new(unified_io_max_multi_device),
     ]);
 
     test_group

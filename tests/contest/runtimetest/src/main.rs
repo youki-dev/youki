@@ -39,6 +39,7 @@ fn main() {
         "mounts_recursive_rbind_ro" => tests::validate_mounts_recursive_rbind_ro(),
         "domainname_test" => tests::validate_domainname(&spec),
         "seccomp" => tests::validate_seccomp(&spec),
+        "seccomp_enforced" => tests::validate_seccomp_enforced(&spec),
         "sysctl" => tests::validate_sysctl(&spec),
         "scheduler_policy_other" => tests::validate_scheduler_policy(&spec),
         "scheduler_policy_batch" => tests::validate_scheduler_policy(&spec),
@@ -47,6 +48,7 @@ fn main() {
         "io_priority_class_idle" => tests::test_io_priority_class(&spec, IoprioClassIdle),
         "memory_policy" => tests::validate_memory_policy(&spec),
         "devices" => tests::validate_devices(&spec),
+        "device_missing_parent_dirs" => tests::validate_device_missing_parent_dirs(&spec),
         "device_cgroup" => tests::validate_device_cgroup(&spec),
         "root_readonly" => tests::test_validate_root_readonly(&spec),
         "process_capabilities_bounding_unset" => {
@@ -66,6 +68,9 @@ fn main() {
         "time_offsets" => tests::validate_time_offsets(&spec),
         "default_symlinks" => tests::validate_default_symlinks(&spec),
         "tmpcopyup" => tests::validate_tmpcopyup(&spec),
+        "tmpfs" => tests::validate_tmpfs(&spec),
+        "mount_label" => tests::validate_mount_label(&spec),
+        "cgroup_mount_label" => tests::validate_cgroup_mount_label(&spec),
         _ => eprintln!("error due to unexpected execute test name: {execute_test}"),
     }
 }

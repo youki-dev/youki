@@ -245,6 +245,13 @@ pub struct CheckpointOptions {
     pub manage_cgroups_mode: rust_criu::CgMode,
     pub link_remap: bool,
     pub empty_net_ns: bool,
+    pub page_server: Option<PageServer>,
+}
+
+/// Address of the CRIU page server that receives the memory pages
+pub struct PageServer {
+    pub address: String,
+    pub port: u16,
 }
 
 #[cfg(test)]

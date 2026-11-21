@@ -11,7 +11,10 @@ use test_framework::{ConditionalTest, TestGroup, TestResult, assert_result_eq, t
 use tracing::debug;
 
 use crate::utils::test_utils::{CGROUP_ROOT, check_container_created};
-use crate::utils::{cgroup_has_file, is_cgroup_v2_with_controller, test_outside_container};
+use crate::utils::{
+    block_devices, cgroup_has_file, device_numbers, is_cgroup_v2_with_controller,
+    test_outside_container,
+};
 
 const IO_WEIGHT: &str = "io.weight";
 const IO_BFQ_WEIGHT: &str = "io.bfq.weight";
@@ -42,22 +45,6 @@ fn create_spec(cgroup_name: &str, block_io: LinuxBlockIo) -> Result<Spec> {
 
 fn convert_blkio_weight_to_io_weight(weight: u16) -> u16 {
     (1 + (u32::from(weight) - 10) * 9999 / 990) as u16
-}
-
-fn block_devices() -> Result<Vec<PathBuf>> {
-    let mut entries: Vec<_> = fs::read_dir("/sys/block")
-        .context("failed to read /sys/block")?
-        .flatten()
-        .map(|entry| entry.path())
-        .collect();
-    entries.sort();
-    Ok(entries)
-}
-
-fn device_numbers(dev_dir: &Path) -> Option<(i64, i64)> {
-    let content = fs::read_to_string(dev_dir.join("dev")).ok()?;
-    let (major, minor) = content.trim().split_once(':')?;
-    Some((major.trim().parse().ok()?, minor.trim().parse().ok()?))
 }
 
 fn get_block_device() -> Result<(i64, i64)> {

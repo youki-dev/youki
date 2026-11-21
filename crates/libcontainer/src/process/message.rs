@@ -47,10 +47,22 @@ impl fmt::Display for Message {
             Message::AskMountFd(msg) => write!(f, "AskMountFd({:?})", msg),
             Message::MountFdReply => write!(f, "MountFdReply"),
             Message::MountFdError(err) => write!(f, "MountFdError({})", err),
-            Message::ExecFailed(s) => write!(f, "ExecFailed({})", s),
-            Message::OtherError(s) => write!(f, "OtherError({})", s),
+            Message::ExecFailed(err) => write!(f, "ExecFailed({err})"),
+            Message::OtherError(err) => write!(f, "OtherError({err})"),
         }
     }
+}
+
+pub(crate) fn format_error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut report = error.to_string();
+    let mut source = error.source();
+    while let Some(error) = source {
+        report.push_str(": ");
+        report.push_str(&error.to_string());
+        source = error.source();
+    }
+
+    report
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]

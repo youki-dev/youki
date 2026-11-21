@@ -104,6 +104,30 @@ fn test_memory_swap_set() -> TestResult {
     })
 }
 
+/// Tests that equal memory and combined memory+swap limits disable swap.
+fn test_memory_swap_disabled() -> TestResult {
+    let limit: i64 = 48 * 1024 * 1024;
+    let spec = test_result!(create_spec(
+        "test_memory_swap_disabled",
+        LinuxMemoryBuilder::default().limit(limit).swap(limit)
+    ));
+
+    test_outside_container(&spec, &|data| {
+        test_result!(check_container_created(&data));
+        test_result!(check_cgroup_file(
+            "test_memory_swap_disabled",
+            MEMORY_MAX,
+            limit
+        ));
+        test_result!(check_cgroup_file(
+            "test_memory_swap_disabled",
+            MEMORY_SWAP_MAX,
+            0
+        ));
+        TestResult::Passed
+    })
+}
+
 fn check_cgroup_file(cgroup_name: &str, cgroup_file: &str, expected: i64) -> Result<()> {
     let data = read_cgroup_data(cgroup_name, cgroup_file)?;
     let actual = data
@@ -152,10 +176,17 @@ pub fn get_test_group() -> TestGroup {
         Box::new(test_memory_swap_set),
     );
 
+    let memory_swap_disabled = ConditionalTest::new(
+        "test_memory_swap_disabled",
+        Box::new(can_run_swap),
+        Box::new(test_memory_swap_disabled),
+    );
+
     test_group.add(vec![
         Box::new(memory_limit_set),
         Box::new(memory_reservation_set),
         Box::new(memory_swap_set),
+        Box::new(memory_swap_disabled),
     ]);
 
     test_group

@@ -1,6 +1,8 @@
 use anyhow::{Context, Ok, Result};
+use nix::sys::resource::{RLIM_INFINITY, Resource, getrlimit};
 use oci_spec::runtime::{
-    PosixRlimit, PosixRlimitBuilder, PosixRlimitType, ProcessBuilder, Spec, SpecBuilder,
+    LinuxBuilder, LinuxIdMappingBuilder, LinuxNamespaceBuilder, LinuxNamespaceType, PosixRlimit,
+    PosixRlimitBuilder, PosixRlimitType, ProcessBuilder, Spec, SpecBuilder,
 };
 use test_framework::{Test, TestGroup, TestResult, test_result};
 
@@ -58,11 +60,70 @@ fn process_rlimits_test() -> TestResult {
     test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
+fn create_raised_nproc_rlimit() -> Result<Option<PosixRlimit>> {
+    let (soft, hard) = getrlimit(Resource::RLIMIT_NPROC)?;
+    if hard == RLIM_INFINITY {
+        return Ok(None);
+    }
+    create_rlimit(PosixRlimitType::RlimitNproc, hard + 1, soft).map(Some)
+}
+
+fn create_userns_spec(rlimit: PosixRlimit) -> Result<Spec> {
+    let mut namespaces = oci_spec::runtime::get_default_namespaces();
+    namespaces.push(
+        LinuxNamespaceBuilder::default()
+            .typ(LinuxNamespaceType::User)
+            .build()?,
+    );
+    let id_mapping = LinuxIdMappingBuilder::default()
+        .host_id(100000_u32)
+        .container_id(0_u32)
+        .size(65536_u32)
+        .build()?;
+
+    let spec = SpecBuilder::default()
+        .linux(
+            LinuxBuilder::default()
+                .namespaces(namespaces)
+                .uid_mappings(vec![id_mapping])
+                .gid_mappings(vec![id_mapping])
+                .build()?,
+        )
+        .process(
+            ProcessBuilder::default()
+                .args(vec![
+                    "runtimetest".to_string(),
+                    "process_rlimits".to_string(),
+                ])
+                .rlimits(vec![rlimit])
+                .build()?,
+        )
+        .build()
+        .context("failed to build spec")?;
+
+    Ok(spec)
+}
+
+// Regression test: with a user namespace, a hard limit above the host's one
+// used to fail with EPERM because youki called setrlimit(2) after entering
+// the user namespace.
+fn process_rlimits_userns_raise_hard_test() -> TestResult {
+    let Some(rlimit) = test_result!(create_raised_nproc_rlimit()) else {
+        return TestResult::Skipped("RLIMIT_NPROC hard limit is already unlimited".to_string());
+    };
+    let spec = test_result!(create_userns_spec(rlimit));
+    test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
+}
+
 pub fn get_process_rlimits_test() -> TestGroup {
     let mut process_rlimits_test_group = TestGroup::new("process_rlimits");
 
     let test = Test::new("process_rlimits_test", Box::new(process_rlimits_test));
-    process_rlimits_test_group.add(vec![Box::new(test)]);
+    let userns_raise_hard_test = Test::new(
+        "process_rlimits_userns_raise_hard_test",
+        Box::new(process_rlimits_userns_raise_hard_test),
+    );
+    process_rlimits_test_group.add(vec![Box::new(test), Box::new(userns_raise_hard_test)]);
 
     process_rlimits_test_group
 }

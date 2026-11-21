@@ -3,7 +3,10 @@ pub mod net;
 pub mod support;
 pub mod test_utils;
 
-pub use cgroups::{cgroup_has_file, is_cgroup_v2, is_cgroup_v2_with_controller};
+pub use cgroups::{
+    block_device_numbers, block_devices, cgroup_has_file, device_numbers, is_cgroup_v2,
+    is_cgroup_v2_with_controller,
+};
 pub use support::{
     generate_uuid, get_runtime_path, get_runtimetest_path, is_runtime_runc, is_runtime_youki,
     prepare_bundle, set_config, wait_for_file_content,

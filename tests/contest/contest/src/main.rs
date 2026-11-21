@@ -32,7 +32,9 @@ use crate::tests::linux_masked_paths::get_linux_masked_paths_tests;
 use crate::tests::linux_ns_itype::get_ns_itype_tests;
 use crate::tests::memory_policy::get_linux_memory_policy_tests;
 use crate::tests::misc_props::get_misc_props_test;
+use crate::tests::mount_label::get_mount_label_test;
 use crate::tests::mount_propagation::get_mount_propagation_test;
+use crate::tests::mount_sync_flags::get_mount_sync_flags_test;
 use crate::tests::mounts_recursive::get_mounts_recursive_test;
 use crate::tests::net_devices::get_net_devices_test;
 use crate::tests::no_pivot::get_no_pivot_test;
@@ -63,8 +65,8 @@ use crate::tests::state::get_state_test;
 use crate::tests::sysctl::get_sysctl_test;
 use crate::tests::terminal::get_terminal_test;
 use crate::tests::time_ns::get_time_ns_test;
-use crate::tests::mount_sync_flags::get_mount_sync_flags_test;
 use crate::tests::tmpcopyup::get_tmpcopyup_test;
+use crate::tests::tmpfs::get_tmpfs_test;
 use crate::tests::uid_mappings::get_uid_mappings_test;
 use crate::tests::update::get_update_test;
 use crate::utils::support::{set_runtime_path, set_runtimetest_path};
@@ -152,6 +154,7 @@ fn main() -> Result<()> {
     let cgroup_v2_io = cgroups::io::get_test_group();
     let cgroup_v2_unified = cgroups::unified::get_test_group();
     let cgroup_systemd_devices = cgroups::systemd::devices::get_test_group();
+    let cgroup_systemd_unified = cgroups::systemd::unified::get_test_group();
     let seccomp = get_seccomp_test();
     let seccomp_notify = get_seccomp_notify_test();
     let state = get_state_test();
@@ -197,6 +200,8 @@ fn main() -> Result<()> {
     let update = get_update_test();
     let time_ns = get_time_ns_test();
     let tmpcopyup = get_tmpcopyup_test();
+    let tmpfs = get_tmpfs_test();
+    let mount_label = get_mount_label_test();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -219,6 +224,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(cgroup_v2_io));
     tm.add_test_group(Box::new(cgroup_v2_unified));
     tm.add_test_group(Box::new(cgroup_systemd_devices));
+    tm.add_test_group(Box::new(cgroup_systemd_unified));
     tm.add_test_group(Box::new(seccomp));
     tm.add_test_group(Box::new(seccomp_notify));
     tm.add_test_group(Box::new(state));
@@ -226,6 +232,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(hostname));
     tm.add_test_group(Box::new(misc_props));
     tm.add_test_group(Box::new(mount_propagation));
+    tm.add_test_group(Box::new(get_mount_sync_flags_test()));
     tm.add_test_group(Box::new(mounts_recursive));
     tm.add_test_group(Box::new(domainname));
     tm.add_test_group(Box::new(intel_rdt));
@@ -264,7 +271,8 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(update));
     tm.add_test_group(Box::new(time_ns));
     tm.add_test_group(Box::new(tmpcopyup));
-    tm.add_test_group(Box::new(get_mount_sync_flags_test()));
+    tm.add_test_group(Box::new(tmpfs));
+    tm.add_test_group(Box::new(mount_label));
     tm.add_cleanup(Box::new(cgroups::cleanup_v2));
 
     match opts.command {
