@@ -9,6 +9,16 @@ use crate::commands::foreground;
 use crate::workload::executor::default_executor;
 
 pub fn exec(args: Exec, root_path: PathBuf) -> Result<i32> {
+    // libkrun runs the workload inside a VM, so a new process cannot be started in
+    // the container. Fail here, before creating any process, with a clear error.
+    #[cfg(feature = "krun")]
+    {
+        let container = super::load_container(&root_path, &args.container_id)?;
+        if crate::workload::libkrun::is_krun_handler(container.state.annotations.as_ref()) {
+            anyhow::bail!("exec is not supported for krun containers");
+        }
+    }
+
     let user = args.user.map(|(u, _)| u);
     let group = args.user.and_then(|(_, g)| g);
 

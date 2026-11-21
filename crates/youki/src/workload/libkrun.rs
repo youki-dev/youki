@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs::Permissions;
 use std::io;
@@ -151,13 +152,13 @@ impl ContainerExecutor for LibkrunExecutor {
 impl Executor for LibkrunExecutor {}
 
 pub fn can_handle(spec: &Spec) -> bool {
-    if let Some(annotations) = spec.annotations()
-        && let Some(handler) = annotations.get("run.oci.handler")
-    {
-        return handler == "krun";
-    }
+    is_krun_handler(spec.annotations().as_ref())
+}
 
-    false
+pub fn is_krun_handler(annotations: Option<&HashMap<String, String>>) -> bool {
+    annotations
+        .and_then(|a| a.get("run.oci.handler"))
+        .is_some_and(|handler| handler == "krun")
 }
 
 pub fn validate_kvm() -> Result<(), KrunError> {
@@ -515,5 +516,15 @@ mod tests {
                 "krun.ram_mib={v:?} should be rejected"
             );
         }
+    }
+
+    #[test]
+    fn krun_handler_detection() {
+        let ann = |k: &str, v: &str| HashMap::from([(k.to_string(), v.to_string())]);
+        assert!(is_krun_handler(Some(&ann("run.oci.handler", "krun"))));
+        assert!(!is_krun_handler(Some(&ann("run.oci.handler", "wasm"))));
+        assert!(!is_krun_handler(Some(&ann("krun.cpus", "2"))));
+        assert!(!is_krun_handler(Some(&HashMap::new())));
+        assert!(!is_krun_handler(None));
     }
 }

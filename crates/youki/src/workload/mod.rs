@@ -1,6 +1,6 @@
 pub mod executor;
 #[cfg(feature = "krun")]
-mod libkrun;
+pub mod libkrun;
 #[cfg(feature = "wasm-wasmedge")]
 mod wasmedge;
 #[cfg(feature = "wasm-wasmer")]
