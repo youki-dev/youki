@@ -8,7 +8,6 @@ The modules that it exposes are :
 - stats
 - systemd
 - test_manager
-- v1
 - v2
 
 Following is a short explanation of these modules.
@@ -79,8 +78,8 @@ This is the module used by youki to interact with systemd, and it exposes severa
 
 This exposes a `TestManager` struct which can be used as dummy for cgroup testing purposes, which also implements `CgroupManager`.
 
-### v1 and v2
+### v2
 
-These two modules contains functionalities specific to cgroups version 1 and version 2. Both of these expose respective cgroup managers, which can be used to manage that type of cgroup, as well as some utility functions related to respective cgroup version, such as `get_mount_points` (for v1 and v2), `get_subsystem_mount points` (for v1), and `get_available_controllers` (for v2) etc.
+This module contains functionalities specific to cgroups version 2. It exposes the cgroup v2 manager, as well as some utility functions such as `get_unified_mount_point` and `get_available_controllers`.
 
-The v2 module also exposes devices module, which provides functionality for working with bpf, such as load a bpf program, query info of a bpf program, attach and detach a bpf program to a cgroup, etc.
+The v2 module exposes devices module, which provides functionality for working with bpf, such as load a bpf program, query info of a bpf program, attach and detach a bpf program to a cgroup, etc.

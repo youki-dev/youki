@@ -13,8 +13,7 @@ autoexamples = true
 keywords = ["youki", "container", "cgroups"]
 
 [features]
-default = ["v1", "v2", "systemd"]
-v1 = []
+default = ["v2", "systemd"]
 v2 = []
 # The systemd manager attaches the eBPF device filter itself, over the one systemd derives
 # from DeviceAllow, so it cannot be built without it. This makes "systemd cgroupsv2_devices"
