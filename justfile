@@ -4,7 +4,11 @@ alias youki := youki-dev
 KIND_CLUSTER_NAME := 'youki'
 KIND_SYSTEMD_CLUSTER_NAME := 'youki-systemd'
 KIND_DEPLOY_CLUSTER_NAME := 'youki-deploy'
+KIND_CRIO_CLUSTER_NAME := 'youki-deploy-crio'
 YOUKI_INSTALLER_IMAGE := 'youki-installer:latest'
+# CRI-O looks up a short image name in its search registries, so use the full
+# localhost/ name for the copy in the local storage of the nodes.
+YOUKI_INSTALLER_IMAGE_CRIO := 'localhost/youki-installer:latest'
 
 cwd := justfile_directory()
 
@@ -176,6 +180,88 @@ test-kind-deploy: kind-deploy
 # Clean kind cluster
 clean-test-kind-deploy:
 	kind delete cluster --name {{ KIND_DEPLOY_CLUSTER_NAME }}
+
+[private]
+kind-cluster-crio:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if kind get clusters 2>/dev/null | grep -qx "{{ KIND_CRIO_CLUSTER_NAME }}"; then
+        # kind also lists a cluster whose containers are stopped, and
+        # `docker exec` then fails. Start the nodes and wait for the API.
+        stopped=$(docker ps -a \
+            --filter "label=io.x-k8s.kind.cluster={{ KIND_CRIO_CLUSTER_NAME }}" \
+            --filter "status=created" --filter "status=exited" \
+            --filter "status=paused" --filter "status=dead" -q)
+        if [ -n "${stopped}" ]; then
+            echo "cluster '{{ KIND_CRIO_CLUSTER_NAME }}' is stopped, starting the nodes"
+            docker start ${stopped} >/dev/null
+            for _ in $(seq 60); do
+                if kubectl --context=kind-{{ KIND_CRIO_CLUSTER_NAME }} \
+                    get nodes >/dev/null 2>&1; then
+                    break
+                fi
+                sleep 5
+            done
+            if ! kubectl --context=kind-{{ KIND_CRIO_CLUSTER_NAME }} \
+                get nodes >/dev/null 2>&1; then
+                echo "cluster '{{ KIND_CRIO_CLUSTER_NAME }}' did not start." \
+                     "Run 'just clean-test-kind-deploy-crio' and try again." >&2
+                exit 1
+            fi
+        fi
+        echo "kind cluster '{{ KIND_CRIO_CLUSTER_NAME }}' already exists, skipping creation"
+        exit 0
+    fi
+
+    mkdir -p tests/k8s/_out/
+    docker buildx build \
+        -f tests/k8s/Dockerfile \
+        --target kind-node-crio \
+        --iidfile=tests/k8s/_out/img-crio \
+        --load .
+
+    kind create cluster \
+        --name {{ KIND_CRIO_CLUSTER_NAME }} \
+        --image "$(cat tests/k8s/_out/img-crio)" \
+        --config tools/youki-deploy/kind-config-crio.yaml
+
+# install youki on every node of a CRI-O kind cluster
+kind-deploy-crio: kind-cluster-crio youki-installer-image
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # `kind load docker-image` writes to containerd, which these nodes do not
+    # run. Use skopeo to copy the image into the storage of each node.
+    # Do not stage the file in /tmp: systemd mounts a tmpfs over it in the
+    # node, which hides the file that `docker cp` writes.
+    mkdir -p tests/k8s/_out/
+    docker save {{ YOUKI_INSTALLER_IMAGE }} -o tests/k8s/_out/youki-installer.tar
+    for node in $(kind get nodes --name {{ KIND_CRIO_CLUSTER_NAME }}); do
+        echo "loading {{ YOUKI_INSTALLER_IMAGE_CRIO }} into ${node}"
+        docker cp tests/k8s/_out/youki-installer.tar "${node}":/var/tmp/youki-installer.tar
+        docker exec "${node}" skopeo copy \
+            docker-archive:/var/tmp/youki-installer.tar \
+            containers-storage:{{ YOUKI_INSTALLER_IMAGE_CRIO }}
+        docker exec "${node}" rm -f /var/tmp/youki-installer.tar
+    done
+
+    sed 's#image: {{ YOUKI_INSTALLER_IMAGE }}#image: {{ YOUKI_INSTALLER_IMAGE_CRIO }}#' \
+        tools/youki-deploy/youki-deploy-crio.yaml \
+        | kubectl --context=kind-{{ KIND_CRIO_CLUSTER_NAME }} apply -f -
+    kubectl --context=kind-{{ KIND_CRIO_CLUSTER_NAME }} -n youki-system \
+        rollout status ds/youki-deploy-crio --timeout=180s
+
+# test youki on the deployed CRI-O kind cluster
+test-kind-deploy-crio: kind-deploy-crio
+    kubectl --context=kind-{{ KIND_CRIO_CLUSTER_NAME }} apply -f tests/k8s/deploy.yaml
+    kubectl --context=kind-{{ KIND_CRIO_CLUSTER_NAME }} wait deployment nginx-deployment --for condition=Available=True --timeout=120s
+    kubectl --context=kind-{{ KIND_CRIO_CLUSTER_NAME }} get pods -o wide
+    kubectl --context=kind-{{ KIND_CRIO_CLUSTER_NAME }} delete -f tests/k8s/deploy.yaml
+
+# Clean CRI-O kind cluster
+clean-test-kind-deploy-crio:
+	kind delete cluster --name {{ KIND_CRIO_CLUSTER_NAME }}
 
 # misc
 
