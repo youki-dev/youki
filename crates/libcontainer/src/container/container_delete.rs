@@ -2,8 +2,10 @@ use std::fs;
 
 use libcgroups::common::CgroupManager;
 use libcgroups::{self};
+use nix::mount::{MntFlags, umount2};
 use nix::sys::signal;
 
+use super::container_criu::CRIU_ROOT_DIR;
 use super::{Container, ContainerStatus};
 use crate::config::YoukiConfig;
 use crate::error::LibcontainerError;
@@ -120,6 +122,35 @@ impl Container {
                     tracing::warn!(
                         "skipping loading youki config due to: {err:?}, continue to delete"
                     );
+                }
+            }
+
+            // A restore in progress (or a restore that just failed) leaves the
+            // container rootfs bind-mounted at <state dir>/criu-root.
+            // remove_dir_all() does not stop at mount points and would follow
+            // the mount, deleting the container's rootfs contents, so detach
+            // and remove it first; refuse the delete if it is still there.
+            // Ref: cleanup_failed_restore() in container_restore.rs
+            let criu_root = self.root.join(CRIU_ROOT_DIR);
+            if criu_root.exists() {
+                tracing::warn!(
+                    ?criu_root,
+                    "criu-root still exists, detaching its bind mount"
+                );
+                if let Err(err) = umount2(&criu_root, MntFlags::MNT_DETACH) {
+                    tracing::warn!(?err, ?criu_root, "failed to umount criu-root");
+                }
+                if let Err(err) = fs::remove_dir(&criu_root) {
+                    tracing::warn!(?err, ?criu_root, "failed to remove criu-root directory");
+                }
+                if criu_root.exists() {
+                    tracing::error!(
+                        ?criu_root,
+                        "refusing to remove container state directory while criu-root is present"
+                    );
+                    return Err(LibcontainerError::Other(format!(
+                        "{criu_root:?} still exists, refusing to remove the container state directory"
+                    )));
                 }
             }
 
