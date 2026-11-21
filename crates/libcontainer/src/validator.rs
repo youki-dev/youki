@@ -7,6 +7,7 @@ use oci_spec::runtime::{LinuxNamespaceType, LinuxSchedulerPolicy, Spec};
 
 use crate::container::mount_validation::validate_idmapped_mounts;
 use crate::error::ErrInvalidSpec;
+use crate::selinux::{self, SelinuxError};
 use crate::utils::is_in_new_userns;
 
 pub struct Validator;
@@ -21,6 +22,11 @@ impl Validator {
         Self::validate_spec_for_io_priority(spec)?;
         Self::validate_spec_for_intel_rdt(spec)?;
         Self::validate_spec_for_time_namespace(spec)?;
+        Self::validate_selinux_label(
+            spec.process()
+                .as_ref()
+                .and_then(|p| p.selinux_label().as_deref()),
+        )?;
         if let Some(mounts) = spec.mounts() {
             Self::validate_spec_for_mount_options(mounts)?;
             validate_idmapped_mounts(mounts, spec.linux().as_ref(), is_rootless)?;
@@ -62,6 +68,14 @@ impl Validator {
     }
 
     // check if given spec is valid for netDevices
+    /// A process label on a host without SELinux is an error, as in runc's validateProcessSpec.
+    pub fn validate_selinux_label(label: Option<&str>) -> Result<(), ErrInvalidSpec> {
+        if label.is_some_and(|l| !l.is_empty()) && !selinux::is_enabled()? {
+            return Err(SelinuxError::NotEnabled.into());
+        }
+        Ok(())
+    }
+
     fn validate_spec_for_net_devices(spec: &Spec, is_rootless: bool) -> Result<(), ErrInvalidSpec> {
         let Some(devices) = spec.linux().as_ref().and_then(|l| l.net_devices().as_ref()) else {
             return Ok(());
@@ -1272,5 +1286,20 @@ mod tests {
         let result =
             Validator::validate_spec_for_net_devices(&spec, rootless_required(&*syscall).unwrap());
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_selinux_label() {
+        assert!(Validator::validate_selinux_label(None).is_ok());
+        assert!(Validator::validate_selinux_label(Some("")).is_ok());
+        let result = Validator::validate_selinux_label(Some("system_u:system_r:container_t:s0"));
+        if selinux::is_enabled().unwrap() {
+            assert!(result.is_ok());
+        } else {
+            assert!(matches!(
+                result,
+                Err(ErrInvalidSpec::Selinux(SelinuxError::NotEnabled))
+            ));
+        }
     }
 }
