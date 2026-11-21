@@ -9,7 +9,7 @@ youki is a low-level container runtime written in Rust. It implements the
 [OCI Runtime Specification](https://github.com/opencontainers/runtime-spec).
 Given an OCI runtime configuration (`config.json`) and a root file system, youki
 sets up namespaces, cgroups, capabilities, seccomp, devices, mounts, and
-AppArmor and SELinux labels. Then it executes the container process. The same
+AppArmor profiles. Then it executes the container process. The same
 code is available as the `libcontainer` and `libcgroups` crates. youki can also
 run WebAssembly workloads through wasmer, wasmedge, and wasmtime.
 
@@ -22,13 +22,8 @@ an unprivileged user (rootless).
 youki must enforce the isolation that `config.json` asks for. If youki does what
 `config.json` requests, there is no youki vulnerability, even if the
 configuration is insecure. A vulnerability exists when untrusted input makes
-youki apply weaker isolation than the configuration requests.
-
-youki does not harden or second-guess the configuration. It does enforce a few
-checks regardless of the configuration. For example, it allows only a procfs to
-be mounted on `/proc`, and only a few files, such as the ones that lxcfs
-emulates, to be mounted under it. A way to bypass such a check is a
-vulnerability.
+youki apply weaker isolation than the configuration requests. youki does not
+harden or second-guess the configuration.
 
 Some isolation features depend on build-time Cargo features, such as `seccomp`
 and `cgroupsv2_devices`. If `config.json` requests isolation that the build
@@ -92,7 +87,9 @@ fields. The following are vulnerabilities:
 - Rootfs contents or container processes that make youki apply a weaker
   security policy than requested. Examples are a dropped seccomp filter, a
   missing capability drop, a skipped masked path, and a wrong LSM label. The
-  process that `youki exec` starts must get the same policy as the container.
+  process that `youki exec` starts must get the container's policy, except for
+  the settings that the `exec` command line changes, such as `--cap`,
+  `--apparmor`, and `--process`.
 - Leaks of host file descriptors, mounts, namespaces, or environment into the
   container.
 - Races between youki and container processes during `create`, `run`, `exec`,
