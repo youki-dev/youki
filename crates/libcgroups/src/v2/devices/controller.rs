@@ -10,6 +10,7 @@ use nix::sys::stat::Mode;
 use oci_spec::runtime::LinuxDeviceCgroup;
 
 use super::bpf::BpfError;
+use super::emulator::EmulatorError;
 use super::program::ProgramError;
 use super::*;
 use crate::common::{ControllerOpt, default_allow_devices, default_devices};
@@ -27,6 +28,8 @@ pub enum DevicesControllerError {
     Nix(#[from] nix::Error),
     #[error("program error: {0}")]
     Program(#[from] ProgramError),
+    #[error("device rule error: {0}")]
+    Emulator(#[from] EmulatorError),
 }
 
 impl Controller for Devices {
@@ -63,7 +66,7 @@ impl Devices {
         if let Some(devices) = linux_devices {
             for d in devices {
                 tracing::debug!("apply user defined rule: {:?}", d);
-                emulator.add_rule(d);
+                emulator.add_rule(d)?;
             }
         }
 
@@ -74,7 +77,7 @@ impl Devices {
         .concat()
         {
             tracing::debug!("apply default rule: {:?}", d);
-            emulator.add_rule(&d);
+            emulator.add_rule(&d)?;
         }
 
         let prog = program::Program::from_rules(&emulator.rules, emulator.default_allow)?;
@@ -191,5 +194,44 @@ mod tests {
 
         // act
         Devices::apply_devices(tmp.path(), &Some(vec![a_type])).expect("Could not apply devices");
+    }
+
+    #[test]
+    #[serial(bpf)] // mock contexts are shared
+    fn test_unsupported_device_type_is_rejected() {
+        // arrange
+        let (tmp, _) = setup("some.value");
+        let deny_all = LinuxDeviceCgroupBuilder::default()
+            .allow(false)
+            .access("rwm")
+            .build()
+            .unwrap();
+        let u_type = LinuxDeviceCgroupBuilder::default()
+            .typ(LinuxDeviceType::U)
+            .allow(true)
+            .major(10)
+            .minor(229)
+            .build()
+            .unwrap();
+
+        // expect
+        let bump_memlock_rlimit = mock_prog::bump_memlock_rlimit_context();
+        let load = mock_prog::load_context();
+        bump_memlock_rlimit.expect().never();
+        load.expect().never();
+
+        // act
+        let err = Devices::apply_devices(tmp.path(), &Some(vec![deny_all, u_type])).unwrap_err();
+
+        // assert
+        assert!(
+            matches!(
+                err,
+                DevicesControllerError::Emulator(EmulatorError::UnsupportedDeviceType(
+                    LinuxDeviceType::U
+                ))
+            ),
+            "expected UnsupportedDeviceType, got {err:?}"
+        );
     }
 }

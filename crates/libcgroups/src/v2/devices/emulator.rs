@@ -13,6 +13,12 @@ use oci_spec::runtime::{LinuxDeviceCgroup, LinuxDeviceType};
 //     which matches device access operation
 //
 
+#[derive(thiserror::Error, Debug)]
+pub enum EmulatorError {
+    #[error("device rule type {0:?} has no device cgroup equivalent")]
+    UnsupportedDeviceType(LinuxDeviceType),
+}
+
 // FIXME: should we use runc's implementation?
 pub struct Emulator {
     pub default_allow: bool,
@@ -27,27 +33,37 @@ impl Emulator {
         }
     }
 
-    pub fn add_rules(&mut self, rules: &[LinuxDeviceCgroup]) {
+    pub fn add_rules(&mut self, rules: &[LinuxDeviceCgroup]) -> Result<(), EmulatorError> {
         for rule in rules {
-            self.add_rule(rule);
+            self.add_rule(rule)?;
         }
+        Ok(())
     }
 
-    pub fn add_rule(&mut self, rule: &LinuxDeviceCgroup) {
+    pub fn add_rule(&mut self, rule: &LinuxDeviceCgroup) -> Result<(), EmulatorError> {
+        let typ = rule.typ().unwrap_or_default();
+
+        // The device cgroup only knows 'a', 'c' and 'b', so a 'u' or 'p' rule can never be
+        // enforced. Reject it here, before any other rule can hide it, as runc's emulator does.
+        if matches!(typ, LinuxDeviceType::U | LinuxDeviceType::P) {
+            return Err(EmulatorError::UnsupportedDeviceType(typ));
+        }
+
         // special case, switch to blacklist or whitelist and clear all existing rules
         // NOTE: we ignore other fields when type='a', this is same as cgroup v1 and runc
-        if rule.typ().unwrap_or_default() == LinuxDeviceType::A {
+        if typ == LinuxDeviceType::A {
             self.default_allow = rule.allow();
             self.rules.clear();
-            return;
+            return Ok(());
         }
 
         // empty access match nothing, just discard this rule
         if rule.access().is_none() {
-            return;
+            return Ok(());
         }
 
         self.rules.push(rule.clone());
+        Ok(())
     }
 }
 
@@ -77,7 +93,7 @@ mod tests {
             .unwrap();
 
         // act
-        emulator.add_rule(&cgroup);
+        emulator.add_rule(&cgroup).unwrap();
 
         // assert
         assert_eq!(emulator.rules.len(), 0);
@@ -91,7 +107,7 @@ mod tests {
         let cgroup = LinuxDeviceCgroupBuilder::default().build().unwrap();
 
         // act
-        emulator.add_rule(&cgroup);
+        emulator.add_rule(&cgroup).unwrap();
 
         // assert
         assert_eq!(emulator.rules.len(), 0);
@@ -110,11 +126,59 @@ mod tests {
             .unwrap();
 
         // act
-        emulator.add_rule(&cgroup);
+        emulator.add_rule(&cgroup).unwrap();
 
         // assert
         let top_rule = emulator.rules.first().unwrap();
         assert_eq!(top_rule.access(), &Some(permission.to_string()));
         assert!(!emulator.default_allow);
+    }
+
+    #[test]
+    fn test_unsupported_type_rule_is_rejected() {
+        for typ in [LinuxDeviceType::U, LinuxDeviceType::P] {
+            // with and without access, since a rule without access is otherwise dropped
+            for access in [Some("rwm"), None] {
+                let mut builder = LinuxDeviceCgroupBuilder::default().typ(typ).allow(true);
+                if let Some(access) = access {
+                    builder = builder.access(access);
+                }
+                let mut emulator = Emulator::with_default_allow(false);
+
+                let err = emulator.add_rule(&builder.build().unwrap()).unwrap_err();
+
+                assert!(
+                    matches!(err, EmulatorError::UnsupportedDeviceType(t) if t == typ),
+                    "expected UnsupportedDeviceType({typ:?}), got {err:?}"
+                );
+                assert_eq!(emulator.rules.len(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_unsupported_type_rule_is_rejected_before_type_a_rule() {
+        // A later type 'a' rule clears the list, but must not hide the invalid rule.
+        let rules = [
+            LinuxDeviceCgroupBuilder::default()
+                .typ(LinuxDeviceType::P)
+                .allow(true)
+                .access("rwm")
+                .build()
+                .unwrap(),
+            LinuxDeviceCgroupBuilder::default()
+                .typ(LinuxDeviceType::A)
+                .allow(true)
+                .build()
+                .unwrap(),
+        ];
+        let mut emulator = Emulator::with_default_allow(false);
+
+        let err = emulator.add_rules(&rules).unwrap_err();
+
+        assert!(matches!(
+            err,
+            EmulatorError::UnsupportedDeviceType(LinuxDeviceType::P)
+        ));
     }
 }

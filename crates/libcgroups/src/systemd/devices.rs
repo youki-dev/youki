@@ -7,7 +7,7 @@ use oci_spec::runtime::{LinuxDeviceCgroup, LinuxDeviceType};
 use crate::common::{ControllerOpt, default_allow_devices, default_devices};
 use crate::systemd::controller::Controller;
 use crate::systemd::dbus_native::serialize::{Structure, Variant};
-use crate::v2::devices::emulator::Emulator;
+use crate::v2::devices::emulator::{Emulator, EmulatorError};
 
 const PROC_DEVICES: &str = "/proc/devices";
 
@@ -17,8 +17,8 @@ pub struct Devices {}
 pub enum SystemdDevicesError {
     #[error("failed to read {path}: {err}")]
     ProcDevices { path: String, err: std::io::Error },
-    #[error("device rule type {0:?} has no device cgroup equivalent")]
-    UnsupportedDeviceType(LinuxDeviceType),
+    #[error("device rule error: {0}")]
+    Emulator(#[from] EmulatorError),
 }
 
 /// The access a DeviceAllow entry grants, merged over the rules naming its path.
@@ -93,7 +93,7 @@ impl Devices {
         let devices = options.resources.devices().as_deref().unwrap_or_default();
 
         let mut emulator = Emulator::with_default_allow(false);
-        emulator.add_rules(devices);
+        emulator.add_rules(devices)?;
 
         // Leave rules containing a deny to the existing eBPF emulator. Even a redundant
         // deny falls back to an empty DeviceAllow list, so the properties can differ from
@@ -129,7 +129,7 @@ impl Devices {
             .map(LinuxDeviceCgroup::from)
             .chain(default_allow_devices())
         {
-            emulator.add_rule(&d);
+            emulator.add_rule(&d)?;
         }
 
         // Keyed by path so rules for one device arrive as a single entry, and ordered so the
@@ -141,12 +141,10 @@ impl Devices {
             let type_prefix = match typ {
                 LinuxDeviceType::C => "char",
                 LinuxDeviceType::B => "block",
-                // 'u' and 'p' have no device cgroup equivalent, so there is nothing to
-                // send and no way to honour them. Dropping them would leave the caller
-                // believing a rule took effect; the eBPF path errors on them too
-                // (v2::devices::program). type='a' never reaches here.
-                _ => {
-                    return Err(SystemdDevicesError::UnsupportedDeviceType(typ));
+                // Emulator::add_rule() rejects 'u' and 'p' and folds 'a' into the default,
+                // so only 'c' and 'b' rules are kept.
+                LinuxDeviceType::A | LinuxDeviceType::U | LinuxDeviceType::P => {
+                    unreachable!("the emulator does not keep {typ:?} rules")
                 }
             };
 
@@ -566,7 +564,50 @@ Block devices:
             let err = try_apply(&resources(vec![rule]), 245).unwrap_err();
 
             assert!(
-                matches!(err, SystemdDevicesError::UnsupportedDeviceType(_)),
+                matches!(
+                    err,
+                    SystemdDevicesError::Emulator(EmulatorError::UnsupportedDeviceType(_))
+                ),
+                "expected UnsupportedDeviceType for {typ:?}, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_unsupported_device_type_is_rejected_with_deny_rule() {
+        // A deny rule makes the controller hand the rules to the eBPF filter early. The
+        // 'u' / 'p' rule must still fail here, not depend on what the other rules are.
+        for typ in [LinuxDeviceType::U, LinuxDeviceType::P] {
+            let rules = vec![
+                LinuxDeviceCgroupBuilder::default()
+                    .allow(false)
+                    .access("rwm")
+                    .build()
+                    .unwrap(),
+                LinuxDeviceCgroupBuilder::default()
+                    .typ(typ)
+                    .allow(true)
+                    .major(10_i64)
+                    .minor(229_i64)
+                    .access("rwm")
+                    .build()
+                    .unwrap(),
+                LinuxDeviceCgroupBuilder::default()
+                    .typ(LinuxDeviceType::C)
+                    .allow(false)
+                    .major(10_i64)
+                    .minor(232_i64)
+                    .access("w")
+                    .build()
+                    .unwrap(),
+            ];
+            let err = try_apply(&resources(rules), 245).unwrap_err();
+
+            assert!(
+                matches!(
+                    err,
+                    SystemdDevicesError::Emulator(EmulatorError::UnsupportedDeviceType(_))
+                ),
                 "expected UnsupportedDeviceType for {typ:?}, got {err:?}"
             );
         }
