@@ -94,6 +94,8 @@ pub enum ErrInvalidID {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ErrInvalidSpec {
+    #[error("rlimit contains entries of the same type")]
+    DuplicateRlimit,
     #[error("runtime spec has incompatible version. Only 1.X.Y is supported")]
     UnsupportedVersion,
     #[error("duplicate namespace type: {0}")]
