@@ -8,9 +8,9 @@ use oci_spec::runtime::Spec;
 use rust_criu::rust_criu_protobuf::rpc::Criu_notify;
 
 use super::container_criu::{
-    CRIU_ROOT_DIR, CRIU_VERSION_MINIMUM, DESCRIPTORS_JSON, check_cgroup_v1_unsupported,
-    check_criu_version, configure_criu_common_options, handle_restoring_namespaces, open_image_dir,
-    resolve_mount_dest_in_rootfs,
+    CRIU_ROOT_DIR, CRIU_VERSION_MINIMUM, DESCRIPTORS_JSON, add_external_mount,
+    check_cgroup_v1_unsupported, check_criu_version, configure_criu_common_options,
+    handle_restoring_namespaces, open_image_dir, resolve_mount_dest_in_rootfs,
 };
 use super::{Container, ContainerStatus};
 use crate::container::container::RestoreOptions;
@@ -418,7 +418,7 @@ impl Container {
                         // what CRIU recorded during checkpoint.
                         let resolved = resolve_mount_dest_in_rootfs(rootfs, &dest_str);
                         tracing::debug!("Adding external mount: {} -> {}", resolved, source_str);
-                        criu.set_external_mount(resolved, source_str.to_string());
+                        add_external_mount(criu, resolved, source_str.to_string())?;
                     }
                 }
 
@@ -462,7 +462,7 @@ impl Container {
                         "Adding masked path external mount: {} -> /dev/null",
                         resolved
                     );
-                    criu.set_external_mount(resolved, "/dev/null".to_string());
+                    add_external_mount(criu, resolved, "/dev/null".to_string())?;
                 }
             }
 
@@ -476,7 +476,7 @@ impl Container {
                 let path = device.path().to_string_lossy();
                 let resolved = resolve_mount_dest_in_rootfs(rootfs, &path);
                 tracing::debug!("Adding device external mount: {}", resolved);
-                criu.set_external_mount(resolved.clone(), resolved);
+                add_external_mount(criu, resolved.clone(), resolved)?;
             }
         }
 

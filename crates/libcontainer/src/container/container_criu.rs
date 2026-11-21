@@ -45,6 +45,37 @@ pub fn resolve_mount_dest_in_rootfs(rootfs: &std::path::Path, dest: &str) -> Str
     resolved
 }
 
+/// Register an external mount with CRIU after validating its key.
+///
+/// CRIU < 4.3.1 stores external mounts as the unescaped string `mnt[KEY]:VAL`
+/// and looks them up by prefix, so a key containing `]:` shifts the key/value
+/// boundary and can make restore bind-mount a host path that config.json never
+/// named. An empty key produces `mnt[]`, which CRIU treats as a request to
+/// autodetect external mounts. Keys are resolved through symlinks in the
+/// container-controlled rootfs, so they must be checked before reaching CRIU.
+///
+/// runc resolves the destination with securejoin and strips the rootfs prefix,
+/// so a destination resolving to the rootfs itself becomes an empty key.
+/// `resolve_mount_dest_in_rootfs` returns `/` in that case, so keys consisting
+/// only of `/` are rejected as empty as well.
+///
+/// Ref: runc addCriuExtMount() in criu_linux.go (GHSA-g2c3-j8g3-7gpw),
+///      crun GHSA-2mxx-58qc-p466
+pub(super) fn add_external_mount(
+    criu: &mut Criu,
+    key: String,
+    val: String,
+) -> Result<(), LibcontainerError> {
+    if key.trim_start_matches('/').is_empty() || key.contains("]:") {
+        tracing::error!(?key, "invalid external mount destination");
+        return Err(LibcontainerError::Other(format!(
+            "criu: invalid external mount destination {key:?}"
+        )));
+    }
+    criu.set_external_mount(key, val);
+    Ok(())
+}
+
 /// Minimum CRIU version required for checkpoint/restore functionality.
 /// This matches crun's LIBCRIU_MIN_VERSION requirement (3.15.0).
 /// Version format: MAJOR * 10000 + MINOR * 100 + PATCH
@@ -474,5 +505,48 @@ mod tests {
         std::os::unix::fs::symlink("/intermediate", rootfs.join("conf")).unwrap();
 
         assert_eq!(resolve_mount_dest_in_rootfs(rootfs, "/conf"), "/real/conf");
+    }
+
+    // ── add_external_mount ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_add_external_mount_accepts_valid_key() {
+        let mut criu = Criu::new().unwrap();
+        assert!(add_external_mount(&mut criu, "/data".into(), "/host/data".into()).is_ok());
+    }
+
+    #[test]
+    fn test_add_external_mount_rejects_invalid_keys() {
+        let mut criu = Criu::new().unwrap();
+        for key in ["", "/", "//", "/b/data]:/name", "]:"] {
+            let err = add_external_mount(&mut criu, key.into(), "/host/data".into()).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("invalid external mount destination"),
+                "unexpected error for {key:?}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_add_external_mount_rejects_symlink_to_invalid_key() {
+        // Mirrors runc's "destination resolves to invalid CRIU key" test: the
+        // container replaces the parent of a mount point with symlinks whose
+        // targets produce an invalid key once resolved.
+        let tmp = tempfile::tempdir().unwrap();
+        let rootfs = tmp.path();
+        std::fs::create_dir_all(rootfs.join("a")).unwrap();
+        for target in ["/b/data]:/name", "/"] {
+            let link = rootfs.join("a/data");
+            let _ = std::fs::remove_file(&link);
+            std::os::unix::fs::symlink(target, &link).unwrap();
+
+            let key = resolve_mount_dest_in_rootfs(rootfs, "/a/data");
+            let mut criu = Criu::new().unwrap();
+            assert!(
+                add_external_mount(&mut criu, key.clone(), key).is_err(),
+                "symlink to {target:?} must be rejected"
+            );
+        }
     }
 }

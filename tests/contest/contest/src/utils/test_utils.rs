@@ -827,10 +827,7 @@ pub fn restore_container(
         .context("failed to spawn restore")?;
 
     let pty_fd = match listener {
-        Some(l) => {
-            let (stream, _) = l.accept()?;
-            handle_console_socket(stream)
-        }
+        Some(l) => accept_console_socket(&l, &mut child)?.and_then(handle_console_socket),
         // is_terminal = false: no PTY fd to receive.
         None => None,
     };
@@ -843,6 +840,34 @@ pub fn restore_container(
     }
 
     Ok(pty_fd)
+}
+
+/// Wait for the runtime to connect to the console socket. Returns `None` if
+/// the runtime exits without connecting (e.g. restore fails before CRIU sends
+/// the PTY master), so a failed restore does not block forever in `accept()`.
+fn accept_console_socket(
+    listener: &std::os::unix::net::UnixListener,
+    child: &mut Child,
+) -> Result<Option<std::os::unix::net::UnixStream>> {
+    listener.set_nonblocking(true)?;
+    loop {
+        let exited = child.try_wait()?.is_some();
+        // Try accept() after try_wait() so a connection made right before the
+        // runtime exited is still picked up.
+        match listener.accept() {
+            Ok((stream, _)) => {
+                stream.set_nonblocking(false)?;
+                return Ok(Some(stream));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if exited {
+                    return Ok(None);
+                }
+                sleep(Duration::from_millis(10));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
 }
 
 /// Returns true if CRIU is installed on the host.

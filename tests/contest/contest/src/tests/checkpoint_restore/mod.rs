@@ -346,6 +346,106 @@ fn checkpoint_and_restore_bind_mount_symlink() -> TestResult {
     )
 }
 
+// Test: checkpoint and restore (bind mount, destination resolves to invalid CRIU key)
+// (runc: @test "checkpoint and restore (bind mount, destination resolves to invalid CRIU key)")
+//
+// Bind mount destinations are resolved through symlinks in the container rootfs
+// before being passed to CRIU as external mount keys. CRIU stores them as
+// "mnt[KEY]:VAL", so a key containing "]:" or an empty key must be rejected on
+// both checkpoint and restore (GHSA-2mxx-58qc-p466 / GHSA-g2c3-j8g3-7gpw).
+fn checkpoint_and_restore_bind_mount_invalid_criu_key() -> TestResult {
+    // Declared before `ctx` so the PTY master fds outlive the deletion in ctx.drop().
+    let mut pty_fds: Vec<OwnedFd> = Vec::new();
+    let ctx = match setup_cr_test(|bundle, spec| {
+        let bind = bundle.path().join("bind");
+        std::fs::create_dir_all(&bind).unwrap();
+        let bind_mount = MountBuilder::default()
+            .typ("bind")
+            .source(bind)
+            .destination("/a/data")
+            .options(vec!["bind".to_string()])
+            .build()
+            .unwrap();
+        let mut mounts = spec.mounts().clone().unwrap_or_default();
+        mounts.push(bind_mount);
+        spec.set_mounts(Some(mounts));
+    }) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    match ctx.start() {
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => return e,
+    }
+
+    let id = &ctx.id;
+    let bundle = &ctx.bundle;
+    let image_dir = &ctx.image_dir;
+    let work_dir = &ctx.work_dir;
+    let rootfs = bundle.path().join("bundle").join("rootfs");
+    let (dir_a, dir_b, link) = (rootfs.join("a"), rootfs.join("b"), rootfs.join("a/data"));
+
+    let result = (|| -> Result<()> {
+        // A mount point cannot be renamed, but its parent directory can,
+        // also from inside the container.
+        std::fs::rename(&dir_a, &dir_b)?;
+        std::fs::create_dir(&dir_a)?;
+        for target in ["/b/data]:/name", "/"] {
+            let _ = std::fs::remove_file(&link);
+            symlink(target, &link)?;
+
+            let output =
+                try_checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[])?;
+            if output.status.success() {
+                bail!("checkpoint unexpectedly succeeded with /a/data -> {target:?}");
+            }
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !stderr.contains("invalid external mount destination") {
+                bail!("unexpected checkpoint error with /a/data -> {target:?}: {stderr}");
+            }
+            wait_for_state(
+                id,
+                bundle,
+                WaitTarget::Status(LifecycleStatus::Running),
+                Duration::from_secs(5),
+                Duration::from_millis(100),
+            )
+            .map_err(|e| anyhow!("not running after rejected checkpoint: {e}"))?;
+        }
+
+        std::fs::remove_file(&link)?;
+        std::fs::remove_dir(&dir_a)?;
+        std::fs::rename(&dir_b, &dir_a)?;
+        checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[])?;
+        wait_for_state(
+            id,
+            bundle,
+            WaitTarget::Deleted,
+            Duration::from_secs(5),
+            Duration::from_millis(100),
+        )
+        .map_err(|e| anyhow!("container state still accessible after checkpoint: {e}"))?;
+        pty_fds.clear();
+
+        std::fs::rename(&dir_a, &dir_b)?;
+        std::fs::create_dir(&dir_a)?;
+        symlink("/b/data]:/name", &link)?;
+        match restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
+            Ok(fds) => {
+                pty_fds.extend(fds);
+                bail!("restore unexpectedly succeeded with /a/data -> \"/b/data]:/name\"");
+            }
+            Err(e) if e.to_string().contains("invalid external mount destination") => Ok(()),
+            Err(e) => bail!("unexpected restore error: {e}"),
+        }
+    })();
+
+    match result {
+        Ok(()) => TestResult::Passed,
+        Err(e) => TestResult::Failed(e),
+    }
+}
+
 // Test: checkpoint and restore (with --debug)
 // (runc: @test "checkpoint and restore (with --debug)")
 fn checkpoint_and_restore_with_debug() -> TestResult {
@@ -1657,6 +1757,10 @@ pub fn get_checkpoint_restore_tests() -> TestGroup {
     tg.add(vec![Box::new(cr_test_youki!(
         "checkpoint_and_restore_bind_mount_symlink",
         checkpoint_and_restore_bind_mount_symlink
+    ))]);
+    tg.add(vec![Box::new(cr_test_youki!(
+        "checkpoint_and_restore_bind_mount_invalid_criu_key",
+        checkpoint_and_restore_bind_mount_invalid_criu_key
     ))]);
     tg.add(vec![Box::new(cr_test_youki!(
         "checkpoint_and_restore_with_debug",

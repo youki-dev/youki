@@ -6,9 +6,9 @@ use std::os::unix::io::AsRawFd;
 use oci_spec::runtime::{LinuxNamespaceType, Spec};
 
 use super::container_criu::{
-    CRIU_VERSION_MINIMUM, DESCRIPTORS_JSON, check_cgroup_v1_unsupported, check_criu_version,
-    configure_criu_common_options, handle_checkpointing_external_namespaces, open_image_dir,
-    resolve_mount_dest_in_rootfs,
+    CRIU_VERSION_MINIMUM, DESCRIPTORS_JSON, add_external_mount, check_cgroup_v1_unsupported,
+    check_criu_version, configure_criu_common_options, handle_checkpointing_external_namespaces,
+    open_image_dir, resolve_mount_dest_in_rootfs,
 };
 use super::{Container, ContainerStatus};
 use crate::container::container::CheckpointOptions;
@@ -86,7 +86,7 @@ impl Container {
                 // When a bind-mount destination is a symlink (e.g. /conf -> /real/conf),
                 // the kernel follows it and the mount appears at the resolved path.
                 let resolved = resolve_mount_dest_in_rootfs(&rootfs, &dest);
-                criu.set_external_mount(resolved.clone(), resolved);
+                add_external_mount(&mut criu, resolved.clone(), resolved)?;
             } else if m.typ().as_deref() == Some("cgroup") {
                 check_cgroup_v1_unsupported("checkpoint")?;
             }
@@ -121,7 +121,7 @@ impl Container {
                     if !full_path.exists() || full_path.is_dir() {
                         continue;
                     }
-                    criu.set_external_mount(resolved.clone(), resolved);
+                    add_external_mount(&mut criu, resolved.clone(), resolved)?;
                 }
             }
         }
