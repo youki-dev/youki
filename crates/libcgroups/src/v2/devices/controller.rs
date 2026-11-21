@@ -12,7 +12,7 @@ use oci_spec::runtime::LinuxDeviceCgroup;
 use super::bpf::BpfError;
 use super::program::ProgramError;
 use super::*;
-use crate::common::{ControllerOpt, default_allow_devices, default_devices};
+use crate::common::ControllerOpt;
 use crate::v2::controller::Controller;
 
 const LICENSE: &str = "Apache";
@@ -56,26 +56,7 @@ impl Devices {
     ) -> Result<(), DevicesControllerError> {
         tracing::debug!("Apply Devices cgroup config");
 
-        // FIXME: should we start as "deny all"?
-        let mut emulator = emulator::Emulator::with_default_allow(false);
-
-        // FIXME: apply user-defined and default rules in which order?
-        if let Some(devices) = linux_devices {
-            for d in devices {
-                tracing::debug!("apply user defined rule: {:?}", d);
-                emulator.add_rule(d);
-            }
-        }
-
-        for d in [
-            default_devices().iter().map(|d| d.into()).collect(),
-            default_allow_devices(),
-        ]
-        .concat()
-        {
-            tracing::debug!("apply default rule: {:?}", d);
-            emulator.add_rule(&d);
-        }
+        let emulator = emulator::Emulator::from_spec(linux_devices.as_deref().unwrap_or_default());
 
         let prog = program::Program::from_rules(&emulator.rules, emulator.default_allow)?;
 
@@ -191,5 +172,45 @@ mod tests {
 
         // act
         Devices::apply_devices(tmp.path(), &Some(vec![a_type])).expect("Could not apply devices");
+    }
+
+    #[test]
+    #[serial(bpf)] // mock contexts are shared
+    fn test_program_is_built_from_spec_emulator() {
+        // arrange
+        let (tmp, _) = setup("some.value");
+        let rule = LinuxDeviceCgroupBuilder::default()
+            .allow(true)
+            .typ(LinuxDeviceType::C)
+            .major(10)
+            .minor(20)
+            .access("r")
+            .build()
+            .unwrap();
+        // The systemd driver builds its DeviceAllow list from this same emulator.
+        let emulator = emulator::Emulator::from_spec(std::slice::from_ref(&rule));
+        let expected = program::Program::from_rules(&emulator.rules, emulator.default_allow)
+            .unwrap()
+            .bytecodes()
+            .to_vec();
+        let file_descriptor: RawFd = 6;
+
+        // expect
+        let bump_memlock_rlimit = mock_prog::bump_memlock_rlimit_context();
+        let load = mock_prog::load_context();
+        let query = mock_prog::query_context();
+        let attach = mock_prog::attach_context();
+        let detach2 = mock_prog::detach2_context();
+        bump_memlock_rlimit.expect().once().returning(|| Ok(()));
+        load.expect()
+            .once()
+            .withf(move |_, insns| insns == expected.as_slice())
+            .returning(move |_, _| Ok(file_descriptor));
+        query.expect().once().returning(|_| Ok(vec![]));
+        attach.expect().once().returning(|_, _| Ok(()));
+        detach2.expect().never();
+
+        // act
+        Devices::apply_devices(tmp.path(), &Some(vec![rule])).expect("Could not apply devices");
     }
 }
