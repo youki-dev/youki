@@ -126,7 +126,7 @@ impl ContainerExecutor for LibkrunExecutor {
 
         let ctx_id = self.get_ctx_id()?;
 
-        let (vcpus, ram_mib) = read_krun_vm_config_from_annotations(spec);
+        let (vcpus, ram_mib) = read_krun_vm_config(spec)?;
         krun_set_vm_config(ctx_id, vcpus, ram_mib)?;
 
         // At this point pivot_root has run, so "/" is the rootfs containing .krun_config.json.
@@ -343,16 +343,117 @@ fn make_oci_spec_device(
         .map_err(|e| KrunError::Other(format!("device node build: {e}")))
 }
 
-fn read_krun_vm_config_from_annotations(spec: &Spec) -> (u8, u32) {
+// Decide the guest vCPUs and RAM from the spec.
+//
+// RAM precedence:
+//   1. `krun.ram_mib` annotation
+//   2. `linux.resources.memory.limit`, so the guest does not request more memory
+//      than the cgroup allows and get OOM-killed
+//   3. DEFAULT_RAM_MIB
+fn read_krun_vm_config(spec: &Spec) -> Result<(u8, u32), ExecutorError> {
     let ann = spec.annotations().as_ref();
     let vcpus = ann
         .and_then(|a| a.get("krun.cpus"))
         .and_then(|s| s.trim().parse::<u8>().ok())
         .unwrap_or(DEFAULT_VCPUS);
-    let ram_mib = ann
+    let ram_mib = match ann
         .and_then(|a| a.get("krun.ram_mib"))
         .and_then(|s| s.trim().parse::<u32>().ok())
-        .unwrap_or(DEFAULT_RAM_MIB);
+    {
+        Some(v) => v,
+        None => ram_mib_from_memory_limit(spec)?.unwrap_or(DEFAULT_RAM_MIB),
+    };
     tracing::debug!(vcpus, ram_mib, "libkrun VM config");
-    (vcpus, ram_mib)
+    Ok((vcpus, ram_mib))
+}
+
+// Convert `linux.resources.memory.limit` (bytes) to MiB.
+// Returns None when no limit is set or the limit is unlimited (negative, e.g. -1).
+fn ram_mib_from_memory_limit(spec: &Spec) -> Result<Option<u32>, ExecutorError> {
+    let limit = spec
+        .linux()
+        .as_ref()
+        .and_then(|l| l.resources().as_ref())
+        .and_then(|r| r.memory().as_ref())
+        .and_then(|m| m.limit());
+    let Some(limit) = limit else {
+        return Ok(None);
+    };
+    if limit < 0 {
+        return Ok(None);
+    }
+    let mib = limit / (1024 * 1024);
+    if mib == 0 {
+        return Err(ExecutorError::Other(format!(
+            "linux.resources.memory.limit ({limit} bytes) is too small for a krun VM"
+        )));
+    }
+    Ok(Some(u32::try_from(mib).unwrap_or(u32::MAX)))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use libcontainer::oci_spec::runtime::{LinuxMemoryBuilder, LinuxResourcesBuilder, SpecBuilder};
+
+    use super::*;
+
+    const MIB: i64 = 1024 * 1024;
+
+    fn spec_with(ram_mib_annotation: Option<&str>, memory_limit: Option<i64>) -> Spec {
+        let mut annotations = HashMap::from([("run.oci.handler".to_string(), "krun".to_string())]);
+        if let Some(v) = ram_mib_annotation {
+            annotations.insert("krun.ram_mib".to_string(), v.to_string());
+        }
+        let mut linux = LinuxBuilder::default();
+        if let Some(limit) = memory_limit {
+            linux = linux.resources(
+                LinuxResourcesBuilder::default()
+                    .memory(LinuxMemoryBuilder::default().limit(limit).build().unwrap())
+                    .build()
+                    .unwrap(),
+            );
+        }
+        SpecBuilder::default()
+            .annotations(annotations)
+            .linux(linux.build().unwrap())
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn ram_defaults_without_annotation_or_limit() {
+        let (_, ram) = read_krun_vm_config(&spec_with(None, None)).unwrap();
+        assert_eq!(ram, DEFAULT_RAM_MIB);
+    }
+
+    #[test]
+    fn ram_follows_memory_limit() {
+        let (_, ram) = read_krun_vm_config(&spec_with(None, Some(512 * MIB))).unwrap();
+        assert_eq!(ram, 512);
+    }
+
+    #[test]
+    fn ram_memory_limit_rounds_down_to_mib() {
+        let (_, ram) = read_krun_vm_config(&spec_with(None, Some(512 * MIB + 123))).unwrap();
+        assert_eq!(ram, 512);
+    }
+
+    #[test]
+    fn ram_annotation_overrides_memory_limit() {
+        let (_, ram) = read_krun_vm_config(&spec_with(Some("1024"), Some(512 * MIB))).unwrap();
+        assert_eq!(ram, 1024);
+    }
+
+    #[test]
+    fn ram_unlimited_memory_limit_uses_default() {
+        let (_, ram) = read_krun_vm_config(&spec_with(None, Some(-1))).unwrap();
+        assert_eq!(ram, DEFAULT_RAM_MIB);
+    }
+
+    #[test]
+    fn ram_memory_limit_below_one_mib_is_error() {
+        assert!(read_krun_vm_config(&spec_with(None, Some(MIB - 1))).is_err());
+    }
 }

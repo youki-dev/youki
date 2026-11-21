@@ -96,7 +96,7 @@ You can configure the libkrun handler via the following annotations:
 
 * `run.oci.handler`: Set to `krun` (tells youki to use the libkrun handler)
 * `krun.cpus`: Number of vCPUs assigned to the guest (default: 1)
-* `krun.ram_mib`: Guest RAM in MiB (default: 2048)
+* `krun.ram_mib`: Guest RAM in MiB. If not set, `linux.resources.memory.limit` is used (rounded down to MiB) so the guest stays within the cgroup memory limit; if no limit is set either, 2048 is used.
 
 ## Limitations
 
