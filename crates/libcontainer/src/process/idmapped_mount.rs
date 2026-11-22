@@ -201,6 +201,10 @@ fn syscall_error(err: SyscallError) -> IdmappedMountError {
     }
 }
 
+fn release_userns_helper(release_write: &OwnedFd) {
+    while let Err(Errno::EINTR) = write(release_write, &[1]) {}
+}
+
 /// `mount_setattr` takes the id-mapping as a user namespace, so one has to be
 /// materialized to carry it. Nothing ever runs in it: a child process only
 /// exists to give the id-map files a pid, and dies once the fd keeps the
@@ -218,8 +222,7 @@ fn create_userns_fd(
         }
     }
 
-    // O_CLOEXEC so a concurrent exec elsewhere in the process cannot inherit
-    // the write ends and keep the release pipe from ever reaching EOF.
+    // Another concurrently forked helper may inherit a writer, so EOF is not a reliable signal.
     let (ready_read, ready_write) = pipe2(OFlag::O_CLOEXEC).map_err(|err| {
         IdmappedMountError::CreateUserNamespace(format!("create ready pipe: {err}"))
     })?;
@@ -241,6 +244,7 @@ fn create_userns_fd(
                 while let Err(Errno::EINTR) = read(&release_read, &mut buf) {}
                 unsafe { libc::_exit(0) }
             }
+            let _ = write(&ready_write, &[0]);
             unsafe { libc::_exit(1) }
         }
         Ok(ForkResult::Parent { child }) => {
@@ -253,15 +257,20 @@ fn create_userns_fd(
                     other => break other,
                 }
             };
-            let result = match ready {
-                Ok(1) => write_userns_mappings(child, uid_mappings, gid_mappings)
-                    .and_then(|()| open_user_namespace(child)),
-                _ => Err(IdmappedMountError::CreateUserNamespace(
+            let unshared = matches!(ready, Ok(1)) && buf[0] == 1;
+            let result = if unshared {
+                write_userns_mappings(child, uid_mappings, gid_mappings)
+                    .and_then(|()| open_user_namespace(child))
+            } else {
+                Err(IdmappedMountError::CreateUserNamespace(
                     "user namespace helper process failed to unshare".to_string(),
-                )),
+                ))
             };
             // The child must outlive the id-map writes above: its /proc entries
             // vanish when it exits.
+            if unshared {
+                release_userns_helper(&release_write);
+            }
             drop(release_write);
             while let Err(Errno::EINTR) = waitpid(child, None) {}
             result
