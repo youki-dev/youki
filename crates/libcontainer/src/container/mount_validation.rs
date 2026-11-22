@@ -26,7 +26,7 @@ fn container_userns_has_mappings(linux: Option<&Linux>) -> bool {
     }
 }
 
-pub(crate) fn mount_requests_idmap(mount: &SpecMount) -> bool {
+pub(crate) fn is_idmap_requested(mount: &SpecMount) -> bool {
     let has_any_mount_mappings = mount.uid_mappings().is_some() || mount.gid_mappings().is_some();
     let options = mount.options().as_deref().unwrap_or(&[]);
     let has_idmap_option = options.iter().any(|o| o == "idmap" || o == "ridmap");
@@ -63,7 +63,7 @@ pub(crate) fn validate_idmapped_mounts(
     let can_use_container_userns = container_userns_has_mappings(linux);
 
     for mount in mounts {
-        if !mount_requests_idmap(mount) {
+        if !is_idmap_requested(mount) {
             continue;
         }
 

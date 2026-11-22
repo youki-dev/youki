@@ -20,7 +20,7 @@ use nix::sys::wait::waitpid;
 use nix::unistd::{ForkResult, Pid, fork, pipe2, read, write};
 use oci_spec::runtime::{LinuxIdMapping, Spec};
 
-use crate::container::mount_validation::mount_requests_idmap;
+use crate::container::mount_validation::is_idmap_requested;
 use crate::process::args::ContainerType;
 use crate::process::message::{MountIdMapUsernsSource, MountMsg};
 use crate::syscall::syscall::SyscallType;
@@ -51,7 +51,7 @@ pub(crate) fn spec_has_idmapped_mounts(spec: &Spec) -> bool {
         .as_deref()
         .unwrap_or(&[])
         .iter()
-        .any(mount_requests_idmap)
+        .any(is_idmap_requested)
 }
 
 pub(crate) fn mount_fd_service_required(container_type: ContainerType, spec: &Spec) -> bool {

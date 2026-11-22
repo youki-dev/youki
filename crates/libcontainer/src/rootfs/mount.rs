@@ -32,7 +32,7 @@ use procfs::{FromRead, ProcessCGroups};
 use super::symlink::Symlink;
 use super::symlink::SymlinkError;
 use super::utils::{MountOptionConfig, is_bind, is_recursive_bind, parse_mount};
-use crate::container::mount_validation::mount_requests_idmap;
+use crate::container::mount_validation::is_idmap_requested;
 use crate::process::channel;
 use crate::process::message::{MountIdMap, MountIdMapUsernsSource, MountMsg};
 use crate::syscall::syscall::create_syscall;
@@ -192,7 +192,7 @@ impl Mount {
         mount: &SpecMount,
         options: &MountOptions,
         mount_option_config: &MountOptionConfig,
-        comm: &mut MountChannels<'_>,
+        mount_channels: &mut MountChannels<'_>,
     ) -> Result<()> {
         let root = Root::open(options.root)?;
         let container_dest = mount.destination();
@@ -221,11 +221,11 @@ impl Mount {
             }),
             clone_mount_tree_recursively: is_recursive_bind(mount),
         };
-        comm.main.request_mount_fd(msg).map_err(|err| {
+        mount_channels.main.request_mount_fd(msg).map_err(|err| {
             tracing::error!("failed to request mount fd: {}", err);
             MountError::Other(err.into())
         })?;
-        let mount_fd = match comm.init.wait_for_mount_fd_reply() {
+        let mount_fd = match mount_channels.init.wait_for_mount_fd_reply() {
             Ok(fd) => fd,
             Err(channel::ChannelError::MountFdError(err)) => {
                 return Err(MountError::Custom(err));
@@ -292,18 +292,18 @@ impl Mount {
         &self,
         mount: &SpecMount,
         options: &MountOptions,
-        mut comm: Option<&mut MountChannels<'_>>,
+        mut mount_channels: Option<&mut MountChannels<'_>>,
     ) -> Result<()> {
         tracing::debug!("mounting {:?}", mount);
         let mut mount_option_config = parse_mount(mount)?;
 
         // Spec validation rejects non-bind idmapped mounts, so returning here cannot
         // take a cgroup, proc or sysfs mount away from the type match below.
-        if mount_requests_idmap(mount) {
-            let comm = comm.take().ok_or_else(|| {
+        if is_idmap_requested(mount) {
+            let mount_channels = mount_channels.take().ok_or_else(|| {
                 MountError::Custom("idmapped mount requires mount fd channel".to_string())
             })?;
-            self.mount_idmapped(mount, options, &mount_option_config, comm)?;
+            self.mount_idmapped(mount, options, &mount_option_config, mount_channels)?;
             return Ok(());
         }
 
@@ -1432,12 +1432,12 @@ mod tests {
             init_sender.close()?;
             Ok(request)
         });
-        let mut comm = MountChannels {
+        let mut mount_channels = MountChannels {
             main: &mut main_sender,
             init: &mut init_receiver,
         };
 
-        mounter.setup_mount(mount, options, Some(&mut comm))?;
+        mounter.setup_mount(mount, options, Some(&mut mount_channels))?;
         main_sender.close()?;
         init_receiver.close()?;
 
