@@ -1,4 +1,4 @@
-use std::fs::{Permissions, canonicalize};
+use std::fs::Permissions;
 use std::io::{BufRead, BufReader, ErrorKind};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -197,13 +197,6 @@ impl Mount {
         let root = Root::open(options.root)?;
         let container_dest = mount.destination();
         let source = mount.source().as_ref().ok_or(MountError::NoSource)?;
-        let src = canonicalize(source).map_err(|err| {
-            tracing::error!("failed to canonicalize {:?}: {}", source, err);
-            err
-        })?;
-        Self::create_bind_mount_destination(&root, container_dest, src.is_dir())?;
-        let dest: OwnedFd = root.resolve(container_dest)?.into();
-        let dest_fd = dest.as_fd();
 
         let userns_source = match (
             mount.uid_mappings().as_deref(),
@@ -221,7 +214,7 @@ impl Mount {
             }
         };
         let msg = MountMsg {
-            source: src,
+            source: source.to_path_buf(),
             idmap: Some(MountIdMap {
                 userns_source,
                 apply_idmap_recursively: mount_option_config.apply_recursive_idmap,
@@ -242,6 +235,11 @@ impl Mount {
                 return Err(MountError::Other(err.into()));
             }
         };
+
+        let source_is_dir = fstat(&mount_fd)?.st_mode & libc::S_IFMT == libc::S_IFDIR;
+        Self::create_bind_mount_destination(&root, container_dest, source_is_dir)?;
+        let dest: OwnedFd = root.resolve(container_dest)?.into();
+        let dest_fd = dest.as_fd();
 
         let attr_set_from_flags = self.mount_flag_to_attr(&mount_option_config.flags);
         let mut mount_attr = linux::MountAttr {
@@ -1420,11 +1418,15 @@ mod tests {
         mount: &SpecMount,
         options: &MountOptions<'_>,
     ) -> Result<MountMsg> {
+        let source = mount
+            .source()
+            .as_ref()
+            .context("mount source is required")?;
+        let mount_fd = std::fs::File::open(source)?;
         let (mut main_sender, mut main_receiver) = channel::main_channel()?;
         let (mut init_sender, mut init_receiver) = channel::init_channel()?;
         let service = thread::spawn(move || -> Result<MountMsg> {
             let request = main_receiver.wait_for_mount_fd_request()?;
-            let mount_fd = tempfile::tempfile()?;
             init_sender.send_mount_fd_reply(mount_fd.as_raw_fd())?;
             main_receiver.close()?;
             init_sender.close()?;
@@ -2280,7 +2282,7 @@ mod tests {
 
         let request = setup_idmapped_mount_and_capture_request(&Mount::new(), &mount, &options)?;
 
-        assert_eq!(request.source, canonicalize(source.path())?);
+        assert_eq!(request.source, source.path());
         assert!(!request.clone_mount_tree_recursively);
         assert_eq!(
             request.idmap,
