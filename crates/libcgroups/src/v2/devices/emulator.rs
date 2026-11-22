@@ -32,8 +32,10 @@ impl Emulator {
     /// Deny by default, then the spec's rules in order, then the default devices. Shared by
     /// the cgroupfs v2 and systemd device controllers.
     pub fn from_spec(devices: &[LinuxDeviceCgroup]) -> Self {
+        // FIXME: should we start as "deny all"?
         let mut emulator = Self::with_default_allow(false);
 
+        // FIXME: apply user-defined and default rules in which order?
         for d in devices {
             tracing::debug!("apply user defined rule: {:?}", d);
             emulator.add_rule(d);
