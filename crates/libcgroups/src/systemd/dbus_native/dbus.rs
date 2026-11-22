@@ -467,12 +467,16 @@ impl SystemdClient for DbusConnection {
     /// start_transient_unit is a higher level API for starting a unit
     /// for a specific container under systemd.
     /// See https://www.freedesktop.org/wiki/Software/systemd/dbus for more details.
+    ///
+    /// `extra_properties` are sent along with the fixed ones. They are for properties
+    /// systemd only accepts when the unit is created, such as OOMPolicy.
     fn start_transient_unit(
         &self,
         container_name: &str,
         pid: u32,
         parent: &str,
         unit_name: &str,
+        extra_properties: &[(&str, Variant)],
     ) -> Result<()> {
         // To view and introspect the methods under the 'org.freedesktop.systemd1' destination
         // and object path under it use the following command:
@@ -508,6 +512,7 @@ impl SystemdClient for DbusConnection {
 
         properties.push(("DefaultDependencies", Variant::Bool(false)));
         properties.push(("PIDs", Variant::ArrayU32(vec![pid])));
+        properties.extend(extra_properties.iter().cloned());
 
         tracing::debug!("Starting transient unit: {:?}", properties);
         let props = properties
@@ -534,6 +539,11 @@ impl SystemdClient for DbusConnection {
                 unit_name: unit_name.into(),
             })?;
         Ok(())
+    }
+
+    fn reset_failed_unit(&self, unit_name: &str) -> Result<()> {
+        let proxy = self.create_proxy();
+        proxy.reset_failed_unit(unit_name)
     }
 
     fn set_unit_properties(
@@ -686,6 +696,103 @@ mod tests {
         let body = peer.join().unwrap();
         result.unwrap();
         body
+    }
+
+    fn capture_start_transient_unit(extra_properties: &[(&str, Variant)]) -> Vec<u8> {
+        let (client, mut server) = property_test_pair();
+        let peer = std::thread::spawn(move || {
+            let connection = DbusConnection::for_test(server.try_clone().unwrap().into());
+            let bytes = connection.read_one_message().unwrap();
+            let request = Message::deserialize(&bytes, &mut 0).unwrap();
+            assert!(request.headers.iter().any(|header| {
+                header.kind == HeaderKind::Member
+                    && header.value == HeaderValue::String("StartTransientUnit".into())
+            }));
+            let mut job = Vec::new();
+            "/org/freedesktop/systemd1/job/1"
+                .to_owned()
+                .serialize(&mut job);
+            let reply = Message::new(
+                MessageType::MethodReturn,
+                1,
+                vec![
+                    Header {
+                        kind: HeaderKind::ReplySerial,
+                        value: HeaderValue::U32(request.serial),
+                    },
+                    Header {
+                        kind: HeaderKind::BodySignature,
+                        value: HeaderValue::String(String::get_signature()),
+                    },
+                ],
+                job,
+            );
+            server.write_all(&reply.serialize()).unwrap();
+            request.body
+        });
+
+        let connection = DbusConnection::for_test(client.into());
+        let result = connection.start_transient_unit(
+            "oom-test",
+            42,
+            "user.slice",
+            "youki-oom-test.scope",
+            extra_properties,
+        );
+        let body = peer.join().unwrap();
+        result.unwrap();
+        body
+    }
+
+    fn start_transient_unit_body(extra_properties: &[(&str, Variant)]) -> Vec<u8> {
+        let mut properties = vec![
+            (
+                "Description",
+                Variant::String("youki container oom-test".into()),
+            ),
+            ("Slice", Variant::String("user.slice".into())),
+            ("Delegate", Variant::Bool(true)),
+            ("MemoryAccounting", Variant::Bool(true)),
+            ("CPUAccounting", Variant::Bool(true)),
+            ("IOAccounting", Variant::Bool(true)),
+            ("TasksAccounting", Variant::Bool(true)),
+            ("DefaultDependencies", Variant::Bool(false)),
+            ("PIDs", Variant::ArrayU32(vec![42])),
+        ];
+        properties.extend(extra_properties.iter().cloned());
+        let properties: Vec<Structure<Variant>> = properties
+            .into_iter()
+            .map(|(name, value)| Structure::new(name.to_owned(), value))
+            .collect();
+        let aux: Vec<Structure<Vec<Structure<Variant>>>> = vec![];
+
+        let mut body = Vec::new();
+        (
+            "youki-oom-test.scope".to_owned(),
+            "replace".to_owned(),
+            properties,
+            aux,
+        )
+            .serialize(&mut body);
+        body
+    }
+
+    #[test]
+    fn test_start_transient_unit_sends_extra_properties() {
+        let oom_policy = [("OOMPolicy", Variant::String("kill".into()))];
+
+        assert_eq!(
+            capture_start_transient_unit(&oom_policy),
+            start_transient_unit_body(&oom_policy)
+        );
+        assert_eq!(
+            capture_start_transient_unit(&[]),
+            start_transient_unit_body(&[])
+        );
+        assert_ne!(
+            start_transient_unit_body(&oom_policy),
+            start_transient_unit_body(&[])
+        );
     }
 
     #[test]

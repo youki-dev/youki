@@ -8,6 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use nix::NixPath;
 use nix::unistd::Pid;
+use oci_spec::runtime::LinuxResources;
 
 use super::controller::Controller;
 use super::controller_type::{CONTROLLER_TYPES, ControllerType};
@@ -26,7 +27,7 @@ use crate::common::{
 use crate::stats::Stats;
 use crate::systemd::dbus_native::serialize::Variant;
 use crate::systemd::io::Io;
-use crate::systemd::unified::Unified;
+use crate::systemd::unified::{MEMORY_OOM_GROUP, OOM_POLICY, Unified};
 use crate::v2::manager::{Manager as FsManager, V2ManagerError};
 
 const CONNECT_MAX_RETRIES: u32 = 7;
@@ -62,6 +63,8 @@ pub struct Manager {
     cgroup_wait_timeout_duration: Duration,
     /// Whether the manager operates in a rootless environment
     rootless: bool,
+    /// Value of the unified memory.oom.group key, sent as OOMPolicy when the unit is created
+    oom_group: Option<String>,
 }
 
 /// Represents the systemd cgroups path:
@@ -292,6 +295,7 @@ impl Manager {
                         delegation_boundary,
                         cgroup_wait_timeout_duration,
                         rootless: false,
+                        oom_group: None,
                     });
                 }
                 Err(e) if !is_eagain(&e) => return Err(e),
@@ -334,6 +338,32 @@ impl Manager {
     pub fn with_rootless(mut self, rootless: bool) -> Self {
         self.rootless = rootless;
         self
+    }
+
+    /// Hands the manager the resources the container starts with.
+    ///
+    /// `apply` gets the resources only after `add_task` has created the unit, and systemd
+    /// takes some properties only at that point. So far that is OOMPolicy, which comes from
+    /// the unified memory.oom.group key.
+    pub fn with_initial_resources(mut self, resources: Option<&LinuxResources>) -> Self {
+        self.oom_group = resources
+            .and_then(|resources| resources.unified().as_ref())
+            .and_then(|unified| unified.get(MEMORY_OOM_GROUP))
+            .cloned();
+        self
+    }
+
+    /// Returns the properties that have to be part of the request that creates the unit.
+    fn unit_creation_properties(&self) -> Result<Vec<(&str, Variant)>, SystemdManagerError> {
+        let mut properties = Vec::new();
+        if let Some(oom_group) = &self.oom_group {
+            let systemd_version = self.client.systemd_version()?;
+            if let Some(policy) = Unified::oom_policy(oom_group, systemd_version)? {
+                properties.push((OOM_POLICY, Variant::String(policy.to_owned())));
+            }
+        }
+
+        Ok(properties)
     }
 
     // split_sub_cgroup splits the unit `name` into the base unit name and the
@@ -527,6 +557,7 @@ impl CgroupManager for Manager {
             pid.as_raw() as u32,
             &self.destructured_path.parent,
             &self.unit_name,
+            &self.unit_creation_properties()?,
         )?;
 
         // There is a chance that the intermediate process ends before systemd gets the dbus message to add it to transit unit.
@@ -613,6 +644,12 @@ impl CgroupManager for Manager {
         tracing::debug!("remove {}", self.unit_name);
         if self.client.transient_unit_exists(&self.unit_name) {
             self.client.stop_transient_unit(&self.unit_name)?;
+            // systemd keeps a failed unit loaded after it is stopped, and a new container
+            // with the same name cannot join it. A scope fails when OOMPolicy=kill is set
+            // and the kernel OOM killer kills its processes. As in runc, errors are ignored.
+            if let Err(err) = self.client.reset_failed_unit(&self.unit_name) {
+                tracing::debug!("failed to reset failed unit {}: {err}", self.unit_name);
+            }
         }
 
         Ok(())
@@ -658,11 +695,16 @@ mod tests {
             _pid: u32,
             _parent: &str,
             _unit_name: &str,
+            _extra_properties: &[(&str, Variant)],
         ) -> Result<(), SystemdClientError> {
             Ok(())
         }
 
         fn stop_transient_unit(&self, _unit_name: &str) -> Result<(), SystemdClientError> {
+            Ok(())
+        }
+
+        fn reset_failed_unit(&self, _unit_name: &str) -> Result<(), SystemdClientError> {
             Ok(())
         }
 
@@ -854,6 +896,113 @@ mod tests {
         // the remove call above should remove the dir, we just do this again
         // for contingency, and thus ignore the result
         let _ = fs::remove_dir(&manager.full_path);
+    }
+
+    fn oom_group_resources(value: &str) -> Result<LinuxResources> {
+        Ok(oci_spec::runtime::LinuxResourcesBuilder::default()
+            .unified(HashMap::from([(
+                MEMORY_OOM_GROUP.to_owned(),
+                value.to_owned(),
+            )]))
+            .build()?)
+    }
+
+    #[test]
+    fn test_unit_creation_properties() -> Result<()> {
+        let new_manager = || {
+            Manager::new(
+                DEFAULT_CGROUP_ROOT.into(),
+                ":youki:test_oom_policy".into(),
+                "youki_test_container".into(),
+                false,
+                PROCESS_IN_CGROUP_TIMEOUT_DURATION,
+            )
+        };
+        if new_manager()?.client.systemd_version()? < 253 {
+            // OOMPolicy is not accepted for scopes before systemd 253
+            return Ok(());
+        }
+
+        // nothing is added unless the resources set memory.oom.group
+        assert_eq!(new_manager()?.unit_creation_properties()?, vec![]);
+        assert_eq!(
+            new_manager()?
+                .with_initial_resources(Some(&LinuxResources::default()))
+                .unit_creation_properties()?,
+            vec![]
+        );
+        for (value, policy) in [("0", "continue"), ("1", "kill")] {
+            let manager = new_manager()?.with_initial_resources(Some(&oom_group_resources(value)?));
+            assert_eq!(
+                manager.unit_creation_properties()?,
+                vec![(OOM_POLICY, Variant::String(policy.into()))],
+                "memory.oom.group {value}"
+            );
+        }
+        let manager = new_manager()?.with_initial_resources(Some(&oom_group_resources("2")?));
+        assert!(matches!(
+            manager.unit_creation_properties(),
+            Err(SystemdManagerError::Unified(_))
+        ));
+        // the builder on AnyCgroupManager reaches the systemd manager
+        let AnyCgroupManager::Systemd(manager) = new_manager()?
+            .any()
+            .with_initial_resources(Some(&oom_group_resources("1")?))
+        else {
+            unreachable!("any() of the systemd manager is the systemd variant");
+        };
+        assert_eq!(
+            manager.unit_creation_properties()?,
+            vec![(OOM_POLICY, Variant::String("kill".into()))]
+        );
+        // a later call replaces what an earlier one stored
+        let manager = new_manager()?
+            .with_initial_resources(Some(&oom_group_resources("1")?))
+            .with_initial_resources(None);
+        assert_eq!(manager.unit_creation_properties()?, vec![]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_task_addition_with_oom_policy() -> Result<()> {
+        let manager = Manager::new(
+            DEFAULT_CGROUP_ROOT.into(),
+            ":youki:test_oom_policy_unit".into(),
+            "youki_test_container".into(),
+            false,
+            PROCESS_IN_CGROUP_TIMEOUT_DURATION,
+        )?
+        .with_initial_resources(Some(&oom_group_resources("1")?));
+        let oom_group_path = manager.full_path.join(MEMORY_OOM_GROUP);
+        if manager.client.systemd_version()? < 253 {
+            // OOMPolicy is not accepted for scopes before systemd 253
+            return Ok(());
+        }
+
+        // both have to outlive the joining add_task, or systemd removes the empty scope
+        let mut p1 = std::process::Command::new("sleep").arg("30").spawn()?;
+        let p1_id = nix::unistd::Pid::from_raw(p1.id() as i32);
+        manager.add_task(p1_id)?;
+        // nothing has written the file here: with OOMPolicy=kill systemd sets it itself
+        let oom_group = fs::read_to_string(&oom_group_path);
+        // joining the unit sends no properties, so a different value is not an error
+        let manager = manager.with_initial_resources(Some(&oom_group_resources("0")?));
+        let mut p2 = std::process::Command::new("sleep").arg("30").spawn()?;
+        let p2_id = nix::unistd::Pid::from_raw(p2.id() as i32);
+        let joined = manager.add_task(p2_id);
+        let oom_group_after_join = fs::read_to_string(&oom_group_path);
+        for p in [&mut p1, &mut p2] {
+            let _ = p.kill();
+            let _ = p.wait();
+        }
+        manager.remove()?;
+        let _ = fs::remove_dir(&manager.full_path);
+
+        assert_eq!(oom_group?.trim(), "1");
+        joined?;
+        assert_eq!(oom_group_after_join?.trim(), "1");
+        Ok(())
     }
 
     #[test]

@@ -4,14 +4,19 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
+use std::thread::sleep;
+use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use libcgroups::v2::controller_type::ControllerType;
 use oci_spec::runtime::{LinuxBuilder, LinuxResourcesBuilder, ProcessBuilder, Spec, SpecBuilder};
 use test_framework::{ConditionalTest, TestGroup, TestResult, test_result};
 
 use super::{SCOPE_PREFIX, can_run, show_property, systemd_version, unit_name};
-use crate::utils::test_utils::{CGROUP_ROOT, CreateOptions, check_container_created};
+use crate::utils::test_utils::{
+    CGROUP_ROOT, CreateOptions, check_container_created, start_container,
+};
 use crate::utils::{
     block_device_numbers, cgroup_has_file, is_cgroup_v2_with_controller, is_runtime_runc,
     test_outside_container_with_options,
@@ -93,8 +98,8 @@ fn run_test(
 /// A key with no systemd property must still reach the cgroup.
 fn test_key_without_property_is_written() -> TestResult {
     let cgroup_name = "systemd_unified_key_without_property";
-    run_test(cgroup_name, &[("memory.oom.group", "1")], &|| {
-        check_file(cgroup_name, "memory.oom.group", "1")
+    run_test(cgroup_name, &[("cgroup.max.depth", "5")], &|| {
+        check_file(cgroup_name, "cgroup.max.depth", "5")
     })
 }
 
@@ -202,6 +207,83 @@ fn test_cpu_idle() -> TestResult {
     })
 }
 
+/// systemd sets memory.oom.group from OOMPolicy whenever it applies the unit's cgroup
+/// settings, so the key also has to reach the unit as OOMPolicy. systemd takes OOMPolicy only
+/// when the unit is created; a scope accepts it since 253.
+fn test_memory_oom_group() -> TestResult {
+    let cgroup_name = "systemd_unified_memory_oom_group";
+    run_test(cgroup_name, &[("memory.oom.group", "1")], &|| {
+        check_property(cgroup_name, "OOMPolicy", "kill")?;
+        check_file(cgroup_name, "memory.oom.group", "1")?;
+
+        // changing a cgroup property makes systemd apply the unit's cgroup settings again
+        let unit = unit_name(cgroup_name);
+        let output = Command::new("systemctl")
+            .args(["set-property", "--runtime", &unit, "CPUWeight=50"])
+            .output()
+            .with_context(|| format!("failed to run systemctl set-property for {unit}"))?;
+        if !output.status.success() {
+            bail!(
+                "systemctl set-property {unit} failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        check_file(cgroup_name, "memory.oom.group", "1")
+    })
+}
+
+/// With OOMPolicy=kill systemd marks the scope as failed once the kernel OOM killer has
+/// killed its processes, and a failed unit stays loaded. Deleting the container has to clear
+/// it, or no container can be created with the same cgroupsPath again.
+fn test_memory_oom_group_recreate_after_oom_kill() -> TestResult {
+    let cgroup_name = "systemd_unified_memory_oom_group_recreate";
+    let limit = "33554432";
+    let unified = [
+        ("memory.oom.group", "1"),
+        ("memory.max", limit),
+        ("memory.swap.max", "0"),
+    ];
+    let mut spec = test_result!(create_spec(cgroup_name, &unified));
+    // doubles a string until the memory limit is hit
+    let hog = "x=0123456789abcdef; while :; do x=$x$x; done";
+    spec.set_process(Some(test_result!(
+        ProcessBuilder::default()
+            .args(["sh", "-c", hog].map(String::from))
+            .build()
+            .context("failed to build process spec")
+    )));
+    let systemd_cgroup: &[&OsStr] = &[OsStr::new("--systemd-cgroup")];
+    let options = CreateOptions::default().with_global_args(systemd_cgroup);
+
+    let oom_killed = test_outside_container_with_options(&spec, &options, &|data| {
+        test_result!(check_container_created(&data));
+        // without these the process could use up the memory or the swap of the host
+        test_result!(check_file(cgroup_name, "memory.max", limit));
+        test_result!(check_file(cgroup_name, "memory.swap.max", "0"));
+        test_result!(
+            start_container(&data.id, &data.bundle).and_then(|mut child| Ok(child.wait()?))
+        );
+
+        // the process never exits on its own, so the unit only stops being active once
+        // the process has been killed
+        let unit = unit_name(cgroup_name);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while test_result!(show_property(&unit, "ActiveState")) == "active" {
+            if Instant::now() > deadline {
+                return TestResult::Failed(anyhow!("{unit} was not OOM killed"));
+            }
+            sleep(Duration::from_millis(100));
+        }
+        TestResult::Passed
+    });
+    if !matches!(oom_killed, TestResult::Passed) {
+        return oom_killed;
+    }
+
+    // the same cgroupsPath, so the new container gets a unit of the same name
+    run_test(cgroup_name, &[], &|| Ok(()))
+}
+
 /// One io.max value with a line per device; each line needs its own write.
 fn test_io_max_multi_device() -> TestResult {
     let cgroup_name = "systemd_unified_io_max_multi_device";
@@ -245,6 +327,14 @@ fn can_run_memory_zswap_writeback() -> bool {
 
 fn can_run_cpu_idle() -> bool {
     can_run() && cgroup_has_file("cpu.idle")
+}
+
+fn can_run_memory_oom_group() -> bool {
+    can_run() && cgroup_has_file("memory.oom.group") && systemd_version().is_ok_and(|v| v >= 253)
+}
+
+fn can_run_memory_oom_group_recreate() -> bool {
+    can_run_memory_oom_group() && cgroup_has_file("memory.swap.max")
 }
 
 fn can_run_io_max_multi_device() -> bool {
@@ -295,6 +385,16 @@ pub fn get_test_group() -> TestGroup {
         Box::new(can_run_cpu_idle),
         Box::new(test_cpu_idle),
     );
+    let memory_oom_group = ConditionalTest::new(
+        "memory_oom_group",
+        Box::new(can_run_memory_oom_group),
+        Box::new(test_memory_oom_group),
+    );
+    let memory_oom_group_recreate = ConditionalTest::new(
+        "memory_oom_group_recreate_after_oom_kill",
+        Box::new(can_run_memory_oom_group_recreate),
+        Box::new(test_memory_oom_group_recreate_after_oom_kill),
+    );
     let io_max_multi_device = ConditionalTest::new(
         "io_max_multi_device",
         Box::new(can_run_io_max_multi_device),
@@ -310,6 +410,8 @@ pub fn get_test_group() -> TestGroup {
         Box::new(memory_zswap_max),
         Box::new(memory_zswap_writeback),
         Box::new(cpu_idle),
+        Box::new(memory_oom_group),
+        Box::new(memory_oom_group_recreate),
         Box::new(io_max_multi_device),
     ]);
     test_group
