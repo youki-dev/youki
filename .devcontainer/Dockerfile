@@ -1,4 +1,4 @@
-ARG VARIANT="bullseye"
+ARG VARIANT="bookworm"
 FROM mcr.microsoft.com/vscode/devcontainers/rust:1-${VARIANT}
 
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
@@ -18,11 +18,13 @@ rm -rf /var/lib/apt/lists/*
 
 curl --proto '=https' --tlsv1.2 -sSf "https://just.systems/install.sh" | bash -s -- --to /usr/bin
 
-curl -L -o /usr/bin/kubectl "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+KARCH="$(uname -m | sed -e "s/x86_64/amd64/" -e "s/aarch64/arm64/" -e "s/arm64/arm64/")"
+curl -fsSL -o /usr/bin/kubectl "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/${KARCH}/kubectl"
 chmod +x /usr/bin/kubectl
 
 VERSION="$(curl -sSfL "https://api.github.com/repos/rust-lang/mdBook/releases/latest" | jq -r .tag_name)"
-curl -sSfL "https://github.com/rust-lang/mdBook/releases/download/$VERSION/mdbook-$VERSION-$(uname -m)-unknown-linux-musl.tar.gz" | tar -xzvC /usr/bin/ mdbook
+MDBOOK_ARCH="$(uname -m | sed -e "s/x86_64/x86_64/" -e "s/aarch64/aarch64/" -e "s/arm64/aarch64/")"
+curl -fsSL "https://github.com/rust-lang/mdBook/releases/download/${VERSION}/mdbook-${VERSION}-${MDBOOK_ARCH}-unknown-linux-musl.tar.gz" | tar -xzvC /usr/bin/ mdbook
 
 # Install the Rust nightly toolchain because `cargo fmt` relies on unstable rustfmt settings.
 curl -sSf "https://sh.rustup.rs" | sh -s -- -y
