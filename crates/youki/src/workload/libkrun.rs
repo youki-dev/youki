@@ -42,6 +42,19 @@ impl LibkrunExecutor {
             .get()
             .ok_or_else(|| ExecutorError::Other("ctx_id not initialized".into()))
     }
+
+    /// Creates the krun context and keeps its id for [`ContainerExecutor::exec`].
+    ///
+    /// This must be called on the host side before pivot_root
+    /// (from [`HostExecutor::modify_spec`]), not in [`ContainerExecutor::exec`].
+    /// `krun_create_ctx` triggers the lazy dlopen of libkrunfw.so.5 inside libkrun.
+    /// After pivot_root, libkrunfw.so.5 is unreachable from the container rootfs,
+    /// so deferring this call would make krun_start_enter fail with -ENOENT.
+    fn create_krun_ctx(&self) -> Result<(), ExecutorError> {
+        let ctx_id = krun_create_ctx()?;
+        self.set_ctx_id(ctx_id);
+        Ok(())
+    }
 }
 
 pub fn get_executor() -> LibkrunExecutor {
@@ -89,6 +102,10 @@ fn krun_start_enter(ctx: u32) -> Result<(), ExecutorError> {
 }
 
 impl HostExecutor for LibkrunExecutor {
+    /// Prepares the host side of a krun container.
+    ///
+    /// Besides modifying the spec, this also validates the krun annotations and
+    /// the host environment (`/dev/kvm`), and creates the krun context.
     fn modify_spec(&self, spec: Spec) -> Result<Spec, ExecutorError> {
         if !can_handle(&spec) {
             return Err(ExecutorError::CantHandle(EXECUTOR_NAME));
@@ -104,12 +121,7 @@ impl HostExecutor for LibkrunExecutor {
         let spec = configure_spec_for_libkrun(spec)
             .map_err(|e| ExecutorError::Other(format!("configure_for_libkrun: {e}")))?;
 
-        // krun_create_ctx must be called here (host side, before pivot_root), not in exec.
-        // It triggers the lazy dlopen of libkrunfw.so.5 inside libkrun (via a LazyLock in KrunfwBindings::new).
-        // After pivot_root, libkrunfw.so.5 is unreachable from the container rootfs,
-        // so deferring this call would make krun_start_enter later fail with -ENOENT.
-        let ctx_id = krun_create_ctx()?;
-        self.set_ctx_id(ctx_id);
+        self.create_krun_ctx()?;
         Ok(spec)
     }
 }
