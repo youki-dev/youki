@@ -150,6 +150,8 @@ pub enum ErrInvalidSpec {
     NetDevicesRootlessNotSupported,
     #[error("invalid network device name: {0}")]
     NetDevicesInvalidDeviceName(String),
+    #[error("invalid cgroup device type '{}' in linux.resources.devices, must be 'a', 'c' or 'b'", .0.as_str())]
+    InvalidCgroupDeviceType(oci_spec::runtime::LinuxDeviceType),
     #[error(transparent)]
     IO(#[from] std::io::Error),
     #[error("rootless container requires valid user namespace definition")]

@@ -7,6 +7,7 @@ use libcgroups::{self};
 use libcontainer::oci_spec::runtime::{
     LinuxBlockIoBuilder, LinuxPidsBuilder, LinuxResources, LinuxResourcesBuilder,
 };
+use libcontainer::validator::Validator;
 use liboci_cli::Update;
 
 use crate::commands::create_cgroup_manager;
@@ -38,6 +39,8 @@ pub fn update(args: Update, root_path: PathBuf) -> Result<()> {
         }
         linux_res = builder.build()?;
     }
+
+    Validator::validate_resources(&linux_res)?;
 
     cmanager.apply(&ControllerOpt {
         resources: &linux_res,
