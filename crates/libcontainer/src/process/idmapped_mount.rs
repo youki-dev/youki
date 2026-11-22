@@ -73,8 +73,11 @@ impl MountFdService {
     /// that namespace only after the main process learns its pid, but is
     /// guaranteed to be inside by the time rootfs setup sends `AskMountFd`.
     pub(crate) fn start(init_pid: Pid, syscall: SyscallType) -> Result<Self> {
+        // Main process -> worker: one request per idmapped mount.
         let (request_tx, request_rx) = mpsc::channel::<MountMsg>();
+        // Worker -> main process: the mount fd or error for each request.
         let (reply_tx, reply_rx) = mpsc::channel::<Result<OwnedFd>>();
+        // Worker -> main process: the one-time worker setup result.
         let (setup_tx, setup_rx) = mpsc::channel::<Result<()>>();
         thread::spawn(move || {
             let syscall = syscall.create_syscall();
@@ -89,6 +92,7 @@ impl MountFdService {
             let _ = setup_tx.send(Ok(()));
 
             let mut mntns_joined: Option<std::result::Result<(), String>> = None;
+            // Main process -> worker: wait for the next mount request.
             for msg in request_rx {
                 let joined = mntns_joined.get_or_insert_with(|| {
                     join_init_mount_namespace(syscall.as_ref(), init_pid)
@@ -98,6 +102,7 @@ impl MountFdService {
                     Ok(()) => create_idmapped_mount_fd(syscall.as_ref(), &msg, init_pid),
                     Err(err) => Err(IdmappedMountError::JoinMountNamespace(err.clone())),
                 };
+                // Worker -> main process: main forwards the result to init.
                 let _ = reply_tx.send(reply);
             }
         });

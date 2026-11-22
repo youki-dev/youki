@@ -497,8 +497,10 @@ fn handle_mount_fd_request(
         ));
     };
 
+    // Main process -> worker: block until the worker replies.
     match service.request_mount_fd(request) {
         Ok(mount_fd) => {
+            // Main process -> init: send the fd over the init channel.
             init_sender.send_mount_fd_reply(mount_fd.as_raw_fd())?;
             // Dropping `mount_fd` is safe: SCM_RIGHTS already duplicated it.
             Ok(())
