@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use libcontainer::error::MissingSpecError;
 use libcontainer::oci_spec::runtime::{
     LinuxBuilder, LinuxDevice, LinuxDeviceBuilder, LinuxDeviceCgroup, LinuxDeviceCgroupBuilder,
-    LinuxDeviceType, Spec,
+    LinuxDeviceType, LinuxResources, Spec,
 };
 use libcontainer::workload::{
     ContainerExecutor, EMPTY, Executor, ExecutorError, ExecutorValidationError, HostExecutor,
@@ -230,25 +230,38 @@ pub fn add_dev_kvm_to_linux_devices(spec: &mut Spec) -> Result<(), KrunError> {
 
 // Add an allow rule for /dev/kvm to linux.resources.devices.
 pub fn allow_kvm_in_linux_resources_devices(spec: &mut Spec) -> Result<(), KrunError> {
-    let linux = match spec.linux_mut() {
-        Some(l) => l,
-        None => return Ok(()),
-    };
-    let res = match linux.resources_mut() {
-        Some(r) => r,
-        None => return Ok(()),
-    };
-
-    // If no device rules are configured, only the default devices are allowed,
-    // so /dev/kvm must be allowed explicitly.
-    let device_cgroups = res.devices_mut().get_or_insert_with(Vec::new);
-
     let (kvm_major, kvm_minor) = match stat_dev_numbers("/dev/kvm") {
         Ok(v) => v,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(KrunError::Other(format!("stat `/dev/kvm`: {e}"))),
     };
+    add_kvm_device_cgroup_rule(spec, kvm_major, kvm_minor)
+}
 
+// `linux` and `linux.resources` are created when missing, so that the rule is
+// always applied.
+fn add_kvm_device_cgroup_rule(
+    spec: &mut Spec,
+    kvm_major: i64,
+    kvm_minor: i64,
+) -> Result<(), KrunError> {
+    if spec.linux().is_none() {
+        let linux = LinuxBuilder::default()
+            .build()
+            .map_err(|e| KrunError::Other(format!("build default linux section: {e}")))?;
+        spec.set_linux(Some(linux));
+    }
+    let linux = spec
+        .linux_mut()
+        .as_mut()
+        .ok_or_else(|| KrunError::Other("spec.linux is None after initialization".into()))?;
+    let res = linux
+        .resources_mut()
+        .get_or_insert_with(LinuxResources::default);
+
+    // With linux.resources, the device controller denies everything except the
+    // default devices, so /dev/kvm must be allowed explicitly.
+    let device_cgroups = res.devices_mut().get_or_insert_with(Vec::new);
     device_cgroups.push(make_oci_spec_dev_cgroup(
         LinuxDeviceType::C,
         kvm_major,
@@ -538,5 +551,51 @@ mod tests {
         assert!(!is_krun_handler(Some(&ann("krun.cpus", "2"))));
         assert!(!is_krun_handler(Some(&HashMap::new())));
         assert!(!is_krun_handler(None));
+    }
+
+    fn kvm_rules(spec: &Spec) -> Vec<LinuxDeviceCgroup> {
+        spec.linux()
+            .as_ref()
+            .and_then(|l| l.resources().as_ref())
+            .and_then(|r| r.devices().clone())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|d| d.major() == Some(10) && d.minor() == Some(232))
+            .collect()
+    }
+
+    #[test]
+    fn kvm_rule_added_without_linux_resources() {
+        let mut spec = spec_with(None, None);
+        // LinuxBuilder::default() sets default resources, so remove them explicitly.
+        spec.linux_mut().as_mut().unwrap().set_resources(None);
+        add_kvm_device_cgroup_rule(&mut spec, 10, 232).unwrap();
+        let rules = kvm_rules(&spec);
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].allow());
+        assert_eq!(rules[0].typ(), Some(LinuxDeviceType::C));
+        assert_eq!(rules[0].access().as_deref(), Some("rwm"));
+    }
+
+    #[test]
+    fn kvm_rule_added_without_linux_section() {
+        let mut spec = SpecBuilder::default().build().unwrap();
+        spec.set_linux(None);
+        add_kvm_device_cgroup_rule(&mut spec, 10, 232).unwrap();
+        assert_eq!(kvm_rules(&spec).len(), 1);
+    }
+
+    #[test]
+    fn kvm_rule_keeps_existing_resources() {
+        let mut spec = spec_with(None, Some(512 * MIB));
+        add_kvm_device_cgroup_rule(&mut spec, 10, 232).unwrap();
+        assert_eq!(kvm_rules(&spec).len(), 1);
+        let limit = spec
+            .linux()
+            .as_ref()
+            .and_then(|l| l.resources().as_ref())
+            .and_then(|r| r.memory().as_ref())
+            .and_then(|m| m.limit());
+        assert_eq!(limit, Some(512 * MIB));
     }
 }
