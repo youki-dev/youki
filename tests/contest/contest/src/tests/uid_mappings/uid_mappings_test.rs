@@ -72,3 +72,5 @@ pub fn get_uid_mappings_test() -> TestGroup {
 
     test_group
 }
+
+test_framework::register_test_group!(get_uid_mappings_test);

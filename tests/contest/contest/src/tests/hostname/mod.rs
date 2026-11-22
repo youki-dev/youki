@@ -50,3 +50,5 @@ pub fn get_hostname_test() -> TestGroup {
 
     test_group
 }
+
+test_framework::register_test_group!(get_hostname_test);

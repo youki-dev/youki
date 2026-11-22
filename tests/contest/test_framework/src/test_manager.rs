@@ -7,7 +7,7 @@ use anyhow::Result;
 
 use crate::testable::{TestResult, TestableGroup};
 
-type TestableGroupType = dyn TestableGroup + Sync + Send;
+pub(crate) type TestableGroupType = dyn TestableGroup + Sync + Send;
 
 /// This manages all test groups, and thus the tests
 pub struct TestManager {
@@ -33,6 +33,16 @@ impl TestManager {
     /// add a test group to the test manager
     pub fn add_test_group(&mut self, tg: Box<TestableGroupType>) {
         self.test_groups.insert(tg.get_name(), tg);
+    }
+
+    /// add all test groups registered with `register_test_group!`
+    pub fn add_registered_test_groups(&mut self) {
+        for tg in crate::registry::registered() {
+            let name = tg.get_name();
+            if self.test_groups.insert(name, tg).is_some() {
+                panic!("test group {name} is registered twice");
+            }
+        }
     }
 
     pub fn add_cleanup(&mut self, cleaner: Box<dyn Fn() -> Result<()>>) {

@@ -93,3 +93,5 @@ pub fn get_seccomp_test() -> TestGroup {
 
     test_group
 }
+
+test_framework::register_test_group!(get_seccomp_test);

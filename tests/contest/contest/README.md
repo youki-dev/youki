@@ -63,12 +63,11 @@ Usually the test creation workflow will be something like :
 2. Make a function which will check if the test can be run or not on a given system. This is important, as some tests such as blkio or cgroups memory need the kernel to be configured with certain flags, without which the test cannot be run. **Note** that this is different from the test failing: the test should fail when it is capable of running, but gives unexpected results, whereas the test should be skipped / not run in the first place, when the host system does not support it.
 3. Create a function which will generate the OCI Spec required for test, using oci-spec-rs 's builder pattern. See the `make_hugetlb_spec` function in src/tests/tlb/tlb_test.rs to get an idea. Usually to understand the types of fields and which fields are available, you'll need to check [this file](https://github.com/youki-dev/oci-spec-rs/blob/main/src/runtime/linux.rs) and other source files to get an idea of what fields you need. The builder pattern is quite consistent, and using the github - vs code integration and doing a global search for what you need should do the trick.
 4. Write the test functions and whatever needed: custom structs, etc.
-5. Create a function which will create the custom/default tests, create a TestGroup/custom impl TestableGroup out of it, and return that. Make this function public, and `pub use` it from the mod.rs .
-6. In the src/main.rs, import your function, and run it to get an instance of your test group, for example see lines 58-60 ish, where lifecycle, create and huge_tlb structs are created.
-7. Add the reference of this to the test_manager in the main function.
-8. Run your tests individually, run your test group individually and then run the whole suite against youki and some other production level runtime, such as runc. As stated previously, the important thing is to make sure runc passes it as well.
-9. Make sure that the system is returned to the original state afterwards: make sure that no youki/runc/runtime process is running in the background, make sure that the /tmp (or respective on Windows/MacOS) does not have a uuid-looking directory in it, make sure that the /sys/fs/cgroup/\* directories do not have a runtime sub-directory of uuid-looking directory in them.
-10. Commit, push and make a PR ;)
+5. Create a function which will create the custom/default tests, create a TestGroup/custom impl TestableGroup out of it, and return that. Add the module to src/tests/mod.rs .
+6. Register the function next to it with `test_framework::register_test_group!(your_function);` (for a custom struct, `register_test_group!(YourStruct::new);`). src/main.rs picks up every registered group, so it does not need to be edited. Group names must be unique.
+7. Run your tests individually, run your test group individually and then run the whole suite against youki and some other production level runtime, such as runc. As stated previously, the important thing is to make sure runc passes it as well.
+8. Make sure that the system is returned to the original state afterwards: make sure that no youki/runc/runtime process is running in the background, make sure that the /tmp (or respective on Windows/MacOS) does not have a uuid-looking directory in it, make sure that the /sys/fs/cgroup/\* directories do not have a runtime sub-directory of uuid-looking directory in them.
+9. Commit, push and make a PR ;)
 
 ### Some common issues/errors
 

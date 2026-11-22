@@ -107,3 +107,5 @@ impl TestableGroup for ContainerCreate {
         ret
     }
 }
+
+test_framework::register_test_group!(ContainerCreate::new);

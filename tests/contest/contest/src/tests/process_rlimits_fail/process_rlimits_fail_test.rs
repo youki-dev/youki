@@ -64,3 +64,5 @@ pub fn get_process_rlimits_fail_test() -> TestGroup {
     test_group.add(vec![Box::new(test)]);
     test_group
 }
+
+test_framework::register_test_group!(get_process_rlimits_fail_test);

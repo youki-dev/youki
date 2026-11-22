@@ -44,10 +44,15 @@ Provides a simple template for test which is to be run conditionally. Implements
 
 Provides a simple template for a test group. This implement TestableGroup. The new function takes the name of the test group, and add function takes vector of Testables. This is intended to used for grouping of simple, stateless tests.
 
+#### Macro register_test_group
+
+Registers a TestableGroup so that `TestManager::add_registered_test_groups` picks it up. It takes the path of a function that returns the group, e.g. `register_test_group!(get_pidfile_test);` or `register_test_group!(ContainerLifecycle::new);`. The registrations are collected at link time with the [inventory](https://crates.io/crates/inventory) crate, so the order in which groups are registered is not defined; TestManager keeps the groups sorted by name.
+
 #### Struct TestManager
 
 This is the core manager for running of the tests. This stores test groups, controls running of them, and printing of results. It has following functions :
 
 - add_test_group : adds a TestableGroup.
+- add_registered_test_groups : adds every TestableGroup registered with the `register_test_group!` macro. Panics if two groups have the same name.
 - run_all : runs all the tests in all test groups which can be run (whose can_run returns true) and prints their results to stdout
 - run_selected : takes a vector of tuples of the form (group-name, optional vector of test names) . Then runs only selected tests. If the optional vector is not present (None) then runs all tests in the group, or else runs only the selected tests from the group.

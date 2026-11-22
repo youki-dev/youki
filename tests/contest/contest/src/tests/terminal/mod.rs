@@ -293,3 +293,5 @@ pub fn get_terminal_test() -> TestGroup {
     ]);
     tg
 }
+
+test_framework::register_test_group!(get_terminal_test);

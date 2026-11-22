@@ -418,3 +418,5 @@ impl TestableGroup for ContainerLifecycle {
         ret
     }
 }
+
+test_framework::register_test_group!(ContainerLifecycle::new);

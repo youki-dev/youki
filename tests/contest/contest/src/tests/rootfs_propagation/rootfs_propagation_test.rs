@@ -146,3 +146,5 @@ pub fn get_rootfs_propagation_test() -> TestGroup {
 
     rootfs_propagation_test_group
 }
+
+test_framework::register_test_group!(get_rootfs_propagation_test);

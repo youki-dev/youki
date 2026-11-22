@@ -152,3 +152,5 @@ pub fn get_hooks_tests() -> TestGroup {
     tg.add(vec![Box::new(get_test("hooks"))]);
     tg
 }
+
+test_framework::register_test_group!(get_hooks_tests);

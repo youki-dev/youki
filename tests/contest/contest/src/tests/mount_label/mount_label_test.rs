@@ -90,3 +90,5 @@ pub fn get_mount_label_test() -> TestGroup {
     ]);
     tg
 }
+
+test_framework::register_test_group!(get_mount_label_test);
