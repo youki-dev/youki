@@ -4,7 +4,7 @@ use std::num::ParseIntError;
 use super::controller::Controller;
 use super::cpuset::{self, BitmaskError, to_bitmask};
 use super::dbus_native::serialize::Variant;
-use super::{cpu, memory, pids};
+use super::{cpu, io, memory, pids};
 use crate::common::ControllerOpt;
 
 // The systemd version each property first appeared in, as in runc.
@@ -237,6 +237,32 @@ impl Unified {
                         };
                     properties.insert(pids::TASKS_MAX, Variant::U64(pids));
                 }
+                "io.bfq.weight" => {
+                    // A plain BFQ weight maps to IOWeight, so systemd writes io.bfq.weight
+                    // itself and the value survives the next time systemd applies the unit.
+                    // The other forms of the file ("default N", per-device lines) have no
+                    // pre-image here and are left to the cgroupfs write below, as before.
+                    match value.trim().parse::<u16>() {
+                        Ok(weight) if (1..=1000).contains(&weight) => {
+                            properties.insert(
+                                io::IO_WEIGHT,
+                                Variant::U64(io::bfq_weight_to_io_weight(weight)),
+                            );
+                        }
+                        _ => tracing::debug!(
+                            "io.bfq.weight value {value:?} is not a plain weight in [1, 1000], \
+                             only writing it to cgroupfs"
+                        ),
+                    }
+                }
+                // Deliberately left on the cgroupfs path: a unified key applies verbatim to
+                // the file it names, while mapping it to IOWeight would also make systemd
+                // derive io.bfq.weight from the value. The value does not survive a later
+                // systemd cgroup apply, same as any other key with no property.
+                "io.weight" => tracing::debug!(
+                    "io.weight has no systemd property, only writing it to cgroupfs"
+                ),
+
                 // sent as OOMPolicy when the unit was created, systemd refuses it here
                 MEMORY_OOM_GROUP => {}
 
@@ -686,6 +712,73 @@ mod tests {
         Unified::apply(&unified, 245, &mut actual).context("apply unified")?;
 
         // assert
+        assert!(actual.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_io_bfq_weight_maps_to_io_weight() -> Result<()> {
+        // the value is a BFQ weight, so it is sent as the pre-image of systemd's scaling
+        for (value, expected) in [
+            ("1", 1u64),
+            ("100", 100),
+            ("101", 111),
+            ("500", 4500),
+            ("1000", 10000),
+        ] {
+            // arrange
+            let unified = unified_map(&[("io.bfq.weight", value)]);
+            let mut actual: HashMap<&str, Variant> = HashMap::new();
+
+            // act
+            Unified::apply(&unified, 245, &mut actual).context("apply unified")?;
+
+            // assert
+            let io_weight = &actual[io::IO_WEIGHT];
+            assert_eq!(
+                recast!(io_weight, Variant)?,
+                Variant::U64(expected),
+                "{value}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_io_bfq_weight_not_a_plain_weight_is_left_to_cgroupfs() -> Result<()> {
+        // "default N" and per-device forms have no pre-image, and neither do values outside
+        // the range of the file; the manager still writes them to cgroupfs
+        for value in [
+            "default 500",
+            "8:0 200",
+            "default 100 8:0 200",
+            "0",
+            "1001",
+            "x",
+        ] {
+            // arrange
+            let unified = unified_map(&[("io.bfq.weight", value)]);
+            let mut actual: HashMap<&str, Variant> = HashMap::new();
+
+            // act
+            Unified::apply(&unified, 245, &mut actual).context("apply unified")?;
+
+            // assert
+            assert!(actual.is_empty(), "{value}");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_io_weight_is_left_to_cgroupfs() -> Result<()> {
+        // a plain io.weight value is not mapped, so it gets no property
+        let unified = unified_map(&[("io.weight", "500")]);
+        let mut actual: HashMap<&str, Variant> = HashMap::new();
+
+        Unified::apply(&unified, 245, &mut actual).context("apply unified")?;
+
         assert!(actual.is_empty());
         Ok(())
     }
