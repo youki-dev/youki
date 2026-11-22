@@ -5,6 +5,11 @@ use libcontainer::workload::{
 
 #[derive(Clone)]
 pub struct DefaultExecutor {
+    // Unlike the wasm executors, which are stateless and created for each dispatch
+    // by `get_executor()`, the krun executor is stateful: the krun context created
+    // in `HostExecutor::modify_spec` must survive the fork and be used in
+    // `ContainerExecutor::exec`. So it is created once here and must not be
+    // re-created per dispatch, or the context is lost.
     #[cfg(feature = "krun")]
     libkrun: super::libkrun::LibkrunExecutor,
 }

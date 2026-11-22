@@ -110,9 +110,9 @@ impl HostExecutor for LibkrunExecutor {
         if !can_handle(&spec) {
             return Err(ExecutorError::CantHandle(EXECUTOR_NAME));
         }
-        // Validate the krun annotations here (host side) so that an invalid value
+        // Decide the VM config here (host side) so that an invalid annotation
         // fails `create` with a clear error instead of failing later in the container.
-        read_krun_vm_config(&spec)?;
+        let (vcpus, ram_mib) = read_krun_vm_config(&spec)?;
         validate_kvm().map_err(|e| {
             ExecutorError::Other(format!("validate kvm error in host executor: {e}"))
         })?;
@@ -122,6 +122,10 @@ impl HostExecutor for LibkrunExecutor {
             .map_err(|e| ExecutorError::Other(format!("configure_for_libkrun: {e}")))?;
 
         self.create_krun_ctx()?;
+        // The VM config is kept in the krun context, which survives the fork into
+        // the container process, so `ContainerExecutor::exec` does not need to read
+        // the annotations again.
+        krun_set_vm_config(self.get_ctx_id()?, vcpus, ram_mib)?;
         Ok(spec)
     }
 }
@@ -140,10 +144,8 @@ impl ContainerExecutor for LibkrunExecutor {
             return Err(ExecutorError::InvalidArg);
         }
 
+        // The krun context and its VM config were set up in `HostExecutor::modify_spec`.
         let ctx_id = self.get_ctx_id()?;
-
-        let (vcpus, ram_mib) = read_krun_vm_config(spec)?;
-        krun_set_vm_config(ctx_id, vcpus, ram_mib)?;
 
         // At this point pivot_root has run, so "/" is the rootfs containing .krun_config.json.
         let root = CString::new("/")
