@@ -70,27 +70,6 @@ impl Controller for Unified {
 }
 
 impl Unified {
-    /// Returns the OOMPolicy that stands for a unified memory.oom.group value, as in runc.
-    ///
-    /// systemd does not allow changing OOMPolicy on a running unit, so this cannot be one
-    /// of the properties `apply` sets. The manager sends it when it creates the unit.
-    pub(super) fn oom_policy(
-        oom_group: &str,
-        systemd_version: u32,
-    ) -> Result<Option<&'static str>, SystemdUnifiedError> {
-        let policy = match oom_group.trim().parse::<u64>() {
-            Ok(0) => "continue",
-            Ok(1) => "kill",
-            _ => return Err(SystemdUnifiedError::MemoryOomGroup(oom_group.into())),
-        };
-        if systemd_version < OOM_POLICY_MIN_VERSION {
-            tracing::debug!("systemd {systemd_version} does not support {OOM_POLICY} for scopes");
-            return Ok(None);
-        }
-
-        Ok(Some(policy))
-    }
-
     fn apply(
         unified: &HashMap<String, String>,
         systemd_version: u32,
@@ -268,6 +247,27 @@ impl Unified {
         }
 
         Ok(())
+    }
+
+    /// Returns the OOMPolicy that stands for a unified memory.oom.group value, as in runc.
+    ///
+    /// systemd does not allow changing OOMPolicy on a running unit, so this cannot be one
+    /// of the properties `apply` sets. The manager sends it when it creates the unit.
+    pub(super) fn oom_policy(
+        oom_group: &str,
+        systemd_version: u32,
+    ) -> Result<Option<&'static str>, SystemdUnifiedError> {
+        let policy = match oom_group.trim().parse::<u64>() {
+            Ok(0) => "continue",
+            Ok(1) => "kill",
+            _ => return Err(SystemdUnifiedError::MemoryOomGroup(oom_group.into())),
+        };
+        if systemd_version < OOM_POLICY_MIN_VERSION {
+            tracing::debug!("systemd {systemd_version} does not support {OOM_POLICY} for scopes");
+            return Ok(None);
+        }
+
+        Ok(Some(policy))
     }
 }
 
