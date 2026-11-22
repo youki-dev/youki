@@ -21,6 +21,8 @@ pub trait SystemdClient {
 
     fn stop_transient_unit(&self, unit_name: &str) -> Result<(), SystemdClientError>;
 
+    fn reset_failed_unit(&self, unit_name: &str) -> Result<(), SystemdClientError>;
+
     fn set_unit_properties(
         &self,
         unit_name: &str,

@@ -541,6 +541,11 @@ impl SystemdClient for DbusConnection {
         Ok(())
     }
 
+    fn reset_failed_unit(&self, unit_name: &str) -> Result<()> {
+        let proxy = self.create_proxy();
+        proxy.reset_failed_unit(unit_name)
+    }
+
     fn set_unit_properties(
         &self,
         unit_name: &str,

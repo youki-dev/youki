@@ -644,6 +644,12 @@ impl CgroupManager for Manager {
         tracing::debug!("remove {}", self.unit_name);
         if self.client.transient_unit_exists(&self.unit_name) {
             self.client.stop_transient_unit(&self.unit_name)?;
+            // systemd keeps a failed unit loaded after it is stopped, and a new container
+            // with the same name cannot join it. A scope fails when OOMPolicy=kill is set
+            // and the kernel OOM killer kills its processes. As in runc, errors are ignored.
+            if let Err(err) = self.client.reset_failed_unit(&self.unit_name) {
+                tracing::debug!("failed to reset failed unit {}: {err}", self.unit_name);
+            }
         }
 
         Ok(())
@@ -695,6 +701,10 @@ mod tests {
         }
 
         fn stop_transient_unit(&self, _unit_name: &str) -> Result<(), SystemdClientError> {
+            Ok(())
+        }
+
+        fn reset_failed_unit(&self, _unit_name: &str) -> Result<(), SystemdClientError> {
             Ok(())
         }
 

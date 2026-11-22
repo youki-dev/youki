@@ -248,4 +248,12 @@ impl<'conn> Proxy<'conn> {
             Some((name, cgroup, vec![pid])),
         )
     }
+
+    pub fn reset_failed_unit(&self, name: &str) -> Result<()> {
+        self.method_call::<_, ()>(
+            "org.freedesktop.systemd1.Manager",
+            "ResetFailedUnit",
+            Some(name),
+        )
+    }
 }
