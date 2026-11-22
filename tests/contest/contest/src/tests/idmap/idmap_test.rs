@@ -1,13 +1,9 @@
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
-use nix::libc;
-use nix::mount::{MntFlags, umount2};
-#[cfg(target_os = "linux")]
-use nix::mount::{MsFlags, mount};
+use nix::mount::{MntFlags, MsFlags, mount, umount2};
 use nix::unistd::{Gid, Uid, chown};
 use oci_spec::runtime::{
     LinuxBuilder, LinuxIdMapping, LinuxIdMappingBuilder, LinuxNamespace, LinuxNamespaceBuilder,
@@ -264,7 +260,6 @@ fn setup_owned_files(source: &Path, files: &[(u32, u32); 3]) -> Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn bind_mount(source: &Path, target: &Path) -> Result<()> {
     mount(
         Some(source),
@@ -329,32 +324,10 @@ fn cleanup_tree(source: &Path) {
     }
 }
 
-/// Distributions backport idmapped mount support, so probe for the syscall.
-fn idmap_unsupported() -> Option<String> {
-    static SUPPORTED: OnceLock<Option<String>> = OnceLock::new();
-    SUPPORTED
-        .get_or_init(|| {
-            let flags = (libc::OPEN_TREE_CLONE | libc::OPEN_TREE_CLOEXEC) as libc::c_uint;
-            let root = c"/";
-            let fd =
-                unsafe { libc::syscall(libc::SYS_open_tree, libc::AT_FDCWD, root.as_ptr(), flags) };
-            if fd < 0 {
-                let err = std::io::Error::last_os_error();
-                return Some(format!("open_tree is unavailable: {err}"));
-            }
-            unsafe { libc::close(fd as libc::c_int) };
-            None
-        })
-        .clone()
-}
-
 fn run_idmap_case<F>(case: &str, spec: Spec, setup: F) -> TestResult
 where
     F: Fn() -> Result<()>,
 {
-    if let Some(reason) = idmap_unsupported() {
-        return TestResult::Skipped(reason);
-    }
     test_inside_container(&spec, &CreateOptions::default(), &|rootfs| {
         if let Some(mounts) = spec.mounts() {
             for mount in mounts {
