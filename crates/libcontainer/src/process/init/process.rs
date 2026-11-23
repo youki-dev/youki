@@ -209,10 +209,6 @@ pub fn container_init_process(
         .as_deref()
         .filter(|label| !label.is_empty())
     {
-        // Checked again here: the validator ran before the container's procfs view existed.
-        if !selinux::is_enabled().map_err(InitProcessError::Selinux)? {
-            return Err(InitProcessError::Selinux(selinux::SelinuxError::NotEnabled));
-        }
         selinux::set_exec_label(label).map_err(|err| {
             tracing::error!(?err, "failed to set the SELinux process label");
             InitProcessError::Selinux(err)

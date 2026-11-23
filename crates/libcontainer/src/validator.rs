@@ -69,7 +69,7 @@ impl Validator {
 
     /// A process label on a host without SELinux is an error, as in runc's validateProcessSpec.
     pub(crate) fn validate_selinux_label(label: Option<&str>) -> Result<(), ErrInvalidSpec> {
-        if label.is_some_and(|l| !l.is_empty()) && !selinux::is_enabled()? {
+        if label.is_some_and(|l| !l.is_empty()) && !selinux::is_enabled() {
             return Err(SelinuxError::NotEnabled.into());
         }
         Ok(())
@@ -1293,7 +1293,7 @@ mod tests {
         assert!(Validator::validate_selinux_label(None).is_ok());
         assert!(Validator::validate_selinux_label(Some("")).is_ok());
         let result = Validator::validate_selinux_label(Some("system_u:system_r:container_t:s0"));
-        if selinux::is_enabled().unwrap() {
+        if selinux::is_enabled() {
             assert!(result.is_ok());
         } else {
             assert!(matches!(
