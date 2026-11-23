@@ -64,6 +64,7 @@ fn exec_label(
         let process = json!({
             "cwd": "/",
             "args": ["cat", "/proc/self/attr/current"],
+            "env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
             "user": {"uid": 0, "gid": 0},
             "selinuxLabel": label,
         });
