@@ -14,4 +14,4 @@ jobs:
         with:
           mode: exactly
           count: 1
-          labels: "kind/feature, kind/bug, kind/documentation, kind/test, kind/cleanup, dependencies, kind/experimental"
+          labels: "kind/feature, kind/bug, kind/documentation, kind/test, kind/cleanup, dependencies, kind/experimental, tagpr"

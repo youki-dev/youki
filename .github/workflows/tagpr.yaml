@@ -6,24 +6,23 @@ on:
 jobs:
   tagpr:
     runs-on: ubuntu-latest
+    if: ${{ github.repository == 'youki-dev/youki' }}
     steps:
+      - name: Generate token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.BOT_CLIENT_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: read
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
       - name: Install just
         uses: taiki-e/install-action@just
       - uses: Songmu/tagpr@v1
-        id: tagpr
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Trigger Release Workflow(only when tagged)
-        uses: actions/github-script@v6
-        if: "steps.tagpr.outputs.tag != ''"
-        with:
-          script: |
-            github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'release.yaml',
-              ref: "refs/tags/${{ steps.tagpr.outputs.tag }}",
-            })
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
