@@ -39,5 +39,6 @@ test_features "v1 seccomp"
 test_features "v2 seccomp"
 test_features "systemd seccomp"
 test_features "v2 cgroupsv2_devices seccomp"
+test_features "v2 krun"
 
 exit 0
