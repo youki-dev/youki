@@ -12,6 +12,7 @@ use anyhow::{Context, Result, bail};
 use crate::utils::is_cgroup_v2;
 
 pub mod devices;
+pub mod io;
 pub mod unified;
 
 const SCOPE_PREFIX: &str = "contest";
