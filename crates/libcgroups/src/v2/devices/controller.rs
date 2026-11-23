@@ -45,7 +45,12 @@ impl Controller for Devices {
         return Ok(());
 
         #[cfg(feature = "cgroupsv2_devices")]
-        return Self::apply_devices(cgroup_root, controller_opt.resources.devices());
+        {
+            if controller_opt.skip_devices {
+                return Ok(());
+            }
+            Self::apply_devices(cgroup_root, controller_opt.resources.devices())
+        }
     }
 }
 
@@ -115,6 +120,49 @@ impl Devices {
 
         Ok(())
     }
+
+    /// Ids of the programs attached directly to `cgroup_root`.
+    pub fn attached_program_ids(cgroup_root: &Path) -> Result<Vec<u32>, DevicesControllerError> {
+        let fd = nix::dir::Dir::open(
+            cgroup_root.as_os_str(),
+            OFlag::O_RDONLY | OFlag::O_DIRECTORY,
+            Mode::from_bits(0o600).unwrap(),
+        )?;
+
+        // Like apply_devices, this leaves the program fds the query opens to the
+        // process exit.
+        let ids = bpf_prog::query(fd.as_raw_fd())?
+            .iter()
+            .map(|prog| prog.id)
+            .collect();
+
+        Ok(ids)
+    }
+
+    /// Detaches the programs attached directly to `cgroup_root` whose ids are not in
+    /// `before`, and returns the ids detached. The systemd manager calls this right
+    /// after set_unit_properties on a skipped update: systemd attaches its own device
+    /// filter there. Anything else attached between the two queries is detached too.
+    pub fn detach_programs_added(
+        cgroup_root: &Path,
+        before: &[u32],
+    ) -> Result<Vec<u32>, DevicesControllerError> {
+        let fd = nix::dir::Dir::open(
+            cgroup_root.as_os_str(),
+            OFlag::O_RDONLY | OFlag::O_DIRECTORY,
+            Mode::from_bits(0o600).unwrap(),
+        )?;
+
+        let mut detached = Vec::new();
+        for prog in bpf_prog::query(fd.as_raw_fd())? {
+            if !before.contains(&prog.id) {
+                bpf_prog::detach2(prog.fd, fd.as_raw_fd())?;
+                detached.push(prog.id);
+            }
+        }
+
+        Ok(detached)
+    }
 }
 
 #[cfg(test)]
@@ -122,11 +170,23 @@ mod tests {
     use std::os::unix::io::RawFd;
 
     use bpf::mock_prog;
-    use oci_spec::runtime::{LinuxDeviceCgroupBuilder, LinuxDeviceType};
+    use oci_spec::runtime::{
+        LinuxDeviceCgroupBuilder, LinuxDeviceType, LinuxResources, LinuxResourcesBuilder,
+    };
     use serial_test::serial;
 
     use super::*;
     use crate::test::setup;
+
+    fn opt(resources: &LinuxResources) -> ControllerOpt<'_> {
+        ControllerOpt {
+            resources,
+            freezer_state: None,
+            oom_score_adj: None,
+            disable_oom_killer: false,
+            skip_devices: false,
+        }
+    }
 
     #[test]
     #[serial(bpf)] // mock contexts are shared
@@ -135,6 +195,10 @@ mod tests {
         let (tmp, _) = setup("some.value");
         let a_type = LinuxDeviceCgroupBuilder::default()
             .typ(LinuxDeviceType::A)
+            .build()
+            .unwrap();
+        let resources = LinuxResourcesBuilder::default()
+            .devices(vec![a_type])
             .build()
             .unwrap();
         let file_descriptor: RawFd = 6;
@@ -154,7 +218,8 @@ mod tests {
         detach2.expect().never();
 
         // act
-        Devices::apply_devices(tmp.path(), &Some(vec![a_type])).expect("Could not apply devices");
+        // Through apply with skip_devices false, so an always-skip change fails here.
+        Devices::apply(&opt(&resources), tmp.path()).expect("Could not apply devices");
     }
 
     #[test]
@@ -164,6 +229,10 @@ mod tests {
         let (tmp, _) = setup("some.value");
         let a_type = LinuxDeviceCgroupBuilder::default()
             .typ(LinuxDeviceType::A)
+            .build()
+            .unwrap();
+        let resources = LinuxResourcesBuilder::default()
+            .devices(vec![a_type])
             .build()
             .unwrap();
         let file_descriptor: RawFd = 6;
@@ -190,6 +259,81 @@ mod tests {
         detach2.expect().once().returning(|_, _| Ok(()));
 
         // act
-        Devices::apply_devices(tmp.path(), &Some(vec![a_type])).expect("Could not apply devices");
+        Devices::apply_devices(tmp.path(), resources.devices()).expect("Could not apply devices");
+    }
+
+    #[test]
+    #[serial(bpf)] // mock contexts are shared
+    fn test_skip_devices_keeps_the_attached_program() {
+        // arrange
+        let (tmp, _) = setup("some.value");
+        let a_type = LinuxDeviceCgroupBuilder::default()
+            .typ(LinuxDeviceType::A)
+            .build()
+            .unwrap();
+        let resources = LinuxResourcesBuilder::default()
+            .devices(vec![a_type])
+            .build()
+            .unwrap();
+        let mut controller_opt = opt(&resources);
+        controller_opt.skip_devices = true;
+
+        // expect: no bpf interaction at all
+        let bump_memlock_rlimit = mock_prog::bump_memlock_rlimit_context();
+        let load = mock_prog::load_context();
+        let query = mock_prog::query_context();
+        let attach = mock_prog::attach_context();
+        let detach2 = mock_prog::detach2_context();
+        bump_memlock_rlimit.expect().never();
+        load.expect().never();
+        query.expect().never();
+        attach.expect().never();
+        detach2.expect().never();
+
+        // act
+        Devices::apply(&controller_opt, tmp.path()).expect("Could not apply devices");
+    }
+
+    #[test]
+    #[serial(bpf)] // mock contexts are shared
+    fn test_detach_programs_added_detaches_only_new_programs() {
+        let (tmp, _) = setup("some.value");
+        let kept = bpf::ProgramInfo { id: 1, fd: 10 };
+        let added = bpf::ProgramInfo { id: 2, fd: 11 };
+
+        let query = mock_prog::query_context();
+        let detach2 = mock_prog::detach2_context();
+        query
+            .expect()
+            .once()
+            .returning(move |_| Ok(vec![kept.clone(), added.clone()]));
+        detach2
+            .expect()
+            .once()
+            .with(mockall::predicate::eq(11), mockall::predicate::always())
+            .returning(|_, _| Ok(()));
+
+        let detached =
+            Devices::detach_programs_added(tmp.path(), &[1]).expect("detach added programs");
+        assert_eq!(detached, vec![2]);
+    }
+
+    #[test]
+    #[serial(bpf)] // mock contexts are shared
+    fn test_detach_programs_added_keeps_known_programs() {
+        let (tmp, _) = setup("some.value");
+        let known = bpf::ProgramInfo { id: 1, fd: 10 };
+
+        let query = mock_prog::query_context();
+        let detach2 = mock_prog::detach2_context();
+        query
+            .expect()
+            .once()
+            .returning(move |_| Ok(vec![known.clone()]));
+        detach2.expect().never();
+
+        let detached =
+            Devices::detach_programs_added(tmp.path(), &[1]).expect("detach added programs");
+        assert!(detached.is_empty());
     }
 }

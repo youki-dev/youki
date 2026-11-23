@@ -2,6 +2,7 @@ mod blkio;
 mod common;
 mod cpu;
 mod cpuset;
+mod devices;
 mod pids_limit;
 
 use std::fs;
@@ -180,6 +181,18 @@ pub fn get_update_test() -> TestGroup {
         Box::new(cpuset::update_cpuset_cpus_range_via_v2_unified_map_test),
     );
 
+    let update_keeps_device_rules_test = ConditionalTest::new(
+        "update_keeps_device_rules_test",
+        Box::new(devices::can_run),
+        Box::new(devices::update_keeps_device_rules_test),
+    );
+
+    let update_keeps_device_rules_systemd_test = ConditionalTest::new(
+        "update_keeps_device_rules_systemd_test",
+        Box::new(devices::can_run_systemd),
+        Box::new(devices::update_keeps_device_rules_systemd_test),
+    );
+
     test_group.add(vec![
         Box::new(update_cgroup_v2_common_limits_test),
         Box::new(update_cpu_limits_test),
@@ -196,6 +209,8 @@ pub fn get_update_test() -> TestGroup {
         Box::new(update_cpuset_parameters_via_resources_cpu_test),
         Box::new(update_cpuset_parameters_via_v2_unified_map_test),
         Box::new(update_cpuset_cpus_range_via_v2_unified_map_test),
+        Box::new(update_keeps_device_rules_test),
+        Box::new(update_keeps_device_rules_systemd_test),
     ]);
     test_group
 }

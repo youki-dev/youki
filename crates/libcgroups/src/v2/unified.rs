@@ -119,6 +119,7 @@ mod tests {
             freezer_state: None,
             oom_score_adj: None,
             disable_oom_killer: false,
+            skip_devices: false,
         };
 
         // act
@@ -156,6 +157,7 @@ mod tests {
             freezer_state: None,
             oom_score_adj: None,
             disable_oom_killer: false,
+            skip_devices: false,
         };
 
         // act
@@ -190,6 +192,7 @@ mod tests {
             oom_score_adj: None,
             disable_oom_killer: false,
             freezer_state: None,
+            skip_devices: false,
         };
 
         // act
@@ -224,6 +227,7 @@ mod tests {
             freezer_state: None,
             oom_score_adj: None,
             disable_oom_killer: false,
+            skip_devices: false,
         };
 
         // act
@@ -257,6 +261,7 @@ mod tests {
             freezer_state: None,
             oom_score_adj: None,
             disable_oom_killer: false,
+            skip_devices: false,
         };
 
         // act
@@ -287,6 +292,7 @@ mod tests {
             freezer_state: None,
             oom_score_adj: None,
             disable_oom_killer: false,
+            skip_devices: false,
         };
 
         // act

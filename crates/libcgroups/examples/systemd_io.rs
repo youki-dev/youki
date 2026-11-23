@@ -36,6 +36,7 @@ fn main() -> Result<()> {
         disable_oom_killer: false,
         oom_score_adj: None,
         freezer_state: None,
+        skip_devices: false,
     };
 
     let pid = Pid::from_raw(std::process::id() as i32);

@@ -32,8 +32,14 @@ impl Controller for Devices {
         Ok(())
     }
 
-    // always needs to be called due to default devices
-    fn needs_to_handle<'a>(_controller_opt: &'a ControllerOpt) -> Option<&'a Self::Resource> {
+    // An update skips the device rules, so it does not select this controller and
+    // does not need the devices hierarchy either.
+    fn needs_to_handle<'a>(controller_opt: &'a ControllerOpt) -> Option<&'a Self::Resource> {
+        if controller_opt.skip_devices {
+            return None;
+        }
+
+        // always needs to be called due to default devices
         Some(&())
     }
 }
@@ -55,7 +61,7 @@ impl Devices {
 mod tests {
     use std::fs::read_to_string;
 
-    use oci_spec::runtime::{LinuxDeviceCgroupBuilder, LinuxDeviceType};
+    use oci_spec::runtime::{LinuxDeviceCgroupBuilder, LinuxDeviceType, LinuxResourcesBuilder};
 
     use super::*;
     use crate::test::set_fixture;
@@ -136,6 +142,22 @@ mod tests {
                 assert_eq!(denied_content, d.to_string());
             }
         });
+    }
+
+    #[test]
+    fn test_skip_devices_deselects_the_controller() {
+        let resources = LinuxResourcesBuilder::default().build().unwrap();
+        let mut controller_opt = ControllerOpt {
+            resources: &resources,
+            freezer_state: None,
+            oom_score_adj: None,
+            disable_oom_killer: false,
+            skip_devices: false,
+        };
+        assert!(Devices::needs_to_handle(&controller_opt).is_some());
+
+        controller_opt.skip_devices = true;
+        assert!(Devices::needs_to_handle(&controller_opt).is_none());
     }
 
     quickcheck! {
