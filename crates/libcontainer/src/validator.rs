@@ -67,15 +67,15 @@ impl Validator {
         true
     }
 
-    // check if given spec is valid for netDevices
     /// A process label on a host without SELinux is an error, as in runc's validateProcessSpec.
-    pub fn validate_selinux_label(label: Option<&str>) -> Result<(), ErrInvalidSpec> {
+    pub(crate) fn validate_selinux_label(label: Option<&str>) -> Result<(), ErrInvalidSpec> {
         if label.is_some_and(|l| !l.is_empty()) && !selinux::is_enabled()? {
             return Err(SelinuxError::NotEnabled.into());
         }
         Ok(())
     }
 
+    // check if given spec is valid for netDevices
     fn validate_spec_for_net_devices(spec: &Spec, is_rootless: bool) -> Result<(), ErrInvalidSpec> {
         let Some(devices) = spec.linux().as_ref().and_then(|l| l.net_devices().as_ref()) else {
             return Ok(());

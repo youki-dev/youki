@@ -297,7 +297,6 @@ impl TenantContainerBuilder {
             as_sibling: self.as_sibling,
             cgroup_path,
             sub_cgroup_path: self.sub_cgroup,
-            process_label: self.process_label,
         };
 
         let (pid, foreground_pty_fd) = builder_impl.create()?;
