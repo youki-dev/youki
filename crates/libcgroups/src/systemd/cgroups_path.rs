@@ -59,3 +59,100 @@ impl TryFrom<&Path> for CgroupsPath {
         Ok(destructured_path)
     }
 }
+
+/// Splits the unit `name` into the base unit name and the sub-cgroup suffix.
+/// Example: "{id}/sub/init" becomes:
+///   - base name: "{id}"
+///   - sub-cgroup: "/sub/init"
+fn split_sub_cgroup(name: &str) -> (&str, &str) {
+    match name.find('/') {
+        Some(i) => name.split_at(i),
+        None => (name, ""),
+    }
+}
+
+impl CgroupsPath {
+    /// Returns the sub-cgroup suffix, e.g. "/sub/init" for name "<id>/sub/init".
+    pub fn sub_cgroup(&self) -> &str {
+        split_sub_cgroup(&self.name).1
+    }
+
+    /// Returns the unit (scope) name from the path provided by the user
+    /// for example: foo:docker:bar returns in '/docker-bar.scope'
+    pub fn unit_name(&self) -> String {
+        let (base_name, _) = split_sub_cgroup(&self.name);
+        // By default we create a scope unless specified explicitly.
+        if !base_name.ends_with(".slice") {
+            return format!("{}-{}.scope", self.prefix, base_name);
+        }
+        base_name.to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn test_systemd_cgroups_path_roundtrip() {
+        let path = Path::new("system.slice:docker:abc123");
+        let parsed = CgroupsPath::try_from(path).unwrap();
+        assert_eq!(parsed.parent, "system.slice");
+        assert_eq!(parsed.unit_name(), "docker-abc123.scope");
+    }
+
+    #[test]
+    fn test_systemd_cgroups_path_two_parts() {
+        let parsed = CgroupsPath::try_from(Path::new("docker:abc123")).unwrap();
+        assert_eq!(parsed.unit_name(), "docker-abc123.scope");
+    }
+
+    #[test]
+    fn test_systemd_cgroups_path_slice_passthrough() {
+        let parsed = CgroupsPath::try_from(Path::new("system.slice:foo:my.slice")).unwrap();
+        assert_eq!(parsed.unit_name(), "my.slice");
+    }
+
+    #[test]
+    fn test_systemd_cgroups_path_malformed() {
+        assert!(CgroupsPath::try_from(Path::new("")).is_err());
+        // Single segment without any ':' separator.
+        assert!(CgroupsPath::try_from(Path::new("foo")).is_err());
+        // Too many ':'-separated parts.
+        assert!(CgroupsPath::try_from(Path::new("a:b:c:d")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_systemd_cgroups_path_invalid_utf8() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        // 0xff is never valid UTF-8.
+        let raw = vec![0xff, 0xfe, b':', b'a'];
+        let path = PathBuf::from(OsString::from_vec(raw));
+        assert!(matches!(
+            CgroupsPath::try_from(path.as_path()),
+            Err(CgroupsPathError::InvalidUtf8(_))
+        ));
+    }
+
+    #[test]
+    fn test_sub_cgroup() {
+        let parsed =
+            CgroupsPath::try_from(Path::new("system.slice:docker:abc123/sub/init")).unwrap();
+        assert_eq!(parsed.sub_cgroup(), "/sub/init");
+        assert_eq!(parsed.unit_name(), "docker-abc123.scope");
+
+        let parsed = CgroupsPath::try_from(Path::new("system.slice:docker:abc123")).unwrap();
+        assert_eq!(parsed.sub_cgroup(), "");
+        assert_eq!(parsed.unit_name(), "docker-abc123.scope");
+
+        // Trailing slash yields a "/" sub-cgroup, matching the original
+        // `split_sub_cgroup` behavior in `systemd::manager`.
+        let parsed = CgroupsPath::try_from(Path::new("system.slice:docker:abc123/")).unwrap();
+        assert_eq!(parsed.sub_cgroup(), "/");
+        assert_eq!(parsed.unit_name(), "docker-abc123.scope");
+    }
+}
