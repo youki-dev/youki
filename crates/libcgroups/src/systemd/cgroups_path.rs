@@ -1,5 +1,4 @@
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// A systemd cgroups path as specified in the runtime spec.
 /// It should be of the form [slice]:[scope_prefix]:[name].
@@ -91,8 +90,9 @@ impl CgroupsPath {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::Path;
+
+    use super::*;
 
     #[test]
     fn test_systemd_cgroups_path_roundtrip() {
