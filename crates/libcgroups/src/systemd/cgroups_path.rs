@@ -77,14 +77,13 @@ impl CgroupsPath {
     }
 
     /// Returns the unit (scope) name from the path provided by the user.
-    /// e.g. foo:docker:bar returns in '/docker-bar.scope'
+    /// e.g. `foo:docker:bar` returns `docker-bar.scope`.
     pub fn unit_name(&self) -> String {
         let (base_name, _) = split_sub_cgroup(&self.name);
-        // By default we create a scope unless specified explicitly.
-        if !base_name.ends_with(".slice") {
-            return format!("{}-{}.scope", self.prefix, base_name);
+        if base_name.ends_with(".slice") {
+            return base_name.to_owned();
         }
-        base_name.to_owned()
+        format!("{}-{base_name}.scope", self.prefix)
     }
 
     /// Returns the unit name of the container itself, stripping any sub-cgroup suffix.
@@ -95,10 +94,7 @@ impl CgroupsPath {
             return None;
         }
 
-        if base_name.ends_with(".slice") {
-            return Some(base_name.to_owned());
-        }
-        Some(format!("{}-{base_name}.scope", self.prefix))
+        Some(self.unit_name())
     }
 }
 
