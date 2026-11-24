@@ -154,13 +154,7 @@ pub enum ErrInvalidSpec {
     IO(#[from] std::io::Error),
     #[error("rootless container requires valid user namespace definition")]
     NoUserNamespace,
-    #[error(
-        "seccomp: defaultErrnoRet is only supported for the SCMP_ACT_ERRNO and SCMP_ACT_TRACE actions"
-    )]
-    SeccompDefaultErrnoRet,
-    #[error(
-        "seccomp: syscall {0:?}: errnoRet is only supported for the SCMP_ACT_ERRNO and SCMP_ACT_TRACE actions"
-    )]
+    #[error("seccomp: {0} is only supported for the SCMP_ACT_ERRNO and SCMP_ACT_TRACE actions")]
     SeccompErrnoRet(String),
 }
 

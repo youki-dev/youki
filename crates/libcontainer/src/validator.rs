@@ -444,11 +444,16 @@ impl Validator {
         };
 
         if seccomp.default_errno_ret().is_some() && !supports_errno(seccomp.default_action()) {
-            return Err(ErrInvalidSpec::SeccompDefaultErrnoRet);
+            return Err(ErrInvalidSpec::SeccompErrnoRet(
+                "defaultErrnoRet".to_string(),
+            ));
         }
         for syscall in seccomp.syscalls().iter().flatten() {
             if syscall.errno_ret().is_some() && !supports_errno(syscall.action()) {
-                return Err(ErrInvalidSpec::SeccompErrnoRet(syscall.names().join(",")));
+                return Err(ErrInvalidSpec::SeccompErrnoRet(format!(
+                    "errnoRet of syscall {:?}",
+                    syscall.names().join(",")
+                )));
             }
         }
 
@@ -1244,12 +1249,12 @@ mod tests {
             let spec = spec_with_seccomp(action, Some(1), None);
             assert!(matches!(
                 Validator::validate_spec_for_seccomp(&spec).unwrap_err(),
-                ErrInvalidSpec::SeccompDefaultErrnoRet
+                ErrInvalidSpec::SeccompErrnoRet(field) if field == "defaultErrnoRet"
             ));
             let spec = spec_with_seccomp(ScmpActErrno, None, Some((action, Some(1))));
             assert!(matches!(
                 Validator::validate_spec_for_seccomp(&spec).unwrap_err(),
-                ErrInvalidSpec::SeccompErrnoRet(name) if name == "mkdir"
+                ErrInvalidSpec::SeccompErrnoRet(field) if field == "errnoRet of syscall \"mkdir\""
             ));
         }
 
