@@ -1,0 +1,57 @@
+name: 📅 Release reminder
+
+on:
+  schedule:
+    - cron: "0 0 * * 1"
+  workflow_dispatch:
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    if: ${{ github.repository == 'youki-dev/youki' }}
+    steps:
+      - name: Generate token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.BOT_CLIENT_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          permission-contents: read
+          permission-pull-requests: write
+          permission-issues: read
+      - name: Ask the release captain
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          CAPTAINS: "utam0k saku3 nayuta723"
+          INTERVAL_DAYS: "28"
+        run: |
+          set -euo pipefail
+          number=$(gh pr list --label tagpr --state open --json number --jq '.[0].number // empty')
+          if [ -z "$number" ]; then
+            echo "No release PR is open, so there is nothing to release."
+            exit 0
+          fi
+
+          days_ago='(now / 86400 | floor) - (fromdateiso8601 / 86400 | floor)'
+          days=$(gh release view --json publishedAt --jq ".publishedAt | $days_ago")
+          if [ "$days" -lt "$INTERVAL_DAYS" ]; then
+            echo "The last release was $days days ago."
+            exit 0
+          fi
+
+          marker="<!-- release-captain -->"
+          asked=$(gh api "repos/$GH_REPO/issues/$number/comments" --paginate --jq ".[] | select(.body | startswith(\"$marker\")) | .created_at | $days_ago" | tail -n 1)
+          if [ -n "$asked" ] && [ "$asked" -lt "$INTERVAL_DAYS" ]; then
+            echo "Already asked on #$number $asked days ago."
+            exit 0
+          fi
+
+          read -ra captains <<< "$CAPTAINS"
+          releases=$(gh api "repos/$GH_REPO/releases?per_page=100" --paginate --jq '[.[] | select(.draft | not)] | length' | awk '{n += $1} END {print n}')
+          captain=${captains[$((releases % ${#captains[@]}))]}
+
+          gh api -X POST "repos/$GH_REPO/pulls/$number/requested_reviewers" -f "reviewers[]=$captain" > /dev/null
+          gh api -X POST "repos/$GH_REPO/issues/$number/comments" -f body="$marker
+          @$captain It has been $days days since the last release, and you are the release captain. Please follow [the release steps](https://youki-dev.github.io/youki/community/release.html#release-a-new-version)." > /dev/null

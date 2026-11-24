@@ -22,6 +22,7 @@
     - [Maintainer](./community/maintainer.md)
     - [Governance](./community/governance.md)
     - [Contributing](./community/contributing.md)
+    - [Release](./community/release.md)
     - [Chat](./community/chat.md)
 
 ---
