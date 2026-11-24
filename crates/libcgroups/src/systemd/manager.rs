@@ -151,7 +151,6 @@ impl Manager {
 
         let mut destructured_path: CgroupsPath = cgroups_path.as_path().try_into()?;
         ensure_parent_unit(&mut destructured_path, use_system);
-        let sub_cgroup = destructured_path.sub_cgroup().to_owned();
 
         // EAGAIN from a recv() that timed out via SO_RCVTIMEO (set in dbus::connect()).
         let is_eagain = |e: &SystemdManagerError| {
@@ -224,7 +223,7 @@ impl Manager {
                         full_path,
                         container_name,
                         unit_name: destructured_path.unit_name(),
-                        sub_cgroup,
+                        sub_cgroup: destructured_path.sub_cgroup().to_owned(),
                         destructured_path,
                         client,
                         fs_manager,
