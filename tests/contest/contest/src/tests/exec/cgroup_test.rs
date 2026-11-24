@@ -139,9 +139,7 @@ pub(crate) fn cgroup_test() -> TestResult {
         .expect("exec failed");
 
         // After a domain controller is enabled, joining "/" fails with EBUSY,
-        // so both runtimes fall back to the init process's "/foobar" sub-cgroup:
-        // youki via proactive inference, runc via its retry fallback.
-        // ref (runc fallback): https://github.com/opencontainers/runc/blob/main/libcontainer/process_linux.go
+        // so both runtimes fall back to the init process's "/foobar" sub-cgroup.
         exec_container(
             id,
             dir,
