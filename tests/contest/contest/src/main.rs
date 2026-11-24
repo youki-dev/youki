@@ -34,6 +34,7 @@ use crate::tests::memory_policy::get_linux_memory_policy_tests;
 use crate::tests::misc_props::get_misc_props_test;
 use crate::tests::mount_label::get_mount_label_test;
 use crate::tests::mount_propagation::get_mount_propagation_test;
+use crate::tests::mount_sync_flags::get_mount_sync_flags_test;
 use crate::tests::mounts_recursive::get_mounts_recursive_test;
 use crate::tests::net_devices::get_net_devices_test;
 use crate::tests::no_pivot::get_no_pivot_test;
@@ -231,6 +232,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(hostname));
     tm.add_test_group(Box::new(misc_props));
     tm.add_test_group(Box::new(mount_propagation));
+    tm.add_test_group(Box::new(get_mount_sync_flags_test()));
     tm.add_test_group(Box::new(mounts_recursive));
     tm.add_test_group(Box::new(domainname));
     tm.add_test_group(Box::new(intel_rdt));
