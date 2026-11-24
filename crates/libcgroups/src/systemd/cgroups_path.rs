@@ -76,8 +76,8 @@ impl CgroupsPath {
         split_sub_cgroup(&self.name).1
     }
 
-    /// Returns the unit (scope) name from the path provided by the user
-    /// for example: foo:docker:bar returns in '/docker-bar.scope'
+    /// Returns the unit (scope) name from the path provided by the user.
+    /// e.g. foo:docker:bar returns in '/docker-bar.scope'
     pub fn unit_name(&self) -> String {
         let (base_name, _) = split_sub_cgroup(&self.name);
         // By default we create a scope unless specified explicitly.
@@ -87,7 +87,7 @@ impl CgroupsPath {
         base_name.to_owned()
     }
 
-    /// Returns the unit name of the container itself, stripping any sub-cgroup suffix,
+    /// Returns the unit name of the container itself, stripping any sub-cgroup suffix.
     /// e.g. `system.slice:docker:<id>/sub/init` -> `docker-<id>.scope`.
     pub fn container_unit_name(&self) -> Option<String> {
         let (base_name, _) = split_sub_cgroup(&self.name);
@@ -174,8 +174,6 @@ mod tests {
         assert_eq!(parsed.sub_cgroup(), "");
         assert_eq!(parsed.unit_name(), "docker-abc123.scope");
 
-        // Trailing slash yields a "/" sub-cgroup, matching the original
-        // `split_sub_cgroup` behavior in `systemd::manager`.
         let parsed = CgroupsPath::try_from(Path::new("system.slice:docker:abc123/")).unwrap();
         assert_eq!(parsed.sub_cgroup(), "/");
         assert_eq!(parsed.unit_name(), "docker-abc123.scope");
