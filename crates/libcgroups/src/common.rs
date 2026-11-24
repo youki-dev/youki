@@ -13,6 +13,7 @@ use oci_spec::runtime::{
 };
 
 use super::stats::Stats;
+use super::systemd::cgroups_path::CgroupsPath;
 use super::{systemd, v1, v2};
 
 pub const CGROUP_PROCS: &str = "cgroup.procs";
@@ -605,6 +606,24 @@ pub(crate) fn clean_cgroup_path(path: &Path) -> PathBuf {
     cleaned
 }
 
+/// Returns the cgroup segment that identifies the container itself within a unified-hierarchy path,
+/// e.g. `docker-<id>.scope` for a systemd cgroups path of `system.slice:docker:<id>`,
+/// or the last path component for a cgroupfs path such as `/docker/<id>`.
+pub fn container_cgroup_segment(cgroups_path: &Path) -> Option<String> {
+    let path_str = cgroups_path.to_str()?;
+    if path_str.contains(':') {
+        return CgroupsPath::try_from(cgroups_path)
+            .ok()?
+            .container_unit_name();
+    }
+
+    clean_cgroup_path(cgroups_path)
+        .file_name()?
+        .to_str()?
+        .to_owned()
+        .into()
+}
+
 #[cfg(any(feature = "cgroupsv2_devices", feature = "v1"))]
 pub(crate) fn default_allow_devices() -> Vec<LinuxDeviceCgroup> {
     vec![
@@ -883,6 +902,55 @@ mod tests {
                 "input: {input}"
             );
         }
+    }
+
+    #[test]
+    fn test_container_cgroup_segment() {
+        let cases = [
+            // systemd: [slice:]prefix:name -> prefix-name.scope
+            ("system.slice:docker:abc123", Some("docker-abc123.scope")),
+            ("docker:abc123", Some("docker-abc123.scope")),
+            // systemd slice names pass through unchanged.
+            ("system.slice:foo:my.slice", Some("my.slice")),
+            // A sub-cgroup suffix is stripped before deriving the segment.
+            (
+                "system.slice:docker:abc123/sub/init",
+                Some("docker-abc123.scope"),
+            ),
+            // Empty base name yields None.
+            ("system.slice:docker:/sub", None),
+            // cgroupfs: last component identifies the container.
+            ("/docker/abc123", Some("abc123")),
+            ("/docker/./abc123/", Some("abc123")),
+            // Parent components are resolved before taking the last segment.
+            ("/docker/../docker/abc123", Some("abc123")),
+            // A bare container id is also accepted.
+            ("abc123", Some("abc123")),
+            // Root has no file name, so there is no segment.
+            ("/", None),
+            // Malformed systemd paths yield None.
+            ("a:b:c:d", None),
+            ("system.slice:docker:", None),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                container_cgroup_segment(Path::new(input)).as_deref(),
+                expected,
+                "input: {input}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_container_cgroup_segment_invalid_utf8() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        // 0xff is never valid UTF-8.
+        let raw = vec![0xff, 0xfe, b':', b'a'];
+        let path = PathBuf::from(OsString::from_vec(raw));
+        assert_eq!(container_cgroup_segment(path.as_path()), None);
     }
 
     #[test]
