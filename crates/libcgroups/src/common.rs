@@ -7,7 +7,11 @@ use std::time::Duration;
 use nix::sys::statfs::{CGROUP2_SUPER_MAGIC, TMPFS_MAGIC, statfs};
 use nix::unistd::Pid;
 use oci_spec::runtime::LinuxResources;
-#[cfg(any(feature = "cgroupsv2_devices", feature = "v1"))]
+#[cfg(any(
+    feature = "cgroupsv2_devices",
+    feature = "v1",
+    feature = "systemd_base"
+))]
 use oci_spec::runtime::{
     LinuxDevice, LinuxDeviceBuilder, LinuxDeviceCgroup, LinuxDeviceCgroupBuilder, LinuxDeviceType,
 };
@@ -18,7 +22,7 @@ use super::{systemd, v1, v2};
 pub const CGROUP_PROCS: &str = "cgroup.procs";
 pub const DEFAULT_CGROUP_ROOT: &str = "/sys/fs/cgroup";
 
-#[cfg(feature = "systemd")]
+#[cfg(feature = "systemd_base")]
 #[inline]
 fn is_true_root() -> Result<bool, WrappedIoError> {
     if !nix::unistd::geteuid().is_root() {
@@ -126,12 +130,15 @@ impl AnyCgroupManager {
     /// Marks the cgroup manager as operating in a rootless environment.
     ///
     /// The v1 manager ignores it.
-    #[cfg_attr(not(any(feature = "v2", feature = "systemd")), allow(unused_variables))]
+    #[cfg_attr(
+        not(any(feature = "v2", feature = "systemd_base")),
+        allow(unused_variables)
+    )]
     pub fn with_rootless(self, rootless: bool) -> Self {
         match self {
             #[cfg(feature = "v2")]
             AnyCgroupManager::V2(m) => AnyCgroupManager::V2(m.with_rootless(rootless)),
-            #[cfg(feature = "systemd")]
+            #[cfg(feature = "systemd_base")]
             AnyCgroupManager::Systemd(m) => {
                 AnyCgroupManager::Systemd(Box::new(m.with_rootless(rootless)))
             }
@@ -158,10 +165,10 @@ impl AnyCgroupManager {
     /// The systemd manager needs them to create the unit, since systemd takes some
     /// properties, such as OOMPolicy, only at that point. `apply` is still what applies
     /// the resources. The v1 and v2 managers ignore it.
-    #[cfg_attr(not(feature = "systemd"), allow(unused_variables))]
+    #[cfg_attr(not(feature = "systemd_base"), allow(unused_variables))]
     pub fn with_initial_resources(self, resources: Option<&LinuxResources>) -> Self {
         match self {
-            #[cfg(feature = "systemd")]
+            #[cfg(feature = "systemd_base")]
             AnyCgroupManager::Systemd(m) => {
                 AnyCgroupManager::Systemd(Box::new(m.with_initial_resources(resources)))
             }
@@ -487,7 +494,7 @@ fn create_v2_cgroup_manager(
     Err(v2::manager::V2ManagerError::NotEnabled)
 }
 
-#[cfg(feature = "systemd")]
+#[cfg(feature = "systemd_base")]
 fn create_systemd_cgroup_manager(
     root_path: &Path,
     cgroup_path: &Path,
@@ -514,7 +521,7 @@ fn create_systemd_cgroup_manager(
     )
 }
 
-#[cfg(not(feature = "systemd"))]
+#[cfg(not(feature = "systemd_base"))]
 fn create_systemd_cgroup_manager(
     _root_path: &Path,
     _cgroup_path: &Path,
@@ -605,7 +612,11 @@ pub(crate) fn clean_cgroup_path(path: &Path) -> PathBuf {
     cleaned
 }
 
-#[cfg(any(feature = "cgroupsv2_devices", feature = "v1"))]
+#[cfg(any(
+    feature = "cgroupsv2_devices",
+    feature = "v1",
+    feature = "systemd_base"
+))]
 pub(crate) fn default_allow_devices() -> Vec<LinuxDeviceCgroup> {
     vec![
         LinuxDeviceCgroupBuilder::default()
@@ -657,7 +668,11 @@ pub(crate) fn default_allow_devices() -> Vec<LinuxDeviceCgroup> {
     ]
 }
 
-#[cfg(any(feature = "cgroupsv2_devices", feature = "v1"))]
+#[cfg(any(
+    feature = "cgroupsv2_devices",
+    feature = "v1",
+    feature = "systemd_base"
+))]
 pub(crate) fn default_devices() -> Vec<LinuxDevice> {
     vec![
         LinuxDeviceBuilder::default()

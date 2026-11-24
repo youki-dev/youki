@@ -872,7 +872,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "systemd")]
+    #[cfg(feature = "systemd_base")]
     fn test_dbus_connection_new() {
         let uid: u32 = getuid().into();
 
@@ -886,7 +886,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "systemd")]
+    #[cfg(feature = "systemd_base")]
     fn test_dbus_function_calls() -> Result<()> {
         use crate::systemd::dbus_native::serialize::Variant;
 
@@ -924,7 +924,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "systemd")]
+    #[cfg(feature = "systemd_base")]
     fn test_dbus_function_calls_errors() {
         use crate::systemd::dbus_native::utils::DbusError;
 

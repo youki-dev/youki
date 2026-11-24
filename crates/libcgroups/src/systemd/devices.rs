@@ -19,6 +19,12 @@ pub enum SystemdDevicesError {
     ProcDevices { path: String, err: std::io::Error },
     #[error("device rule type {0:?} has no device cgroup equivalent")]
     UnsupportedDeviceType(LinuxDeviceType),
+    #[cfg(not(feature = "cgroupsv2_devices"))]
+    #[error(
+        "device rules with a deny rule need the eBPF device filter, which this build \
+         leaves out (feature cgroupsv2_devices)"
+    )]
+    DenyRuleWithoutFilter,
 }
 
 /// The access a DeviceAllow entry grants, merged over the rules naming its path.
@@ -112,6 +118,14 @@ impl Devices {
         // really gets is the eBPF filter the manager attaches right afterwards, which
         // detaches the program systemd derives from this list; the list is what remains if
         // that attach never happens.
+        // Without the eBPF filter nothing would carry the rules, and the deny-all list below
+        // would leave the container without devices; refuse them instead.
+        #[cfg(not(feature = "cgroupsv2_devices"))]
+        if has_deny_rule {
+            return Err(SystemdDevicesError::DenyRuleWithoutFilter);
+        }
+
+        #[cfg(feature = "cgroupsv2_devices")]
         if has_deny_rule {
             tracing::warn!(
                 "systemd DeviceAllow cannot express deny rules; sending a deny-all list and \
@@ -388,6 +402,7 @@ Block devices:
         assert!(get_allow(&props).is_empty());
     }
 
+    #[cfg(feature = "cgroupsv2_devices")]
     #[test]
     fn test_blacklist_with_deny_rule_falls_back_to_deny_all() {
         // Dropping the deny rule here would leave every device allowed, so the list has to
@@ -670,6 +685,7 @@ Block devices:
         );
     }
 
+    #[cfg(feature = "cgroupsv2_devices")]
     #[test]
     fn test_deny_rule_falls_back_to_deny_all() {
         // Skipping the deny rule would grant the write the spec takes away again, because
@@ -697,6 +713,30 @@ Block devices:
             get_allow(&props).is_empty(),
             "expected an empty allow list, got {:?}",
             get_allow(&props)
+        );
+    }
+
+    #[cfg(not(feature = "cgroupsv2_devices"))]
+    #[test]
+    fn test_deny_rule_is_refused_without_the_ebpf_filter() {
+        // Nothing would carry a deny rule without the eBPF filter, and the deny-all fallback
+        // would leave the container without devices, so the rules are refused.
+        let allow_all = LinuxDeviceCgroupBuilder::default()
+            .typ(LinuxDeviceType::A)
+            .allow(true)
+            .build()
+            .unwrap();
+        let deny_char = LinuxDeviceCgroupBuilder::default()
+            .typ(LinuxDeviceType::C)
+            .allow(false)
+            .access("rw")
+            .build()
+            .unwrap();
+        let result = try_apply(&resources(vec![allow_all, deny_char]), 245);
+
+        assert!(
+            matches!(result, Err(SystemdDevicesError::DenyRuleWithoutFilter)),
+            "expected DenyRuleWithoutFilter, got {result:?}"
         );
     }
 
