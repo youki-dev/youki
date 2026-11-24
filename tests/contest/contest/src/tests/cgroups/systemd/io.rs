@@ -19,7 +19,7 @@ use oci_spec::runtime::{
 };
 use test_framework::{ConditionalTest, TestGroup, TestResult, test_result};
 
-use super::{SCOPE_PREFIX, can_run, show_property, unit_name};
+use super::{SCOPE_PREFIX, can_run, show_property, systemd_version, unit_name};
 use crate::utils::test_utils::{CGROUP_ROOT, CreateOptions, check_container_created};
 use crate::utils::{
     cgroup_has_file, is_cgroup_v2_with_controller, is_runtime_runc,
@@ -182,10 +182,15 @@ fn test_io_weight_survives_reapply() -> TestResult {
     })
 }
 
-/// The systemd driver of runc 1.5.2 does not send IOWeight at all, so its weight is reset by
-/// systemd and there is nothing to check for it; these tests are about youki's driver.
+/// The mapping targets systemd's BFQ scaling since 250; older releases derive io.bfq.weight
+/// differently, so the expectations do not hold there. The systemd driver of runc 1.5.2 does
+/// not send IOWeight at all, so its weight is reset by systemd and there is nothing to check
+/// for it; these tests are about youki's driver.
 fn can_run_io_weight() -> bool {
-    can_run() && is_cgroup_v2_with_controller(ControllerType::Io) && !is_runtime_runc()
+    can_run()
+        && is_cgroup_v2_with_controller(ControllerType::Io)
+        && systemd_version().is_ok_and(|v| v >= 250)
+        && !is_runtime_runc()
 }
 
 /// The io controller exposes io.bfq.weight in a cgroup once the BFQ scheduler is available.

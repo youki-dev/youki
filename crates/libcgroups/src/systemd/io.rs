@@ -31,6 +31,11 @@ pub enum SystemdIoError {
 /// `100 + (io_weight - 100) / 11`. Sending the pre-image `100 + (weight - 100) * 11` above
 /// 100 therefore makes the scaled value equal the requested weight for every integer weight
 /// in [1, 1000] (the multiplication and division are exact, so no rounding is involved).
+///
+/// This pre-image is exact from systemd 250. Older releases derive `io.bfq.weight` from
+/// `IOWeight` differently: 243 to 247 write it as is (the kernel rejects values above 1000),
+/// and 248 and 249 write `(io_weight + 9) / 10`, so the mapping is not meaningful below 250.
+///
 /// The property is also what keeps the weight after systemd applies the unit again: a value
 /// written to cgroupfs only is reset to the `IOWeight` systemd holds, or to the default when
 /// the unit has no `IOWeight`.
