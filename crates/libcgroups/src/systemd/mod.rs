@@ -1,5 +1,6 @@
 use std::fs;
 
+pub mod cgroups_path;
 mod controller;
 pub mod controller_type;
 mod cpu;
