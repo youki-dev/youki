@@ -6,7 +6,6 @@ use std::path::Component::RootDir;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use nix::NixPath;
 use nix::unistd::Pid;
 use oci_spec::runtime::LinuxResources;
 
@@ -94,7 +93,7 @@ impl TryFrom<&Path> for CgroupsPath {
     fn try_from(cgroups_path: &Path) -> Result<Self, Self::Error> {
         // if cgroups_path was provided it should be of the form [slice]:[prefix]:[name],
         // for example: "system.slice:docker:1234".
-        if cgroups_path.len() == 0 {
+        if cgroups_path.as_os_str().is_empty() {
             return Err(CgroupsPathError::NoPath);
         }
 
