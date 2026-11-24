@@ -88,3 +88,5 @@ pub fn get_pidfile_test() -> TestGroup {
     tg.add(vec![Box::new(pidfile)]);
     tg
 }
+
+test_framework::register_test_group!(get_pidfile_test);

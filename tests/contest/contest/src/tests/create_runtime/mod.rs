@@ -90,3 +90,5 @@ pub fn get_create_runtime_tests() -> TestGroup {
     tg.add(vec![Box::new(get_test("create_runtime"))]);
     tg
 }
+
+test_framework::register_test_group!(get_create_runtime_tests);

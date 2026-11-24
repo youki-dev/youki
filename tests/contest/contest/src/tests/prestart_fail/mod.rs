@@ -157,3 +157,5 @@ pub fn get_prestart_fail_tests() -> TestGroup {
     tg.add(vec![Box::new(get_test("prestart_fail"))]);
     tg
 }
+
+test_framework::register_test_group!(get_prestart_fail_tests);

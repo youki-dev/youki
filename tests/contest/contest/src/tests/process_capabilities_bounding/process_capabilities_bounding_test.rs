@@ -100,3 +100,5 @@ pub fn get_process_capabilities_bounding_test() -> TestGroup {
     tg.add(vec![Box::new(dropped), Box::new(fails)]);
     tg
 }
+
+test_framework::register_test_group!(get_process_capabilities_bounding_test);

@@ -142,3 +142,5 @@ pub fn get_poststart_tests() -> TestGroup {
     tg.add(vec![Box::new(get_test("poststart"))]);
     tg
 }
+
+test_framework::register_test_group!(get_poststart_tests);

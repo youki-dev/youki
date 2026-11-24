@@ -111,3 +111,5 @@ pub fn get_tmpfs_test() -> TestGroup {
     ]);
     tg
 }
+
+test_framework::register_test_group!(get_tmpfs_test);

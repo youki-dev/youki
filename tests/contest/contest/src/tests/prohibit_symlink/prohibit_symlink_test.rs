@@ -89,3 +89,5 @@ pub fn get_prohibit_symlink_test() -> TestGroup {
 
     prohibit_symlink_test_group
 }
+
+test_framework::register_test_group!(get_prohibit_symlink_test);

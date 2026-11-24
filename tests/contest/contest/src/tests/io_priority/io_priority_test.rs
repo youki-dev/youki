@@ -78,3 +78,5 @@ pub fn get_io_priority_test() -> TestGroup {
     ]);
     io_priority_group
 }
+
+test_framework::register_test_group!(get_io_priority_test);

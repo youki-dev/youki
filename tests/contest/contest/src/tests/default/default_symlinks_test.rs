@@ -15,3 +15,5 @@ pub fn get_default_symlinks_test() -> TestGroup {
     test_group.add(vec![Box::new(test)]);
     test_group
 }
+
+test_framework::register_test_group!(get_default_symlinks_test);

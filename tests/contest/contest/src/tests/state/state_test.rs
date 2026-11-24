@@ -96,3 +96,5 @@ pub fn get_state_test() -> TestGroup {
     ]);
     test_group
 }
+
+test_framework::register_test_group!(get_state_test);

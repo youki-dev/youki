@@ -119,3 +119,5 @@ pub fn get_seccomp_notify_test() -> TestGroup {
 
     tg
 }
+
+test_framework::register_test_group!(get_seccomp_notify_test);

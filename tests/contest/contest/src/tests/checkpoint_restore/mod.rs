@@ -1652,3 +1652,5 @@ pub fn get_checkpoint_restore_tests() -> TestGroup {
     ))]);
     tg
 }
+
+test_framework::register_test_group!(get_checkpoint_restore_tests);

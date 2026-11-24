@@ -60,3 +60,5 @@ pub fn get_tmpcopyup_test() -> TestGroup {
     ]);
     tg
 }
+
+test_framework::register_test_group!(get_tmpcopyup_test);

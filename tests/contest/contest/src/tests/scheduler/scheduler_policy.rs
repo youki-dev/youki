@@ -53,3 +53,5 @@ pub fn get_scheduler_test() -> TestGroup {
     scheduler_policy_group.add(vec![Box::new(policy_fifo_test), Box::new(policy_rr_test)]);
     scheduler_policy_group
 }
+
+test_framework::register_test_group!(get_scheduler_test);

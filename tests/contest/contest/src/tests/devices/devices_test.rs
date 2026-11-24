@@ -176,3 +176,5 @@ pub fn get_devices_test() -> TestGroup {
 
     device_test_group
 }
+
+test_framework::register_test_group!(get_devices_test);
