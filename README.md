@@ -90,6 +90,28 @@ We have [our roadmap](https://github.com/orgs/containers/projects/15).
 
 ![youki demo](docs/demo.gif)
 
+youki also runs [Kubernetes pods](https://youki-dev.github.io/youki/user/kubernetes.html) and [WebAssembly modules](https://youki-dev.github.io/youki/user/webassembly.html).
+
+# 📦 Use youki as a library
+
+The [libcontainer](https://docs.rs/libcontainer) crate holds the container logic of youki, so you can create and manage containers from your own Rust program.
+
+```rust
+use libcontainer::container::builder::ContainerBuilder;
+use libcontainer::syscall::syscall::SyscallType;
+
+let (mut container, _pty) = ContainerBuilder::new(id, SyscallType::default())
+    .with_root_path("/run/youki-example")?
+    .as_init(bundle)
+    .with_systemd(false)
+    .with_detach(true)
+    .build()?;
+
+container.start()?;
+```
+
+[crates/libcontainer/examples/run.rs](crates/libcontainer/examples/run.rs) is the complete program.
+
 # 🔗 Related project
 
 - [youki-dev/oci-spec-rs](https://github.com/youki-dev/oci-spec-rs) - OCI Runtime and Image Spec in Rust
@@ -175,10 +197,11 @@ Then, we need to prepare a configuration file. This file contains metadata and s
 ../youki spec  # will generate a spec file named config.json
 ```
 
-We can edit the `config.json` to add customized behaviors for container. Here, we modify the `process` field to run `sleep 30`.
+We can edit the `config.json` to add customized behaviors for container. Here, we modify the `process` field to run `sleep 30`. We also set `terminal` to `false`, because `youki create` runs the container in the background and cannot allocate a terminal without `--console-socket`.
 
 ```json
   "process": {
+    "terminal": false,
     ...
     "args": [
       "sleep", "30"

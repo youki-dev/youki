@@ -32,6 +32,8 @@ pub enum Variant {
     Bool(bool),
     // t
     U64(u64),
+    // ay
+    ArrayU8(Vec<u8>),
     // au
     ArrayU32(Vec<u32>),
     // at
@@ -409,6 +411,16 @@ impl<T: DbusSerialize> DbusSerialize for Structure<T> {
     }
 }
 
+/// Writes a variant's value after its header: the signature length, the type
+/// signature and a NUL byte.
+fn serialize_variant_value<T: DbusSerialize>(value: &T, buf: &mut Vec<u8>) {
+    let sub_type = T::get_signature();
+    buf.push(sub_type.len() as u8); // signature length must be < 256
+    buf.extend_from_slice(sub_type.as_bytes());
+    buf.push(0);
+    value.serialize(buf);
+}
+
 impl DbusSerialize for Variant {
     fn get_signature() -> String {
         "v".to_string()
@@ -419,62 +431,14 @@ impl DbusSerialize for Variant {
     fn serialize(&self, buf: &mut Vec<u8>) {
         // no alignment needed, as variant is 1-align
         match self {
-            Self::String(s) => {
-                let sub_type = String::get_signature();
-                let signature_length = sub_type.len() as u8; // signature length must be < 256
-                buf.push(signature_length);
-                buf.extend_from_slice(sub_type.as_bytes());
-                buf.push(0);
-                s.serialize(buf);
-            }
-            Self::ArrayU32(v) => {
-                let sub_type = <Vec<u32>>::get_signature();
-                let signature_length = sub_type.len() as u8; // signature length must be < 256
-                buf.push(signature_length);
-                buf.extend_from_slice(sub_type.as_bytes());
-                buf.push(0);
-                v.serialize(buf);
-            }
-            Self::ArrayU64(v) => {
-                let sub_type = <Vec<u64>>::get_signature();
-                let signature_length = sub_type.len() as u8; // signature length must be < 256
-                buf.push(signature_length);
-                buf.extend_from_slice(sub_type.as_bytes());
-                buf.push(0);
-                v.serialize(buf);
-            }
-            Self::Bool(b) => {
-                let sub_type = bool::get_signature();
-                let signature_length = sub_type.len() as u8; // signature length must be < 256
-                buf.push(signature_length);
-                buf.extend_from_slice(sub_type.as_bytes());
-                buf.push(0);
-                b.serialize(buf);
-            }
-            Self::U64(v) => {
-                let sub_type = u64::get_signature();
-                let signature_length = sub_type.len() as u8; // signature length must be < 256
-                buf.push(signature_length);
-                buf.extend_from_slice(sub_type.as_bytes());
-                buf.push(0);
-                v.serialize(buf);
-            }
-            Self::ArrayStructU64(s) => {
-                let sub_type = <Vec<Structure<u64>>>::get_signature();
-                let signature_length = sub_type.len() as u8;
-                buf.push(signature_length);
-                buf.extend_from_slice(sub_type.as_bytes());
-                buf.push(0);
-                s.serialize(buf);
-            }
-            Self::ArrayStructSS(s) => {
-                let sub_type = <Vec<Structure<String>>>::get_signature();
-                let signature_length = sub_type.len() as u8;
-                buf.push(signature_length);
-                buf.extend_from_slice(sub_type.as_bytes());
-                buf.push(0);
-                s.serialize(buf);
-            }
+            Self::String(s) => serialize_variant_value(s, buf),
+            Self::ArrayU8(v) => serialize_variant_value(v, buf),
+            Self::ArrayU32(v) => serialize_variant_value(v, buf),
+            Self::ArrayU64(v) => serialize_variant_value(v, buf),
+            Self::Bool(b) => serialize_variant_value(b, buf),
+            Self::U64(v) => serialize_variant_value(v, buf),
+            Self::ArrayStructU64(s) => serialize_variant_value(s, buf),
+            Self::ArrayStructSS(s) => serialize_variant_value(s, buf),
         }
     }
     fn deserialize(buf: &[u8], counter: &mut usize) -> Result<Self> {
@@ -496,6 +460,7 @@ impl DbusSerialize for Variant {
 
         let string_signature = String::get_signature();
         let bool_signature = bool::get_signature();
+        let vec8_signature = <Vec<u8>>::get_signature();
         let vec32_signature = <Vec<u32>>::get_signature();
         let vec64_signature = <Vec<u64>>::get_signature();
         let u64_signature = u64::get_signature();
@@ -505,6 +470,8 @@ impl DbusSerialize for Variant {
             Ok(Self::String(String::deserialize(buf, counter)?))
         } else if signature == bool_signature {
             Ok(Self::Bool(bool::deserialize(buf, counter)?))
+        } else if signature == vec8_signature {
+            Ok(Self::ArrayU8(<Vec<u8>>::deserialize(buf, counter)?))
         } else if signature == vec32_signature {
             Ok(Self::ArrayU32(<Vec<u32>>::deserialize(buf, counter)?))
         } else if signature == vec64_signature {
@@ -544,6 +511,24 @@ mod tests {
     }
 
     #[test]
+    fn test_string_roundtrip() {
+        roundtrip(Variant::String("youki.slice".to_string()));
+        roundtrip(Variant::String(String::new()));
+    }
+
+    #[test]
+    fn test_bool_roundtrip() {
+        roundtrip(Variant::Bool(true));
+        roundtrip(Variant::Bool(false));
+    }
+
+    #[test]
+    fn test_u64_roundtrip() {
+        roundtrip(Variant::U64(0));
+        roundtrip(Variant::U64(u64::MAX));
+    }
+
+    #[test]
     fn test_array_struct_ss_roundtrip() {
         roundtrip(Variant::ArrayStructSS(vec![
             Structure::new("char-*".to_string(), "rwm".to_string()),
@@ -576,6 +561,25 @@ mod tests {
     fn test_array_u64_roundtrip() {
         roundtrip(Variant::ArrayU64(vec![15, u64::MAX]));
         roundtrip(Variant::ArrayU64(vec![]));
+    }
+
+    #[test]
+    fn test_array_u8_wire_encoding() {
+        for (values, expected) in [
+            (vec![1, 3], b"\x02ay\0\x02\0\0\0\x01\x03".as_slice()),
+            (vec![], b"\x02ay\0\0\0\0\0".as_slice()),
+        ] {
+            let variant = Variant::ArrayU8(values);
+            let mut bytes = Vec::new();
+            variant.serialize(&mut bytes);
+            assert_eq!(bytes, expected);
+            let mut counter = 0;
+            assert_eq!(
+                Variant::deserialize(expected, &mut counter).unwrap(),
+                variant
+            );
+            assert_eq!(counter, expected.len());
+        }
     }
 
     #[test]

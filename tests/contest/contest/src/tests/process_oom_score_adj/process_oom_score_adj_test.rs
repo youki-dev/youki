@@ -45,3 +45,5 @@ pub fn get_process_oom_score_adj_test() -> TestGroup {
 
     process_oom_score_adj_test_group
 }
+
+test_framework::register_test_group!(get_process_oom_score_adj_test);

@@ -12,3 +12,5 @@ pub fn get_intel_rdt_test() -> TestGroup {
 
     test_group
 }
+
+test_framework::register_test_group!(get_intel_rdt_test);

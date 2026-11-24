@@ -49,3 +49,5 @@ pub fn get_process_test() -> TestGroup {
 
     process_test_group
 }
+
+test_framework::register_test_group!(get_process_test);

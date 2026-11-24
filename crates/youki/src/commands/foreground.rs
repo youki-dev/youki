@@ -9,7 +9,7 @@ use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use nix::sys::eventfd::{EfdFlags, EventFd};
 use nix::sys::signal::{self, kill};
 use nix::sys::signalfd::SigSet;
-use nix::sys::termios::{self, Termios};
+use nix::sys::termios::{self, OutputFlags, Termios};
 use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
 use nix::unistd::Pid;
 use nix::{libc, unistd};
@@ -30,6 +30,7 @@ impl RawTerminalGuard {
             termios::tcgetattr(stdin_fd).with_context(|| "failed to get terminal attributes")?;
         let mut raw = original.clone();
         termios::cfmakeraw(&mut raw);
+        raw.output_flags.insert(OutputFlags::OPOST);
         termios::tcsetattr(&stdin, termios::SetArg::TCSANOW, &raw)
             .with_context(|| "failed to set raw terminal attributes")?;
 

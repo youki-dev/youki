@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::fmt::{Debug, Display};
+use std::fmt::Debug;
 use std::fs::{self};
 use std::path::Component::RootDir;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use nix::NixPath;
 use nix::unistd::Pid;
+use oci_spec::runtime::LinuxResources;
 
 use super::controller::Controller;
 use super::controller_type::{CONTROLLER_TYPES, ControllerType};
@@ -24,9 +24,10 @@ use crate::common::{
     PathBufExt, WrapIoResult, WrappedIoError,
 };
 use crate::stats::Stats;
+use crate::systemd::cgroups_path::{CgroupsPath, CgroupsPathError};
 use crate::systemd::dbus_native::serialize::Variant;
 use crate::systemd::io::Io;
-use crate::systemd::unified::Unified;
+use crate::systemd::unified::{MEMORY_OOM_GROUP, OOM_POLICY, Unified};
 use crate::v2::manager::{Manager as FsManager, V2ManagerError};
 
 const CONNECT_MAX_RETRIES: u32 = 7;
@@ -34,7 +35,6 @@ const CONNECT_BASE_DELAY_MS: u64 = 100;
 const CONNECT_JITTER_DIVISOR: u64 = 8; // jitter up to 1/8 of delay (~12.5%)
 
 const CGROUP_CONTROLLERS: &str = "cgroup.controllers";
-const CGROUP_SUBTREE_CONTROL: &str = "cgroup.subtree_control";
 pub const PROCESS_IN_CGROUP_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
 
 pub struct Manager {
@@ -63,67 +63,8 @@ pub struct Manager {
     cgroup_wait_timeout_duration: Duration,
     /// Whether the manager operates in a rootless environment
     rootless: bool,
-}
-
-/// Represents the systemd cgroups path:
-/// It should be of the form [slice]:[scope_prefix]:[name].
-/// The slice is the "parent" and should be expanded properly,
-/// see expand_slice below.
-#[derive(Debug)]
-struct CgroupsPath {
-    parent: String,
-    prefix: String,
-    name: String,
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum CgroupsPathError {
-    #[error("no cgroups path has been provided")]
-    NoPath,
-    #[error("cgroups path does not contain valid utf8")]
-    InvalidUtf8(PathBuf),
-    #[error("cgroups path is malformed: {0}")]
-    MalformedPath(PathBuf),
-}
-
-impl TryFrom<&Path> for CgroupsPath {
-    type Error = CgroupsPathError;
-
-    fn try_from(cgroups_path: &Path) -> Result<Self, Self::Error> {
-        // if cgroups_path was provided it should be of the form [slice]:[prefix]:[name],
-        // for example: "system.slice:docker:1234".
-        if cgroups_path.len() == 0 {
-            return Err(CgroupsPathError::NoPath);
-        }
-
-        let parts = cgroups_path
-            .to_str()
-            .ok_or_else(|| CgroupsPathError::InvalidUtf8(cgroups_path.to_path_buf()))?
-            .split(':')
-            .collect::<Vec<&str>>();
-
-        let destructured_path = match parts.len() {
-            2 => CgroupsPath {
-                parent: "".to_owned(),
-                prefix: parts[0].to_owned(),
-                name: parts[1].to_owned(),
-            },
-            3 => CgroupsPath {
-                parent: parts[0].to_owned(),
-                prefix: parts[1].to_owned(),
-                name: parts[2].to_owned(),
-            },
-            _ => return Err(CgroupsPathError::MalformedPath(cgroups_path.to_path_buf())),
-        };
-
-        Ok(destructured_path)
-    }
-}
-
-impl Display for CgroupsPath {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}:{}", self.parent, self.prefix, self.name)
-    }
+    /// Value of the unified memory.oom.group key, sent as OOMPolicy when the unit is created
+    oom_group: Option<String>,
 }
 
 /// ensures that a parent unit for the current unit is specified
@@ -188,8 +129,10 @@ pub enum SystemdManagerError {
     Memory(#[from] super::memory::SystemdMemoryError),
     #[error("in pids controller: {0}")]
     Pids(Infallible),
-    #[error("in pids unified controller: {0}")]
+    #[error("in unified controller: {0}")]
     Unified(#[from] super::unified::SystemdUnifiedError),
+    #[error("in v2 unified controller: {0}")]
+    V2Unified(#[from] crate::v2::unified::V2UnifiedError),
     #[error(
         "systemd cgroup flag passed, but systemd support for managing cgroups is not available"
     )]
@@ -208,10 +151,6 @@ impl Manager {
 
         let mut destructured_path: CgroupsPath = cgroups_path.as_path().try_into()?;
         ensure_parent_unit(&mut destructured_path, use_system);
-
-        let (name, sub_cgroup) = Self::split_sub_cgroup(&destructured_path.name);
-        let sub_cgroup = sub_cgroup.to_owned();
-        destructured_path.name = name.to_owned();
 
         // EAGAIN from a recv() that timed out via SO_RCVTIMEO (set in dbus::connect()).
         let is_eagain = |e: &SystemdManagerError| {
@@ -274,7 +213,7 @@ impl Manager {
 
             // Step 2 — initial method calls to discover the cgroup path.
             // On EAGAIN, client is dropped here and the next iteration reconnects.
-            match Self::construct_cgroups_path(&destructured_path, &client, &sub_cgroup) {
+            match Self::construct_cgroups_path(&destructured_path, &client) {
                 Ok((cgroups_path, delegation_boundary)) => {
                     let full_path = root_path.join_safely(&cgroups_path)?;
                     let fs_manager = FsManager::new(root_path.clone(), cgroups_path.clone())?;
@@ -283,14 +222,15 @@ impl Manager {
                         cgroups_path,
                         full_path,
                         container_name,
-                        unit_name: Self::get_unit_name(&destructured_path),
-                        sub_cgroup,
+                        unit_name: destructured_path.unit_name(),
+                        sub_cgroup: destructured_path.sub_cgroup().to_owned(),
                         destructured_path,
                         client,
                         fs_manager,
                         delegation_boundary,
                         cgroup_wait_timeout_duration,
                         rootless: false,
+                        oom_group: None,
                     });
                 }
                 Err(e) if !is_eagain(&e) => return Err(e),
@@ -335,26 +275,30 @@ impl Manager {
         self
     }
 
-    // split_sub_cgroup splits the unit `name` into the base unit name and the
-    // sub-cgroup suffix.
-    // Example: "{id}/sub/init" becomes:
-    //   - base name: "{id}"
-    //   - sub-cgroup: "/sub/init"
-    fn split_sub_cgroup(name: &str) -> (&str, &str) {
-        match name.find('/') {
-            Some(i) => name.split_at(i),
-            None => (name, ""),
-        }
+    /// Hands the manager the resources the container starts with.
+    ///
+    /// `apply` gets the resources only after `add_task` has created the unit, and systemd
+    /// takes some properties only at that point. So far that is OOMPolicy, which comes from
+    /// the unified memory.oom.group key.
+    pub fn with_initial_resources(mut self, resources: Option<&LinuxResources>) -> Self {
+        self.oom_group = resources
+            .and_then(|resources| resources.unified().as_ref())
+            .and_then(|unified| unified.get(MEMORY_OOM_GROUP))
+            .cloned();
+        self
     }
 
-    /// get_unit_name returns the unit (scope) name from the path provided by the user
-    /// for example: foo:docker:bar returns in '/docker-bar.scope'
-    fn get_unit_name(cgroups_path: &CgroupsPath) -> String {
-        // By default we create a scope unless specified explicitly.
-        if !cgroups_path.name.ends_with(".slice") {
-            return format!("{}-{}.scope", cgroups_path.prefix, cgroups_path.name);
+    /// Returns the properties that have to be part of the request that creates the unit.
+    fn unit_creation_properties(&self) -> Result<Vec<(&str, Variant)>, SystemdManagerError> {
+        let mut properties = Vec::new();
+        if let Some(oom_group) = &self.oom_group {
+            let systemd_version = self.client.systemd_version()?;
+            if let Some(policy) = Unified::oom_policy(oom_group, systemd_version)? {
+                properties.push((OOM_POLICY, Variant::String(policy.to_owned())));
+            }
         }
-        cgroups_path.name.clone()
+
+        Ok(properties)
     }
 
     // get_cgroups_path generates a cgroups path from the one provided by the user via cgroupsPath.
@@ -363,19 +307,17 @@ impl Manager {
     fn construct_cgroups_path(
         cgroups_path: &CgroupsPath,
         client: &dyn SystemdClient,
-        sub_cgroup: &str,
     ) -> Result<(PathBuf, PathBuf), SystemdManagerError> {
         // if the user provided a '.slice' (as in a branch of a tree)
         // we need to convert it to a filesystem path.
 
         let parent = Self::expand_slice(&cgroups_path.parent)?;
         let systemd_root = client.control_cgroup_root()?;
-        let unit_name = Self::get_unit_name(cgroups_path);
 
         let cgroups_path = systemd_root
             .join_safely(parent)?
-            .join_safely(unit_name)?
-            .join_safely(sub_cgroup)?;
+            .join_safely(cgroups_path.unit_name())?
+            .join_safely(cgroups_path.sub_cgroup())?;
         Ok((cgroups_path, systemd_root))
     }
 
@@ -413,13 +355,12 @@ impl Manager {
     fn ensure_controllers_attached(&self) -> Result<(), SystemdManagerError> {
         let full_boundary_path = self.root_path.join_safely(&self.delegation_boundary)?;
 
-        let controllers: Vec<String> = self
-            .get_available_controllers(&full_boundary_path)?
+        let controllers: Vec<String> = Self::get_available_controllers(&full_boundary_path)?
             .into_iter()
-            .map(|c| format!("{}{}", "+", c))
+            .map(|c| format!("+{c}"))
             .collect();
 
-        Self::write_controllers(&full_boundary_path, &controllers)?;
+        FsManager::enable_controllers(&full_boundary_path, &controllers);
 
         let mut current_path = full_boundary_path;
         let mut components = self
@@ -448,7 +389,7 @@ impl Manager {
             // last component cannot have subtree_control enabled due to internal process constraint
             // if this were set, writing to the cgroups.procs file will fail with Erno 16 (device or resource busy)
             if components.peek().is_some() {
-                Self::write_controllers(&current_path, &controllers)?;
+                FsManager::enable_controllers(&current_path, &controllers);
             }
         }
 
@@ -482,37 +423,20 @@ impl Manager {
         ))
     }
 
-    fn get_available_controllers<P: AsRef<Path>>(
-        &self,
-        cgroups_path: P,
-    ) -> Result<Vec<ControllerType>, SystemdManagerError> {
-        let controllers_path = self.root_path.join(cgroups_path).join(CGROUP_CONTROLLERS);
+    /// Returns every controller listed for the cgroup, including those systemd does not
+    /// manage, such as hugetlb, misc or rdma. systemd enables its own controllers for the
+    /// delegated unit, but nothing else enables the others.
+    fn get_available_controllers(cgroup_path: &Path) -> Result<Vec<String>, SystemdManagerError> {
+        let controllers_path = cgroup_path.join(CGROUP_CONTROLLERS);
         if !controllers_path.exists() {
             return Err(SystemdManagerError::FileNotFound(controllers_path));
         }
 
-        let mut controllers = Vec::new();
-        for controller in fs::read_to_string(&controllers_path)
+        Ok(fs::read_to_string(&controllers_path)
             .wrap_read(controllers_path)?
             .split_whitespace()
-        {
-            match controller {
-                "cpu" => controllers.push(ControllerType::Cpu),
-                "memory" => controllers.push(ControllerType::Memory),
-                "pids" => controllers.push(ControllerType::Pids),
-                _ => continue,
-            }
-        }
-
-        Ok(controllers)
-    }
-
-    fn write_controllers(path: &Path, controllers: &[String]) -> Result<(), SystemdManagerError> {
-        for controller in controllers {
-            common::write_cgroup_file_str(path.join(CGROUP_SUBTREE_CONTROL), controller)?;
-        }
-
-        Ok(())
+            .map(str::to_owned)
+            .collect())
     }
 
     pub fn any(self) -> AnyCgroupManager {
@@ -544,6 +468,7 @@ impl CgroupManager for Manager {
             pid.as_raw() as u32,
             &self.destructured_path.parent,
             &self.unit_name,
+            &self.unit_creation_properties()?,
         )?;
 
         // There is a chance that the intermediate process ends before systemd gets the dbus message to add it to transit unit.
@@ -592,6 +517,15 @@ impl CgroupManager for Manager {
                 .set_unit_properties(&self.unit_name, &properties)?;
         }
 
+        // Only some unified keys map to a unit property, so write all of them to the cgroup
+        // as well, as runc does. Keys systemd has just set get the same value again.
+        crate::v2::unified::Unified::apply(
+            controller_opt,
+            &self.full_path,
+            crate::v2::util::get_available_controllers(&self.root_path)
+                .map_err(V2ManagerError::from)?,
+        )?;
+
         // systemd derives a device filter from DeviceAllow and attaches it every time
         // unit properties are set, so this has to run afterwards to replace it. A rule
         // DeviceAllow cannot express, a deny rule above all, is only honoured by the
@@ -621,6 +555,12 @@ impl CgroupManager for Manager {
         tracing::debug!("remove {}", self.unit_name);
         if self.client.transient_unit_exists(&self.unit_name) {
             self.client.stop_transient_unit(&self.unit_name)?;
+            // systemd keeps a failed unit loaded after it is stopped, and a new container
+            // with the same name cannot join it. A scope fails when OOMPolicy=kill is set
+            // and the kernel OOM killer kills its processes. As in runc, errors are ignored.
+            if let Err(err) = self.client.reset_failed_unit(&self.unit_name) {
+                tracing::debug!("failed to reset failed unit {}: {err}", self.unit_name);
+            }
         }
 
         Ok(())
@@ -666,11 +606,16 @@ mod tests {
             _pid: u32,
             _parent: &str,
             _unit_name: &str,
+            _extra_properties: &[(&str, Variant)],
         ) -> Result<(), SystemdClientError> {
             Ok(())
         }
 
         fn stop_transient_unit(&self, _unit_name: &str) -> Result<(), SystemdClientError> {
+            Ok(())
+        }
+
+        fn reset_failed_unit(&self, _unit_name: &str) -> Result<(), SystemdClientError> {
             Ok(())
         }
 
@@ -701,47 +646,6 @@ mod tests {
     }
 
     #[test]
-    fn test_split_sub_cgroup() {
-        struct Case {
-            name: &'static str,
-            expected_name: &'static str,
-            expected_sub_cgroup: &'static str,
-        }
-        let cases = [
-            Case {
-                name: "youki-569d5ce3afe1074769f67",
-                expected_name: "youki-569d5ce3afe1074769f67",
-                expected_sub_cgroup: "",
-            },
-            Case {
-                name: "youki-569d5ce3afe1074769f67/init",
-                expected_name: "youki-569d5ce3afe1074769f67",
-                expected_sub_cgroup: "/init",
-            },
-            Case {
-                name: "youki-569d5ce3afe1074769f67/sub/init",
-                expected_name: "youki-569d5ce3afe1074769f67",
-                expected_sub_cgroup: "/sub/init",
-            },
-            Case {
-                name: "youki-569d5ce3afe1074769f67/",
-                expected_name: "youki-569d5ce3afe1074769f67",
-                expected_sub_cgroup: "/",
-            },
-        ];
-
-        for case in cases {
-            let (name, sub_cgroup) = Manager::split_sub_cgroup(case.name);
-            assert_eq!(name, case.expected_name, "name mismatch for {}", case.name);
-            assert_eq!(
-                sub_cgroup, case.expected_sub_cgroup,
-                "sub_cgroup mismatch for {}",
-                case.name
-            );
-        }
-    }
-
-    #[test]
     fn expand_slice_works() -> Result<()> {
         assert_eq!(
             Manager::expand_slice("test-a-b.slice")?,
@@ -758,7 +662,7 @@ mod tests {
             .context("construct path")?;
 
         assert_eq!(
-            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {}, "")?.0,
+            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {})?.0,
             PathBuf::from("/test.slice/test-a.slice/test-a-b.slice/docker-foo.scope"),
         );
 
@@ -772,7 +676,7 @@ mod tests {
             .context("construct path")?;
 
         assert_eq!(
-            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {}, "")?.0,
+            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {})?.0,
             PathBuf::from("/machine.slice/libpod-foo.scope"),
         );
 
@@ -781,12 +685,12 @@ mod tests {
 
     #[test]
     fn get_cgroups_path_works_with_sub_cgroup() -> Result<()> {
-        let cgroups_path = Path::new("machine.slice:libpod:foo")
+        let cgroups_path = Path::new("machine.slice:libpod:foo/init")
             .try_into()
             .context("construct path")?;
 
         assert_eq!(
-            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {}, "/init")?.0,
+            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {})?.0,
             PathBuf::from("/machine.slice/libpod-foo.scope/init"),
         );
 
@@ -801,10 +705,32 @@ mod tests {
         ensure_parent_unit(&mut cgroups_path, true);
 
         assert_eq!(
-            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {}, "")?.0,
+            Manager::construct_cgroups_path(&cgroups_path, &TestSystemdClient {})?.0,
             PathBuf::from("/system.slice/docker-foo.scope"),
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_available_controllers_keeps_every_controller() -> Result<()> {
+        // arrange
+        let tmp = tempfile::tempdir()?;
+        fs::write(
+            tmp.path().join(CGROUP_CONTROLLERS),
+            "cpuset cpu io memory hugetlb pids rdma misc\n",
+        )?;
+
+        // act
+        let controllers = Manager::get_available_controllers(tmp.path())?;
+
+        // assert
+        assert_eq!(
+            controllers,
+            [
+                "cpuset", "cpu", "io", "memory", "hugetlb", "pids", "rdma", "misc"
+            ]
+        );
         Ok(())
     }
 
@@ -840,6 +766,113 @@ mod tests {
         // the remove call above should remove the dir, we just do this again
         // for contingency, and thus ignore the result
         let _ = fs::remove_dir(&manager.full_path);
+    }
+
+    fn oom_group_resources(value: &str) -> Result<LinuxResources> {
+        Ok(oci_spec::runtime::LinuxResourcesBuilder::default()
+            .unified(HashMap::from([(
+                MEMORY_OOM_GROUP.to_owned(),
+                value.to_owned(),
+            )]))
+            .build()?)
+    }
+
+    #[test]
+    fn test_unit_creation_properties() -> Result<()> {
+        let new_manager = || {
+            Manager::new(
+                DEFAULT_CGROUP_ROOT.into(),
+                ":youki:test_oom_policy".into(),
+                "youki_test_container".into(),
+                false,
+                PROCESS_IN_CGROUP_TIMEOUT_DURATION,
+            )
+        };
+        if new_manager()?.client.systemd_version()? < 253 {
+            // OOMPolicy is not accepted for scopes before systemd 253
+            return Ok(());
+        }
+
+        // nothing is added unless the resources set memory.oom.group
+        assert_eq!(new_manager()?.unit_creation_properties()?, vec![]);
+        assert_eq!(
+            new_manager()?
+                .with_initial_resources(Some(&LinuxResources::default()))
+                .unit_creation_properties()?,
+            vec![]
+        );
+        for (value, policy) in [("0", "continue"), ("1", "kill")] {
+            let manager = new_manager()?.with_initial_resources(Some(&oom_group_resources(value)?));
+            assert_eq!(
+                manager.unit_creation_properties()?,
+                vec![(OOM_POLICY, Variant::String(policy.into()))],
+                "memory.oom.group {value}"
+            );
+        }
+        let manager = new_manager()?.with_initial_resources(Some(&oom_group_resources("2")?));
+        assert!(matches!(
+            manager.unit_creation_properties(),
+            Err(SystemdManagerError::Unified(_))
+        ));
+        // the builder on AnyCgroupManager reaches the systemd manager
+        let AnyCgroupManager::Systemd(manager) = new_manager()?
+            .any()
+            .with_initial_resources(Some(&oom_group_resources("1")?))
+        else {
+            unreachable!("any() of the systemd manager is the systemd variant");
+        };
+        assert_eq!(
+            manager.unit_creation_properties()?,
+            vec![(OOM_POLICY, Variant::String("kill".into()))]
+        );
+        // a later call replaces what an earlier one stored
+        let manager = new_manager()?
+            .with_initial_resources(Some(&oom_group_resources("1")?))
+            .with_initial_resources(None);
+        assert_eq!(manager.unit_creation_properties()?, vec![]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_task_addition_with_oom_policy() -> Result<()> {
+        let manager = Manager::new(
+            DEFAULT_CGROUP_ROOT.into(),
+            ":youki:test_oom_policy_unit".into(),
+            "youki_test_container".into(),
+            false,
+            PROCESS_IN_CGROUP_TIMEOUT_DURATION,
+        )?
+        .with_initial_resources(Some(&oom_group_resources("1")?));
+        let oom_group_path = manager.full_path.join(MEMORY_OOM_GROUP);
+        if manager.client.systemd_version()? < 253 {
+            // OOMPolicy is not accepted for scopes before systemd 253
+            return Ok(());
+        }
+
+        // both have to outlive the joining add_task, or systemd removes the empty scope
+        let mut p1 = std::process::Command::new("sleep").arg("30").spawn()?;
+        let p1_id = nix::unistd::Pid::from_raw(p1.id() as i32);
+        manager.add_task(p1_id)?;
+        // nothing has written the file here: with OOMPolicy=kill systemd sets it itself
+        let oom_group = fs::read_to_string(&oom_group_path);
+        // joining the unit sends no properties, so a different value is not an error
+        let manager = manager.with_initial_resources(Some(&oom_group_resources("0")?));
+        let mut p2 = std::process::Command::new("sleep").arg("30").spawn()?;
+        let p2_id = nix::unistd::Pid::from_raw(p2.id() as i32);
+        let joined = manager.add_task(p2_id);
+        let oom_group_after_join = fs::read_to_string(&oom_group_path);
+        for p in [&mut p1, &mut p2] {
+            let _ = p.kill();
+            let _ = p.wait();
+        }
+        manager.remove()?;
+        let _ = fs::remove_dir(&manager.full_path);
+
+        assert_eq!(oom_group?.trim(), "1");
+        joined?;
+        assert_eq!(oom_group_after_join?.trim(), "1");
+        Ok(())
     }
 
     #[test]

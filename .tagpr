@@ -2,6 +2,7 @@
     vPrefix = true
     releaseBranch = main
     versionFile = -
-    command = just version-up 0.7.1
+    command = "just version-up ${TAGPR_NEXT_VERSION#v}"
+    minorLabels = breaking change
     release = false
     changelog = true

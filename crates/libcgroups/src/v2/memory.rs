@@ -10,7 +10,8 @@ const CGROUP_MEMORY_SWAP: &str = "memory.swap.max";
 const CGROUP_MEMORY_MAX: &str = "memory.max";
 const CGROUP_MEMORY_LOW: &str = "memory.low";
 const MEMORY_STAT: &str = "memory.stat";
-const MEMORY_PSI: &str = "memory.pressure";
+pub const MEMORY_PSI: &str = "memory.pressure";
+const MEMORY_SWAP_CURRENT: &str = "memory.swap.current";
 
 #[derive(thiserror::Error, Debug)]
 pub enum V2MemoryControllerError {
@@ -32,13 +33,22 @@ pub struct Memory {}
 
 impl Controller for Memory {
     type Error = V2MemoryControllerError;
+    type Resource = LinuxMemory;
 
     fn apply(controller_opt: &ControllerOpt, cgroup_path: &Path) -> Result<(), Self::Error> {
-        if let Some(memory) = &controller_opt.resources.memory() {
+        if let Some(memory) = Self::needs_to_handle(controller_opt) {
             Self::apply(cgroup_path, memory)?;
         }
 
         Ok(())
+    }
+
+    fn needs_to_handle<'a>(controller_opt: &'a ControllerOpt) -> Option<&'a Self::Resource> {
+        controller_opt.resources.memory().as_ref().filter(|m| {
+            m.limit().is_some_and(|v| v != 0)
+                || m.reservation().is_some_and(|v| v != 0)
+                || m.swap().is_some_and(|v| v != 0)
+        })
     }
 }
 #[derive(thiserror::Error, Debug)]
@@ -54,9 +64,16 @@ impl StatsProvider for Memory {
     type Stats = MemoryStats;
 
     fn stats(cgroup_path: &Path) -> Result<Self::Stats, Self::Error> {
+        let memory = Self::get_memory_data(cgroup_path, "memory", "oom")?;
+        // The memory.swap files exist only when the kernel supports swap.
+        let memswap = if cgroup_path.join(MEMORY_SWAP_CURRENT).exists() {
+            Self::get_memory_data(cgroup_path, "memory.swap", "fail")?
+        } else {
+            MemoryData::default()
+        };
         let stats = MemoryStats {
-            memory: Self::get_memory_data(cgroup_path, "memory", "oom")?,
-            memswap: Self::get_memory_data(cgroup_path, "memory.swap", "fail")?,
+            memory,
+            memswap,
             hierarchy: true,
             stats: stats::parse_flat_keyed_data(&cgroup_path.join(MEMORY_STAT))?,
             psi: stats::psi_stats(&cgroup_path.join(MEMORY_PSI))?,
@@ -108,6 +125,22 @@ impl Memory {
         }
     }
 
+    fn set_swap(path: &Path, val: i64) -> Result<(), WrappedIoError> {
+        let swap_path = path.join(CGROUP_MEMORY_SWAP);
+        let result = if val == -1 {
+            common::write_cgroup_file_str(swap_path, "max")
+        } else {
+            common::write_cgroup_file(swap_path, val)
+        };
+        if let Err(err) = result {
+            // Without swap support, disabling swap or leaving it unlimited is harmless.
+            if !matches!(val, -1 | 0) || err.inner().kind() != std::io::ErrorKind::NotFound {
+                return Err(err);
+            }
+        }
+        Ok(())
+    }
+
     fn apply(path: &Path, memory: &LinuxMemory) -> Result<(), V2MemoryControllerError> {
         // if nothing is set just exit right away
         if memory.reservation().is_none() && memory.limit().is_none() && memory.swap().is_none() {
@@ -125,7 +158,9 @@ impl Memory {
                 Some(swap) => {
                     // -1 means max
                     if swap == -1 || limit == -1 {
-                        Memory::set(path.join(CGROUP_MEMORY_SWAP), swap)?;
+                        if swap != 0 {
+                            Memory::set_swap(path, swap)?;
+                        }
                     } else {
                         if swap < limit {
                             return Err(V2MemoryControllerError::SwapTooSmall { swap, limit });
@@ -135,13 +170,17 @@ impl Memory {
                         // a separate value, so the swap value in the runtime spec needs
                         // to be converted from the cgroup v1 value to the cgroup v2 value
                         // by subtracting limit from swap
-                        Memory::set(path.join(CGROUP_MEMORY_SWAP), swap - limit)?;
+                        // An explicit positive total equal to the memory limit
+                        // disables swap. Do not skip the resulting zero value.
+                        if swap != 0 {
+                            Memory::set_swap(path, swap - limit)?;
+                        }
                     }
                     Memory::set(path.join(CGROUP_MEMORY_MAX), limit)?;
                 }
                 None => {
                     if limit == -1 {
-                        Memory::set(path.join(CGROUP_MEMORY_SWAP), -1)?;
+                        Memory::set_swap(path, -1)?;
                     }
                     Memory::set(path.join(CGROUP_MEMORY_MAX), limit)?;
                 }
@@ -172,6 +211,123 @@ mod tests {
 
     use super::*;
     use crate::test::set_fixture;
+
+    #[test]
+    fn test_missing_swap_controller_allows_disabling_or_unlimited_swap() {
+        for (limit, swap) in [
+            (1024, Some(1024)),
+            (1024, Some(-1)),
+            (-1, None),
+            (-1, Some(-1)),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            set_fixture(tmp.path(), CGROUP_MEMORY_MAX, "max").unwrap();
+            let mut builder = LinuxMemoryBuilder::default().limit(limit);
+            if let Some(swap) = swap {
+                builder = builder.swap(swap);
+            }
+
+            Memory::apply(tmp.path(), &builder.build().unwrap())
+                .expect("missing swap controller does not prevent setting memory limit");
+
+            assert_eq!(
+                read_to_string(tmp.path().join(CGROUP_MEMORY_MAX)).unwrap(),
+                if limit == -1 {
+                    "max".into()
+                } else {
+                    limit.to_string()
+                }
+            );
+            assert!(!tmp.path().join(CGROUP_MEMORY_SWAP).exists());
+        }
+    }
+
+    #[test]
+    fn test_missing_swap_controller_rejects_positive_swap_limit() {
+        let tmp = tempfile::tempdir().unwrap();
+        set_fixture(tmp.path(), CGROUP_MEMORY_MAX, "max").unwrap();
+        let memory = LinuxMemoryBuilder::default()
+            .limit(1024)
+            .swap(2048)
+            .build()
+            .unwrap();
+
+        let err = Memory::apply(tmp.path(), &memory).unwrap_err();
+        assert!(matches!(err, V2MemoryControllerError::WrappedIo(ref err)
+            if err.inner().kind() == std::io::ErrorKind::NotFound));
+        assert_eq!(
+            read_to_string(tmp.path().join(CGROUP_MEMORY_MAX)).unwrap(),
+            "max"
+        );
+    }
+
+    #[test]
+    fn test_swap_controller_propagates_other_write_errors() {
+        for swap in [1024, -1] {
+            let tmp = tempfile::tempdir().unwrap();
+            set_fixture(tmp.path(), CGROUP_MEMORY_MAX, "max").unwrap();
+            std::fs::create_dir(tmp.path().join(CGROUP_MEMORY_SWAP)).unwrap();
+            let memory = LinuxMemoryBuilder::default()
+                .limit(1024)
+                .swap(swap)
+                .build()
+                .unwrap();
+
+            let err = Memory::apply(tmp.path(), &memory).unwrap_err();
+            assert!(matches!(err, V2MemoryControllerError::WrappedIo(ref err)
+                if err.inner().kind() == std::io::ErrorKind::IsADirectory));
+            assert_eq!(
+                read_to_string(tmp.path().join(CGROUP_MEMORY_MAX)).unwrap(),
+                "max"
+            );
+        }
+    }
+
+    #[test]
+    fn test_equal_memory_and_swap_limits_disable_swap() {
+        let tmp = tempfile::tempdir().unwrap();
+        set_fixture(tmp.path(), CGROUP_MEMORY_MAX, "max").unwrap();
+        set_fixture(tmp.path(), CGROUP_MEMORY_SWAP, "1").unwrap();
+        let memory = LinuxMemoryBuilder::default()
+            .limit(1024)
+            .swap(1024)
+            .build()
+            .unwrap();
+
+        Memory::apply(tmp.path(), &memory).expect("apply memory limits");
+
+        assert_eq!(
+            read_to_string(tmp.path().join(CGROUP_MEMORY_SWAP)).unwrap(),
+            "0"
+        );
+        assert_eq!(
+            read_to_string(tmp.path().join(CGROUP_MEMORY_MAX)).unwrap(),
+            "1024"
+        );
+    }
+
+    #[test]
+    fn test_zero_memory_and_swap_limits_leave_limits_unchanged() {
+        let tmp = tempfile::tempdir().unwrap();
+        set_fixture(tmp.path(), CGROUP_MEMORY_MAX, "2048").unwrap();
+        set_fixture(tmp.path(), CGROUP_MEMORY_SWAP, "512").unwrap();
+        let memory = LinuxMemoryBuilder::default()
+            .limit(0)
+            .swap(0)
+            .build()
+            .unwrap();
+
+        Memory::apply(tmp.path(), &memory).expect("apply memory limits");
+
+        assert_eq!(
+            read_to_string(tmp.path().join(CGROUP_MEMORY_SWAP)).unwrap(),
+            "512"
+        );
+        assert_eq!(
+            read_to_string(tmp.path().join(CGROUP_MEMORY_MAX)).unwrap(),
+            "2048"
+        );
+    }
 
     #[test]
     fn test_set_memory() {
@@ -400,5 +556,41 @@ mod tests {
         };
 
         assert_eq!(actual, expected);
+    }
+
+    fn set_memory_stat_fixtures(path: &Path) {
+        set_fixture(path, "memory.current", "4096\n").expect("set memory.current");
+        set_fixture(path, CGROUP_MEMORY_MAX, "max\n").expect("set memory.max");
+        set_fixture(path, "memory.events", "oom 2\n").expect("set memory.events");
+        set_fixture(path, MEMORY_STAT, "anon 1024\n").expect("set memory.stat");
+        set_fixture(path, MEMORY_PSI, "").expect("set memory.pressure");
+    }
+
+    #[test]
+    fn test_stat_memory_with_swap() {
+        let tmp = tempfile::tempdir().unwrap();
+        set_memory_stat_fixtures(tmp.path());
+        set_fixture(tmp.path(), MEMORY_SWAP_CURRENT, "512\n").expect("set memory.swap.current");
+        set_fixture(tmp.path(), CGROUP_MEMORY_SWAP, "max\n").expect("set memory.swap.max");
+        set_fixture(tmp.path(), "memory.swap.events", "fail 1\n").expect("set memory.swap.events");
+
+        let actual = Memory::stats(tmp.path()).expect("get cgroup stats");
+        assert_eq!(actual.memory.usage, 4096);
+        assert_eq!(actual.memory.fail_count, 2);
+        assert_eq!(actual.memswap.usage, 512);
+        assert_eq!(actual.memswap.fail_count, 1);
+    }
+
+    #[test]
+    fn test_stat_memory_without_swap() {
+        let tmp = tempfile::tempdir().unwrap();
+        set_memory_stat_fixtures(tmp.path());
+
+        let actual = Memory::stats(tmp.path()).expect("get cgroup stats");
+        assert_eq!(actual.memory.usage, 4096);
+        assert_eq!(actual.memory.limit, u64::MAX);
+        assert_eq!(actual.memory.fail_count, 2);
+        assert_eq!(actual.stats.get("anon"), Some(&1024));
+        assert_eq!(actual.memswap, MemoryData::default());
     }
 }

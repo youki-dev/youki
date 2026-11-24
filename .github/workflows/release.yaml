@@ -5,6 +5,10 @@ on:
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
   workflow_dispatch:
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   parse:
     runs-on: ubuntu-latest
@@ -41,6 +45,7 @@ jobs:
         run: |
           echo "CARGO=cross" >> ${GITHUB_ENV}
           echo "TARGET=${{ matrix.arch }}-unknown-linux-${{ matrix.libc }}" >> ${GITHUB_ENV}
+          echo "CARGO_BUILD_TARGET=${{ matrix.arch }}-unknown-linux-${{ matrix.libc }}" >> ${GITHUB_ENV}
       - name: Release build
         run: just youki-release
       - name: Disable AppArmor restrictions
@@ -83,29 +88,52 @@ jobs:
       - name: Create release draft
         shell: bash
         run: |
-          set -x
-          gh release create "${{ github.ref }}" --generate-notes --draft
-          gh release upload "${{ github.ref }}" artifacts/*/*
+          set -euxo pipefail
+          state=$(gh release view "$TAG" --json isDraft --jq 'if .isDraft then "draft" else "published" end' || echo absent)
+          case "$state" in
+            published)
+              echo "$TAG is already published"
+              exit 0
+              ;;
+            absent)
+              gh release create "$TAG" --verify-tag --generate-notes --draft
+              ;;
+          esac
+          gh release upload "$TAG" artifacts/*/* --clobber
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_NAME: "${{ needs.parse.outputs.version }} Release"
+          TAG: ${{ github.ref_name }}
 
   publish:
     name: Publish Packages
-    needs: release
+    needs:
+      - parse
+      - release
     runs-on: ubuntu-24.04
     if: ${{ github.repository == 'youki-dev/youki' }}
+    permissions:
+      contents: write
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      VERSION: ${{ needs.parse.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup Rust toolchain and cache
         uses: actions-rust-lang/setup-rust-toolchain@v1
-      - name: Publish libcgroups
-        run: cargo publish -p libcgroups --no-verify
-      - name: Publish libcontainer
-        run: cargo publish -p libcontainer --no-verify
-      - name: Publish liboci-cli
-        run: cargo publish -p liboci-cli --no-verify
-      - name: Publish youki
-        run: cargo publish -p youki --no-verify
+      - name: Publish crates
+        shell: bash
+        run: |
+          set -euo pipefail
+          for crate in libcgroups libcontainer liboci-cli youki; do
+            index="https://index.crates.io/${crate:0:2}/${crate:2:2}/${crate}"
+            if curl -fsSL "$index" | jq -e --arg v "$VERSION" 'select(.vers == $v)' > /dev/null; then
+              echo "$crate $VERSION is already on crates.io"
+            else
+              cargo publish -p "$crate" --no-verify
+            fi
+          done
+      - name: Publish the GitHub release
+        run: gh release edit "$TAG" --draft=false
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}

@@ -2,6 +2,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use libcontainer::container::PageServer;
 use liboci_cli::Checkpoint;
 
 use crate::commands::load_container;
@@ -23,6 +24,7 @@ pub fn checkpoint(args: Checkpoint, root_path: PathBuf) -> Result<()> {
         manage_cgroups_mode: parse_cgroups_mode(&args.manage_cgroups_mode)?,
         link_remap: args.link_remap,
         empty_net_ns: parse_empty_ns(&args.empty_ns)?,
+        page_server: parse_page_server(args.page_server.as_deref())?,
     };
     container
         .checkpoint(&opts)
@@ -44,6 +46,54 @@ fn parse_cgroups_mode(s: &str) -> Result<rust_criu::CgMode, anyhow::Error> {
         "soft" => Ok(rust_criu::CgMode::SOFT),
         _ => Err(anyhow::anyhow!("invalid manage-cgroups-mode: {s}")),
     }
+}
+
+fn parse_page_server(s: Option<&str>) -> Result<Option<PageServer>, anyhow::Error> {
+    let Some(s) = s.filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let (address, port) = split_host_port(s).ok_or_else(|| {
+        anyhow::anyhow!("use --page-server ADDRESS:PORT to specify page server, got {s:?}")
+    })?;
+    let port = port
+        .parse::<u16>()
+        .with_context(|| format!("invalid port {port:?} of page server"))?;
+    // runc does not pass the page server to CRIU when the port is 0, and the pages
+    // are written to the image path instead.
+    // https://github.com/opencontainers/runc/blob/2a603d366e0a59ef456366a7a221aaed4c6bb103/libcontainer/criu_linux.go#L394
+    if port == 0 {
+        return Ok(None);
+    }
+    Ok(Some(PageServer {
+        address: address.to_string(),
+        port,
+    }))
+}
+
+// Follows net.SplitHostPort of Go, which runc uses to split --page-server.
+// https://pkg.go.dev/net#SplitHostPort
+fn split_host_port(s: &str) -> Option<(&str, &str)> {
+    let (host, port) = match s.strip_prefix('[') {
+        Some(rest) => {
+            let (host, after) = rest.split_once(']')?;
+            let port = after.strip_prefix(':')?;
+            if host.contains('[') || port.contains([':', '[', ']']) {
+                return None;
+            }
+            (host, port)
+        }
+        None => {
+            let (host, port) = s.rsplit_once(':')?;
+            if host.contains([':', '[', ']']) || port.contains(['[', ']']) {
+                return None;
+            }
+            (host, port)
+        }
+    };
+    if host.is_empty() || port.is_empty() {
+        return None;
+    }
+    Some((host, port))
 }
 
 #[cfg(test)]
@@ -92,6 +142,66 @@ mod tests {
             assert_eq!(
                 err.to_string(),
                 format!("namespace {ns:?} is not supported")
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_page_server_ok() {
+        for (input, address, port) in [
+            ("127.0.0.1:27", "127.0.0.1", 27),
+            ("[::1]:1234", "::1", 1234),
+            ("[fe80::1]:1", "fe80::1", 1),
+            ("[fe80::1%eth0]:27", "fe80::1%eth0", 27),
+            ("[localhost]:1234", "localhost", 1234),
+            ("localhost:80", "localhost", 80),
+            (
+                "page-server.example.com:65535",
+                "page-server.example.com",
+                65535,
+            ),
+        ] {
+            let ps = parse_page_server(Some(input)).unwrap().unwrap();
+            assert_eq!(ps.address, address, "input: {input}");
+            assert_eq!(ps.port, port, "input: {input}");
+        }
+    }
+
+    #[test]
+    fn test_parse_page_server_ng() {
+        for input in [
+            "127.0.0.1",
+            "localhost",
+            ":1234",
+            "127.0.0.1:",
+            "::1:1234",
+            "[::1]",
+            "[]:1234",
+            "[::1:1234",
+            "::1]:1234",
+            "[::1]1234",
+            "[::1]x:1234",
+            "[::1]:12:34",
+            "[::1]:]1234",
+            "[[::1]]:1234",
+            "127.0.0.1]:1234",
+            "[127.0.0.1:1234",
+            "local[host:1234",
+            "127.0.0.1:12[34",
+            "127.0.0.1:port",
+            "127.0.0.1:65536",
+            "127.0.0.1:-1",
+        ] {
+            assert!(parse_page_server(Some(input)).is_err(), "input: {input}");
+        }
+    }
+
+    #[test]
+    fn test_parse_page_server_unset() {
+        for input in [None, Some(""), Some("127.0.0.1:0"), Some("[::1]:0")] {
+            assert!(
+                matches!(parse_page_server(input), Ok(None)),
+                "input: {input:?}"
             );
         }
     }

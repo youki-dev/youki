@@ -31,6 +31,11 @@ pub enum DevicesControllerError {
 
 impl Controller for Devices {
     type Error = DevicesControllerError;
+    type Resource = Vec<LinuxDeviceCgroup>;
+
+    fn needs_to_handle<'a>(controller_opt: &'a ControllerOpt) -> Option<&'a Self::Resource> {
+        controller_opt.resources.devices().as_ref()
+    }
 
     fn apply(
         controller_opt: &ControllerOpt,

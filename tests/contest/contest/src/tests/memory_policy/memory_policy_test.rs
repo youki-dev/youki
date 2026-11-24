@@ -284,3 +284,5 @@ pub fn get_linux_memory_policy_tests() -> TestGroup {
 
     tg
 }
+
+test_framework::register_test_group!(get_linux_memory_policy_tests);

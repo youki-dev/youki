@@ -1,7 +1,6 @@
 //! Contains structure for a test group
 use std::collections::BTreeMap;
-
-use crossbeam::thread;
+use std::thread;
 
 use crate::testable::{TestResult, Testable, TestableGroup};
 
@@ -56,8 +55,8 @@ impl TestableGroup for TestGroup {
         if self.parallel {
             thread::scope(|s| {
                 let mut collector = Vec::with_capacity(self.tests.len());
-                for (_, t) in self.tests.iter() {
-                    let _t = s.spawn(move |_| {
+                for t in self.tests.values() {
+                    let _t = s.spawn(move || {
                         if t.can_run() {
                             (t.get_name(), t.run())
                         } else {
@@ -75,10 +74,9 @@ impl TestableGroup for TestGroup {
                 for handle in collector {
                     ret.push(handle.join().unwrap());
                 }
-            })
-            .unwrap();
+            });
         } else {
-            for (_, t) in self.tests.iter() {
+            for t in self.tests.values() {
                 ret.push(if t.can_run() {
                     (t.get_name(), t.run())
                 } else {
@@ -106,7 +104,7 @@ impl TestableGroup for TestGroup {
             thread::scope(|s| {
                 let mut collector = Vec::with_capacity(selected.len());
                 for (_, t) in selected_tests {
-                    let _t = s.spawn(move |_| {
+                    let _t = s.spawn(move || {
                         if t.can_run() {
                             (t.get_name(), t.run())
                         } else {
@@ -124,8 +122,7 @@ impl TestableGroup for TestGroup {
                 for handle in collector {
                     ret.push(handle.join().unwrap());
                 }
-            })
-            .unwrap();
+            });
         } else {
             for (_, t) in selected_tests {
                 ret.push(if t.can_run() {

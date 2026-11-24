@@ -10,16 +10,21 @@ pub struct Pids {}
 
 impl Controller for Pids {
     type Error = WrappedIoError;
+    type Resource = LinuxPids;
 
     fn apply(
         controller_opt: &ControllerOpt,
         cgroup_root: &std::path::Path,
     ) -> Result<(), Self::Error> {
         tracing::debug!("Apply pids cgroup v2 config");
-        if let Some(pids) = &controller_opt.resources.pids() {
+        if let Some(pids) = Self::needs_to_handle(controller_opt) {
             Self::apply(cgroup_root, pids)?;
         }
         Ok(())
+    }
+
+    fn needs_to_handle<'a>(controller_opt: &'a ControllerOpt) -> Option<&'a Self::Resource> {
+        controller_opt.resources.pids().as_ref()
     }
 }
 

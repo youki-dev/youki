@@ -12,6 +12,7 @@ use anyhow::{Context, Result, bail};
 use crate::utils::is_cgroup_v2;
 
 pub mod devices;
+pub mod unified;
 
 const SCOPE_PREFIX: &str = "contest";
 
@@ -37,6 +38,27 @@ fn show_property(unit: &str, property: &str) -> Result<String> {
         .context("systemctl output was not utf-8")?
         .trim()
         .to_string())
+}
+
+/// The major version of the running systemd manager, which is the version the runtime
+/// checks before it sends a property. `systemctl --version` is not used because it reports
+/// the installed client, and the manager can be older until it is re-executed.
+fn systemd_version() -> Result<u32> {
+    let output = Command::new("systemctl")
+        .args(["show", "--property=Version", "--value"])
+        .output()
+        .context("failed to run systemctl show --property=Version")?;
+    let stdout = String::from_utf8(output.stdout).context("systemctl output was not utf-8")?;
+
+    // "255.4-1ubuntu8" or "v255"
+    stdout
+        .trim()
+        .chars()
+        .skip_while(|c| c.is_alphabetic())
+        .take_while(|c| c.is_numeric())
+        .collect::<String>()
+        .parse()
+        .with_context(|| format!("failed to read the systemd version from {stdout:?}"))
 }
 
 /// The systemd cgroup manager needs a unified cgroup hierarchy, a running systemd to talk

@@ -1,10 +1,10 @@
-use std::env;
 use std::ffi::OsStr;
 use std::fs::{self, File, read_dir};
 use std::io::{self, BufRead};
 use std::os::linux::fs::MetadataExt;
 use std::os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
+use std::{env, mem};
 
 use anyhow::{Result, bail};
 use caps::CapSet;
@@ -373,6 +373,23 @@ pub fn validate_seccomp(spec: &Spec) {
     }
 }
 
+pub fn validate_seccomp_enforced(spec: &Spec) {
+    let linux = spec.linux().as_ref().unwrap();
+    if linux.seccomp().is_some() {
+        let result = unsafe { libc::syscall(libc::SYS_getpriority, libc::PRIO_PROCESS, 0) };
+        if result != -1 {
+            eprintln!(
+                "'getpriority()' syscall succeeded. It was expected to fail due to seccomp policies."
+            );
+        } else if Errno::last() != Errno::EPERM {
+            eprintln!(
+                "'getpriority()' failed with unexpected error code '{}', expected  'EPERM'",
+                Errno::last()
+            );
+        }
+    }
+}
+
 pub fn validate_sysctl(spec: &Spec) {
     let linux = spec.linux().as_ref().unwrap();
     if let Some(expected_linux_sysctl) = linux.sysctl() {
@@ -400,7 +417,7 @@ pub fn validate_sysctl(spec: &Spec) {
 pub fn validate_scheduler_policy(spec: &Spec) {
     let proc = spec.process().as_ref().unwrap();
     let sc = proc.scheduler().as_ref().unwrap();
-    let mut get_sched_attr = nc::sched_attr_t {
+    let mut get_sched_attr = libc::sched_attr {
         size: 0,
         sched_policy: 0,
         sched_flags: 0,
@@ -409,16 +426,18 @@ pub fn validate_scheduler_policy(spec: &Spec) {
         sched_runtime: 0,
         sched_deadline: 0,
         sched_period: 0,
-        sched_util_min: 0,
-        sched_util_max: 0,
     };
-    unsafe {
-        match nc::sched_getattr(0, &mut get_sched_attr, 0) {
-            Ok(_) => {}
-            Err(e) => {
-                return eprintln!("error due to fail to get sched attr error: {e}");
-            }
-        };
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_sched_getattr,
+            0,
+            &raw mut get_sched_attr,
+            mem::size_of::<libc::sched_attr>() as libc::c_uint,
+            0,
+        )
+    };
+    if let Err(e) = Errno::result(result) {
+        return eprintln!("error due to fail to get sched attr error: {e}");
     }
     let sp = get_sched_attr.sched_policy;
     let want_sp: u32 = match *sc.policy() {
@@ -546,6 +565,41 @@ fn validate_device(device: &LinuxDevice, description: &str) {
             expected_gid,
             file_data.st_gid()
         );
+    }
+}
+
+pub fn validate_device_missing_parent_dirs(spec: &Spec) {
+    validate_devices(spec);
+
+    let devices = spec
+        .linux()
+        .as_ref()
+        .and_then(|linux| linux.devices().as_ref())
+        .cloned()
+        .unwrap_or_default();
+    for device in devices {
+        for dir in device
+            .path()
+            .ancestors()
+            .skip(1)
+            .take_while(|dir| *dir != Path::new("/") && *dir != Path::new("/dev"))
+        {
+            match fs::metadata(dir) {
+                Ok(dir_data) => {
+                    let dir_mode = dir_data.permissions().mode() & 0o7777;
+                    if dir_mode & 0o022 != 0 {
+                        eprintln!(
+                            "error due to device parent dir {dir:?} being group/world writable, got mode {dir_mode:o}"
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "error due to fail to get metadata for device parent dir {dir:?}, error: {e}"
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -1725,6 +1779,121 @@ pub fn validate_tmpcopyup(spec: &Spec) {
             (Err(e), true) if e.raw_os_error() == Some(libc::EROFS) => {}
             (Ok(()), true) => eprintln!("{dest:?} is writable but mounted ro"),
             (Err(e), _) => eprintln!("write to {dest:?}: {e}"),
+        }
+    }
+}
+
+/// Checks that the tmpfs mounts have the expected mode specified in the
+/// `org.youki.contest.tmpfs` annotation as an octal value.
+pub fn validate_tmpfs(spec: &Spec) {
+    const EXPECTED_MODE_ANNOTATION: &str = "org.youki.contest.tmpfs.mode";
+
+    let Some(expected) = spec
+        .annotations()
+        .as_ref()
+        .and_then(|a| a.get(EXPECTED_MODE_ANNOTATION))
+        .and_then(|m| u32::from_str_radix(m, 8).ok())
+    else {
+        eprintln!("invalid or missing {EXPECTED_MODE_ANNOTATION} annotation");
+        return;
+    };
+
+    let Some(mount) = spec
+        .mounts()
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .find(|m| m.typ().as_deref() == Some("tmpfs") && m.destination() == Path::new("/tmpfs"))
+    else {
+        eprintln!("the spec has no /tmpfs mount");
+        return;
+    };
+
+    let dest = mount.destination();
+
+    match nix::sys::statfs::statfs(dest) {
+        Ok(fs) if fs.filesystem_type() == nix::sys::statfs::TMPFS_MAGIC => {}
+        Ok(_) => eprintln!("{dest:?} is not a tmpfs"),
+        Err(e) => eprintln!("statfs {dest:?}: {e}"),
+    }
+
+    match fs::metadata(dest) {
+        Ok(metadata) => {
+            let mode = metadata.permissions().mode() & 0o7777;
+            if mode != expected {
+                eprintln!("{dest:?} has mode {mode:04o}, expected {expected:04o}");
+            }
+        }
+        Err(e) => eprintln!("stat {dest:?}: {e}"),
+    }
+}
+
+pub fn validate_mount_label(spec: &Spec) {
+    let Some(label) = spec
+        .linux()
+        .as_ref()
+        .and_then(|l| l.mount_label().as_deref())
+    else {
+        return eprintln!("the spec has no linux.mountLabel");
+    };
+    for mount in spec.mounts().as_deref().unwrap_or_default() {
+        if mount.typ().as_deref() != Some("mqueue") {
+            continue;
+        }
+        let dest = mount.destination();
+
+        let path = std::ffi::CString::new(dest.as_os_str().as_encoded_bytes()).unwrap();
+        let mut buf = [0u8; 256];
+        // SAFETY: path and name are NUL-terminated, buf is writable for its length.
+        let n = unsafe {
+            libc::getxattr(
+                path.as_ptr(),
+                c"security.selinux".as_ptr(),
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+            )
+        };
+        if n < 0 {
+            eprintln!("getxattr {dest:?}: {}", io::Error::last_os_error());
+        } else {
+            let got = &buf[..n as usize];
+            let got = got.strip_suffix(b"\0").unwrap_or(got);
+            if got != label.as_bytes() {
+                eprintln!(
+                    "{dest:?} is labelled {:?}, want {label:?}",
+                    String::from_utf8_lossy(got)
+                );
+            }
+        }
+
+        let readonly = mount
+            .options()
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .any(|o| o == "ro");
+        match nix::sys::statvfs::statvfs(dest) {
+            Ok(st) if st.flags().contains(nix::sys::statvfs::FsFlags::ST_RDONLY) == readonly => {}
+            Ok(_) => eprintln!("{dest:?}: read-only is not {readonly}"),
+            Err(e) => eprintln!("statvfs {dest:?}: {e}"),
+        }
+    }
+}
+
+/// With a mount label, the cgroup mount must still be the container's own cgroup. The
+/// process is the only thing known to be in it, so its pid is looked up in cgroup.procs:
+/// a mount of another cgroup, such as the host's root, does not list it.
+pub fn validate_cgroup_mount_label(spec: &Spec) {
+    let pid = std::process::id().to_string();
+    for mount in spec.mounts().as_deref().unwrap_or_default() {
+        if mount.typ().as_deref() != Some("cgroup") {
+            continue;
+        }
+        let procs = mount.destination().join("cgroup.procs");
+        match fs::read_to_string(&procs) {
+            Ok(content) if content.lines().any(|line| line == pid) => {}
+            Ok(_) => eprintln!("{procs:?} does not list this process ({pid})"),
+            Err(e) => eprintln!("read {procs:?}: {e}"),
         }
     }
 }

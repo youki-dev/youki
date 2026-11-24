@@ -155,3 +155,5 @@ pub fn get_time_ns_test() -> TestGroup {
 
     test_group
 }
+
+test_framework::register_test_group!(get_time_ns_test);

@@ -21,7 +21,7 @@ pub mod mount_validation;
 pub mod state;
 pub mod tenant_builder;
 pub use builder::validate_id;
-pub use container::{CheckpointOptions, Container};
+pub use container::{CheckpointOptions, Container, PageServer};
 pub use container_checkpoint::CheckpointError;
 #[allow(deprecated)]
 pub use state::ContainerProcessState;

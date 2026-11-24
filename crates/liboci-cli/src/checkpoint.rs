@@ -40,9 +40,9 @@ pub struct Checkpoint {
     // TODO: Pass a file descriptor fd to criu. Is u32 the right type?
     // #[arg(long)]
     // pub status_fd: Option<u32>,
-    // TODO: Start a page server at the given URL
-    // #[arg(long)]
-    // pub page_server: Option<String>,
+    /// ADDRESS:PORT of the page server
+    #[arg(long)]
+    pub page_server: Option<String>,
     /// Allow file locks
     #[arg(long)]
     pub file_locks: bool,

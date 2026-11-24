@@ -9,7 +9,7 @@ use crate::common::ControllerOpt;
 pub const CPU_WEIGHT: &str = "CPUWeight";
 pub const CPU_QUOTA: &str = "CPUQuotaPerSecUSec";
 pub const CPU_PERIOD: &str = "CPUQuotaPeriodUSec";
-const MICROSECS_PER_SEC: u64 = 1_000_000;
+pub(crate) const MICROSECS_PER_SEC: u64 = 1_000_000;
 
 #[derive(thiserror::Error, Debug)]
 pub enum SystemdCpuError {

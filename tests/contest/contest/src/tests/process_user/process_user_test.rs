@@ -72,3 +72,5 @@ pub fn get_process_user_test() -> TestGroup {
 
     process_user_test_group
 }
+
+test_framework::register_test_group!(get_process_user_test);

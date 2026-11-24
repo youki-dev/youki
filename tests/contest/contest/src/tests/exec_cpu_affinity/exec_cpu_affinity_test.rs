@@ -248,3 +248,5 @@ fn affinity_mask_from_str(cpuset_str: &str) -> u64 {
 
     mask
 }
+
+test_framework::register_test_group!(get_exec_cpu_affinity_test);

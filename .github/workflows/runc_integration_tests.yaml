@@ -5,10 +5,13 @@ on:
   - cron: "0 0 * * *"
   workflow_dispatch:
 
+# Keep this scheduled/manual until a complete run establishes the baseline
+# failures and duration; it is not yet suitable as a required PR check.
+
 jobs:
   runc-integration-tests:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:

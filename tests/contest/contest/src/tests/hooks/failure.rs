@@ -348,3 +348,4 @@ pub fn get_hook_failure_tests() -> TestGroup {
     ]);
     tg
 }
+test_framework::register_test_group!(get_hook_failure_tests);

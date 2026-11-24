@@ -258,3 +258,5 @@ pub fn get_ro_paths_test() -> TestGroup {
     ]);
     tg
 }
+
+test_framework::register_test_group!(get_ro_paths_test);

@@ -87,3 +87,5 @@ pub fn get_root_readonly_test() -> TestGroup {
 
     root_readonly_test_group
 }
+
+test_framework::register_test_group!(get_root_readonly_test);

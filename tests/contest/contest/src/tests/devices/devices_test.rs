@@ -1,4 +1,4 @@
-use anyhow::{Context, Ok, Result};
+use anyhow::{Context, Ok, Result, ensure};
 use oci_spec::runtime::{
     LinuxBuilder, LinuxDeviceBuilder, LinuxDeviceType, ProcessBuilder, Spec, SpecBuilder,
 };
@@ -94,6 +94,66 @@ fn devices_default_permissions_test() -> TestResult {
     test_inside_container(&spec, &CreateOptions::default(), &|_| Ok(()))
 }
 
+// A top-level directory name that the test bundle does not have, so that every
+// parent directory of the devices below has to be created by the runtime.
+const MISSING_PARENT_DIR: &str = "youki-missing-parent";
+
+// The runtime has to create the missing parent directories of these devices,
+// both on the /dev tmpfs and on the rootfs itself, two levels deep.
+// runtimetest checks that none of them is left writable by group or others.
+fn create_spec_missing_parent_dirs() -> Result<Spec> {
+    let devices = [
+        format!("/dev/{MISSING_PARENT_DIR}/dir/test"),
+        format!("/{MISSING_PARENT_DIR}/nested/test"),
+    ]
+    .into_iter()
+    .map(|path| {
+        LinuxDeviceBuilder::default()
+            .path(&path)
+            .typ(LinuxDeviceType::C)
+            .major(1)
+            .minor(3)
+            .file_mode(0o666u32)
+            .uid(0u32)
+            .gid(0u32)
+            .build()
+            .with_context(|| format!("failed to create device {path}"))
+    })
+    .collect::<Result<Vec<_>>>()?;
+
+    let spec = SpecBuilder::default()
+        .process(
+            ProcessBuilder::default()
+                .args(vec![
+                    "runtimetest".to_string(),
+                    "device_missing_parent_dirs".to_string(),
+                ])
+                .build()
+                .expect("error in creating process config"),
+        )
+        .linux(
+            LinuxBuilder::default()
+                .devices(devices)
+                .build()
+                .context("failed to build linux spec")?,
+        )
+        .build()
+        .context("failed to build spec")?;
+
+    Ok(spec)
+}
+
+fn devices_missing_parent_dirs_test() -> TestResult {
+    let spec = test_result!(create_spec_missing_parent_dirs());
+    test_inside_container(&spec, &CreateOptions::default(), &|rootfs| {
+        ensure!(
+            !rootfs.join(MISSING_PARENT_DIR).exists(),
+            "{MISSING_PARENT_DIR} must not exist in the test bundle"
+        );
+        Ok(())
+    })
+}
+
 pub fn get_devices_test() -> TestGroup {
     let mut device_test_group = TestGroup::new("devices");
 
@@ -103,7 +163,18 @@ pub fn get_devices_test() -> TestGroup {
         Box::new(devices_default_permissions_test),
     );
 
-    device_test_group.add(vec![Box::new(test), Box::new(test_default_permissions)]);
+    let test_missing_parent_dirs = Test::new(
+        "device_missing_parent_dirs",
+        Box::new(devices_missing_parent_dirs_test),
+    );
+
+    device_test_group.add(vec![
+        Box::new(test),
+        Box::new(test_default_permissions),
+        Box::new(test_missing_parent_dirs),
+    ]);
 
     device_test_group
 }
+
+test_framework::register_test_group!(get_devices_test);

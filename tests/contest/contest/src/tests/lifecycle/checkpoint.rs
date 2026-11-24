@@ -1,3 +1,5 @@
+use std::io::Read;
+use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -183,7 +185,7 @@ fn checkpoint(
     if !dump_log.exists() {
         return TestResult::Failed(anyhow::anyhow!(
             "resulting checkpoint log file {:?} not found.",
-            &dump_log,
+            dump_log,
         ));
     }
 
@@ -260,7 +262,7 @@ fn create_checkpoint_image_dir() -> Result<(tempfile::TempDir, std::path::PathBu
     std::fs::create_dir(&image_path).map_err(|e| {
         TestResult::Failed(anyhow::anyhow!(
             "failed creating checkpoint directory ({:?}): {}",
-            &image_path,
+            image_path,
             e
         ))
     })?;
@@ -629,6 +631,160 @@ pub fn checkpoint_tcp_skip_in_flight() -> TestResult {
     }
 }
 
+struct PageServer {
+    child: std::process::Child,
+}
+
+impl PageServer {
+    // `criu page-server --status-fd` writes \0 to the fd once it is listening.
+    // nix::unistd::pipe() does not set O_CLOEXEC, so criu inherits `ready_w`.
+    fn start(images_dir: &Path, port: u16) -> Result<Self, TestResult> {
+        let (ready_r, ready_w) = nix::unistd::pipe()
+            .map_err(|e| TestResult::Failed(anyhow!("failed to create pipe: {e}")))?;
+        let child = Command::new("criu")
+            .arg("page-server")
+            .arg("--images-dir")
+            .arg(images_dir)
+            .args(["--address", "127.0.0.1", "--port", &port.to_string()])
+            .args(["--status-fd", &ready_w.as_raw_fd().to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| TestResult::Failed(anyhow!("failed to spawn criu page-server: {e}")))?;
+        // Close our copy of the write end so that the read below gets EOF when
+        // criu exits without reporting readiness.
+        drop(ready_w);
+        let page_server = Self { child };
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 1];
+            let _ = tx.send(std::fs::File::from(ready_r).read(&mut buf));
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+            Ok(Ok(1)) => Ok(page_server),
+            Ok(Ok(_)) => Err(TestResult::Failed(anyhow!(
+                "criu page-server exited before it became ready"
+            ))),
+            Ok(Err(e)) => Err(TestResult::Failed(anyhow!(
+                "failed to read the status fd of criu page-server: {e}"
+            ))),
+            Err(_) => Err(TestResult::Failed(anyhow!(
+                "timed out waiting for criu page-server to become ready"
+            ))),
+        }
+    }
+
+    // The page server writes the received pages to its images dir and exits once
+    // the dump closes the connection, so the images are complete only after exit.
+    fn wait_exit(&mut self, timeout: std::time::Duration) -> Result<(), TestResult> {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(status)) if status.success() => return Ok(()),
+                Ok(Some(status)) => {
+                    return Err(TestResult::Failed(anyhow!(
+                        "criu page-server exited with failure: {status}"
+                    )));
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    return Err(TestResult::Failed(anyhow!(
+                        "failed to wait for criu page-server: {e}"
+                    )));
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(TestResult::Failed(anyhow!(
+                    "timed out waiting for criu page-server to exit"
+                )));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+}
+
+impl Drop for PageServer {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Checkpoint a container with `--page-server` and verify that the memory pages
+/// were sent to the page server instead of being written to the image path.
+pub fn checkpoint_page_server(project_path: &Path, id: &str) -> TestResult {
+    let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let (_page_server_temp_dir, page_server_path) = match create_checkpoint_image_dir() {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+
+    // Binding to port 0 lets the kernel choose an unused port, which is released
+    // right away for criu page-server to listen on. A fixed port such as runc's
+    // 27277 fails with "Address already in use" while a page server leaked by an
+    // earlier failed run is still listening on it.
+    let port = match std::net::TcpListener::bind("127.0.0.1:0").and_then(|l| l.local_addr()) {
+        Ok(addr) => addr.port(),
+        Err(e) => return TestResult::Failed(anyhow!("failed to pick an unused port: {e}")),
+    };
+    let mut page_server = match PageServer::start(&page_server_path, port) {
+        Ok(ps) => ps,
+        Err(e) => return e,
+    };
+
+    let page_server_addr = format!("127.0.0.1:{port}");
+    let result = checkpoint(
+        project_path,
+        id,
+        &image_path,
+        vec!["--leave-running", "--page-server", &page_server_addr],
+        None,
+    );
+    if !matches!(result, TestResult::Passed) {
+        return result;
+    }
+
+    if let Err(e) = page_server.wait_exit(std::time::Duration::from_secs(10)) {
+        return e;
+    }
+
+    // pages-<id>.img holds the memory contents of the dumped processes
+    let page_server_has_pages = match std::fs::read_dir(&page_server_path) {
+        Ok(entries) => entries.flatten().any(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            name.starts_with("pages-") && name.ends_with(".img")
+        }),
+        Err(e) => {
+            return TestResult::Failed(anyhow!("failed to read {page_server_path:?}: {e}"));
+        }
+    };
+    if !page_server_has_pages {
+        return TestResult::Failed(anyhow!(
+            "no pages-*.img was written to the page server dir {page_server_path:?}"
+        ));
+    }
+
+    let image_path_has_pages = match std::fs::read_dir(&image_path) {
+        Ok(entries) => entries.flatten().any(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            name.starts_with("pages-") && name.ends_with(".img")
+        }),
+        Err(e) => return TestResult::Failed(anyhow!("failed to read {image_path:?}: {e}")),
+    };
+    if image_path_has_pages {
+        return TestResult::Failed(anyhow!(
+            "pages-*.img was written to the image path {image_path:?} although \
+             the pages must be sent to the page server"
+        ));
+    }
+
+    TestResult::Passed
+}
+
 /// Check that a namespace was treated as external by CRIU.
 /// Fails if `<img_prefix>-*.img` is absent or lacks `ext_key`.
 /// CRIU img files embed protobuf strings as raw UTF-8, so a byte search suffices.
@@ -727,7 +883,7 @@ pub fn checkpoint_empty_net_ns(project_path: &Path, id: &str) -> TestResult {
             })
             .map(|entry| entry.path()),
         Err(e) => {
-            return TestResult::Failed(anyhow::anyhow!("failed to read {:?}: {}", &image_path, e));
+            return TestResult::Failed(anyhow::anyhow!("failed to read {:?}: {}", image_path, e));
         }
     };
 

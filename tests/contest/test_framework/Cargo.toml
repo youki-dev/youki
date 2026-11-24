@@ -7,5 +7,4 @@ edition = "2024"
 
 [dependencies]
 anyhow = { workspace = true }
-crossbeam = { workspace = true }
-num_cpus = { workspace = true }
+inventory = { workspace = true }

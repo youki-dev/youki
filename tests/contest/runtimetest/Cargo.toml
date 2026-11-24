@@ -8,7 +8,6 @@ oci-spec = { workspace = true }
 nix = { workspace = true }
 anyhow = { workspace = true }
 libc = { workspace = true } # TODO (YJDoc2) upgrade to latest
-nc = { workspace = true }
 tempfile = { workspace = true }
 netlink-packet-route = { workspace = true }
 netlink-packet-core = { workspace = true }

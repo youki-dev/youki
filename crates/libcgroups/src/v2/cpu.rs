@@ -29,13 +29,26 @@ pub struct Cpu {}
 
 impl Controller for Cpu {
     type Error = V2CpuControllerError;
+    type Resource = LinuxCpu;
 
     fn apply(controller_opt: &ControllerOpt, path: &Path) -> Result<(), Self::Error> {
-        if let Some(cpu) = &controller_opt.resources.cpu() {
+        if let Some(cpu) = Self::needs_to_handle(controller_opt) {
             Self::apply(path, cpu)?;
         }
 
         Ok(())
+    }
+
+    fn needs_to_handle<'a>(controller_opt: &'a ControllerOpt) -> Option<&'a Self::Resource> {
+        controller_opt.resources.cpu().as_ref().filter(|c| {
+            c.shares().is_some_and(|v| v != 0)
+                || c.quota().is_some_and(|v| v != 0)
+                || c.period().is_some_and(|v| v != 0)
+                || c.burst().is_some()
+                || c.idle().is_some()
+                || c.realtime_runtime().is_some()
+                || c.realtime_period().is_some()
+        })
     }
 }
 
@@ -496,5 +509,17 @@ mod tests {
 
         // assert
         assert!(result.is_ok())
+    }
+
+    #[test]
+    fn test_stat_usage_without_psi() {
+        let tmp = tempfile::tempdir().unwrap();
+        let content = ["usage_usec 7730", "user_usec 4387", "system_usec 3498"].join("\n");
+        set_fixture(tmp.path(), CPU_STAT, &content).expect("create stat file");
+
+        let actual = Cpu::stats(tmp.path()).expect("get cgroup stats");
+        assert_eq!(actual.usage.usage_total, 7_730_000);
+        assert_eq!(actual.usage.usage_user, 4_387_000);
+        assert_eq!(actual.usage.usage_kernel, 3_498_000);
     }
 }

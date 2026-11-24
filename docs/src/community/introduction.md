@@ -4,4 +4,5 @@
 - [Maintainer](./maintainer.md)
 - [Governance](./governance.md)
 - [Contributing](./contributing.md)
+- [Release](./release.md)
 - [Chat](./chat.md)

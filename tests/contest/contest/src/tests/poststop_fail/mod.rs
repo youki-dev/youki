@@ -142,3 +142,5 @@ pub fn get_poststop_fail_tests() -> TestGroup {
     tg.add(vec![Box::new(get_test("poststop_fail"))]);
     tg
 }
+
+test_framework::register_test_group!(get_poststop_fail_tests);

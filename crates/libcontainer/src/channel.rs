@@ -49,17 +49,9 @@ where
         data: &[u8],
         fds: Option<&[RawFd]>,
     ) -> Result<usize, ChannelError> {
-        let len = data.len() as u64;
+        let len = (data.len() as u64).to_ne_bytes();
         // Here we prefix the length of the data onto the serialized data.
-        let iov = [
-            IoSlice::new(unsafe {
-                std::slice::from_raw_parts(
-                    (&len as *const u64) as *const u8,
-                    std::mem::size_of::<u64>(),
-                )
-            }),
-            IoSlice::new(data),
-        ];
+        let iov = [IoSlice::new(&len), IoSlice::new(data)];
         self.send_iovec(&iov[..], fds)
     }
 
@@ -87,18 +79,13 @@ where
     T: serde::de::DeserializeOwned,
 {
     fn peek_size_iovec(&mut self) -> Result<u64, ChannelError> {
-        let mut len: u64 = 0;
-        let mut iov = [IoSliceMut::new(unsafe {
-            std::slice::from_raw_parts_mut(
-                (&mut len as *mut u64) as *mut u8,
-                std::mem::size_of::<u64>(),
-            )
-        })];
+        let mut len = [0u8; size_of::<u64>()];
+        let mut iov = [IoSliceMut::new(&mut len)];
         let _ =
             socket::recvmsg::<UnixAddr>(self.receiver, &mut iov, None, socket::MsgFlags::MSG_PEEK)?;
-        match len {
+        match u64::from_ne_bytes(len) {
             0 => Err(ChannelError::BrokenChannel),
-            _ => Ok(len),
+            len => Ok(len),
         }
     }
 
@@ -145,18 +132,10 @@ where
         F: Default + AsMut<[RawFd]>,
     {
         let msg_len = self.peek_size_iovec()?;
-        let mut len: u64 = 0;
+        let mut len = [0u8; size_of::<u64>()];
         let mut buf = vec![0u8; msg_len as usize];
         let (bytes, fds) = {
-            let mut iov = [
-                IoSliceMut::new(unsafe {
-                    std::slice::from_raw_parts_mut(
-                        (&mut len as *mut u64) as *mut u8,
-                        std::mem::size_of::<u64>(),
-                    )
-                }),
-                IoSliceMut::new(&mut buf),
-            ];
+            let mut iov = [IoSliceMut::new(&mut len), IoSliceMut::new(&mut buf)];
             self.recv_into_iovec(&mut iov)?
         };
 

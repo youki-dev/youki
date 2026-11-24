@@ -120,7 +120,7 @@ pub(crate) fn build_container_process_state(
 #[cfg(test)]
 mod tests {
     use std::io::Read;
-    use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+    use std::os::fd::AsRawFd;
     use std::os::unix::net::UnixListener;
     use std::thread;
 
@@ -148,9 +148,8 @@ mod tests {
         let listener = UnixListener::bind(&socket_path)?;
         let want = "container-process-state";
         let send_path = socket_path.clone();
-        let fd = unsafe { OwnedFd::from_raw_fd(scmp_file.into_raw_fd()) };
         let th = thread::spawn(move || {
-            sync_seccomp_send_msg(&send_path, want.as_bytes(), fd.as_raw_fd()).unwrap();
+            sync_seccomp_send_msg(&send_path, want.as_bytes(), scmp_file.as_raw_fd()).unwrap();
         });
 
         let (mut socket, _) = listener.accept()?;

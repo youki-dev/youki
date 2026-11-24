@@ -222,3 +222,5 @@ pub fn get_linux_masked_paths_tests() -> TestGroup {
     ]);
     tg
 }
+
+test_framework::register_test_group!(get_linux_masked_paths_tests);
