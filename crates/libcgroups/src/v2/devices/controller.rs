@@ -129,14 +129,9 @@ impl Devices {
             Mode::from_bits(0o600).unwrap(),
         )?;
 
-        // Like apply_devices, this leaves the program fds the query opens to the
-        // process exit.
-        let ids = bpf_prog::query(fd.as_raw_fd())?
-            .iter()
-            .map(|prog| prog.id)
-            .collect();
-
-        Ok(ids)
+        // Only the ids: a program that cannot be opened must still count as attached
+        // before the update, or the detach below would treat it as new.
+        Ok(bpf_prog::query_ids(fd.as_raw_fd())?)
     }
 
     /// Detaches the programs attached directly to `cgroup_root` whose ids are not in
@@ -154,11 +149,20 @@ impl Devices {
         )?;
 
         let mut detached = Vec::new();
-        for prog in bpf_prog::query(fd.as_raw_fd())? {
-            if !before.contains(&prog.id) {
-                bpf_prog::detach2(prog.fd, fd.as_raw_fd())?;
-                detached.push(prog.id);
+        for id in bpf_prog::query_ids(fd.as_raw_fd())? {
+            if before.contains(&id) {
+                continue;
             }
+            // A new program that cannot be opened cannot be detached, so this is an
+            // error rather than a silent success. ENOENT means it is already gone.
+            // Like apply_devices, the fd is left to the process exit.
+            let prog_fd = match bpf_prog::get_fd_by_id(id) {
+                Ok(prog_fd) => prog_fd,
+                Err(BpfError::Errno(errno)) if errno.0 == libc::ENOENT => continue,
+                Err(err) => return Err(err.into()),
+            };
+            bpf_prog::detach2(prog_fd, fd.as_raw_fd())?;
+            detached.push(id);
         }
 
         Ok(detached)
@@ -298,15 +302,16 @@ mod tests {
     #[serial(bpf)] // mock contexts are shared
     fn test_detach_programs_added_detaches_only_new_programs() {
         let (tmp, _) = setup("some.value");
-        let kept = bpf::ProgramInfo { id: 1, fd: 10 };
-        let added = bpf::ProgramInfo { id: 2, fd: 11 };
 
-        let query = mock_prog::query_context();
+        let query_ids = mock_prog::query_ids_context();
+        let get_fd_by_id = mock_prog::get_fd_by_id_context();
         let detach2 = mock_prog::detach2_context();
-        query
+        query_ids.expect().once().returning(|_| Ok(vec![1, 2]));
+        get_fd_by_id
             .expect()
             .once()
-            .returning(move |_| Ok(vec![kept.clone(), added.clone()]));
+            .with(mockall::predicate::eq(2))
+            .returning(|_| Ok(11));
         detach2
             .expect()
             .once()
@@ -320,20 +325,33 @@ mod tests {
 
     #[test]
     #[serial(bpf)] // mock contexts are shared
-    fn test_detach_programs_added_keeps_known_programs() {
+    fn test_detach_programs_added_fails_when_a_new_program_cannot_be_opened() {
         let (tmp, _) = setup("some.value");
-        let known = bpf::ProgramInfo { id: 1, fd: 10 };
 
-        let query = mock_prog::query_context();
+        let query_ids = mock_prog::query_ids_context();
+        let get_fd_by_id = mock_prog::get_fd_by_id_context();
         let detach2 = mock_prog::detach2_context();
-        query
+        query_ids.expect().once().returning(|_| Ok(vec![1, 2]));
+        get_fd_by_id
             .expect()
             .once()
-            .returning(move |_| Ok(vec![known.clone()]));
+            .returning(|_| Err(BpfError::Errno(errno::Errno(libc::EMFILE))));
         detach2.expect().never();
 
-        let detached =
-            Devices::detach_programs_added(tmp.path(), &[1]).expect("detach added programs");
-        assert!(detached.is_empty());
+        assert!(Devices::detach_programs_added(tmp.path(), &[1]).is_err());
+    }
+
+    #[test]
+    #[serial(bpf)] // mock contexts are shared
+    fn test_attached_program_ids_counts_programs_without_opening_them() {
+        let (tmp, _) = setup("some.value");
+
+        let query_ids = mock_prog::query_ids_context();
+        let get_fd_by_id = mock_prog::get_fd_by_id_context();
+        query_ids.expect().once().returning(|_| Ok(vec![1, 2]));
+        get_fd_by_id.expect().never();
+
+        let ids = Devices::attached_program_ids(tmp.path()).expect("list programs");
+        assert_eq!(ids, vec![1, 2]);
     }
 }
