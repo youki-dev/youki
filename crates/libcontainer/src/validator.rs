@@ -3,7 +3,7 @@ use std::path::Path;
 
 use libc::IFNAMSIZ;
 use nix::sys::stat::stat;
-use oci_spec::runtime::{LinuxNamespaceType, LinuxSchedulerPolicy, Spec};
+use oci_spec::runtime::{LinuxNamespaceType, LinuxSchedulerPolicy, LinuxSeccompAction, Spec};
 
 use crate::container::mount_validation::validate_idmapped_mounts;
 use crate::error::ErrInvalidSpec;
@@ -21,6 +21,7 @@ impl Validator {
         Self::validate_spec_for_io_priority(spec)?;
         Self::validate_spec_for_intel_rdt(spec)?;
         Self::validate_spec_for_time_namespace(spec)?;
+        Self::validate_spec_for_seccomp(spec)?;
         if let Some(mounts) = spec.mounts() {
             Self::validate_spec_for_mount_options(mounts)?;
             validate_idmapped_mounts(mounts, spec.linux().as_ref(), is_rootless)?;
@@ -426,6 +427,38 @@ impl Validator {
         }
         Ok(())
     }
+
+    // The runtime spec only allows defaultErrnoRet and errnoRet with an action
+    // that supports an errno, and says the runtime must fail otherwise. Every
+    // rule is checked, including one that is later skipped because it has the
+    // default action.
+    fn validate_spec_for_seccomp(spec: &Spec) -> Result<(), ErrInvalidSpec> {
+        let Some(seccomp) = spec.linux().as_ref().and_then(|l| l.seccomp().as_ref()) else {
+            return Ok(());
+        };
+        let supports_errno = |action| {
+            matches!(
+                action,
+                LinuxSeccompAction::ScmpActErrno | LinuxSeccompAction::ScmpActTrace
+            )
+        };
+
+        if seccomp.default_errno_ret().is_some() && !supports_errno(seccomp.default_action()) {
+            return Err(ErrInvalidSpec::SeccompErrnoRet(
+                "defaultErrnoRet".to_string(),
+            ));
+        }
+        for syscall in seccomp.syscalls().iter().flatten() {
+            if syscall.errno_ret().is_some() && !supports_errno(syscall.action()) {
+                return Err(ErrInvalidSpec::SeccompErrnoRet(format!(
+                    "errnoRet of syscall {:?}",
+                    syscall.names().join(",")
+                )));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -436,8 +469,8 @@ mod tests {
     use nix::unistd::{Gid, Uid};
     use oci_spec::runtime::{
         IOPriorityClass, LinuxBuilder, LinuxIOPriorityBuilder, LinuxIdMappingBuilder,
-        LinuxIntelRdtBuilder, LinuxNamespaceBuilder, LinuxNetDevice, ProcessBuilder,
-        SchedulerBuilder, SpecBuilder,
+        LinuxIntelRdtBuilder, LinuxNamespaceBuilder, LinuxNetDevice, LinuxSeccompBuilder,
+        LinuxSyscallBuilder, ProcessBuilder, SchedulerBuilder, SpecBuilder,
     };
     use serial_test::serial;
 
@@ -1170,6 +1203,72 @@ mod tests {
             .build()
             .unwrap();
         assert!(Validator::validate_spec_for_time_namespace(&spec_no_offsets).is_ok());
+    }
+
+    fn spec_with_seccomp(
+        default_action: LinuxSeccompAction,
+        default_errno_ret: Option<u32>,
+        rule: Option<(LinuxSeccompAction, Option<u32>)>,
+    ) -> Spec {
+        let mut seccomp = LinuxSeccompBuilder::default().default_action(default_action);
+        if let Some(errno) = default_errno_ret {
+            seccomp = seccomp.default_errno_ret(errno);
+        }
+        if let Some((action, errno)) = rule {
+            let mut syscall = LinuxSyscallBuilder::default()
+                .names(vec!["mkdir".to_string()])
+                .action(action);
+            if let Some(errno) = errno {
+                syscall = syscall.errno_ret(errno);
+            }
+            seccomp = seccomp.syscalls(vec![syscall.build().unwrap()]);
+        }
+        SpecBuilder::default()
+            .linux(
+                LinuxBuilder::default()
+                    .seccomp(seccomp.build().unwrap())
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn test_validate_spec_for_seccomp_errno_ret() {
+        use LinuxSeccompAction::*;
+
+        for action in [ScmpActErrno, ScmpActTrace] {
+            let spec = spec_with_seccomp(action, Some(1), None);
+            assert!(Validator::validate_spec_for_seccomp(&spec).is_ok());
+            let spec = spec_with_seccomp(ScmpActAllow, None, Some((action, Some(1))));
+            assert!(Validator::validate_spec_for_seccomp(&spec).is_ok());
+        }
+
+        for action in [ScmpActAllow, ScmpActKill, ScmpActTrap, ScmpActLog] {
+            let spec = spec_with_seccomp(action, Some(1), None);
+            assert!(matches!(
+                Validator::validate_spec_for_seccomp(&spec).unwrap_err(),
+                ErrInvalidSpec::SeccompErrnoRet(field) if field == "defaultErrnoRet"
+            ));
+            let spec = spec_with_seccomp(ScmpActErrno, None, Some((action, Some(1))));
+            assert!(matches!(
+                Validator::validate_spec_for_seccomp(&spec).unwrap_err(),
+                ErrInvalidSpec::SeccompErrnoRet(field) if field == "errnoRet of syscall \"mkdir\""
+            ));
+        }
+
+        // A rule with the default action is skipped when the filter is built,
+        // but its errnoRet is still checked.
+        let spec = spec_with_seccomp(ScmpActAllow, None, Some((ScmpActAllow, Some(1))));
+        assert!(matches!(
+            Validator::validate_spec_for_seccomp(&spec).unwrap_err(),
+            ErrInvalidSpec::SeccompErrnoRet(_)
+        ));
+
+        // No errno anywhere -> Ok
+        let spec = spec_with_seccomp(ScmpActAllow, None, Some((ScmpActKill, None)));
+        assert!(Validator::validate_spec_for_seccomp(&spec).is_ok());
     }
 
     #[test]

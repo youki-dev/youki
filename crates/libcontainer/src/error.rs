@@ -154,6 +154,8 @@ pub enum ErrInvalidSpec {
     IO(#[from] std::io::Error),
     #[error("rootless container requires valid user namespace definition")]
     NoUserNamespace,
+    #[error("seccomp: {0} is only supported for the SCMP_ACT_ERRNO and SCMP_ACT_TRACE actions")]
+    SeccompErrnoRet(String),
 }
 
 #[derive(Debug, thiserror::Error)]
