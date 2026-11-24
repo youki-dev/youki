@@ -35,7 +35,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-afec3877.js";
+            window.path_to_searchindex_js = "../../searchindex-be13d274.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-542fda56.js"></script>
@@ -225,6 +225,8 @@ pub fn get_example_test() -&gt; TestGroup {
 
     test_group
 }
+
+test_framework::register_test_group!(get_example_test);
 ////////// ANCHOR_END: get_example_test</code></pre>
 </p>
 
@@ -260,7 +262,7 @@ Therefore, it is common practice here to write an OCI Runtime Spec that executes
     test_inside_container(&amp;spec, &amp;CreateOptions::default(), &amp;|_| Ok(()))
 }</code></pre>
 <ol start="3">
-<li>Create a <code>TestGroup</code> and register a test case you created</li>
+<li>Create a <code>TestGroup</code>, add the test case you created to it, and register the <code>TestGroup</code> with <code>test_framework::register_test_group!</code>. The macro takes the function (or <code>Type::new</code>) that builds the group, and goes next to that function.</li>
 </ol>
 <pre><code class="language-rust no_run noplayground">pub fn get_example_test() -&gt; TestGroup {
     let mut test_group = TestGroup::new("example");
@@ -268,13 +270,14 @@ Therefore, it is common practice here to write an OCI Runtime Spec that executes
     test_group.add(vec![Box::new(test1)]);
 
     test_group
-}</code></pre>
+}
+
+test_framework::register_test_group!(get_example_test);</code></pre>
 <ol start="4">
-<li>Register the <code>TestGroup</code> you created to a <code>TestManager</code></li>
+<li><code>main.rs</code> collects every registered group into the <code>TestManager</code>. Each group needs a unique name: contest panics at startup if two groups share one.</li>
 </ol>
 <pre><code class="language-rust no_run noplayground">    let mut tm = TestManager::new();
-    let example = get_example_test();
-    tm.add_test_group(Box::new(example));</code></pre>
+    tm.add_registered_test_groups();</code></pre>
 <ol start="5">
 <li>Write the validation you want to run within a test container</li>
 </ol>
