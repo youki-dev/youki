@@ -137,7 +137,6 @@ impl InitContainerBuilder {
             as_sibling: self.as_sibling,
             cgroup_path: config.cgroup_path.clone(),
             sub_cgroup_path: None,
-            process_label: None,
         };
 
         let (_, foreground_pty_fd) = builder_impl.create()?;

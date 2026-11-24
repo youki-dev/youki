@@ -33,6 +33,7 @@ use super::symlink::Symlink;
 use super::symlink::SymlinkError;
 use super::utils::{MountOptionConfig, parse_mount};
 use crate::rootfs::utils::is_bind;
+use crate::selinux;
 use crate::syscall::syscall::create_syscall;
 use crate::syscall::{Syscall, SyscallError, linux};
 use crate::utils::{PathBufExt, retry};
@@ -136,7 +137,7 @@ impl Mount {
         Mount {
             syscall: create_syscall(),
             mountinfo_provider: Box::new(ProcMountInfoProvider::new()),
-            selinux_enabled: Path::new("/sys/fs/selinux").exists(),
+            selinux_enabled: selinux::is_enabled(),
         }
     }
 
@@ -1580,7 +1581,7 @@ mod tests {
                 fsc_str("mode", "0620"),
                 fsc_str("gid", "5"),
             ];
-            if Path::new("/sys/fs/selinux").exists() {
+            if selinux::is_enabled() {
                 want_fsconfig.push(fsc_str("context", "defaults"));
             }
             want_fsconfig.push(fsc_create());

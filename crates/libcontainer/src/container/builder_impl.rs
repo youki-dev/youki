@@ -66,10 +66,6 @@ pub(super) struct ContainerBuilderImpl {
     pub cgroup_path: PathBuf,
     // Run the process in an (existing) sub-cgroup(s)
     pub sub_cgroup_path: Option<String>,
-    // Asm process label for the process commonly used with selinux.
-    // TODO: youki does not support selinux yet
-    #[allow(dead_code)]
-    pub process_label: Option<String>,
 }
 
 impl ContainerBuilderImpl {
