@@ -1,4 +1,6 @@
 pub mod bpf;
+#[cfg(not(test))]
+mod bpf_sys;
 pub mod controller;
 pub mod emulator;
 pub mod program;

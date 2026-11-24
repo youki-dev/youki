@@ -18,37 +18,39 @@ pub mod libc {
 }
 
 #[cfg_attr(test, automock())]
-pub mod libbpf_sys {
+pub mod bpf_sys {
+    use std::ffi::CStr;
+
+    use aya_obj::generated::{bpf_attach_type, bpf_insn, bpf_prog_type};
+
     pub fn bpf_prog_load(
-        _type_: libbpf_sys::bpf_prog_type,
-        _name: *const ::std::os::raw::c_char,
-        _license: *const ::std::os::raw::c_char,
-        _insns: *const libbpf_sys::bpf_insn,
-        _insns_cnt: libbpf_sys::size_t,
-        _opts: *const libbpf_sys::bpf_prog_load_opts,
+        _prog_type: bpf_prog_type,
+        _license: &CStr,
+        _insns: *const bpf_insn,
+        _insns_cnt: usize,
     ) -> ::std::os::raw::c_int {
         unimplemented!();
     }
 
     pub fn bpf_prog_query(
         _target_fd: ::std::os::raw::c_int,
-        _type_: libbpf_sys::bpf_attach_type,
-        _query_flags: libbpf_sys::__u32,
-        _attach_flags: *mut libbpf_sys::__u32,
-        _prog_ids: *mut libbpf_sys::__u32,
-        _prog_cnt: *mut libbpf_sys::__u32,
+        _attach_type: bpf_attach_type,
+        _query_flags: u32,
+        _attach_flags: *mut u32,
+        _prog_ids: *mut u32,
+        _prog_cnt: *mut u32,
     ) -> ::std::os::raw::c_int {
         unimplemented!();
     }
 
-    pub fn bpf_prog_get_fd_by_id(_id: libbpf_sys::__u32) -> ::std::os::raw::c_int {
+    pub fn bpf_prog_get_fd_by_id(_id: u32) -> ::std::os::raw::c_int {
         unimplemented!();
     }
 
     pub fn bpf_prog_detach2(
         _prog_fd: ::std::os::raw::c_int,
         _attachable_fd: ::std::os::raw::c_int,
-        _type_: libbpf_sys::bpf_attach_type,
+        _attach_type: bpf_attach_type,
     ) -> ::std::os::raw::c_int {
         unimplemented!();
     }
@@ -56,7 +58,7 @@ pub mod libbpf_sys {
     pub fn bpf_prog_attach(
         _prog_fd: ::std::os::raw::c_int,
         _attachable_fd: ::std::os::raw::c_int,
-        _type_: libbpf_sys::bpf_attach_type,
+        _attach_type: bpf_attach_type,
         _flags: ::std::os::raw::c_uint,
     ) -> ::std::os::raw::c_int {
         unimplemented!();

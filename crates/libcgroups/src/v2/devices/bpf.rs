@@ -14,22 +14,24 @@ pub enum BpfError {
 
 #[cfg_attr(test, automock)]
 pub mod prog {
+    use std::ffi::CString;
     use std::os::unix::io::RawFd;
-    use std::ptr;
 
-    use libbpf_sys::{BPF_CGROUP_DEVICE, BPF_F_ALLOW_MULTI, BPF_PROG_TYPE_CGROUP_DEVICE, bpf_insn};
-    #[cfg(not(test))]
-    use libbpf_sys::{
-        bpf_prog_attach, bpf_prog_detach2, bpf_prog_get_fd_by_id, bpf_prog_load, bpf_prog_query,
-    };
+    use aya_obj::generated::bpf_attach_type::BPF_CGROUP_DEVICE;
+    use aya_obj::generated::bpf_prog_type::BPF_PROG_TYPE_CGROUP_DEVICE;
+    use aya_obj::generated::{BPF_F_ALLOW_MULTI, bpf_insn};
     #[cfg(not(test))]
     use libc::setrlimit;
     use libc::{ENOSPC, RLIMIT_MEMLOCK, rlimit};
 
     use super::ProgramInfo;
     // TODO: consider use of #[mockall_double]
+    #[cfg(not(test))]
+    use crate::v2::devices::bpf_sys::{
+        bpf_prog_attach, bpf_prog_detach2, bpf_prog_get_fd_by_id, bpf_prog_load, bpf_prog_query,
+    };
     #[cfg(test)]
-    use crate::v2::devices::mocks::mock_libbpf_sys::{
+    use crate::v2::devices::mocks::mock_bpf_sys::{
         bpf_prog_attach, bpf_prog_detach2, bpf_prog_get_fd_by_id, bpf_prog_load, bpf_prog_query,
     };
     // mocks
@@ -40,24 +42,12 @@ pub mod prog {
     pub fn load(license: &str, insns: &[u8]) -> Result<RawFd, super::BpfError> {
         let insns_cnt = insns.len() / std::mem::size_of::<bpf_insn>();
         let insns = insns as *const _ as *const bpf_insn;
-        let mut opts = libbpf_sys::bpf_prog_load_opts {
-            sz: std::mem::size_of::<libbpf_sys::bpf_prog_load_opts>() as libbpf_sys::size_t,
-            kern_version: 0,
-            log_buf: ptr::null_mut::<::std::os::raw::c_char>(),
-            log_size: 0,
-            ..Default::default()
-        };
+        // The kernel reads the license as a NUL-terminated string.
+        let license = CString::new(license)
+            .map_err(|_| super::BpfError::Errno(errno::Errno(libc::EINVAL)))?;
         #[allow(unused_unsafe)]
-        let prog_fd = unsafe {
-            bpf_prog_load(
-                BPF_PROG_TYPE_CGROUP_DEVICE,
-                ptr::null::<::std::os::raw::c_char>(),
-                license as *const _ as *const ::std::os::raw::c_char,
-                insns,
-                insns_cnt as u64,
-                &mut opts as *mut libbpf_sys::bpf_prog_load_opts,
-            )
-        };
+        let prog_fd =
+            unsafe { bpf_prog_load(BPF_PROG_TYPE_CGROUP_DEVICE, &license, insns, insns_cnt) };
 
         if prog_fd < 0 {
             return Err(errno::errno().into());
@@ -159,10 +149,10 @@ mod tests {
     use serial_test::serial;
 
     use super::prog;
-    use crate::v2::devices::mocks::{mock_libbpf_sys, mock_libc};
+    use crate::v2::devices::mocks::{mock_bpf_sys, mock_libc};
 
     #[test]
-    #[serial(libbpf_sys)] // mock contexts are shared
+    #[serial(bpf_sys)] // mock contexts are shared
     fn test_bpf_load() {
         // eBPF uses 64-bit instructions
         let instruction_zero: &[u8] = &[0x0, 0x0, 0x0, 0x0];
@@ -171,10 +161,10 @@ mod tests {
         // arrange
         let license = "Apache";
         let instructions = [instruction_zero, instruction_one].concat();
-        let load = mock_libbpf_sys::bpf_prog_load_context();
+        let load = mock_bpf_sys::bpf_prog_load_context();
 
         // expect
-        load.expect().once().returning(|_, _, _, _, _, _| 32);
+        load.expect().once().returning(|_, _, _, _| 32);
 
         // act
         let fd = prog::load(license, &instructions).expect("successfully calls load");
@@ -184,10 +174,10 @@ mod tests {
     }
 
     #[test]
-    #[serial(libbpf_sys)] // mock contexts are shared
+    #[serial(bpf_sys)] // mock contexts are shared
     fn test_bpf_attach() {
         // arrange
-        let attach = mock_libbpf_sys::bpf_prog_attach_context();
+        let attach = mock_bpf_sys::bpf_prog_attach_context();
 
         // expect
         attach.expect().once().returning(|_, _, _, _| 0);
@@ -200,7 +190,7 @@ mod tests {
     }
 
     #[test]
-    #[serial(libbpf_sys)] // mock contexts are shared
+    #[serial(bpf_sys)] // mock contexts are shared
     fn test_bpf_load_error() {
         // eBPF uses 64-bit instructions
         let instruction_zero: &[u8] = &[0x0, 0x0, 0x0, 0x0];
@@ -209,10 +199,10 @@ mod tests {
         // arrange
         let license = "Apache";
         let instructions = [instruction_zero, instruction_one].concat();
-        let load = mock_libbpf_sys::bpf_prog_load_context();
+        let load = mock_bpf_sys::bpf_prog_load_context();
 
         // expect
-        load.expect().once().returning(|_, _, _, _, _, _| -1);
+        load.expect().once().returning(|_, _, _, _| -1);
 
         // act
         let error_result = prog::load(license, &instructions);
@@ -222,20 +212,20 @@ mod tests {
     }
 
     #[test]
-    #[serial(libbpf_sys)] // mock contexts are shared
+    #[serial(bpf_sys)] // mock contexts are shared
     fn test_bpf_query() {
         // arrange
-        let query = mock_libbpf_sys::bpf_prog_query_context();
-        let get_fd_by_id = mock_libbpf_sys::bpf_prog_get_fd_by_id_context();
+        let query = mock_bpf_sys::bpf_prog_query_context();
+        let get_fd_by_id = mock_bpf_sys::bpf_prog_get_fd_by_id_context();
 
         // expect
         query.expect().once().returning(
             |_target_fd: std::os::raw::c_int,
-             _type_: libbpf_sys::bpf_attach_type,
-             _query_flags: libbpf_sys::__u32,
-             _attach_flags: *mut libbpf_sys::__u32,
-             prog_ids: *mut libbpf_sys::__u32,
-             prog_cnt: *mut libbpf_sys::__u32|
+             _type_: aya_obj::generated::bpf_attach_type,
+             _query_flags: u32,
+             _attach_flags: *mut u32,
+             prog_ids: *mut u32,
+             prog_cnt: *mut u32|
              -> ::std::os::raw::c_int {
                 // deref the ptr and fill it with some "ids"
                 // also set the prog_cnt to 4
@@ -268,20 +258,20 @@ mod tests {
     }
 
     #[test]
-    #[serial(libbpf_sys)] // mock contexts are shared
+    #[serial(bpf_sys)] // mock contexts are shared
     fn test_bpf_query_recoverable_error() {
         // arrange
-        let query = mock_libbpf_sys::bpf_prog_query_context();
-        let get_fd_by_id = mock_libbpf_sys::bpf_prog_get_fd_by_id_context();
+        let query = mock_bpf_sys::bpf_prog_query_context();
+        let get_fd_by_id = mock_bpf_sys::bpf_prog_get_fd_by_id_context();
 
         // expect
         query.expect().times(2).returning(
             |_target_fd: std::os::raw::c_int,
-             _type_: libbpf_sys::bpf_attach_type,
-             _query_flags: libbpf_sys::__u32,
-             _attach_flags: *mut libbpf_sys::__u32,
-             prog_ids: *mut libbpf_sys::__u32,
-             prog_cnt: *mut libbpf_sys::__u32|
+             _type_: aya_obj::generated::bpf_attach_type,
+             _query_flags: u32,
+             _attach_flags: *mut u32,
+             prog_ids: *mut u32,
+             prog_cnt: *mut u32|
              -> ::std::os::raw::c_int {
                 unsafe {
                     if *prog_cnt == 64 {
@@ -314,20 +304,20 @@ mod tests {
     }
 
     #[test]
-    #[serial(libbpf_sys)] // mock contexts are shared
+    #[serial(bpf_sys)] // mock contexts are shared
     fn test_bpf_query_other_error() {
         // arrange
-        let query = mock_libbpf_sys::bpf_prog_query_context();
-        let get_fd_by_id = mock_libbpf_sys::bpf_prog_get_fd_by_id_context();
+        let query = mock_bpf_sys::bpf_prog_query_context();
+        let get_fd_by_id = mock_bpf_sys::bpf_prog_get_fd_by_id_context();
 
         // expect
         query.expect().times(1).returning(
             |_target_fd: std::os::raw::c_int,
-             _type_: libbpf_sys::bpf_attach_type,
-             _query_flags: libbpf_sys::__u32,
-             _attach_flags: *mut libbpf_sys::__u32,
-             _prog_ids: *mut libbpf_sys::__u32,
-             _prog_cnt: *mut libbpf_sys::__u32|
+             _type_: aya_obj::generated::bpf_attach_type,
+             _query_flags: u32,
+             _attach_flags: *mut u32,
+             _prog_ids: *mut u32,
+             _prog_cnt: *mut u32|
              -> ::std::os::raw::c_int {
                 set_errno(Errno(ENOSYS));
                 1
@@ -343,10 +333,10 @@ mod tests {
     }
 
     #[test]
-    #[serial(libbpf_sys)] // mock contexts are shared
+    #[serial(bpf_sys)] // mock contexts are shared
     fn test_bpf_detach2() {
         // arrange
-        let detach2 = mock_libbpf_sys::bpf_prog_detach2_context();
+        let detach2 = mock_bpf_sys::bpf_prog_detach2_context();
 
         // expect
         detach2.expect().once().returning(|_, _, _| 0);
@@ -359,10 +349,10 @@ mod tests {
     }
 
     #[test]
-    #[serial(libbpf_sys)] // mock contexts are shared
+    #[serial(bpf_sys)] // mock contexts are shared
     fn test_bpf_detach2_error() {
         // arrange
-        let detach2 = mock_libbpf_sys::bpf_prog_detach2_context();
+        let detach2 = mock_bpf_sys::bpf_prog_detach2_context();
 
         // expect
         detach2.expect().once().returning(|_, _, _| 1);
