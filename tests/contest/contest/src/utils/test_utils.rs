@@ -167,6 +167,20 @@ pub fn delete_container_force<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child>
     Ok(res)
 }
 
+/// `run --detach`: creates and starts the container in one command.
+pub fn run_container_detached<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
+    let res = runtime_command(&dir)
+        .arg("run")
+        .arg("--detach")
+        .arg(id)
+        .arg("--bundle")
+        .arg(dir.as_ref().join("bundle"))
+        .stdin(Stdio::null())
+        .spawn()
+        .context("could not run container")?;
+    Ok(res)
+}
+
 pub fn get_state<P: AsRef<Path>>(id: &str, dir: P) -> Result<(String, String)> {
     sleep(SLEEP_TIME);
     let output = runtime_command(dir)

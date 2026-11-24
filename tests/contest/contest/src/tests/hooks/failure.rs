@@ -15,7 +15,7 @@ use oci_spec::runtime::{Hook, HookBuilder, HooksBuilder, ProcessBuilder, Spec, S
 use test_framework::{ConditionalTest, Test, TestGroup, TestResult};
 
 use super::invoke::{delete_hook_output_file, get_hook_output_path, write_log_hook};
-use crate::utils::test_utils::delete_container_force;
+use crate::utils::test_utils::{delete_container_force, run_container_detached};
 use crate::utils::{
     CreateOptions, LifecycleStatus, WaitTarget, create_container, delete_container, generate_uuid,
     is_runtime_runc, prepare_bundle, set_config, start_container, wait_for_state,
@@ -53,6 +53,22 @@ fn failing_log_hook(content: &str, host_output_file_path: &str) -> Hook {
         .expect("could not build hook")
 }
 
+/// A hook that records its invocation, then outlives its 2 s timeout.
+/// The runtime kills it and reports the hook as failed.
+/// The 2 s leave a slow host time to write the log line first.
+fn timing_out_log_hook(content: &str, host_output_file_path: &str) -> Hook {
+    HookBuilder::default()
+        .path("/bin/sh")
+        .args(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            format!("echo '{content}' >> {host_output_file_path}; exec /bin/sleep 30"),
+        ])
+        .timeout(2)
+        .build()
+        .expect("could not build hook")
+}
+
 fn wait_for_target(id: &str, bundle_path: &Path, target: WaitTarget) -> anyhow::Result<()> {
     wait_for_state(
         id,
@@ -63,8 +79,41 @@ fn wait_for_target(id: &str, bundle_path: &Path, target: WaitTarget) -> anyhow::
     )
 }
 
-fn poststart_failure_spec(host_output_file: &str) -> Spec {
-    SpecBuilder::default()
+/// The two ways a hook can fail: a non-zero exit, or outliving its timeout.
+#[derive(Clone, Copy)]
+enum HookFailure {
+    Exit,
+    Timeout,
+}
+
+impl HookFailure {
+    /// The failing hook, and the line it writes to the hook log.
+    /// The line is `<stage>-failed` or `<stage>-timed-out`.
+    fn hook(self, stage: &str, host_output_file: &str) -> (Hook, String) {
+        match self {
+            HookFailure::Exit => {
+                let content = format!("{stage}-failed");
+                (failing_log_hook(&content, host_output_file), content)
+            }
+            HookFailure::Timeout => {
+                let content = format!("{stage}-timed-out");
+                (timing_out_log_hook(&content, host_output_file), content)
+            }
+        }
+    }
+}
+
+/// The create-time hook stages that run before `create` returns.
+#[derive(Clone, Copy)]
+enum CreateStage {
+    CreateRuntime,
+    CreateContainer,
+}
+
+/// A container whose poststart hook fails, and the line that hook logs.
+fn poststart_failure_spec(host_output_file: &str, failure: HookFailure) -> (Spec, String) {
+    let (hook, logged) = failure.hook("post-start", host_output_file);
+    let spec = SpecBuilder::default()
         .process(
             ProcessBuilder::default()
                 .args(vec!["sleep".to_string(), "60".to_string()])
@@ -73,20 +122,37 @@ fn poststart_failure_spec(host_output_file: &str) -> Spec {
         )
         .hooks(
             HooksBuilder::default()
-                .poststart(vec![failing_log_hook(
-                    "post-start-failed",
-                    host_output_file,
-                )])
+                .poststart(vec![hook])
                 .poststop(vec![write_log_hook("post-stop called", host_output_file)])
                 .build()
                 .expect("could not build hooks"),
         )
         .build()
-        .unwrap()
+        .unwrap();
+    (spec, logged)
 }
 
-fn create_runtime_failure_spec(host_output_file: &str) -> Spec {
-    SpecBuilder::default()
+/// A container whose createRuntime or createContainer hook fails.
+/// Also returns the line that hook logs.
+fn create_failure_spec(
+    host_output_file: &str,
+    stage: CreateStage,
+    failure: HookFailure,
+) -> (Spec, String) {
+    let mut hooks = HooksBuilder::default();
+    let logged = match stage {
+        CreateStage::CreateRuntime => {
+            let (hook, logged) = failure.hook("create-runtime", host_output_file);
+            hooks = hooks.create_runtime(vec![hook]);
+            logged
+        }
+        CreateStage::CreateContainer => {
+            let (hook, logged) = failure.hook("create-container", host_output_file);
+            hooks = hooks.create_container(vec![hook]);
+            logged
+        }
+    };
+    let spec = SpecBuilder::default()
         .process(
             ProcessBuilder::default()
                 .args(vec!["true".to_string()])
@@ -94,25 +160,23 @@ fn create_runtime_failure_spec(host_output_file: &str) -> Spec {
                 .unwrap(),
         )
         .hooks(
-            HooksBuilder::default()
-                .create_runtime(vec![failing_log_hook(
-                    "create-runtime-failed",
-                    host_output_file,
-                )])
+            hooks
                 .poststop(vec![status_log_hook("post-stop", host_output_file)])
                 .build()
                 .expect("could not build hooks"),
         )
         .build()
-        .unwrap()
+        .unwrap();
+    (spec, logged)
 }
 
-fn poststart_failure_test() -> TestResult {
+fn poststart_failure_test(failure: HookFailure) -> TestResult {
     let id = generate_uuid().to_string();
     let bundle = prepare_bundle().unwrap();
     let host_output_file = get_hook_output_path(&bundle);
     let host_output_file_str = host_output_file.to_str().unwrap();
-    set_config(&bundle, &poststart_failure_spec(host_output_file_str)).unwrap();
+    let (spec, logged) = poststart_failure_spec(host_output_file_str, failure);
+    set_config(&bundle, &spec).unwrap();
 
     create_container(&id, &bundle, &CreateOptions::default())
         .unwrap()
@@ -153,7 +217,7 @@ fn poststart_failure_test() -> TestResult {
     }
     let log = fs::read_to_string(&host_output_file).expect("cannot read output file");
     delete_hook_output_file(&host_output_file).unwrap();
-    let expected = "post-start-failed\npost-stop called\n";
+    let expected = format!("{logged}\npost-stop called\n");
     if log != expected {
         return TestResult::Failed(anyhow!(
             "unexpected hook log after a poststart failure.\ngot:\n{log}\nexpected:\n{expected}"
@@ -162,12 +226,51 @@ fn poststart_failure_test() -> TestResult {
     TestResult::Passed
 }
 
-fn create_runtime_failure_test() -> TestResult {
+/// `youki run` creates and starts in one command.
+/// After a poststart hook failure it must destroy the container itself.
+/// It must also run the poststop hooks.
+fn run_poststart_failure_test(failure: HookFailure) -> TestResult {
     let id = generate_uuid().to_string();
     let bundle = prepare_bundle().unwrap();
     let host_output_file = get_hook_output_path(&bundle);
     let host_output_file_str = host_output_file.to_str().unwrap();
-    set_config(&bundle, &create_runtime_failure_spec(host_output_file_str)).unwrap();
+    let (spec, logged) = poststart_failure_spec(host_output_file_str, failure);
+    set_config(&bundle, &spec).unwrap();
+
+    let run = run_container_detached(&id, &bundle)
+        .unwrap()
+        .wait()
+        .unwrap();
+    if run.success() {
+        let _ = delete_container_force(&id, &bundle).and_then(|mut c| Ok(c.wait()?));
+        return TestResult::Failed(anyhow!(
+            "run must fail when a poststart hook fails, but it exited successfully"
+        ));
+    }
+
+    // Steps 9, 12 and 13, all inside `run`: no container is left to delete.
+    if let Err(e) = wait_for_target(&id, bundle.path(), WaitTarget::Deleted) {
+        let _ = delete_container_force(&id, &bundle).and_then(|mut c| Ok(c.wait()?));
+        return TestResult::Failed(anyhow!("container must not exist after a failed run: {e}"));
+    }
+    let log = fs::read_to_string(&host_output_file).expect("cannot read output file");
+    delete_hook_output_file(&host_output_file).unwrap();
+    let expected = format!("{logged}\npost-stop called\n");
+    if log != expected {
+        return TestResult::Failed(anyhow!(
+            "unexpected hook log after a failed run.\ngot:\n{log}\nexpected:\n{expected}"
+        ));
+    }
+    TestResult::Passed
+}
+
+fn create_failure_test(stage: CreateStage, failure: HookFailure) -> TestResult {
+    let id = generate_uuid().to_string();
+    let bundle = prepare_bundle().unwrap();
+    let host_output_file = get_hook_output_path(&bundle);
+    let host_output_file_str = host_output_file.to_str().unwrap();
+    let (spec, logged) = create_failure_spec(host_output_file_str, stage, failure);
+    set_config(&bundle, &spec).unwrap();
 
     let create = create_container(&id, &bundle, &CreateOptions::default())
         .unwrap()
@@ -176,17 +279,18 @@ fn create_runtime_failure_test() -> TestResult {
     if create.success() {
         let _ = delete_container_force(&id, &bundle).and_then(|mut c| Ok(c.wait()?));
         return TestResult::Failed(anyhow!(
-            "create must fail when a createRuntime hook fails, but it exited successfully"
+            "create must fail when its hook fails ({logged}), but it exited successfully"
         ));
     }
 
-    // Steps 4, 12 and 13: the failed create destroyed the container and ran the poststop hooks.
+    // Step 4 or 5, then 12 and 13: the failed create destroyed the container.
+    // It also ran the poststop hooks.
     let log = fs::read_to_string(&host_output_file).expect("cannot read output file");
     delete_hook_output_file(&host_output_file).unwrap();
-    let expected = "create-runtime-failed\npost-stop status=stopped\n";
+    let expected = format!("{logged}\npost-stop status=stopped\n");
     if log != expected {
         return TestResult::Failed(anyhow!(
-            "unexpected hook log after a createRuntime failure.\ngot:\n{log}\nexpected:\n{expected}"
+            "unexpected hook log after a failed create.\ngot:\n{log}\nexpected:\n{expected}"
         ));
     }
     if let Err(e) = wait_for_target(&id, bundle.path(), WaitTarget::Deleted) {
@@ -202,14 +306,45 @@ pub fn get_hook_failure_tests() -> TestGroup {
     // runc runs the poststart hooks during `create` rather than `start`
     // (opencontainers/runc#4347), so under runc the container never reaches
     // `created` here; the case is youki-only, as `poststart_fail` is.
-    tg.add(vec![Box::new(ConditionalTest::new(
-        "poststart_failure_stops_container",
-        Box::new(|| !is_runtime_runc()),
-        Box::new(poststart_failure_test),
-    ))]);
-    tg.add(vec![Box::new(Test::new(
-        "create_runtime_failure_runs_poststop",
-        Box::new(create_runtime_failure_test),
-    ))]);
+    tg.add(vec![
+        Box::new(ConditionalTest::new(
+            "poststart_failure_stops_container",
+            Box::new(|| !is_runtime_runc()),
+            Box::new(|| poststart_failure_test(HookFailure::Exit)),
+        )),
+        Box::new(ConditionalTest::new(
+            "poststart_timeout_stops_container",
+            Box::new(|| !is_runtime_runc()),
+            Box::new(|| poststart_failure_test(HookFailure::Timeout)),
+        )),
+        Box::new(ConditionalTest::new(
+            "run_poststart_failure_deletes_container",
+            Box::new(|| !is_runtime_runc()),
+            Box::new(|| run_poststart_failure_test(HookFailure::Exit)),
+        )),
+        Box::new(ConditionalTest::new(
+            "run_poststart_timeout_deletes_container",
+            Box::new(|| !is_runtime_runc()),
+            Box::new(|| run_poststart_failure_test(HookFailure::Timeout)),
+        )),
+    ]);
+    tg.add(vec![
+        Box::new(Test::new(
+            "create_runtime_failure_runs_poststop",
+            Box::new(|| create_failure_test(CreateStage::CreateRuntime, HookFailure::Exit)),
+        )),
+        Box::new(Test::new(
+            "create_runtime_timeout_runs_poststop",
+            Box::new(|| create_failure_test(CreateStage::CreateRuntime, HookFailure::Timeout)),
+        )),
+        Box::new(Test::new(
+            "create_container_failure_runs_poststop",
+            Box::new(|| create_failure_test(CreateStage::CreateContainer, HookFailure::Exit)),
+        )),
+        Box::new(Test::new(
+            "create_container_timeout_runs_poststop",
+            Box::new(|| create_failure_test(CreateStage::CreateContainer, HookFailure::Timeout)),
+        )),
+    ]);
     tg
 }
