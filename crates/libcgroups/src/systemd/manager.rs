@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::fmt::{Debug, Display};
+use std::fmt::Debug;
 use std::fs::{self};
 use std::path::Component::RootDir;
 use std::path::{Path, PathBuf};
@@ -118,12 +118,6 @@ impl TryFrom<&Path> for CgroupsPath {
         };
 
         Ok(destructured_path)
-    }
-}
-
-impl Display for CgroupsPath {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}:{}", self.parent, self.prefix, self.name)
     }
 }
 
