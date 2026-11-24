@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-be13d274.js";
+            window.path_to_searchindex_js = "searchindex-7dfe7b7f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-542fda56.js"></script>
+        <script src="toc-9d7079ca.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -835,6 +835,7 @@ your cluster nodes can pull from, then update the image field in
 <li><a href="#current-maintainers">Maintainer</a></li>
 <li><a href="#code-of-conduct">Governance</a></li>
 <li><a href="#contributing">Contributing</a></li>
+<li><a href="#release">Release</a></li>
 <li><a href="#chat">Chat</a></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -920,6 +921,39 @@ Use the <code>git commit -s</code> command to add the Signed-off-by line.</p>
 <h2 id="merging-pull-requests"><a class="header" href="#merging-pull-requests">Merging pull requests</a></h2>
 <p>Committers can merge pull requests.
 A Committer shouldn’t merge their own pull requests without approval by at least one other Committer.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="release"><a class="header" href="#release">Release</a></h1>
+<p>youki is released about once a month.
+The <a href="https://github.com/youki-dev/youki/blob/main/.github/workflows/release-reminder.yaml">release reminder</a> workflow asks the release captain to release.</p>
+<ul>
+<li>The workflow runs every Monday at 00:00 UTC.</li>
+<li>It asks when the last release was 28 or more days ago, counted by UTC date.</li>
+<li>If nobody releases, it asks the same captain again 28 days later.</li>
+</ul>
+<p>To skip a release, leave the release PR open and write the reason in a comment.
+You can release at any time without the reminder.
+The next reminder counts the days from that release.</p>
+<p>The release captains take turns in this order, one for each release.</p>
+<ul>
+<li><a href="https://github.com/utam0k">@utam0k</a></li>
+<li><a href="https://github.com/saku3">@saku3</a></li>
+<li><a href="https://github.com/nayuta723">@nayuta723</a></li>
+</ul>
+<p>To change the captains, update this list and <code>CAPTAINS</code> in the workflow.</p>
+<h2 id="release-a-new-version"><a class="header" href="#release-a-new-version">Release a new version</a></h2>
+<p>tagpr keeps the <a href="https://github.com/youki-dev/youki/pulls?q=is%3Apr+is%3Aopen+label%3Atagpr">release PR</a> up to date with <code>main</code>.</p>
+<ol>
+<li>Check the version in the title of the release PR.
+tagpr makes a minor release when a merged PR has the <code>breaking change</code> label, and a patch release otherwise.
+If the version is wrong, add the <code>tagpr:minor</code> label to the release PR.
+tagpr updates the title and the crate versions in the release PR on the next push to <code>main</code>.</li>
+<li>When the title shows the right version, approve and merge the release PR.
+tagpr pushes the tag, and the tag starts the <a href="https://github.com/youki-dev/youki/actions/workflows/release.yaml">release workflow</a>.</li>
+<li>In the release workflow run, click <strong>Review deployments</strong>, select <code>release</code>, and click <strong>Approve and deploy</strong>.
+The workflow publishes the crates to crates.io and then publishes the GitHub release.</li>
+</ol>
+<p>If the release workflow fails, re-run the failed jobs.
+The workflow reuses the draft release and skips the crates that are already on crates.io.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="chat"><a class="header" href="#chat">Chat</a></h1>
 <p>Please join our chat find help or discuss issues:</p>
