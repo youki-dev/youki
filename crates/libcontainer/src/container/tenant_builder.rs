@@ -161,6 +161,9 @@ fn get_init_proc_sub_cgroup(container: &Container, cgroup_path: &Path) -> Option
     infer_sub_cgroup_from_proc_cgroups(&init_proc_cgroups, cgroup_path)
 }
 
+// Pure inference logic split out of [`get_init_proc_sub_cgroup`] for testability:
+// reading `/proc/<pid>/cgroup` depends on the live host (cgroup setup, pid, procfs)
+// and cannot be unit-tested, while this function only operates on already-parsed data.
 fn infer_sub_cgroup_from_proc_cgroups(
     init_proc_cgroups: &ProcessCGroups,
     cgroup_path: &Path,
