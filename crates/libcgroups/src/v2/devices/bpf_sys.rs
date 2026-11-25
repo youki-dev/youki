@@ -9,8 +9,8 @@ use std::mem;
 use std::os::raw::{c_int, c_uint};
 
 use super::bpf_uapi::{
-    BPF_PROG_ATTACH, BPF_PROG_DETACH, BPF_PROG_GET_FD_BY_ID, BPF_PROG_LOAD, BPF_PROG_QUERY,
-    BpfInsn, ProgAttachAttr, ProgGetFdByIdAttr, ProgLoadAttr, ProgQueryAttr,
+    ATTR_BUF_SIZE, AttrBuf, BPF_PROG_ATTACH, BPF_PROG_DETACH, BPF_PROG_GET_FD_BY_ID, BPF_PROG_LOAD,
+    BPF_PROG_QUERY, BpfInsn, ProgAttachAttr, ProgGetFdByIdAttr, ProgLoadAttr, ProgQueryAttr,
 };
 
 /// Attempts at `BPF_PROG_LOAD` while the verifier answers `EAGAIN` (a signal was pending), as in
@@ -50,19 +50,37 @@ unsafe fn raw_bpf(cmd: u32, attr: *mut u8, size: usize) -> c_int {
     })
 }
 
-/// Passes `attr` with its own size: the kernel zero-fills the rest of its union.
+/// Issues `cmd` from a zeroed `ATTR_BUF_SIZE` buffer holding `attr` at its start, then copies the
+/// struct's part of the buffer back into `attr`.
+///
+/// The kernel writes results back through the pointer whatever size it is given (see
+/// `bpf_uapi`), so the buffer, not the caller's struct, is what it gets to write into.
 ///
 /// # Safety
-/// Every pointer stored in `attr` must be valid for the command for the duration of the call.
-unsafe fn sys_bpf<T>(cmd: u32, attr: &mut T) -> c_int {
-    // SAFETY: `attr` is a fully initialised `repr(C)` struct of the size the kernel is told.
+/// `T` must be a `repr(C)` struct of plain integers, and every pointer stored in `attr` must be
+/// valid for the command for the duration of the call.
+unsafe fn sys_bpf<T: Copy>(cmd: u32, attr: &mut T) -> c_int {
+    const { assert!(mem::size_of::<T>() <= ATTR_BUF_SIZE) };
+    let mut buf = AttrBuf([0; ATTR_BUF_SIZE]);
+    // SAFETY: `T` fits in the buffer (asserted above), which is zeroed and 8-byte aligned.
     unsafe {
-        raw_bpf(
-            cmd,
+        std::ptr::copy_nonoverlapping(
+            std::ptr::from_ref(attr).cast::<u8>(),
+            buf.0.as_mut_ptr(),
+            mem::size_of::<T>(),
+        );
+    }
+    // SAFETY: `buf` is `ATTR_BUF_SIZE` bytes; the caller guarantees the pointers inside it.
+    let ret = unsafe { raw_bpf(cmd, buf.0.as_mut_ptr(), ATTR_BUF_SIZE) };
+    // SAFETY: as above; the kernel's results for the fields of `T` are plain integers.
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            buf.0.as_ptr(),
             std::ptr::from_mut(attr).cast::<u8>(),
             mem::size_of::<T>(),
-        )
+        );
     }
+    ret
 }
 
 /// Loads a program of `prog_type` from `insns_cnt` instructions; returns its file descriptor.
@@ -199,15 +217,16 @@ mod tests {
     fn decode<T: Copy>(bytes: &[u8]) -> T {
         assert_eq!(
             bytes.len(),
-            mem::size_of::<T>(),
-            "attr size is the struct's"
+            ATTR_BUF_SIZE,
+            "the kernel is given the full buffer"
         );
+        assert!(bytes[mem::size_of::<T>()..].iter().all(|b| *b == 0));
         // SAFETY: the length was checked; the structs are plain integers.
         unsafe { ptr::read_unaligned(bytes.as_ptr().cast::<T>()) }
     }
 
     fn encode<T: Copy>(value: &T, bytes: &mut [u8]) {
-        assert_eq!(bytes.len(), mem::size_of::<T>());
+        assert!(bytes.len() >= mem::size_of::<T>());
         // SAFETY: the length was checked; the structs are plain integers.
         unsafe { ptr::write_unaligned(bytes.as_mut_ptr().cast::<T>(), *value) }
     }
@@ -353,6 +372,8 @@ mod tests {
             attr.prog_cnt = 2;
             attr.attach_flags = BPF_F_ALLOW_MULTI;
             encode(&attr, bytes);
+            // Recent kernels also store `revision` at offset 56.
+            bytes[56..64].copy_from_slice(&7_u64.to_ne_bytes());
             0
         });
         let mut ids = [0_u32; 4];
@@ -389,6 +410,7 @@ mod tests {
             attr.prog_cnt = 70;
             attr.attach_flags = BPF_F_ALLOW_MULTI;
             encode(&attr, bytes);
+            bytes[56..64].copy_from_slice(&7_u64.to_ne_bytes());
             fail(libc::ENOSPC)
         });
         let mut ids = [0_u32; 1];
@@ -410,5 +432,30 @@ mod tests {
         assert_eq!(errno::errno().0, libc::ENOSPC);
         assert_eq!(cnt, 70);
         assert_eq!(flags, BPF_F_ALLOW_MULTI);
+    }
+
+    #[test]
+    fn kernel_writes_never_leave_the_buffer() {
+        // The fake kernel scribbles over everything it is given; the bytes next to the
+        // caller's struct must survive, and only the struct's own fields are read back.
+        #[repr(C)]
+        struct Guarded {
+            attr: ProgQueryAttr,
+            guard: [u8; 64],
+        }
+        install(|_, bytes| {
+            bytes.fill(0xFF);
+            0
+        });
+        let mut guarded = Guarded {
+            attr: ProgQueryAttr::default(),
+            guard: [0xA5; 64],
+        };
+
+        let ret = unsafe { sys_bpf(BPF_PROG_QUERY, &mut guarded.attr) };
+
+        assert_eq!(ret, 0);
+        assert_eq!(guarded.guard, [0xA5; 64]);
+        assert_eq!(guarded.attr.revision, u64::MAX);
     }
 }
