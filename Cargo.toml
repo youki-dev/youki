@@ -5,7 +5,6 @@ exclude = ["experiment/seccomp", "experiment/selinux", "tools/youki-deploy"]
 
 [workspace.dependencies]
 anyhow = "1.0.102"
-aya-obj = "0.6.0"
 caps = "0.5.6"
 chrono = { version = "0.4", default-features = false }
 clap = { version = "4.5.13", default-features = false }

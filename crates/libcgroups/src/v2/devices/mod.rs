@@ -1,6 +1,8 @@
 pub mod bpf;
-#[cfg(not(test))]
+// Compiled in tests too (the raw syscall is swappable there); `bpf.rs` tests use the mocks.
+#[cfg_attr(test, allow(dead_code))]
 mod bpf_sys;
+mod bpf_uapi;
 pub mod controller;
 pub mod emulator;
 pub mod program;

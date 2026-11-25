@@ -17,9 +17,6 @@ pub mod prog {
     use std::ffi::CString;
     use std::os::unix::io::RawFd;
 
-    use aya_obj::generated::bpf_attach_type::BPF_CGROUP_DEVICE;
-    use aya_obj::generated::bpf_prog_type::BPF_PROG_TYPE_CGROUP_DEVICE;
-    use aya_obj::generated::{BPF_F_ALLOW_MULTI, bpf_insn};
     #[cfg(not(test))]
     use libc::setrlimit;
     use libc::{ENOSPC, RLIMIT_MEMLOCK, rlimit};
@@ -29,6 +26,9 @@ pub mod prog {
     #[cfg(not(test))]
     use crate::v2::devices::bpf_sys::{
         bpf_prog_attach, bpf_prog_detach2, bpf_prog_get_fd_by_id, bpf_prog_load, bpf_prog_query,
+    };
+    use crate::v2::devices::bpf_uapi::{
+        BPF_CGROUP_DEVICE, BPF_F_ALLOW_MULTI, BPF_PROG_TYPE_CGROUP_DEVICE, BpfInsn,
     };
     #[cfg(test)]
     use crate::v2::devices::mocks::mock_bpf_sys::{
@@ -40,8 +40,8 @@ pub mod prog {
     use crate::v2::devices::mocks::mock_libc::setrlimit;
 
     pub fn load(license: &str, insns: &[u8]) -> Result<RawFd, super::BpfError> {
-        let insns_cnt = insns.len() / std::mem::size_of::<bpf_insn>();
-        let insns = insns as *const _ as *const bpf_insn;
+        let insns_cnt = insns.len() / std::mem::size_of::<BpfInsn>();
+        let insns = insns as *const _ as *const BpfInsn;
         // The kernel reads the license as a NUL-terminated string.
         let license = CString::new(license)
             .map_err(|_| super::BpfError::Errno(errno::Errno(libc::EINVAL)))?;
@@ -221,7 +221,7 @@ mod tests {
         // expect
         query.expect().once().returning(
             |_target_fd: std::os::raw::c_int,
-             _type_: aya_obj::generated::bpf_attach_type,
+             _type_: u32,
              _query_flags: u32,
              _attach_flags: *mut u32,
              prog_ids: *mut u32,
@@ -267,7 +267,7 @@ mod tests {
         // expect
         query.expect().times(2).returning(
             |_target_fd: std::os::raw::c_int,
-             _type_: aya_obj::generated::bpf_attach_type,
+             _type_: u32,
              _query_flags: u32,
              _attach_flags: *mut u32,
              prog_ids: *mut u32,
@@ -313,7 +313,7 @@ mod tests {
         // expect
         query.expect().times(1).returning(
             |_target_fd: std::os::raw::c_int,
-             _type_: aya_obj::generated::bpf_attach_type,
+             _type_: u32,
              _query_flags: u32,
              _attach_flags: *mut u32,
              _prog_ids: *mut u32,

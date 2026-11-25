@@ -1,10 +1,11 @@
-use aya_obj::generated::{
-    BPF_DEVCG_ACC_MKNOD, BPF_DEVCG_ACC_READ, BPF_DEVCG_ACC_WRITE, BPF_DEVCG_DEV_BLOCK,
-    BPF_DEVCG_DEV_CHAR,
-};
 use oci_spec::runtime::*;
 use rbpf::disassembler::disassemble;
 use rbpf::insn_builder::{Arch as RbpfArch, *};
+
+use crate::v2::devices::bpf_uapi::{
+    BPF_DEVCG_ACC_MKNOD, BPF_DEVCG_ACC_READ, BPF_DEVCG_ACC_WRITE, BPF_DEVCG_DEV_BLOCK,
+    BPF_DEVCG_DEV_CHAR,
+};
 
 pub struct Program {
     prog: BpfCode,
@@ -108,10 +109,7 @@ impl Program {
     fn add_rule(&mut self, rule: &LinuxDeviceCgroup) -> Result<(), ProgramError> {
         let dev_type = bpf_dev_type(rule.typ().unwrap_or_default())?;
         let access = bpf_access(rule.access().clone().unwrap_or_default())?;
-        let has_access = access
-            != (BPF_DEVCG_ACC_READ as u32
-                | BPF_DEVCG_ACC_WRITE as u32
-                | BPF_DEVCG_ACC_MKNOD as u32);
+        let has_access = access != (BPF_DEVCG_ACC_READ | BPF_DEVCG_ACC_WRITE | BPF_DEVCG_ACC_MKNOD);
 
         let has_major = rule.major().is_some() && rule.major().unwrap() >= 0;
         let has_minor = rule.minor().is_some() && rule.minor().unwrap() >= 0;
@@ -214,9 +212,9 @@ impl Program {
 
 fn bpf_dev_type(typ: LinuxDeviceType) -> Result<u32, ProgramError> {
     let dev_type: u32 = match typ {
-        LinuxDeviceType::C => BPF_DEVCG_DEV_CHAR as u32,
+        LinuxDeviceType::C => BPF_DEVCG_DEV_CHAR,
         LinuxDeviceType::U => return Err(ProgramError::DeviceNotSupported("unbuffered char")),
-        LinuxDeviceType::B => BPF_DEVCG_DEV_BLOCK as u32,
+        LinuxDeviceType::B => BPF_DEVCG_DEV_BLOCK,
         LinuxDeviceType::P => return Err(ProgramError::DeviceNotSupported("pipe device")),
         LinuxDeviceType::A => return Err(ProgramError::WildcardDevice),
     };
@@ -227,9 +225,9 @@ fn bpf_access(access: String) -> Result<u32, ProgramError> {
     let mut v = 0_u32;
     for c in access.chars() {
         let cur_access = match c {
-            'r' => BPF_DEVCG_ACC_READ as u32,
-            'w' => BPF_DEVCG_ACC_WRITE as u32,
-            'm' => BPF_DEVCG_ACC_MKNOD as u32,
+            'r' => BPF_DEVCG_ACC_READ,
+            'w' => BPF_DEVCG_ACC_WRITE,
+            'm' => BPF_DEVCG_ACC_MKNOD,
             _ => return Err(ProgramError::InvalidAccess(c)),
         };
         v |= cur_access;

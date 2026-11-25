@@ -177,18 +177,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aya-obj"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66254e485eda05c8ab20b83fb55ea4bde22a8436981f435e35cffa5e6aa6196d"
-dependencies = [
- "bytes",
- "log",
- "object 0.40.0",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "backtrace"
 version = "0.3.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2577,7 +2565,6 @@ name = "libcgroups"
 version = "0.8.0"
 dependencies = [
  "anyhow",
- "aya-obj",
  "clap",
  "env_logger",
  "errno",

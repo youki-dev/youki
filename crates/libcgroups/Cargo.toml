@@ -20,7 +20,7 @@ v2 = []
 # from DeviceAllow, so it cannot be built without it. This makes "systemd cgroupsv2_devices"
 # the same build as "systemd"; scripts/features_test.sh lists only the latter.
 systemd = ["v2", "cgroupsv2_devices", "nix/socket", "nix/uio"]
-cgroupsv2_devices = ["rbpf", "aya-obj", "errno", "libc", "nix/dir"]
+cgroupsv2_devices = ["rbpf", "errno", "libc", "nix/dir"]
 
 [dependencies]
 nix = { workspace = true, features = ["signal", "user", "fs"] }
@@ -30,7 +30,6 @@ oci-spec = { workspace = true }
 fixedbitset = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 rbpf = { workspace = true, optional = true }
-aya-obj = { workspace = true, optional = true }
 errno = { workspace = true, optional = true }
 libc = { workspace = true, optional = true }
 thiserror = { workspace = true }
