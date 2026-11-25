@@ -614,7 +614,7 @@ pub fn container_cgroup_segment(cgroups_path: &Path) -> Option<String> {
     if path_str.contains(':') {
         return CgroupsPath::try_from(cgroups_path)
             .ok()?
-            .container_unit_name();
+            .container_cgroup_segment();
     }
 
     clean_cgroup_path(cgroups_path)

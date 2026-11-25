@@ -86,9 +86,10 @@ impl CgroupsPath {
         format!("{}-{base_name}.scope", self.prefix)
     }
 
-    /// Returns the unit name of the container itself, stripping any sub-cgroup suffix.
-    /// e.g. `system.slice:docker:<id>/sub/init` -> `docker-<id>.scope`.
-    pub fn container_unit_name(&self) -> Option<String> {
+    /// Returns the cgroup segment that identifies the container itself,
+    /// stripping any sub-cgroup suffix.
+    /// Returns `None` when the path carries no container name to match on.
+    pub fn container_cgroup_segment(&self) -> Option<String> {
         let (base_name, _) = split_sub_cgroup(&self.name);
         if base_name.is_empty() {
             return None;
@@ -149,14 +150,17 @@ mod tests {
     }
 
     #[test]
-    fn test_container_unit_name_edge_cases() {
+    fn test_container_cgroup_segment_edge_cases() {
         // Empty base name (e.g. name starts with '/') yields None.
         let parsed = CgroupsPath::try_from(Path::new("system.slice:docker:/sub")).unwrap();
-        assert_eq!(parsed.container_unit_name(), None);
+        assert_eq!(parsed.container_cgroup_segment(), None);
 
         // Slice base names pass through even with a sub-cgroup suffix.
         let parsed = CgroupsPath::try_from(Path::new("system.slice:foo:my.slice/sub")).unwrap();
-        assert_eq!(parsed.container_unit_name().as_deref(), Some("my.slice"));
+        assert_eq!(
+            parsed.container_cgroup_segment().as_deref(),
+            Some("my.slice")
+        );
     }
 
     #[test]
