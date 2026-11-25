@@ -8,7 +8,7 @@ use oci_spec::runtime::{
 };
 use test_framework::{TestResult, test_result};
 
-use super::check_cgroup_value;
+use super::{check_cgroup_value, update_container_and_wait};
 use crate::utils::test_utils::check_container_created;
 use crate::utils::{start_container, test_outside_container, update_container_with_stdin};
 
@@ -250,6 +250,65 @@ pub(crate) fn update_cpuset_cpus_range_via_v2_unified_map_test() -> TestResult {
             .wait()
             .unwrap();
         test_result!(check_cgroup_value(&cgroup_path, "cpuset.cpus", "5-8"));
+
+        TestResult::Passed
+    })
+}
+
+// Not a port of a runc bats test: covers the --cpuset-cpus and --cpuset-mems flags.
+pub(crate) fn update_cpuset_parameters_via_cli_flags_test() -> TestResult {
+    const CGROUP_NAME: &str = "update_cpuset_parameters_via_cli_flags";
+
+    let cpu = test_result!(
+        LinuxCpuBuilder::default()
+            .cpus("0")
+            .build()
+            .context("failed to build cpu resources")
+    );
+    let resources = test_result!(
+        LinuxResourcesBuilder::default()
+            .cpu(cpu)
+            .build()
+            .context("failed to build resources spec")
+    );
+    let spec = test_result!(create_spec(CGROUP_NAME, Some(resources)));
+
+    test_outside_container(&spec, &|data| {
+        test_result!(check_container_created(&data));
+
+        let id = &data.id;
+        let dir = &data.bundle;
+
+        let start_result = start_container(id, dir).unwrap().wait().unwrap();
+        if !start_result.success() {
+            return TestResult::Failed(anyhow!("container start failed"));
+        }
+
+        let cgroup_path = Path::new("/sys/fs/cgroup/runtime-test").join(CGROUP_NAME);
+
+        // check the initial values were properly set
+        test_result!(check_cgroup_value(&cgroup_path, "cpuset.cpus", "0"));
+        test_result!(check_cgroup_value(&cgroup_path, "cpuset.mems", ""));
+
+        // set cpuset.cpus to 1 via CLI flag, cpuset.mems must stay unset
+        test_result!(update_container_and_wait(id, dir, &["--cpuset-cpus", "1"]));
+        test_result!(check_cgroup_value(&cgroup_path, "cpuset.cpus", "1"));
+        test_result!(check_cgroup_value(&cgroup_path, "cpuset.mems", ""));
+
+        // An empty value must succeed and leave the value unchanged.
+        test_result!(update_container_and_wait(id, dir, &["--cpuset-cpus", ""]));
+        test_result!(check_cgroup_value(&cgroup_path, "cpuset.cpus", "1"));
+
+        // set cpuset.mems to 0 via CLI flag, cpuset.cpus must stay as it is.
+        // Node 0 is the only node on a host without NUMA, and cpuset.mems
+        // starts unset, so this is a visible change there too.
+        test_result!(update_container_and_wait(id, dir, &["--cpuset-mems", "0"]));
+        test_result!(check_cgroup_value(&cgroup_path, "cpuset.mems", "0"));
+        test_result!(check_cgroup_value(&cgroup_path, "cpuset.cpus", "1"));
+
+        // An empty value must succeed and leave the value unchanged.
+        test_result!(update_container_and_wait(id, dir, &["--cpuset-mems", ""]));
+        test_result!(check_cgroup_value(&cgroup_path, "cpuset.mems", "0"));
 
         TestResult::Passed
     })

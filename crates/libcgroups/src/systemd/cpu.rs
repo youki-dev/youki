@@ -57,6 +57,12 @@ impl Cpu {
             }
         }
 
+        // With neither given there is nothing to change, and sending the defaults
+        // would reset the quota the unit already has (a cpuset-only update, for one).
+        if cpu.quota().is_none() && cpu.period().is_none() {
+            return Ok(());
+        }
+
         // if quota is unrestricted set to 'max'
         let mut quota = u64::MAX;
         if let Some(specified_quota) = cpu.quota() {
@@ -190,6 +196,26 @@ mod tests {
             let val = recast!(cpu_quota, Variant)?;
             assert_eq!(val, Variant::U64(period.1));
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_cpuset_only_keeps_quota_and_period() -> Result<()> {
+        // arrange
+        let cpu = LinuxCpuBuilder::default()
+            .cpus("0-1")
+            .mems("0")
+            .build()
+            .context("build cpu spec")?;
+        let mut properties: HashMap<&str, Variant> = HashMap::new();
+
+        // act
+        Cpu::apply(&cpu, &mut properties)?;
+
+        // assert
+        assert!(!properties.contains_key(CPU_QUOTA));
+        assert!(!properties.contains_key(CPU_PERIOD));
 
         Ok(())
     }
