@@ -1,0 +1,28 @@
+# The VM that docs/demo/demo.tape records in.
+images:
+- location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+  arch: "x86_64"
+cpus: 6
+memory: "8GiB"
+disk: "30GiB"
+containerd:
+  system: false
+  user: false
+mounts:
+- location: "~"
+provision:
+- mode: system
+  script: |
+    #!/bin/bash
+    set -eux
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends docker.io tmux libseccomp2
+    # Open the Docker socket to the VM user. A group change would not reach Lima's SSH session.
+    mkdir -p /etc/systemd/system/docker.socket.d
+    printf '[Socket]\nSocketMode=0666\n' >/etc/systemd/system/docker.socket.d/override.conf
+    systemctl daemon-reload
+    systemctl restart docker.socket docker.service
+    curl -fsSLo /usr/local/bin/kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64
+    curl -fsSLo /usr/local/bin/kubectl https://dl.k8s.io/release/v1.34.0/bin/linux/amd64/kubectl
+    chmod +x /usr/local/bin/kind /usr/local/bin/kubectl

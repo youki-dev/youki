@@ -93,3 +93,5 @@ pub fn get_process_capabilities_fail_test() -> TestGroup {
 
     process_capabilities_fail_test_group
 }
+
+test_framework::register_test_group!(get_process_capabilities_fail_test);

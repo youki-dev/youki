@@ -191,3 +191,5 @@ pub fn get_test_group() -> TestGroup {
 
     test_group
 }
+
+test_framework::register_test_group!(get_test_group);

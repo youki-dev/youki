@@ -105,3 +105,5 @@ pub fn get_misc_props_test() -> TestGroup {
     ]);
     misc_props_group
 }
+
+test_framework::register_test_group!(get_misc_props_test);

@@ -136,3 +136,5 @@ pub fn get_poststart_fail_tests() -> TestGroup {
     tg.add(vec![Box::new(get_test("poststart_fail"))]);
     tg
 }
+
+test_framework::register_test_group!(get_poststart_fail_tests);

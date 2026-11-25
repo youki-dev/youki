@@ -127,3 +127,5 @@ pub fn get_process_rlimits_test() -> TestGroup {
 
     process_rlimits_test_group
 }
+
+test_framework::register_test_group!(get_process_rlimits_test);

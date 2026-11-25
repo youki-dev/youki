@@ -108,3 +108,5 @@ pub fn get_kill_no_effect_test() -> TestGroup {
     test_group.add(vec![Box::new(kill_no_effect_test)]);
     test_group
 }
+
+test_framework::register_test_group!(get_kill_no_effect_test);

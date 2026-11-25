@@ -125,3 +125,5 @@ pub fn get_start_container_env_tests() -> TestGroup {
     ]);
     tg
 }
+
+test_framework::register_test_group!(get_start_container_env_tests);

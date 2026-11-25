@@ -73,3 +73,5 @@ pub fn get_exec_test() -> TestGroup {
 
     test_group
 }
+
+test_framework::register_test_group!(get_exec_test);

@@ -283,3 +283,5 @@ pub fn get_hugetlb_test() -> TestGroup {
     ]);
     tg
 }
+
+test_framework::register_test_group!(get_hugetlb_test);

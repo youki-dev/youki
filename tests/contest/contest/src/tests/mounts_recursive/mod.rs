@@ -627,3 +627,5 @@ pub fn get_mounts_recursive_test() -> TestGroup {
 
     tg
 }
+
+test_framework::register_test_group!(get_mounts_recursive_test);

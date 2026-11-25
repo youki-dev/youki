@@ -32,3 +32,5 @@ pub fn get_domainname_tests() -> TestGroup {
 
     tg
 }
+
+test_framework::register_test_group!(get_domainname_tests);

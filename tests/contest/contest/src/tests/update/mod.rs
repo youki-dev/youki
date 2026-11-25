@@ -181,6 +181,12 @@ pub fn get_update_test() -> TestGroup {
         Box::new(cpuset::update_cpuset_cpus_range_via_v2_unified_map_test),
     );
 
+    let update_cpuset_parameters_via_cli_flags_test = ConditionalTest::new(
+        "update_cpuset_parameters_via_cli_flags_test",
+        Box::new(can_run_cpuset_update),
+        Box::new(cpuset::update_cpuset_parameters_via_cli_flags_test),
+    );
+
     let update_keeps_device_rules_test = ConditionalTest::new(
         "update_keeps_device_rules_test",
         Box::new(devices::can_run),
@@ -209,8 +215,11 @@ pub fn get_update_test() -> TestGroup {
         Box::new(update_cpuset_parameters_via_resources_cpu_test),
         Box::new(update_cpuset_parameters_via_v2_unified_map_test),
         Box::new(update_cpuset_cpus_range_via_v2_unified_map_test),
+        Box::new(update_cpuset_parameters_via_cli_flags_test),
         Box::new(update_keeps_device_rules_test),
         Box::new(update_keeps_device_rules_systemd_test),
     ]);
     test_group
 }
+
+test_framework::register_test_group!(get_update_test);

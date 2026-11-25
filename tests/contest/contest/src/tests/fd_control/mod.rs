@@ -112,3 +112,5 @@ pub fn get_fd_control_test() -> TestGroup {
 
     test_group
 }
+
+test_framework::register_test_group!(get_fd_control_test);

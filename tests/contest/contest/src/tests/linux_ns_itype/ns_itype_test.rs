@@ -75,3 +75,5 @@ pub fn get_ns_itype_tests() -> TestGroup {
     tg.add(tests);
     tg
 }
+
+test_framework::register_test_group!(get_ns_itype_tests);

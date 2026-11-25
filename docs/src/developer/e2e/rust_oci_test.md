@@ -42,16 +42,16 @@ We will not go into detail here, but will explain how to write and add a new tes
 {{#include ../../../../tests/contest/contest/src/tests/example/hello_world.rs:example_test}}
 ```
 
-3. Create a `TestGroup` and register a test case you created
+3. Create a `TestGroup`, add the test case you created to it, and register the `TestGroup` with `test_framework::register_test_group!`. The macro takes the function (or `Type::new`) that builds the group, and goes next to that function.
 
 ```rust,no_run,noplayground
 {{#include ../../../../tests/contest/contest/src/tests/example/hello_world.rs:get_example_test}}
 ```
 
-4. Register the `TestGroup` you created to a `TestManager`
+4. `main.rs` collects every registered group into the `TestManager`. Each group needs a unique name: contest panics at startup if two groups share one.
 
 ```rust,no_run,noplayground
-{{#include ../../../../tests/contest/contest/src/main.rs:register_example_test}}
+{{#include ../../../../tests/contest/contest/src/main.rs:register_test_groups}}
 ```
 
 5. Write the validation you want to run within a test container

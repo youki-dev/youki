@@ -147,3 +147,5 @@ pub fn get_mount_propagation_test() -> TestGroup {
 
     test_group
 }
+
+test_framework::register_test_group!(get_mount_propagation_test);
