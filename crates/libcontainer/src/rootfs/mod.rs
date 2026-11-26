@@ -9,7 +9,7 @@ pub mod device;
 pub use device::Device;
 
 pub(super) mod mount;
-pub use mount::Mount;
+pub use mount::{Mount, MountChannels};
 
 pub(super) mod symlink;
 
