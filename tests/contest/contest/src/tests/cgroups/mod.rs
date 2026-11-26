@@ -5,6 +5,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 pub mod cpu;
 pub mod cpuset;
+pub mod devices;
 pub mod hugetlb;
 pub mod io;
 pub mod memory;
