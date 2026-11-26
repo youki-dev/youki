@@ -434,7 +434,6 @@ mod tests {
 
     #[test]
     fn validate_idmapped_mounts_allows_bind_type_without_bind_option() {
-        // typ="bind" のみで is_bind を満たし、options に "bind"/"rbind" を含まないケース
         let mount = base_mount()
             .options(vec!["idmap".to_string()])
             .uid_mappings(vec![make_mapping()])
