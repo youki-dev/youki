@@ -2556,13 +2556,11 @@ dependencies = [
 
 [[package]]
 name = "libbpf-sys"
-version = "1.7.1+v1.7.0"
+version = "2.0.0+v1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "222dd409cbd4db5e9d40410d17a168e1f80446386ae7bafbefa9bd0c1183ff64"
+checksum = "3eb44a2e2d6aed9e366ebb27d1a2f230d61b4776795923b9aa05b0f699108fec"
 dependencies = [
  "cc",
- "nix",
- "pkg-config",
 ]
 
 [[package]]
@@ -3044,7 +3042,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5009,7 +5007,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
