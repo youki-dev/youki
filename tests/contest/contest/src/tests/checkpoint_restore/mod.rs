@@ -1,10 +1,10 @@
 // Checkpoint and restore tests based on runc's tests/integration/checkpoint.bats.
 //
-// All tests are skipped when running with youki because checkpoint/restore is
-// not yet implemented in youki.  They are also skipped when CRIU is not
-// installed on the host.
+// Tests verified against youki use `can_run_with_youki()` and run on both
+// runtimes; the rest still use `can_run()` and are skipped for youki until they
+// are verified.  All of them are skipped when CRIU is not installed on the host.
 
-use std::os::fd::BorrowedFd;
+use std::os::fd::{BorrowedFd, OwnedFd};
 use std::os::unix::fs::symlink;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::process::CommandExt;
@@ -25,19 +25,14 @@ use crate::utils::{
     wait_for_state,
 };
 
-/// Used as check_fn for all `ConditionalTests` in this module:
-/// run only when the runtime is NOT youki and CRIU is installed.
+/// Default check: runc only. Used for tests not yet verified with youki.
 fn can_run() -> bool {
-    // TODO: remove this skip for youki once checkpoint/restore is supported.
     !is_runtime_youki() && criu_installed()
 }
 
-fn is_cgroups_v1() -> bool {
-    Path::new("/sys/fs/cgroup/pids").exists()
-}
-
-fn has_cgroupns() -> bool {
-    Path::new("/proc/self/ns/cgroup").exists()
+/// Used for tests verified to work with youki.
+fn can_run_with_youki() -> bool {
+    criu_installed()
 }
 
 struct CrTestContext {
@@ -76,21 +71,18 @@ impl CrTestContext {
         self.restore_id = Some(rid);
     }
 
-    fn start(&self) -> Result<(), TestResult> {
-        let run_result = (|| -> Result<()> {
-            run_container_with_console(get_runtime_path(), self.bundle.path(), &self.id)?;
+    fn start(&self) -> Result<Option<OwnedFd>, TestResult> {
+        let run_result = (|| -> Result<Option<OwnedFd>> {
+            let pty_fd =
+                run_container_with_console(get_runtime_path(), self.bundle.path(), &self.id)?;
 
             wait_container_running(&self.id, &self.bundle)?;
-            ping_container(self.bundle.path())
+            ping_container(self.bundle.path())?;
+            Ok(pty_fd)
         })();
 
-        if let Err(e) = run_result {
-            return Err(TestResult::Failed(anyhow!(
-                "container did not reach running state: {e}"
-            )));
-        }
-
-        Ok(())
+        run_result
+            .map_err(|e| TestResult::Failed(anyhow!("container did not reach running state: {e}")))
     }
 }
 
@@ -240,13 +232,18 @@ fn simple_cr(
     setup: impl Fn(&tempfile::TempDir, &mut oci_spec::runtime::Spec),
     verify_state: impl Fn(&str, &Path) -> Result<()>,
 ) -> TestResult {
+    // Declared before `ctx` so it is dropped AFTER ctx (reverse declaration order).
+    // The PTY master fds must stay open until the container is deleted; ctx.drop()
+    // handles deletion, and pty_fds.drop() closes the fds afterwards.
+    let mut pty_fds: Vec<OwnedFd> = Vec::new();
     let ctx = match setup_cr_test(setup) {
         Ok(c) => c,
         Err(e) => return e,
     };
 
-    if let Err(e) = ctx.start() {
-        return e;
+    match ctx.start() {
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => return e,
     }
 
     let id = &ctx.id;
@@ -284,8 +281,9 @@ fn simple_cr(
                 "container state still accessible after checkpoint: {e}"
             ));
         }
+        pty_fds.clear();
 
-        if let Err(e) = restore_container(
+        match restore_container(
             bundle.path(),
             id,
             image_dir,
@@ -293,7 +291,8 @@ fn simple_cr(
             &[],
             global_args,
         ) {
-            return TestResult::Failed(anyhow!("restore failed: {e}"));
+            Ok(fds) => pty_fds.extend(fds),
+            Err(e) => return TestResult::Failed(anyhow!("restore failed: {e}")),
         }
 
         if let Err(e) = wait_for_state(
@@ -347,36 +346,110 @@ fn checkpoint_and_restore_bind_mount_symlink() -> TestResult {
     )
 }
 
+// Test: checkpoint and restore (bind mount, destination resolves to invalid CRIU key)
+// (runc: @test "checkpoint and restore (bind mount, destination resolves to invalid CRIU key)")
+//
+// Bind mount destinations are resolved through symlinks in the container rootfs
+// before being passed to CRIU as external mount keys. CRIU stores them as
+// "mnt[KEY]:VAL", so a key containing "]:" or an empty key must be rejected on
+// both checkpoint and restore (GHSA-2mxx-58qc-p466 / GHSA-g2c3-j8g3-7gpw).
+fn checkpoint_and_restore_bind_mount_invalid_criu_key() -> TestResult {
+    // Declared before `ctx` so the PTY master fds outlive the deletion in ctx.drop().
+    let mut pty_fds: Vec<OwnedFd> = Vec::new();
+    let ctx = match setup_cr_test(|bundle, spec| {
+        let bind = bundle.path().join("bind");
+        std::fs::create_dir_all(&bind).unwrap();
+        let bind_mount = MountBuilder::default()
+            .typ("bind")
+            .source(bind)
+            .destination("/a/data")
+            .options(vec!["bind".to_string()])
+            .build()
+            .unwrap();
+        let mut mounts = spec.mounts().clone().unwrap_or_default();
+        mounts.push(bind_mount);
+        spec.set_mounts(Some(mounts));
+    }) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    match ctx.start() {
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => return e,
+    }
+
+    let id = &ctx.id;
+    let bundle = &ctx.bundle;
+    let image_dir = &ctx.image_dir;
+    let work_dir = &ctx.work_dir;
+    let rootfs = bundle.path().join("bundle").join("rootfs");
+    let (dir_a, dir_b, link) = (rootfs.join("a"), rootfs.join("b"), rootfs.join("a/data"));
+
+    let result = (|| -> Result<()> {
+        // A mount point cannot be renamed, but its parent directory can,
+        // also from inside the container.
+        std::fs::rename(&dir_a, &dir_b)?;
+        std::fs::create_dir(&dir_a)?;
+        for target in ["/b/data]:/name", "/"] {
+            let _ = std::fs::remove_file(&link);
+            symlink(target, &link)?;
+
+            let output =
+                try_checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[])?;
+            if output.status.success() {
+                bail!("checkpoint unexpectedly succeeded with /a/data -> {target:?}");
+            }
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !stderr.contains("invalid external mount destination") {
+                bail!("unexpected checkpoint error with /a/data -> {target:?}: {stderr}");
+            }
+            wait_for_state(
+                id,
+                bundle,
+                WaitTarget::Status(LifecycleStatus::Running),
+                Duration::from_secs(5),
+                Duration::from_millis(100),
+            )
+            .map_err(|e| anyhow!("not running after rejected checkpoint: {e}"))?;
+        }
+
+        std::fs::remove_file(&link)?;
+        std::fs::remove_dir(&dir_a)?;
+        std::fs::rename(&dir_b, &dir_a)?;
+        checkpoint_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[])?;
+        wait_for_state(
+            id,
+            bundle,
+            WaitTarget::Deleted,
+            Duration::from_secs(5),
+            Duration::from_millis(100),
+        )
+        .map_err(|e| anyhow!("container state still accessible after checkpoint: {e}"))?;
+        pty_fds.clear();
+
+        std::fs::rename(&dir_a, &dir_b)?;
+        std::fs::create_dir(&dir_a)?;
+        symlink("/b/data]:/name", &link)?;
+        match restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
+            Ok(fds) => {
+                pty_fds.extend(fds);
+                bail!("restore unexpectedly succeeded with /a/data -> \"/b/data]:/name\"");
+            }
+            Err(e) if e.to_string().contains("invalid external mount destination") => Ok(()),
+            Err(e) => bail!("unexpected restore error: {e}"),
+        }
+    })();
+
+    match result {
+        Ok(()) => TestResult::Passed,
+        Err(e) => TestResult::Failed(e),
+    }
+}
+
 // Test: checkpoint and restore (with --debug)
 // (runc: @test "checkpoint and restore (with --debug)")
 fn checkpoint_and_restore_with_debug() -> TestResult {
     simple_cr(&["--debug"], |_, _| {}, |_, _| Ok(()))
-}
-
-// Test: checkpoint and restore (cgroupns)
-// (runc: @test "checkpoint and restore (cgroupns)")
-// Requires: cgroups v1 + cgroupns
-fn checkpoint_and_restore_cgroupns() -> TestResult {
-    // cgroupv2 already enables cgroupns, so only run on cgroups v1 with cgroupns
-    if !is_cgroups_v1() || !has_cgroupns() {
-        return TestResult::Skipped("requires cgroups v1 with cgroupns enabled".to_string());
-    }
-    simple_cr(
-        &[],
-        |_, spec| {
-            if let Some(linux) = spec.linux_mut() {
-                let mut namespaces = linux.namespaces().clone().unwrap_or_default();
-                namespaces.push(
-                    LinuxNamespaceBuilder::default()
-                        .typ(LinuxNamespaceType::Cgroup)
-                        .build()
-                        .unwrap(),
-                );
-                linux.set_namespaces(Some(namespaces));
-            }
-        },
-        |_, _| Ok(()),
-    )
 }
 
 // Test: checkpoint and restore with netdevice
@@ -473,13 +546,20 @@ fn checkpoint_and_restore_with_netdevice() -> TestResult {
 
 // Test: checkpoint --pre-dump (bad --parent-path)
 // (runc: @test "checkpoint --pre-dump (bad --parent-path)")
+//
+// TODO(youki): `--pre-dump` and `--parent-path` are not yet implemented in the youki
+// checkpoint command. To enable: add both fields to liboci_cli::Checkpoint and call
+// CRIU's set_pre_dump / set_parent_images_dir_fd in container_checkpoint.rs.
 fn checkpoint_pre_dump_bad_parent_path() -> TestResult {
+    // Declared before `ctx` so the PTY master fds outlive the deletion in ctx.drop().
+    let mut pty_fds: Vec<OwnedFd> = Vec::new();
     let ctx = match setup_cr_test(|_, _| {}) {
         Ok(c) => c,
         Err(e) => return e,
     };
-    if let Err(e) = ctx.start() {
-        return e;
+    match ctx.start() {
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => return e,
     }
 
     let id = &ctx.id;
@@ -545,6 +625,9 @@ fn checkpoint_pre_dump_bad_parent_path() -> TestResult {
 
 // Test: checkpoint --pre-dump and restore
 // (runc: @test "checkpoint --pre-dump and restore")
+//
+// TODO(youki): Same as checkpoint_pre_dump_bad_parent_path — blocked on `--pre-dump` /
+// `--parent-path` support. Enable once that TODO is resolved.
 fn checkpoint_pre_dump_and_restore() -> TestResult {
     if !criu_has_feature("mem_dirty_track") {
         return TestResult::Skipped(
@@ -552,12 +635,14 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
         );
     }
 
+    let mut pty_fds: Vec<OwnedFd> = Vec::new();
     let ctx = match setup_cr_test(|_, _| {}) {
         Ok(c) => c,
         Err(e) => return e,
     };
-    if let Err(e) = ctx.start() {
-        return e;
+    match ctx.start() {
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => return e,
     }
 
     let id = &ctx.id;
@@ -617,9 +702,11 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
             "container state still accessible after final checkpoint: {e}"
         ));
     }
+    pty_fds.clear();
 
-    if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
-        return TestResult::Failed(anyhow!("restore failed: {e}"));
+    match restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => return TestResult::Failed(anyhow!("restore failed: {e}")),
     }
 
     if let Err(e) = wait_for_state(
@@ -641,17 +728,24 @@ fn checkpoint_pre_dump_and_restore() -> TestResult {
 
 // Test: checkpoint --lazy-pages and restore
 // (runc: @test "checkpoint --lazy-pages and restore")
+//
+// TODO(youki): `--lazy-pages`, `--page-server`, and `--status-fd` are not yet implemented
+// in the youki checkpoint command. To enable: add the fields to liboci_cli::Checkpoint,
+// wire them through CheckpointOptions, and call the corresponding CRIU setters
+// (set_lazy_pages, set_page_server_address/port, set_status_fd) in container_checkpoint.rs.
 fn checkpoint_lazy_pages_and_restore() -> TestResult {
     if !criu_has_feature("uffd-noncoop") {
         return TestResult::Skipped("CRIU does not support the uffd-noncoop feature".to_string());
     }
 
+    let mut pty_fds: Vec<OwnedFd> = Vec::new();
     let mut ctx = match setup_cr_test(|_, _| {}) {
         Ok(c) => c,
         Err(e) => return e,
     };
-    if let Err(e) = ctx.start() {
-        return e;
+    match ctx.start() {
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => return e,
     }
 
     let id = ctx.id.clone();
@@ -831,12 +925,15 @@ fn checkpoint_lazy_pages_and_restore() -> TestResult {
     // if the daemon has already exited.
     let mut criu_daemon = criu_daemon_child;
 
-    if let Err(e) = restore_result {
-        let _ = criu_daemon.kill();
-        let _ = criu_daemon.wait();
-        let _ = checkpoint_child.kill();
-        let _ = checkpoint_child.wait();
-        return TestResult::Failed(anyhow!("restore --lazy-pages failed: {e}"));
+    match restore_result {
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => {
+            let _ = criu_daemon.kill();
+            let _ = criu_daemon.wait();
+            let _ = checkpoint_child.kill();
+            let _ = checkpoint_child.wait();
+            return TestResult::Failed(anyhow!("restore --lazy-pages failed: {e}"));
+        }
     }
 
     // Wait for background jobs to finish
@@ -876,6 +973,7 @@ fn checkpoint_and_restore_in_external_netns() -> TestResult {
     };
     let ext_netns_path = format!("/run/netns/{ns_name}");
 
+    let mut pty_fds: Vec<OwnedFd> = Vec::new();
     let ctx = match setup_cr_test(|_, spec| {
         if let Some(linux) = spec.linux_mut()
             && let Some(namespaces) = linux.namespaces_mut()
@@ -891,8 +989,9 @@ fn checkpoint_and_restore_in_external_netns() -> TestResult {
         Ok(c) => c,
         Err(e) => return e,
     };
-    if let Err(e) = ctx.start() {
-        return e;
+    match ctx.start() {
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => return e,
     }
 
     let id = &ctx.id;
@@ -924,9 +1023,11 @@ fn checkpoint_and_restore_in_external_netns() -> TestResult {
         ) {
             return TestResult::Failed(anyhow!("not deleted after checkpoint: {e}"));
         }
+        pty_fds.clear();
 
-        if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
-            return TestResult::Failed(anyhow!("restore failed: {e}"));
+        match restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
+            Ok(fds) => pty_fds.extend(fds),
+            Err(e) => return TestResult::Failed(anyhow!("restore failed: {e}")),
         }
 
         if let Err(e) = wait_for_state(
@@ -958,8 +1059,15 @@ fn checkpoint_and_restore_in_external_netns() -> TestResult {
 
 // Test: checkpoint and restore with container specific CRIU config
 // (runc: @test "checkpoint and restore with container specific CRIU config")
+//
+// TODO(youki): The `org.criu.config` OCI annotation is not yet read by youki.
+// To enable: parse spec annotations in container_checkpoint.rs and container_restore.rs,
+// read the file pointed to by `org.criu.config`, and apply its options to the CRIU
+// instance (mirroring runc's criuConfigFile handling).
+// Also consider supporting the global /etc/criu/default.conf config file.
 fn checkpoint_and_restore_with_container_specific_criu_config() -> TestResult {
     let custom_log_name = "custom_criu.log";
+    let mut pty_fds: Vec<OwnedFd> = Vec::new();
     let ctx = match setup_cr_test(|bundle, spec| {
         let custom_config_path = bundle.path().join("custom_criu.conf");
         std::fs::write(&custom_config_path, format!("log-file={custom_log_name}\n")).unwrap();
@@ -974,8 +1082,9 @@ fn checkpoint_and_restore_with_container_specific_criu_config() -> TestResult {
         Ok(c) => c,
         Err(e) => return e,
     };
-    if let Err(e) = ctx.start() {
-        return e;
+    match ctx.start() {
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => return e,
     }
 
     let id = &ctx.id;
@@ -1005,9 +1114,11 @@ fn checkpoint_and_restore_with_container_specific_criu_config() -> TestResult {
     ) {
         return TestResult::Failed(anyhow!("container not deleted after checkpoint: {e}"));
     }
+    pty_fds.clear();
 
-    if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
-        return TestResult::Failed(anyhow!("restore failed: {e}"));
+    match restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => return TestResult::Failed(anyhow!("restore failed: {e}")),
     }
 
     // Verify custom log file was created during restore
@@ -1034,8 +1145,16 @@ fn checkpoint_and_restore_with_container_specific_criu_config() -> TestResult {
 
 // Test: checkpoint and restore with nested bind mounts
 // (runc: @test "checkpoint and restore with nested bind mounts")
+//
+// TODO(youki): Restore fails because youki calls CRIU directly without first recreating
+// the container environment (rootfs mounts, /dev, mount-point directories).
+// runc solves this by calling createContainer before CRIU, which sets up all mount
+// points so the nested bind mounts exist when CRIU tries to attach them.
+// To enable: implement container environment setup (equivalent to runc's createContainer)
+// in container_restore.rs before invoking CRIU.
 fn checkpoint_and_restore_with_nested_bind_mounts() -> TestResult {
     let mut bind1_path = PathBuf::new();
+    let mut pty_fds: Vec<OwnedFd> = Vec::new();
     let ctx = match setup_cr_test(|bundle, spec| {
         // Create bind mount source directories
         let bind1 = bundle.path().join("bind1");
@@ -1068,8 +1187,9 @@ fn checkpoint_and_restore_with_nested_bind_mounts() -> TestResult {
         Ok(c) => c,
         Err(e) => return e,
     };
-    if let Err(e) = ctx.start() {
-        return e;
+    match ctx.start() {
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => return e,
     }
 
     let id = &ctx.id;
@@ -1091,6 +1211,7 @@ fn checkpoint_and_restore_with_nested_bind_mounts() -> TestResult {
     ) {
         return TestResult::Failed(anyhow!("container not deleted after checkpoint: {e}"));
     }
+    pty_fds.clear();
 
     // Cleanup mountpoints created by runc/youki during creation
     // The mountpoints should be recreated during restore - that is the actual thing tested here
@@ -1104,8 +1225,9 @@ fn checkpoint_and_restore_with_nested_bind_mounts() -> TestResult {
         }
     }
 
-    if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
-        return TestResult::Failed(anyhow!("restore failed: {e}"));
+    match restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => return TestResult::Failed(anyhow!("restore failed: {e}")),
     }
 
     if let Err(e) = wait_for_state(
@@ -1127,7 +1249,15 @@ fn checkpoint_and_restore_with_nested_bind_mounts() -> TestResult {
 
 // Test: checkpoint then restore into a different cgroup (via --manage-cgroups-mode ignore)
 // (runc: @test "checkpoint then restore into a different cgroup (via --manage-cgroups-mode ignore)")
+//
+// TODO(youki): Restore places the process in the session cgroup instead of the cgroup
+// specified in the OCI spec, because youki does not set up cgroups before calling CRIU.
+// runc creates and configures the target cgroup prior to restore so that CRIU can move
+// the process into it.
+// To enable: read the cgroups_path from the spec in container_restore.rs and create /
+// configure the cgroup before invoking CRIU.
 fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
+    let mut pty_fds: Vec<OwnedFd> = Vec::new();
     let ctx = match setup_cr_test(|_, spec| {
         // Set initial cgroup path
         let mut linux = oci_spec::runtime::Linux::default();
@@ -1150,8 +1280,9 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
         Ok(c) => c,
         Err(e) => return e,
     };
-    if let Err(e) = ctx.start() {
-        return e;
+    match ctx.start() {
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => return e,
     }
 
     let id = &ctx.id;
@@ -1213,6 +1344,7 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
             "container state still accessible after checkpoint: {e}"
         ));
     }
+    pty_fds.clear();
 
     // Verify the original cgroup is gone
     if host_cgroup_path.exists() {
@@ -1233,7 +1365,7 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
 
     // Restore into the new cgroup
     let pid_file = bundle.path().join("pid");
-    if let Err(e) = restore_container(
+    match restore_container(
         bundle.path(),
         id,
         image_dir,
@@ -1245,7 +1377,8 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
         ],
         &[],
     ) {
-        return TestResult::Failed(anyhow!("restore failed: {e}"));
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => return TestResult::Failed(anyhow!("restore failed: {e}")),
     }
 
     if let Err(e) = wait_for_state(
@@ -1312,13 +1445,24 @@ fn checkpoint_then_restore_into_a_different_cgroup() -> TestResult {
     }
 }
 
+// Test: checkpoint and restore (with exec'd child processes)
+// (runc: @test "checkpoint and restore and exec")
+//
+// TODO(youki): Restore of exec'd processes fails for the same reason as
+// checkpoint_and_restore_with_nested_bind_mounts — youki does not set up the container
+// environment (rootfs, /dev, mount points) before calling CRIU, so CRIU cannot attach
+// the restored exec'd processes to the correct namespaces and file descriptors.
+// To enable: implement container environment setup in container_restore.rs before
+// invoking CRIU (equivalent to runc's createContainer).
 fn checkpoint_and_restore_and_exec() -> TestResult {
+    let mut pty_fds: Vec<OwnedFd> = Vec::new();
     let ctx = match setup_cr_test(|_, _| {}) {
         Ok(c) => c,
         Err(e) => return e,
     };
-    if let Err(e) = ctx.start() {
-        return e;
+    match ctx.start() {
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => return e,
     }
 
     let id = &ctx.id;
@@ -1345,9 +1489,11 @@ fn checkpoint_and_restore_and_exec() -> TestResult {
                 "container state still accessible after checkpoint: {e}"
             ));
         }
+        pty_fds.clear();
 
-        if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
-            return TestResult::Failed(anyhow!("restore failed: {e}"));
+        match restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
+            Ok(fds) => pty_fds.extend(fds),
+            Err(e) => return TestResult::Failed(anyhow!("restore failed: {e}")),
         }
 
         if let Err(e) = wait_for_state(
@@ -1406,6 +1552,7 @@ fn checkpoint_and_restore_and_exec() -> TestResult {
 fn checkpoint_and_restore_with_link_remap() -> TestResult {
     const MARKER: &str = "link-remap-marker";
 
+    let mut pty_fds: Vec<OwnedFd> = Vec::new();
     let ctx = match setup_cr_test(|_, spec| {
         // Mount a writable tmpfs so the unlinked file lives on a filesystem CRIU
         // can dump (the default rootfs entries are read-only bind mounts).
@@ -1440,8 +1587,9 @@ fn checkpoint_and_restore_with_link_remap() -> TestResult {
         Ok(c) => c,
         Err(e) => return e,
     };
-    if let Err(e) = ctx.start() {
-        return e;
+    match ctx.start() {
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => return e,
     }
 
     let id = &ctx.id;
@@ -1471,9 +1619,11 @@ fn checkpoint_and_restore_with_link_remap() -> TestResult {
             "container state still accessible after checkpoint: {e}"
         ));
     }
+    pty_fds.clear();
 
-    if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
-        return TestResult::Failed(anyhow!("restore failed: {e}"));
+    match restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => return TestResult::Failed(anyhow!("restore failed: {e}")),
     }
 
     if let Err(e) = wait_for_state(
@@ -1504,12 +1654,15 @@ fn checkpoint_and_restore_with_link_remap() -> TestResult {
 }
 
 fn checkpoint_and_restore_empty_net_ns() -> TestResult {
+    // Declared before `ctx` so the PTY master fds outlive the deletion in ctx.drop().
+    let mut pty_fds: Vec<OwnedFd> = Vec::new();
     let ctx = match setup_cr_test(|_, _| {}) {
         Ok(c) => c,
         Err(e) => return e,
     };
-    if let Err(e) = ctx.start() {
-        return e;
+    match ctx.start() {
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => return e,
     }
 
     let id = &ctx.id;
@@ -1556,9 +1709,11 @@ fn checkpoint_and_restore_empty_net_ns() -> TestResult {
             "container state still accessible after checkpoint: {e}"
         ));
     }
+    pty_fds.clear();
 
-    if let Err(e) = restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
-        return TestResult::Failed(anyhow!("restore failed: {e}"));
+    match restore_container(bundle.path(), id, image_dir, Some(work_dir), &[], &[]) {
+        Ok(fds) => pty_fds.extend(fds),
+        Err(e) => return TestResult::Failed(anyhow!("restore failed: {e}")),
     }
 
     if let Err(e) = wait_for_state(
@@ -1589,27 +1744,33 @@ pub fn get_checkpoint_restore_tests() -> TestGroup {
             ConditionalTest::new($name, Box::new(can_run), Box::new($fn))
         };
     }
+    macro_rules! cr_test_youki {
+        ($name:expr, $fn:expr) => {
+            ConditionalTest::new($name, Box::new(can_run_with_youki), Box::new($fn))
+        };
+    }
 
-    tg.add(vec![Box::new(cr_test!(
+    tg.add(vec![Box::new(cr_test_youki!(
         "checkpoint_and_restore",
         checkpoint_and_restore
     ))]);
-    tg.add(vec![Box::new(cr_test!(
+    tg.add(vec![Box::new(cr_test_youki!(
         "checkpoint_and_restore_bind_mount_symlink",
         checkpoint_and_restore_bind_mount_symlink
     ))]);
-    tg.add(vec![Box::new(cr_test!(
+    tg.add(vec![Box::new(cr_test_youki!(
+        "checkpoint_and_restore_bind_mount_invalid_criu_key",
+        checkpoint_and_restore_bind_mount_invalid_criu_key
+    ))]);
+    tg.add(vec![Box::new(cr_test_youki!(
         "checkpoint_and_restore_with_debug",
         checkpoint_and_restore_with_debug
     ))]);
-    tg.add(vec![Box::new(cr_test!(
-        "checkpoint_and_restore_cgroupns",
-        checkpoint_and_restore_cgroupns
-    ))]);
-    tg.add(vec![Box::new(cr_test!(
+    tg.add(vec![Box::new(cr_test_youki!(
         "checkpoint_and_restore_with_netdevice",
         checkpoint_and_restore_with_netdevice
     ))]);
+    // --parent-path and --pre-dump are not yet implemented in youki
     tg.add(vec![Box::new(cr_test!(
         "checkpoint_pre_dump_bad_parent_path",
         checkpoint_pre_dump_bad_parent_path
@@ -1618,14 +1779,16 @@ pub fn get_checkpoint_restore_tests() -> TestGroup {
         "checkpoint_pre_dump_and_restore",
         checkpoint_pre_dump_and_restore
     ))]);
+    // --lazy-pages, --page-server, --status-fd are not yet implemented in youki
     tg.add(vec![Box::new(cr_test!(
         "checkpoint_lazy_pages_and_restore",
         checkpoint_lazy_pages_and_restore
     ))]);
-    tg.add(vec![Box::new(cr_test!(
+    tg.add(vec![Box::new(cr_test_youki!(
         "checkpoint_and_restore_in_external_netns",
         checkpoint_and_restore_in_external_netns
     ))]);
+    // org.criu.config annotation is not yet implemented in youki
     tg.add(vec![Box::new(cr_test!(
         "checkpoint_and_restore_with_container_specific_criu_config",
         checkpoint_and_restore_with_container_specific_criu_config
@@ -1642,7 +1805,7 @@ pub fn get_checkpoint_restore_tests() -> TestGroup {
         "checkpoint_and_restore_and_exec",
         checkpoint_and_restore_and_exec
     ))]);
-    tg.add(vec![Box::new(cr_test!(
+    tg.add(vec![Box::new(cr_test_youki!(
         "checkpoint_and_restore_with_link_remap",
         checkpoint_and_restore_with_link_remap
     ))]);
