@@ -202,6 +202,10 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
                     MountOption::Norelatime(is_clear, flag) => Some((is_clear, flag)),
                     MountOption::Strictatime(is_clear, flag) => Some((is_clear, flag)),
                     MountOption::Nostrictatime(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Iversion(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Noiversion(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Silent(is_clear, flag) => Some((is_clear, flag)),
+                    MountOption::Loud(is_clear, flag) => Some((is_clear, flag)),
                 },
                 Err(_) => None,
             } {
@@ -590,6 +594,44 @@ mod tests {
                 .build()?,
         )?;
         assert_eq!(mount_option_config.data, Vec::<String>::new());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_mount_iversion_and_silent_options() -> Result<()> {
+        // These options set or clear a mount flag; they must not leak into the
+        // filesystem data, where tmpfs rejects them as unknown parameters.
+        let cases = [
+            ("iversion", MsFlags::MS_I_VERSION),
+            ("silent", MsFlags::MS_SILENT),
+            ("noiversion", MsFlags::empty()),
+            ("loud", MsFlags::empty()),
+        ];
+        for (option, expected) in cases {
+            let config = parse_mount(
+                &MountBuilder::default()
+                    .typ("tmpfs")
+                    .options(vec![option.to_string()])
+                    .build()?,
+            )?;
+            assert_eq!(config.flags, expected, "flags for {option}");
+            assert_eq!(config.data, Vec::<String>::new(), "data for {option}");
+        }
+
+        // The negative forms clear a flag set earlier in the list.
+        let config = parse_mount(
+            &MountBuilder::default()
+                .typ("tmpfs")
+                .options(
+                    ["iversion", "noiversion", "silent", "loud"]
+                        .map(String::from)
+                        .to_vec(),
+                )
+                .build()?,
+        )?;
+        assert_eq!(config.flags, MsFlags::empty());
+        assert_eq!(config.data, Vec::<String>::new());
 
         Ok(())
     }
