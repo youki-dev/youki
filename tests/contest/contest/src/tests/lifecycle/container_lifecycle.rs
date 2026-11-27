@@ -7,7 +7,7 @@ use oci_spec::runtime::{LinuxNamespaceBuilder, LinuxNamespaceType, Spec};
 use test_framework::{TestResult, TestableGroup};
 
 use super::{checkpoint, create, delete, exec, kill, start, state};
-use crate::utils::{criu_installed, generate_uuid, prepare_bundle, set_config};
+use crate::utils::{criu_has_feature, criu_installed, generate_uuid, prepare_bundle, set_config};
 
 /// RAII guard that deletes a named network namespace on drop.
 struct NetnsGuard(String);
@@ -212,6 +212,19 @@ impl ContainerLifecycle {
         checkpoint::checkpoint_page_server(self.project_path.path(), &self.container_id)
     }
 
+    pub fn checkpoint_lazy_pages(&self) -> TestResult {
+        if !criu_installed() {
+            return TestResult::Skipped("CRIU is not installed".to_string());
+        }
+        if !criu_has_feature("uffd-noncoop") {
+            return TestResult::Skipped(
+                "CRIU does not support the uffd-noncoop feature".to_string(),
+            );
+        }
+
+        checkpoint::checkpoint_lazy_pages(self.project_path.path(), &self.container_id)
+    }
+
     // NOTE: The following two methods (`checkpoint_link_remap` and
     // `checkpoint_with_external_namespaces`) deviate from the pattern used by
     // the other checkpoint methods in this impl block. The typical pattern is:
@@ -354,6 +367,7 @@ impl TestableGroup for ContainerLifecycle {
                 self.checkpoint_empty_net_ns(),
             ),
             ("checkpoint with page-server", self.checkpoint_page_server()),
+            ("checkpoint with lazy-pages", self.checkpoint_lazy_pages()),
             ("checkpoint with link-remap", Self::checkpoint_link_remap()),
             (
                 "checkpoint with tcp-skip-in-flight",
@@ -397,6 +411,9 @@ impl TestableGroup for ContainerLifecycle {
                 )),
                 "checkpoint_page_server" => {
                     ret.push(("checkpoint with page-server", self.checkpoint_page_server()))
+                }
+                "checkpoint_lazy_pages" => {
+                    ret.push(("checkpoint with lazy-pages", self.checkpoint_lazy_pages()))
                 }
                 "checkpoint_link_remap" => {
                     ret.push(("checkpoint with link-remap", Self::checkpoint_link_remap()))

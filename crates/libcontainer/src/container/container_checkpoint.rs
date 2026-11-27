@@ -173,6 +173,7 @@ impl Container {
         if let Some(page_server) = &opts.page_server {
             criu.set_page_server(page_server.address.clone(), page_server.port.into());
         }
+        criu.set_lazy_pages(opts.lazy_pages);
         // youki does not manage network devices, so external dependencies such as the
         // host side of a veth pair cannot be described to CRIU. Dumping them makes
         // restore fail with "Unknown peer net namespace", so runc sets this unconditionally.

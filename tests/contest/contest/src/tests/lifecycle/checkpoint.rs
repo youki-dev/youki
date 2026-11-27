@@ -678,29 +678,13 @@ impl PageServer {
     // The page server writes the received pages to its images dir and exits once
     // the dump closes the connection, so the images are complete only after exit.
     fn wait_exit(&mut self, timeout: std::time::Duration) -> Result<(), TestResult> {
-        let deadline = std::time::Instant::now() + timeout;
-        loop {
-            match self.child.try_wait() {
-                Ok(Some(status)) if status.success() => return Ok(()),
-                Ok(Some(status)) => {
-                    return Err(TestResult::Failed(anyhow!(
-                        "criu page-server exited with failure: {status}"
-                    )));
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    return Err(TestResult::Failed(anyhow!(
-                        "failed to wait for criu page-server: {e}"
-                    )));
-                }
-            }
-            if std::time::Instant::now() >= deadline {
-                return Err(TestResult::Failed(anyhow!(
-                    "timed out waiting for criu page-server to exit"
-                )));
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
+        let status = wait_child_exit(&mut self.child, "criu page-server", timeout)?;
+        if !status.success() {
+            return Err(TestResult::Failed(anyhow!(
+                "criu page-server exited with failure: {status}"
+            )));
         }
+        Ok(())
     }
 }
 
@@ -709,6 +693,42 @@ impl Drop for PageServer {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+fn wait_child_exit(
+    child: &mut std::process::Child,
+    name: &str,
+    timeout: std::time::Duration,
+) -> Result<std::process::ExitStatus, TestResult> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {}
+            Err(e) => {
+                return Err(TestResult::Failed(anyhow!(
+                    "failed to wait for {name}: {e}"
+                )));
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(TestResult::Failed(anyhow!(
+                "timed out waiting for {name} to exit"
+            )));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+// Binding to port 0 lets the kernel choose an unused port, which is released
+// right away for CRIU to listen on. A fixed port such as runc's 27277 fails with
+// "Address already in use" while a page server leaked by an earlier failed run
+// is still listening on it.
+fn pick_unused_port() -> Result<u16, TestResult> {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr())
+        .map(|addr| addr.port())
+        .map_err(|e| TestResult::Failed(anyhow!("failed to pick an unused port: {e}")))
 }
 
 /// Checkpoint a container with `--page-server` and verify that the memory pages
@@ -723,13 +743,9 @@ pub fn checkpoint_page_server(project_path: &Path, id: &str) -> TestResult {
         Err(e) => return e,
     };
 
-    // Binding to port 0 lets the kernel choose an unused port, which is released
-    // right away for criu page-server to listen on. A fixed port such as runc's
-    // 27277 fails with "Address already in use" while a page server leaked by an
-    // earlier failed run is still listening on it.
-    let port = match std::net::TcpListener::bind("127.0.0.1:0").and_then(|l| l.local_addr()) {
-        Ok(addr) => addr.port(),
-        Err(e) => return TestResult::Failed(anyhow!("failed to pick an unused port: {e}")),
+    let port = match pick_unused_port() {
+        Ok(port) => port,
+        Err(e) => return e,
     };
     let mut page_server = match PageServer::start(&page_server_path, port) {
         Ok(ps) => ps,
@@ -783,6 +799,174 @@ pub fn checkpoint_page_server(project_path: &Path, id: &str) -> TestResult {
     }
 
     TestResult::Passed
+}
+
+fn is_tcp_listening(port: u16) -> Result<bool, TestResult> {
+    let entries = procfs::net::tcp()
+        .map_err(|e| TestResult::Failed(anyhow!("failed to read /proc/net/tcp: {e}")))?;
+    Ok(entries.iter().any(|entry| {
+        entry.state == procfs::net::TcpState::Listen && entry.local_address.port() == port
+    }))
+}
+
+fn read_stderr(child: &mut std::process::Child) -> String {
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        let _ = pipe.read_to_string(&mut stderr);
+    }
+    stderr
+}
+
+// With --lazy-pages the dump does not finish until a client fetches the pages
+// from the page server that CRIU starts, so the checkpoint runs in the background.
+struct LazyPagesCheckpoint {
+    child: std::process::Child,
+    port: u16,
+}
+
+impl LazyPagesCheckpoint {
+    fn wait_listening(&mut self, timeout: std::time::Duration) -> Result<(), TestResult> {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if is_tcp_listening(self.port)? {
+                return Ok(());
+            }
+            match self.child.try_wait() {
+                Ok(Some(status)) => {
+                    return Err(TestResult::Failed(anyhow!(
+                        "checkpoint exited with {status} before CRIU started listening on \
+                         port {}: {}",
+                        self.port,
+                        read_stderr(&mut self.child)
+                    )));
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    return Err(TestResult::Failed(anyhow!(
+                        "failed to wait for checkpoint: {e}"
+                    )));
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(TestResult::Failed(anyhow!(
+                    "timed out waiting for CRIU to listen on port {}",
+                    self.port
+                )));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+
+    // A client that closes the connection without requesting any page ends the
+    // lazy transfer successfully, which lets the dump complete without a restore.
+    fn finish(&mut self, timeout: std::time::Duration) -> Result<(), TestResult> {
+        std::net::TcpStream::connect(("127.0.0.1", self.port)).map_err(|e| {
+            TestResult::Failed(anyhow!(
+                "failed to connect to the lazy page server on port {}: {e}",
+                self.port
+            ))
+        })?;
+        let status = wait_child_exit(&mut self.child, "checkpoint", timeout)?;
+        if !status.success() {
+            return Err(TestResult::Failed(anyhow!(
+                "checkpoint exited with {status}: {}",
+                read_stderr(&mut self.child)
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl Drop for LazyPagesCheckpoint {
+    fn drop(&mut self) {
+        if let Ok(None) = self.child.try_wait() {
+            // Killing only the runtime would leave CRIU blocked in accept(), so
+            // unblock CRIU first and let the checkpoint end by itself.
+            let _ = std::net::TcpStream::connect(("127.0.0.1", self.port));
+            if wait_child_exit(
+                &mut self.child,
+                "checkpoint",
+                std::time::Duration::from_secs(10),
+            )
+            .is_err()
+            {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+            }
+        }
+    }
+}
+
+/// Checkpoint a container with `--lazy-pages` and verify that CRIU starts a page
+/// server for the memory pages instead of finishing the dump right away.
+pub fn checkpoint_lazy_pages(project_path: &Path, id: &str) -> TestResult {
+    let pid_before = match get_container_pid(project_path, id) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let (_temp_dir, image_path) = match create_checkpoint_image_dir() {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let port = match pick_unused_port() {
+        Ok(port) => port,
+        Err(e) => return e,
+    };
+
+    let page_server_addr = format!("127.0.0.1:{port}");
+    let runtime_path = get_runtime_path();
+    let child = match Command::new(runtime_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .arg("--root")
+        .arg(project_path.join("runtime"))
+        .arg(match runtime_path {
+            _ if runtime_path.ends_with("youki") => "checkpointt",
+            _ => "checkpoint",
+        })
+        .arg("--image-path")
+        .arg(&image_path)
+        .args([
+            "--leave-running",
+            "--lazy-pages",
+            "--page-server",
+            &page_server_addr,
+        ])
+        .arg(id)
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(e) => return TestResult::Failed(anyhow!("failed to execute checkpoint command: {e}")),
+    };
+    let mut checkpoint = LazyPagesCheckpoint { child, port };
+
+    // Without --lazy-pages CRIU connects to --page-server as a client and never
+    // listens on it, so listening proves that the dump went into the lazy mode.
+    if let Err(e) = checkpoint.wait_listening(std::time::Duration::from_secs(10)) {
+        return e;
+    }
+
+    // CRIU writes every image before it starts serving the pages lazily.
+    if !image_path.join("inventory.img").exists() {
+        return TestResult::Failed(anyhow!(
+            "{image_path:?}/inventory.img is missing while CRIU serves the pages lazily"
+        ));
+    }
+
+    if let Err(e) = checkpoint.finish(std::time::Duration::from_secs(10)) {
+        return e;
+    }
+
+    match is_process_running(pid_before) {
+        Ok(true) => TestResult::Passed,
+        Ok(false) => TestResult::Failed(anyhow!(
+            "process (pid {pid_before}) should still be running after checkpoint with \
+             --leave-running, but it is gone"
+        )),
+        Err(err) => TestResult::Failed(anyhow!(
+            "could not determine whether process (pid {pid_before}) is running: {err}"
+        )),
+    }
 }
 
 /// Check that a namespace was treated as external by CRIU.

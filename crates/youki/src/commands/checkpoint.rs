@@ -25,6 +25,7 @@ pub fn checkpoint(args: Checkpoint, root_path: PathBuf) -> Result<()> {
         link_remap: args.link_remap,
         empty_net_ns: parse_empty_ns(&args.empty_ns)?,
         page_server: parse_page_server(args.page_server.as_deref())?,
+        lazy_pages: args.lazy_pages,
     };
     container
         .checkpoint(&opts)
