@@ -3,7 +3,10 @@ use std::path::Path;
 
 use libc::IFNAMSIZ;
 use nix::sys::stat::stat;
-use oci_spec::runtime::{LinuxNamespaceType, LinuxSchedulerPolicy, LinuxSeccompAction, Spec};
+use oci_spec::runtime::{
+    LinuxDeviceType, LinuxNamespaceType, LinuxResources, LinuxSchedulerPolicy, LinuxSeccompAction,
+    Spec,
+};
 
 use crate::container::mount_validation::validate_idmapped_mounts;
 use crate::error::ErrInvalidSpec;
@@ -22,6 +25,9 @@ impl Validator {
         Self::validate_spec_for_intel_rdt(spec)?;
         Self::validate_spec_for_time_namespace(spec)?;
         Self::validate_spec_for_seccomp(spec)?;
+        if let Some(resources) = spec.linux().as_ref().and_then(|l| l.resources().as_ref()) {
+            Self::validate_resources(resources)?;
+        }
         if let Some(mounts) = spec.mounts() {
             Self::validate_spec_for_mount_options(mounts)?;
             validate_idmapped_mounts(mounts, spec.linux().as_ref(), is_rootless)?;
@@ -459,6 +465,26 @@ impl Validator {
 
         Ok(())
     }
+
+    /// Checks `linux.resources`. Called for the spec on create and for the
+    /// resources passed to update.
+    pub fn validate_resources(resources: &LinuxResources) -> Result<(), ErrInvalidSpec> {
+        Self::validate_device_cgroup_rules(resources)
+    }
+
+    // The runtime spec only allows 'a', 'c' and 'b' in linux.resources.devices.
+    // 'u' and 'p' are only valid in linux.devices, and the device cgroup has no
+    // way to enforce them. runc rejects them the same way in specconv.
+    fn validate_device_cgroup_rules(resources: &LinuxResources) -> Result<(), ErrInvalidSpec> {
+        for rule in resources.devices().iter().flatten() {
+            let typ = rule.typ().unwrap_or_default();
+            if matches!(typ, LinuxDeviceType::U | LinuxDeviceType::P) {
+                return Err(ErrInvalidSpec::InvalidCgroupDeviceType(typ));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -468,9 +494,9 @@ mod tests {
 
     use nix::unistd::{Gid, Uid};
     use oci_spec::runtime::{
-        IOPriorityClass, LinuxBuilder, LinuxIOPriorityBuilder, LinuxIdMappingBuilder,
-        LinuxIntelRdtBuilder, LinuxNamespaceBuilder, LinuxNetDevice, LinuxSeccompBuilder,
-        LinuxSyscallBuilder, ProcessBuilder, SchedulerBuilder, SpecBuilder,
+        IOPriorityClass, LinuxBuilder, LinuxDeviceCgroupBuilder, LinuxIOPriorityBuilder,
+        LinuxIdMappingBuilder, LinuxIntelRdtBuilder, LinuxNamespaceBuilder, LinuxNetDevice,
+        LinuxSeccompBuilder, LinuxSyscallBuilder, ProcessBuilder, SchedulerBuilder, SpecBuilder,
     };
     use serial_test::serial;
 
@@ -1371,5 +1397,100 @@ mod tests {
         let result =
             Validator::validate_spec_for_net_devices(&spec, rootless_required(&*syscall).unwrap());
         assert!(result.is_ok());
+    }
+
+    fn spec_with_device_rules(rules: Vec<oci_spec::runtime::LinuxDeviceCgroup>) -> Spec {
+        // Built from JSON so that nothing but the device rules is set.
+        serde_json::from_value(serde_json::json!({
+            "ociVersion": "1.0.2",
+            "linux": { "resources": { "devices": rules } }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn test_reject_u_and_p_device_cgroup_rules() {
+        for typ in [LinuxDeviceType::U, LinuxDeviceType::P] {
+            // The rule is invalid no matter what the other rules are, so put a deny
+            // rule before it and a type 'a' rule after it.
+            let spec = spec_with_device_rules(vec![
+                LinuxDeviceCgroupBuilder::default()
+                    .allow(false)
+                    .access("rwm")
+                    .build()
+                    .unwrap(),
+                LinuxDeviceCgroupBuilder::default()
+                    .typ(typ)
+                    .allow(true)
+                    .major(10_i64)
+                    .minor(229_i64)
+                    .access("rwm")
+                    .build()
+                    .unwrap(),
+                LinuxDeviceCgroupBuilder::default()
+                    .typ(LinuxDeviceType::A)
+                    .allow(true)
+                    .build()
+                    .unwrap(),
+            ]);
+
+            // This is what update runs.
+            let resources = spec.linux().as_ref().unwrap().resources().as_ref().unwrap();
+            let err = Validator::validate_resources(resources).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!(
+                    "invalid cgroup device type '{}' in linux.resources.devices, must be 'a', 'c' or 'b'",
+                    typ.as_str()
+                )
+            );
+
+            // validate_spec must run the check too.
+            let err = Validator::validate_spec(&spec, false).unwrap_err();
+            assert!(
+                matches!(err, ErrInvalidSpec::InvalidCgroupDeviceType(t) if t == typ),
+                "expected InvalidCgroupDeviceType({typ:?}), got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_accept_a_c_b_device_cgroup_rules() {
+        let mut rules: Vec<_> = [LinuxDeviceType::C, LinuxDeviceType::B]
+            .into_iter()
+            .map(|typ| {
+                LinuxDeviceCgroupBuilder::default()
+                    .typ(typ)
+                    .allow(true)
+                    .major(1_i64)
+                    .minor(3_i64)
+                    .access("rwm")
+                    .build()
+                    .unwrap()
+            })
+            .collect();
+        rules.push(
+            LinuxDeviceCgroupBuilder::default()
+                .typ(LinuxDeviceType::A)
+                .allow(false)
+                .build()
+                .unwrap(),
+        );
+        // A rule without a type defaults to 'a'.
+        rules.push(
+            LinuxDeviceCgroupBuilder::default()
+                .allow(false)
+                .build()
+                .unwrap(),
+        );
+
+        for rules in [rules, vec![]] {
+            let spec = spec_with_device_rules(rules);
+            let resources = spec.linux().as_ref().unwrap().resources().as_ref().unwrap();
+            Validator::validate_resources(resources).unwrap();
+        }
+
+        // No devices at all is fine too.
+        Validator::validate_resources(&LinuxResources::default()).unwrap();
     }
 }
