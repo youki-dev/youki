@@ -143,7 +143,6 @@ sudo apt-get install    \
       pkg-config        \
       libsystemd-dev    \
       build-essential   \
-      libelf-dev        \
       libseccomp-dev    \
       libclang-dev      \
       libssl-dev
@@ -155,7 +154,6 @@ sudo apt-get install    \
 sudo dnf install            \
       pkg-config            \
       systemd-devel         \
-      elfutils-libelf-devel \
       libseccomp-devel      \
       clang-devel           \
       openssl-devel

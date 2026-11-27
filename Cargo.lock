@@ -2555,17 +2555,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libbpf-sys"
-version = "1.7.1+v1.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "222dd409cbd4db5e9d40410d17a168e1f80446386ae7bafbefa9bd0c1183ff64"
-dependencies = [
- "cc",
- "nix",
- "pkg-config",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2580,7 +2569,6 @@ dependencies = [
  "env_logger",
  "errno",
  "fixedbitset 0.5.9",
- "libbpf-sys",
  "libc",
  "mockall",
  "nix",
@@ -3044,7 +3032,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5009,7 +4997,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
