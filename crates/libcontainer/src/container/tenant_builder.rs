@@ -9,6 +9,7 @@ use std::rc::Rc;
 use std::str::FromStr;
 
 use caps::Capability;
+use libcgroups::common::{CgroupSetup, container_cgroup_segment};
 use nix::fcntl::OFlag;
 use nix::unistd::{Pid, pipe2, read};
 use oci_spec::runtime::{
@@ -16,7 +17,10 @@ use oci_spec::runtime::{
     LinuxCapabilities, LinuxCapabilitiesBuilder, LinuxNamespace, LinuxNamespaceBuilder,
     LinuxNamespaceType, Process, ProcessBuilder, Spec, UserBuilder,
 };
+use pathrs::flags::OpenFlags;
+use pathrs::procfs::{ProcfsBase, ProcfsHandle};
 use procfs::process::Namespace;
+use procfs::{FromRead, ProcessCGroups};
 
 use super::Container;
 use super::builder::ContainerBuilder;
@@ -130,6 +134,54 @@ fn get_capabilities(
     caps.set_inheritable(None);
     caps.set_ambient(None);
     Ok(caps)
+}
+
+// Only works for cgroup v2
+fn get_init_proc_sub_cgroup(container: &Container, cgroup_path: &Path) -> Option<String> {
+    match libcgroups::common::get_cgroup_setup() {
+        Ok(CgroupSetup::Unified) => {}
+        Ok(_) | Err(_) => return None,
+    }
+
+    let init_pid = container.pid()?.as_raw() as u32;
+    let init_proc_cgroups = (|| -> Result<ProcessCGroups, Box<dyn std::error::Error>> {
+        Ok(ProcessCGroups::from_read(ProcfsHandle::new()?.open(
+            ProcfsBase::ProcPid(init_pid),
+            "cgroup",
+            OpenFlags::O_RDONLY | OpenFlags::O_CLOEXEC,
+        )?)?)
+    })()
+    .map_err(|e| {
+        let container_id = container.id();
+        tracing::debug!("failed to get cgroup for init process of container {container_id}: {e} ");
+        e
+    })
+    .ok()?;
+
+    infer_sub_cgroup_from_proc_cgroups(&init_proc_cgroups, cgroup_path)
+}
+
+// Pure inference logic split out of [`get_init_proc_sub_cgroup`] for testability:
+// reading `/proc/<pid>/cgroup` depends on the live host (cgroup setup, pid, procfs)
+// and cannot be unit-tested, while this function only operates on already-parsed data.
+fn infer_sub_cgroup_from_proc_cgroups(
+    init_proc_cgroups: &ProcessCGroups,
+    cgroup_path: &Path,
+) -> Option<String> {
+    let init_proc_cgroup = init_proc_cgroups
+        .into_iter()
+        // This function is necessary only in cgroup v2, where there is only a single cgroup
+        // with an empty controller name.
+        .find(|c| c.controllers.is_empty())?;
+
+    let expected_segment = container_cgroup_segment(cgroup_path)?;
+
+    // Locate the container's cgroup segment and return the trailing sub-cgroup path.
+    let mut init_proc_cgroup_path_parts = init_proc_cgroup.pathname.split("/");
+    init_proc_cgroup_path_parts
+        .position(|part| part == expected_segment)
+        .map(|_| init_proc_cgroup_path_parts.collect::<Vec<_>>().join("/"))
+        .filter(|s| !s.is_empty())
 }
 
 impl TenantContainerBuilder {
@@ -295,8 +347,22 @@ impl TenantContainerBuilder {
             stdout: self.base.stdout,
             stderr: self.base.stderr,
             as_sibling: self.as_sibling,
-            cgroup_path,
-            sub_cgroup_path: self.sub_cgroup,
+            // In cgroup v2, joining a TenantContainer into a nested container's cgroup may fail
+            // with EBUSY due to the "no internal processes constraint".
+            // If no explicit sub-cgroup is provided, infer the sub-cgroup from the init process
+            // of the landlord and use that.
+            // For a normal landlord container, this remains None.
+            // Ref: https://github.com/youki-dev/youki/issues/3342
+            cgroup_path: cgroup_path.clone(),
+            sub_cgroup_path: match self.sub_cgroup {
+                Some(s) if !s.is_empty() => Some(s),
+                _ => get_init_proc_sub_cgroup(&container, &cgroup_path).map(|sub_cgroup| {
+                    tracing::debug!(
+                        "inferred sub-cgroup path from landlord container: {sub_cgroup}"
+                    );
+                    sub_cgroup
+                }),
+            },
             process_label: self.process_label,
         };
 
@@ -775,6 +841,120 @@ mod tests {
         assert_eq!(caps, expected_caps);
 
         Ok(())
+    }
+
+    // --- infer sub-cgroup tests ---
+
+    #[test]
+    fn test_infer_sub_cgroup_from_proc_cgroups() {
+        const CONTAINER_ID: &str = "569d5ce3afe1074769f67";
+
+        struct Case {
+            name: &'static str,
+            // Resolved landlord cgroup path as saved in YoukiConfig.
+            cgroup_path: PathBuf,
+            proc_path: String,
+            expected: Option<&'static str>,
+        }
+        let cases = [
+            Case {
+                name: "default systemd path uses container id",
+                cgroup_path: PathBuf::from(format!(":youki:{CONTAINER_ID}")),
+                proc_path: format!("/youki-{CONTAINER_ID}.scope/init"),
+                expected: Some("init"),
+            },
+            Case {
+                name: "default cgroupfs path uses container id",
+                cgroup_path: PathBuf::from(CONTAINER_ID),
+                proc_path: format!("/{CONTAINER_ID}/init"),
+                expected: Some("init"),
+            },
+            Case {
+                name: "valid sub-cgroup for fs controller",
+                cgroup_path: PathBuf::from(format!("/docker/{CONTAINER_ID}")),
+                proc_path: format!("/docker/{CONTAINER_ID}/init"),
+                expected: Some("init"),
+            },
+            Case {
+                name: "valid sub-cgroup for domain controller",
+                cgroup_path: PathBuf::from(format!("system.slice:docker:{CONTAINER_ID}")),
+                proc_path: format!("/system.slice/docker-{CONTAINER_ID}.scope/init"),
+                expected: Some("init"),
+            },
+            Case {
+                name: "valid multi layer sub-cgroup",
+                cgroup_path: PathBuf::from(format!("system.slice:docker:{CONTAINER_ID}")),
+                proc_path: format!("/system.slice/docker-{CONTAINER_ID}.scope/subgroup/init"),
+                expected: Some("subgroup/init"),
+            },
+            Case {
+                name: "cgroup path doesn't match proc path",
+                cgroup_path: PathBuf::from(format!("/docker/{CONTAINER_ID}")),
+                proc_path: "/docker/other-container/subgroup".to_string(),
+                expected: None,
+            },
+            Case {
+                name: "substring segment must not match for fs controller",
+                cgroup_path: PathBuf::from("/test1/test"),
+                proc_path: "/test1/test-foo/subgroup".to_string(),
+                expected: None,
+            },
+            Case {
+                name: "substring scope must not match for domain controller",
+                cgroup_path: PathBuf::from(format!("system.slice:docker:{CONTAINER_ID}")),
+                proc_path: format!("/system.slice/docker-{CONTAINER_ID}-extra.scope/subgroup"),
+                expected: None,
+            },
+            Case {
+                name: "no sub-cgroup for fs controller",
+                cgroup_path: PathBuf::from(format!("/docker/{CONTAINER_ID}")),
+                proc_path: format!("/docker/{CONTAINER_ID}"),
+                expected: None,
+            },
+            Case {
+                name: "no sub-cgroup for domain controller",
+                cgroup_path: PathBuf::from(format!("system.slice:docker:{CONTAINER_ID}")),
+                proc_path: format!("/system.slice/docker-{CONTAINER_ID}.scope"),
+                expected: None,
+            },
+            Case {
+                name: "malformed cgroup path yields none",
+                cgroup_path: PathBuf::from("a:b:c:d"),
+                proc_path: "/a/b/c/d/init".to_string(),
+                expected: None,
+            },
+            Case {
+                name: "empty proc path yields none",
+                cgroup_path: PathBuf::from(format!("/docker/{CONTAINER_ID}")),
+                proc_path: String::new(),
+                expected: None,
+            },
+        ];
+
+        for case in cases {
+            let proc_cgroups = ProcessCGroups(vec![procfs::ProcessCGroup {
+                hierarchy: 0,
+                controllers: Vec::new(),
+                pathname: case.proc_path.to_string(),
+            }]);
+
+            let actual = infer_sub_cgroup_from_proc_cgroups(&proc_cgroups, &case.cgroup_path);
+            assert_eq!(actual.as_deref(), case.expected, "{}", case.name);
+        }
+
+        // No unified-hierarchy (v2) entry at all, e.g. a cgroup v1-only host.
+        let v1_only = ProcessCGroups(vec![procfs::ProcessCGroup {
+            hierarchy: 1,
+            controllers: vec!["memory".to_string()],
+            pathname: format!("/docker/{CONTAINER_ID}/init"),
+        }]);
+        assert_eq!(
+            infer_sub_cgroup_from_proc_cgroups(
+                &v1_only,
+                &PathBuf::from(format!("/docker/{CONTAINER_ID}"))
+            ),
+            None
+        );
     }
 
     // --- environment tests ---

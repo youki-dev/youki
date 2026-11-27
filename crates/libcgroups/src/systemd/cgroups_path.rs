@@ -76,15 +76,26 @@ impl CgroupsPath {
         split_sub_cgroup(&self.name).1
     }
 
-    /// Returns the unit (scope) name from the path provided by the user
-    /// for example: foo:docker:bar returns in '/docker-bar.scope'
+    /// Returns the unit (scope) name from the path provided by the user.
+    /// e.g. `foo:docker:bar` returns `docker-bar.scope`.
     pub fn unit_name(&self) -> String {
         let (base_name, _) = split_sub_cgroup(&self.name);
-        // By default we create a scope unless specified explicitly.
-        if !base_name.ends_with(".slice") {
-            return format!("{}-{}.scope", self.prefix, base_name);
+        if base_name.ends_with(".slice") {
+            return base_name.to_owned();
         }
-        base_name.to_owned()
+        format!("{}-{base_name}.scope", self.prefix)
+    }
+
+    /// Returns the cgroup segment that identifies the container itself,
+    /// stripping any sub-cgroup suffix.
+    /// Returns `None` when the path carries no container name to match on.
+    pub fn container_cgroup_segment(&self) -> Option<String> {
+        let (base_name, _) = split_sub_cgroup(&self.name);
+        if base_name.is_empty() {
+            return None;
+        }
+
+        Some(self.unit_name())
     }
 }
 
@@ -139,6 +150,20 @@ mod tests {
     }
 
     #[test]
+    fn test_container_cgroup_segment_edge_cases() {
+        // Empty base name (e.g. name starts with '/') yields None.
+        let parsed = CgroupsPath::try_from(Path::new("system.slice:docker:/sub")).unwrap();
+        assert_eq!(parsed.container_cgroup_segment(), None);
+
+        // Slice base names pass through even with a sub-cgroup suffix.
+        let parsed = CgroupsPath::try_from(Path::new("system.slice:foo:my.slice/sub")).unwrap();
+        assert_eq!(
+            parsed.container_cgroup_segment().as_deref(),
+            Some("my.slice")
+        );
+    }
+
+    #[test]
     fn test_sub_cgroup() {
         let parsed =
             CgroupsPath::try_from(Path::new("system.slice:docker:abc123/sub/init")).unwrap();
@@ -149,8 +174,6 @@ mod tests {
         assert_eq!(parsed.sub_cgroup(), "");
         assert_eq!(parsed.unit_name(), "docker-abc123.scope");
 
-        // Trailing slash yields a "/" sub-cgroup, matching the original
-        // `split_sub_cgroup` behavior in `systemd::manager`.
         let parsed = CgroupsPath::try_from(Path::new("system.slice:docker:abc123/")).unwrap();
         assert_eq!(parsed.sub_cgroup(), "/");
         assert_eq!(parsed.unit_name(), "docker-abc123.scope");

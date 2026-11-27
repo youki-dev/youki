@@ -6,6 +6,7 @@ use test_framework::{TestResult, test_result};
 use crate::utils::test_utils::{
     check_container_created, exec_container, start_container, test_outside_container,
 };
+use crate::utils::{is_runtime_runc, is_runtime_youki};
 
 pub(crate) fn cgroup_test() -> TestResult {
     let mut spec = test_result!(super::create_spec(None));
@@ -94,7 +95,10 @@ pub(crate) fn cgroup_test() -> TestResult {
             return TestResult::Failed(anyhow!("container start failed"));
         }
 
-        // move init to a subcgroup, and check it was moved
+        exec_container(id, dir, &["grep", "^0::/$", "/proc/self/cgroup"], None, &[])
+            .expect("exec failed");
+
+        // move init to a sub-cgroup, and check it was moved
         exec_container(
             id,
             dir,
@@ -104,9 +108,25 @@ pub(crate) fn cgroup_test() -> TestResult {
         )
         .expect("exec failed");
 
-        // the init process is now in "/foo", but an exec process can still join "/" because we haven't enabled any domain controller yet
-        exec_container(id, dir, &["grep", "^0::/$", "/proc/self/cgroup"], None, &[])
+        // youki adopts the "proactive inference" approach rather than runc's "retrying" approach,
+        // so the exec process joins the "/foobar" sub-cgroup the init process was moved to.
+        // runc leaves the exec process in "/" here instead.
+        // ref (runc's behavior test): https://github.com/opencontainers/runc/blob/main/tests/integration/cgroups.bats#L99-L103
+        // ref (approach details): https://github.com/youki-dev/youki/pull/3347#issuecomment-4557652166
+        // ref (discussion): https://github.com/youki-dev/youki/pull/3347#issuecomment-5224550358
+        if is_runtime_youki() {
+            exec_container(
+                id,
+                dir,
+                &["grep", "^0::/foobar$", "/proc/self/cgroup"],
+                None,
+                &[],
+            )
             .expect("exec failed");
+        } else if is_runtime_runc() {
+            exec_container(id, dir, &["grep", "^0::/$", "/proc/self/cgroup"], None, &[])
+                .expect("exec failed");
+        }
 
         // turn on a domain controller (memory)
         exec_container(
@@ -118,21 +138,55 @@ pub(crate) fn cgroup_test() -> TestResult {
         )
         .expect("exec failed");
 
-        // TODO: Implement the test cases discussed in
-        // https://github.com/youki-dev/youki/pull/3210#discussion_r2554961182.
-        // This depends on changes introduced by PR https://github.com/youki-dev/youki/pull/3347.
-        // // an exec process can no longer join "/" after turning on a domain controller. Check that cgroup v2 fallback to init cgroup works
-        // exec_container(
-        //     id,
-        //     dir,
-        //     &[
-        //         "sh",
-        //         "-euc",
-        //         "cat /proc/self/cgroup && grep '^0::/foobar$' /proc/self/cgroup",
-        //     ],
-        //     None,
-        // )
-        // .expect("exec failed");
+        // After a domain controller is enabled, joining "/" fails with EBUSY,
+        // so both runtimes fall back to the init process's "/foobar" sub-cgroup.
+        exec_container(
+            id,
+            dir,
+            &["grep", "^0::/foobar$", "/proc/self/cgroup"],
+            None,
+            &[],
+        )
+        .expect("exec failed");
+
+        // a nested sub-cgroup is inferred as a whole.
+        exec_container(
+            id,
+            dir,
+            &["sh", "-euc", "mkdir -p /sys/fs/cgroup/foobar/nested && echo 1 > /sys/fs/cgroup/foobar/nested/cgroup.procs && grep -w nested /proc/1/cgroup"],
+            None,
+            &[],
+        )
+        .expect("exec failed");
+
+        // After a domain controller is enabled, both runtimes fall back to
+        // the init process's nested sub-cgroup, as with "/foobar" above.
+        exec_container(
+            id,
+            dir,
+            &["grep", "^0::/foobar/nested$", "/proc/self/cgroup"],
+            None,
+            &[],
+        )
+        .expect("exec failed");
+
+        TestResult::Passed
+    });
+
+    // Without any sub-cgroup, the exec process joins "/" without inference.
+    test_outside_container(&spec, &|data| {
+        test_result!(check_container_created(&data));
+
+        let id = &data.id;
+        let dir = &data.bundle;
+
+        let start_result = start_container(id, dir).unwrap().wait().unwrap();
+        if !start_result.success() {
+            return TestResult::Failed(anyhow!("container start failed"));
+        }
+
+        exec_container(id, dir, &["grep", "^0::/$", "/proc/self/cgroup"], None, &[])
+            .expect("exec failed");
 
         TestResult::Passed
     })
