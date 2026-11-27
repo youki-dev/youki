@@ -1,5 +1,7 @@
 use oci_spec::runtime::{LinuxDeviceCgroup, LinuxDeviceType};
 
+use crate::common::{default_allow_devices, default_devices};
+
 // For cgroup v1 compatibility, runc implements a device emulator to calculate the final rules given
 // a list of user-defined rules.
 // https://github.com/opencontainers/runc/commit/2353ffec2bb670a200009dc7a54a56b93145f141
@@ -25,6 +27,30 @@ impl Emulator {
             default_allow,
             rules: Vec::new(),
         }
+    }
+
+    /// Deny by default, then the spec's rules in order, then the default devices. Shared by
+    /// the cgroupfs v2 and systemd device controllers.
+    pub fn from_spec(devices: &[LinuxDeviceCgroup]) -> Self {
+        // FIXME: should we start as "deny all"?
+        let mut emulator = Self::with_default_allow(false);
+
+        // FIXME: apply user-defined and default rules in which order?
+        for d in devices {
+            tracing::debug!("apply user defined rule: {:?}", d);
+            emulator.add_rule(d);
+        }
+
+        for d in default_devices()
+            .iter()
+            .map(LinuxDeviceCgroup::from)
+            .chain(default_allow_devices())
+        {
+            tracing::debug!("apply default rule: {:?}", d);
+            emulator.add_rule(&d);
+        }
+
+        emulator
     }
 
     pub fn add_rules(&mut self, rules: &[LinuxDeviceCgroup]) {
@@ -116,5 +142,48 @@ mod tests {
         let top_rule = emulator.rules.first().unwrap();
         assert_eq!(top_rule.access(), &Some(permission.to_string()));
         assert!(!emulator.default_allow);
+    }
+
+    #[test]
+    fn test_from_spec_appends_default_rules_after_spec_rules() {
+        // arrange
+        let spec_rule = LinuxDeviceCgroupBuilder::default()
+            .typ(LinuxDeviceType::C)
+            .allow(true)
+            .major(10)
+            .minor(200)
+            .access("rw")
+            .build()
+            .unwrap();
+
+        // act
+        let emulator = Emulator::from_spec(std::slice::from_ref(&spec_rule));
+
+        // assert
+        let defaults: Vec<LinuxDeviceCgroup> = default_devices()
+            .iter()
+            .map(LinuxDeviceCgroup::from)
+            .chain(default_allow_devices())
+            .collect();
+        assert!(!emulator.default_allow);
+        assert_eq!(emulator.rules.len(), 1 + defaults.len());
+        assert_eq!(emulator.rules[0], spec_rule);
+        assert_eq!(emulator.rules[1..], defaults[..]);
+    }
+
+    #[test]
+    fn test_from_spec_default_rules_keep_allow_all() {
+        // The default rules are all allow rules, so adding them never turns an allow-all
+        // spec into a restricted one and never adds a deny rule.
+        let allow_all = LinuxDeviceCgroupBuilder::default()
+            .typ(LinuxDeviceType::A)
+            .allow(true)
+            .build()
+            .unwrap();
+
+        let emulator = Emulator::from_spec(&[allow_all]);
+
+        assert!(emulator.default_allow);
+        assert!(emulator.rules.iter().all(|rule| rule.allow()));
     }
 }

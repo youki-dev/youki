@@ -12,7 +12,7 @@ use oci_spec::runtime::LinuxDeviceCgroup;
 use super::bpf::BpfError;
 use super::program::ProgramError;
 use super::*;
-use crate::common::{ControllerOpt, default_allow_devices, default_devices};
+use crate::common::ControllerOpt;
 use crate::v2::controller::Controller;
 
 const LICENSE: &str = "Apache";
@@ -56,26 +56,7 @@ impl Devices {
     ) -> Result<(), DevicesControllerError> {
         tracing::debug!("Apply Devices cgroup config");
 
-        // FIXME: should we start as "deny all"?
-        let mut emulator = emulator::Emulator::with_default_allow(false);
-
-        // FIXME: apply user-defined and default rules in which order?
-        if let Some(devices) = linux_devices {
-            for d in devices {
-                tracing::debug!("apply user defined rule: {:?}", d);
-                emulator.add_rule(d);
-            }
-        }
-
-        for d in [
-            default_devices().iter().map(|d| d.into()).collect(),
-            default_allow_devices(),
-        ]
-        .concat()
-        {
-            tracing::debug!("apply default rule: {:?}", d);
-            emulator.add_rule(&d);
-        }
+        let emulator = emulator::Emulator::from_spec(linux_devices.as_deref().unwrap_or_default());
 
         let prog = program::Program::from_rules(&emulator.rules, emulator.default_allow)?;
 

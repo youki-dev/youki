@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
 
-use oci_spec::runtime::{LinuxDeviceCgroup, LinuxDeviceType};
+use oci_spec::runtime::LinuxDeviceType;
 
-use crate::common::{ControllerOpt, default_allow_devices, default_devices};
+use crate::common::ControllerOpt;
 use crate::systemd::controller::Controller;
 use crate::systemd::dbus_native::serialize::{Structure, Variant};
 use crate::v2::devices::emulator::Emulator;
@@ -92,8 +92,7 @@ impl Devices {
         // path (v2::devices::controller) does not read it as one either.
         let devices = options.resources.devices().as_deref().unwrap_or_default();
 
-        let mut emulator = Emulator::with_default_allow(false);
-        emulator.add_rules(devices);
+        let emulator = Emulator::from_spec(devices);
 
         // Leave rules containing a deny to the existing eBPF emulator. Even a redundant
         // deny falls back to an empty DeviceAllow list, so the properties can differ from
@@ -120,16 +119,6 @@ impl Devices {
             properties.insert("DevicePolicy", Variant::String("strict".to_string()));
             properties.insert("DeviceAllow", Variant::ArrayStructSS(vec![]));
             return Ok(());
-        }
-
-        // So standard devices (/dev/null, /dev/full, ...) stay accessible as in the eBPF
-        // path.
-        for d in default_devices()
-            .iter()
-            .map(LinuxDeviceCgroup::from)
-            .chain(default_allow_devices())
-        {
-            emulator.add_rule(&d);
         }
 
         // Keyed by path so rules for one device arrive as a single entry, and ordered so the
@@ -279,7 +268,8 @@ fn find_device_group_in(content: &str, typ: LinuxDeviceType, major: u64) -> Opti
 #[cfg(test)]
 mod tests {
     use oci_spec::runtime::{
-        LinuxDeviceCgroupBuilder, LinuxDeviceType, LinuxResources, LinuxResourcesBuilder,
+        LinuxDeviceCgroup, LinuxDeviceCgroupBuilder, LinuxDeviceType, LinuxResources,
+        LinuxResourcesBuilder,
     };
 
     use super::*;
