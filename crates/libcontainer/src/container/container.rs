@@ -246,6 +246,7 @@ pub struct CheckpointOptions {
     pub link_remap: bool,
     pub empty_net_ns: bool,
     pub page_server: Option<PageServer>,
+    pub lazy_pages: bool,
 }
 
 /// Address of the CRIU page server that receives the memory pages

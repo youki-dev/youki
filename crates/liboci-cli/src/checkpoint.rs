@@ -34,9 +34,9 @@ pub struct Checkpoint {
     /// Allow shell jobs
     #[arg(long)]
     pub shell_job: bool,
-    // TODO: Use lazy migration mechanism
-    // #[arg(long)]
-    // pub lazy_pages: bool,
+    /// Use userfaultfd to lazily restore memory pages
+    #[arg(long)]
+    pub lazy_pages: bool,
     // TODO: Pass a file descriptor fd to criu. Is u32 the right type?
     // #[arg(long)]
     // pub status_fd: Option<u32>,
