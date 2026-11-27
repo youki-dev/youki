@@ -19,6 +19,34 @@ pub enum SystemdDevicesError {
     ProcDevices { path: String, err: std::io::Error },
     #[error("device rule type {0:?} has no device cgroup equivalent")]
     UnsupportedDeviceType(LinuxDeviceType),
+    #[cfg(not(feature = "cgroupsv2_devices"))]
+    #[error(
+        "device rules with a deny rule need the eBPF device filter, which this build \
+         leaves out (feature cgroupsv2_devices)"
+    )]
+    DenyRuleWithoutFilter,
+    #[cfg(not(feature = "cgroupsv2_devices"))]
+    #[error(
+        "device rule {rule} cannot be expressed as a systemd DeviceAllow entry ({reason}) and \
+         this build leaves out the eBPF device filter (feature cgroupsv2_devices)"
+    )]
+    UnrepresentableRuleWithoutFilter { rule: String, reason: String },
+}
+
+/// Handles an allow rule that DeviceAllow cannot express. With the eBPF filter the filter
+/// carries the rule, so it is skipped with a warning. Without it nothing would, and
+/// `apply()` would succeed while the requested access stays denied, so it is refused.
+fn skip_unrepresentable(rule: &LinuxDeviceCgroup, reason: &str) -> Result<(), SystemdDevicesError> {
+    #[cfg(feature = "cgroupsv2_devices")]
+    {
+        tracing::warn!("{reason}; skipping rule {rule:?}");
+        Ok(())
+    }
+    #[cfg(not(feature = "cgroupsv2_devices"))]
+    Err(SystemdDevicesError::UnrepresentableRuleWithoutFilter {
+        rule: format!("{rule:?}"),
+        reason: reason.to_string(),
+    })
 }
 
 /// The access a DeviceAllow entry grants, merged over the rules naming its path.
@@ -112,6 +140,14 @@ impl Devices {
         // really gets is the eBPF filter the manager attaches right afterwards, which
         // detaches the program systemd derives from this list; the list is what remains if
         // that attach never happens.
+        // Without the eBPF filter nothing would carry the rules, and the deny-all list below
+        // would leave the container without devices; refuse them instead.
+        #[cfg(not(feature = "cgroupsv2_devices"))]
+        if has_deny_rule {
+            return Err(SystemdDevicesError::DenyRuleWithoutFilter);
+        }
+
+        #[cfg(feature = "cgroupsv2_devices")]
         if has_deny_rule {
             tracing::warn!(
                 "systemd DeviceAllow cannot express deny rules; sending a deny-all list and \
@@ -160,6 +196,12 @@ impl Devices {
             let Some(access) = rule.access().as_deref() else {
                 continue;
             };
+            let mut granted = Access::default();
+            granted.add(access);
+            // A rule granting nothing loses nothing by being left out, whatever its device.
+            if granted.is_empty() {
+                continue;
+            }
 
             let path = match (major, minor) {
                 (None, None) => format!("{type_prefix}-*"),
@@ -167,10 +209,10 @@ impl Devices {
                     // systemd names either a whole device group or one node, and the
                     // nearest thing to "any major, this minor" is the whole type, so the
                     // rule is dropped rather than turned into one that grants more.
-                    tracing::warn!(
-                        "systemd DeviceAllow does not support '*:{minor}' device rules; skipping rule {:?}",
-                        rule
-                    );
+                    skip_unrepresentable(
+                        rule,
+                        &format!("systemd DeviceAllow does not support '*:{minor}' device rules"),
+                    )?;
                     continue;
                 }
                 (Some(major), None) => {
@@ -181,9 +223,12 @@ impl Devices {
                         match find_device_group(proc_devices, typ, major as u64)? {
                             Some(name) => name,
                             None => {
-                                tracing::warn!(
-                                    "could not find device group for {type_prefix} major {major}; skipping rule",
-                                );
+                                skip_unrepresentable(
+                                    rule,
+                                    &format!(
+                                        "could not find device group for {type_prefix} major {major}"
+                                    ),
+                                )?;
                                 continue;
                             }
                         }
@@ -196,10 +241,10 @@ impl Devices {
                     // warning from systemd. Leaving it out keeps that noise out of the
                     // journal for something already known here.
                     if systemd_version < 240 && !Path::new(&node).exists() {
-                        tracing::warn!(
-                            "systemd {systemd_version} needs {node} to exist to allow it; \
-                             skipping rule {rule:?}",
-                        );
+                        skip_unrepresentable(
+                            rule,
+                            &format!("systemd {systemd_version} needs {node} to exist to allow it"),
+                        )?;
                         continue;
                     }
                     node
@@ -388,6 +433,7 @@ Block devices:
         assert!(get_allow(&props).is_empty());
     }
 
+    #[cfg(feature = "cgroupsv2_devices")]
     #[test]
     fn test_blacklist_with_deny_rule_falls_back_to_deny_all() {
         // Dropping the deny rule here would leave every device allowed, so the list has to
@@ -504,6 +550,7 @@ Block devices:
         );
     }
 
+    #[cfg(feature = "cgroupsv2_devices")]
     #[test]
     fn test_wildcard_major_with_minor_is_skipped() {
         // "*:3" has no systemd representation and must not be widened to "char-*".
@@ -596,6 +643,7 @@ Block devices:
         );
     }
 
+    #[cfg(feature = "cgroupsv2_devices")]
     #[test]
     fn test_major_only_old_systemd_skips_unknown_group() {
         // A major /proc/devices does not list has no name to send, so the rule is dropped
@@ -636,6 +684,7 @@ Block devices:
         );
     }
 
+    #[cfg(feature = "cgroupsv2_devices")]
     #[test]
     fn test_missing_device_node_is_skipped_on_old_systemd() {
         // Before 240 systemd stat(2)s the path, so an entry for a node that is not there
@@ -670,6 +719,7 @@ Block devices:
         );
     }
 
+    #[cfg(feature = "cgroupsv2_devices")]
     #[test]
     fn test_deny_rule_falls_back_to_deny_all() {
         // Skipping the deny rule would grant the write the spec takes away again, because
@@ -697,6 +747,30 @@ Block devices:
             get_allow(&props).is_empty(),
             "expected an empty allow list, got {:?}",
             get_allow(&props)
+        );
+    }
+
+    #[cfg(not(feature = "cgroupsv2_devices"))]
+    #[test]
+    fn test_deny_rule_is_refused_without_the_ebpf_filter() {
+        // Nothing would carry a deny rule without the eBPF filter, and the deny-all fallback
+        // would leave the container without devices, so the rules are refused.
+        let allow_all = LinuxDeviceCgroupBuilder::default()
+            .typ(LinuxDeviceType::A)
+            .allow(true)
+            .build()
+            .unwrap();
+        let deny_char = LinuxDeviceCgroupBuilder::default()
+            .typ(LinuxDeviceType::C)
+            .allow(false)
+            .access("rw")
+            .build()
+            .unwrap();
+        let result = try_apply(&resources(vec![allow_all, deny_char]), 245);
+
+        assert!(
+            matches!(result, Err(SystemdDevicesError::DenyRuleWithoutFilter)),
+            "expected DenyRuleWithoutFilter, got {result:?}"
         );
     }
 
@@ -769,5 +843,96 @@ Block devices:
             find_device_group_in(PROC_DEVICES_SAMPLE, LinuxDeviceType::A, 1),
             None
         );
+    }
+
+    #[cfg(not(feature = "cgroupsv2_devices"))]
+    mod without_filter {
+        use super::*;
+
+        fn allow_rule(
+            typ: LinuxDeviceType,
+            major: Option<i64>,
+            minor: Option<i64>,
+            access: &str,
+        ) -> LinuxDeviceCgroup {
+            let mut builder = LinuxDeviceCgroupBuilder::default();
+            builder = builder.typ(typ).allow(true).access(access);
+            if let Some(major) = major {
+                builder = builder.major(major);
+            }
+            if let Some(minor) = minor {
+                builder = builder.minor(minor);
+            }
+            builder.build().unwrap()
+        }
+
+        fn assert_refused(result: Result<HashMap<&'static str, Variant>, SystemdDevicesError>) {
+            assert!(
+                matches!(
+                    result,
+                    Err(SystemdDevicesError::UnrepresentableRuleWithoutFilter { .. })
+                ),
+                "expected UnrepresentableRuleWithoutFilter, got {result:?}"
+            );
+        }
+
+        #[test]
+        fn wildcard_major_with_minor_is_refused() {
+            let rule = allow_rule(LinuxDeviceType::B, None, Some(0), "rw");
+            assert_refused(try_apply(&resources(vec![rule]), 245));
+        }
+
+        #[test]
+        fn unknown_device_group_on_old_systemd_is_refused() {
+            let proc_devices = proc_devices_fixture(PROC_DEVICES_SAMPLE);
+            let rule = allow_rule(LinuxDeviceType::C, Some(99), None, "r");
+            assert_refused(try_apply_from(
+                proc_devices.path().to_str().unwrap(),
+                &resources(vec![rule]),
+                239,
+            ));
+        }
+
+        #[test]
+        fn missing_device_node_on_old_systemd_is_refused() {
+            let proc_devices = proc_devices_fixture(PROC_DEVICES_SAMPLE);
+            let rule = allow_rule(LinuxDeviceType::B, Some(9999), Some(9999), "rw");
+            assert_refused(try_apply_from(
+                proc_devices.path().to_str().unwrap(),
+                &resources(vec![rule.clone()]),
+                239,
+            ));
+
+            // systemd 240 and later parse the numbers off the path.
+            let props = apply(&resources(vec![rule]), 245);
+            assert!(get_allow(&props).contains(&entry("/dev/block/9999:9999", "rw")));
+        }
+
+        #[test]
+        fn representable_rules_are_accepted() {
+            let rules = vec![
+                allow_rule(LinuxDeviceType::C, None, None, "rw"),
+                allow_rule(LinuxDeviceType::C, Some(1), None, "r"),
+                allow_rule(LinuxDeviceType::B, Some(8), Some(0), "rw"),
+            ];
+            let props = apply(&resources(rules), 245);
+            let allow = get_allow(&props);
+            assert!(allow.contains(&entry("char-*", "rwm")), "{allow:?}");
+            assert!(allow.contains(&entry("char-1", "r")), "{allow:?}");
+            assert!(allow.contains(&entry("/dev/block/8:0", "rw")), "{allow:?}");
+        }
+
+        #[test]
+        fn oci_defaults_are_accepted() {
+            let props = apply(&resources(vec![]), 245);
+            assert_eq!(get_policy(&props).as_deref(), Some("strict"));
+            assert!(get_allow(&props).contains(&entry("/dev/char/1:3", "rwm")));
+        }
+
+        #[test]
+        fn rule_without_access_is_not_refused() {
+            let rule = allow_rule(LinuxDeviceType::C, None, Some(3), "");
+            apply(&resources(vec![rule]), 245);
+        }
     }
 }

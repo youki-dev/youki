@@ -14,9 +14,9 @@ mod test;
 
 pub mod common;
 pub mod stats;
-#[cfg(feature = "systemd")]
+#[cfg(feature = "systemd_base")]
 pub mod systemd;
-#[cfg(not(feature = "systemd"))]
+#[cfg(not(feature = "systemd_base"))]
 #[path = "stub/systemd/mod.rs"]
 pub mod systemd;
 pub mod test_manager;

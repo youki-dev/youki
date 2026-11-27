@@ -11,6 +11,7 @@ test_package_features() {
 # NOTE: libcgroups' "systemd" feature pulls in "cgroupsv2_devices", because the systemd
 # cgroup manager attaches the eBPF device filter itself. The "systemd cgroupsv2_devices"
 # combinations are therefore identical to "systemd" and are not listed separately.
+# "systemd_base" is the systemd manager without the eBPF filter (no libbpf).
 test_package_features "libcontainer" "v1"
 test_package_features "libcontainer" "v2"
 test_package_features "libcontainer" "systemd"
@@ -23,6 +24,8 @@ test_package_features "libcontainer" "v2 cgroupsv2_devices libseccomp"
 test_package_features "libcgroups" "v1"
 test_package_features "libcgroups" "v2"
 test_package_features "libcgroups" "systemd"
+test_package_features "libcgroups" "systemd_base"
+test_package_features "libcgroups" "v1 systemd_base"
 test_package_features "libcgroups" "v2 cgroupsv2_devices"
 
 test_features() {
