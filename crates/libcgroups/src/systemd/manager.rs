@@ -511,11 +511,73 @@ impl CgroupManager for Manager {
         tracing::debug!("applying properties {:?}", properties);
         Unified::apply(controller_opt, systemd_version, &mut properties)?;
 
-        if !properties.is_empty() {
-            self.ensure_controllers_attached()?;
+        // Enable the controllers systemd does not enable itself (hugetlb, misc,
+        // rdma) down to the unit, as every apply did before the skip existed: an
+        // update that sends no unit property but writes unified keys still needs
+        // the files. Before the skip, the device properties kept this list
+        // non-empty, so this ran for every apply.
+        self.ensure_controllers_attached()?;
+
+        // Setting unit properties makes systemd attach the device filter it derives
+        // from the unit's DeviceAllow, even when no device property is sent. For rules
+        // that keep a deny, youki created the unit with an empty DeviceAllow and a
+        // strict policy, so that filter denies every device. A skipped update sends
+        // properties without device rules, so it lists the attached programs before
+        // the call and detaches the ones that appeared during it. youki's own program,
+        // attached at create, stays and keeps enforcing the container's rules.
+        #[cfg(feature = "cgroupsv2_devices")]
+        let attached_before = if controller_opt.skip_devices && !properties.is_empty() {
+            match crate::v2::devices::Devices::attached_program_ids(&self.full_path) {
+                Ok(ids) => Some(ids),
+                // A rootless update cannot list the programs; like the rest of the
+                // device handling there, this is best effort.
+                Err(err) if self.rootless => {
+                    tracing::warn!(
+                        "rootless cgroup: cannot list the attached device programs for \
+                         {:?}: {err}; leaving the filters alone",
+                        self.full_path
+                    );
+                    None
+                }
+                Err(err) => return Err(err.into()),
+            }
+        } else {
+            None
+        };
+
+        let set_result = if !properties.is_empty() {
             self.client
-                .set_unit_properties(&self.unit_name, &properties)?;
+                .set_unit_properties(&self.unit_name, &properties)
+        } else {
+            Ok(())
+        };
+
+        // This runs before the cgroupfs writes below and also when the property call
+        // failed, since systemd may have applied the properties anyway.
+        #[cfg(feature = "cgroupsv2_devices")]
+        if let Some(before) = attached_before {
+            match crate::v2::devices::Devices::detach_programs_added(&self.full_path, &before) {
+                Ok(_) => {}
+                // Like runc, treat device rules as best effort in rootless mode instead of
+                // failing the container.
+                Err(err) if self.rootless => {
+                    tracing::warn!(
+                        "rootless cgroup: cannot detach the device programs added for {:?}: {err}",
+                        self.full_path
+                    );
+                }
+                // The property call failed too; its error is the one returned.
+                Err(err) if set_result.is_err() => {
+                    tracing::warn!(
+                        "could not detach the device programs added for {:?}: {err}",
+                        self.full_path
+                    );
+                }
+                Err(err) => return Err(err.into()),
+            }
         }
+
+        set_result?;
 
         // Only some unified keys map to a unit property, so write all of them to the cgroup
         // as well, as runc does. Keys systemd has just set get the same value again.
@@ -526,26 +588,27 @@ impl CgroupManager for Manager {
                 .map_err(V2ManagerError::from)?,
         )?;
 
-        // systemd derives a device filter from DeviceAllow and attaches it every time
-        // unit properties are set, so this has to run afterwards to replace it. A rule
-        // DeviceAllow cannot express, a deny rule above all, is only honoured by the
-        // program built here.
+        // A rule DeviceAllow cannot express, a deny rule above all, is only honoured by
+        // the program built here, which replaces the filter systemd derives from the
+        // properties above. A skipped update built no program, so it attaches none.
         #[cfg(feature = "cgroupsv2_devices")]
-        match crate::v2::devices::Devices::apply_devices(
-            &self.full_path,
-            controller_opt.resources.devices(),
-        ) {
-            Ok(()) => {}
-            // Like runc, treat device rules as best effort in rootless mode instead of
-            // failing the container.
-            Err(err) if self.rootless => {
-                tracing::warn!(
-                    "rootless cgroup: cannot apply device rules to {:?}: {err}; \
-                     skipping device cgroup",
-                    self.full_path
-                );
+        if !controller_opt.skip_devices {
+            match crate::v2::devices::Devices::apply_devices(
+                &self.full_path,
+                controller_opt.resources.devices(),
+            ) {
+                Ok(()) => {}
+                // Like runc, treat device rules as best effort in rootless mode instead of
+                // failing the container.
+                Err(err) if self.rootless => {
+                    tracing::warn!(
+                        "rootless cgroup: cannot apply device rules to {:?}: {err}; \
+                         skipping device cgroup",
+                        self.full_path
+                    );
+                }
+                Err(err) => return Err(err.into()),
             }
-            Err(err) => return Err(err.into()),
         }
 
         Ok(())

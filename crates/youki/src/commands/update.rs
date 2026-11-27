@@ -43,11 +43,15 @@ pub fn update(args: Update, root_path: PathBuf) -> Result<()> {
         linux_res = builder.build()?;
     }
 
+    // runc skips the device rules on update (SkipDevices): an update must not replace
+    // them, since something else may have added rules after the container started,
+    // like a GPU plugin. Updating them is a separate future feature.
     cmanager.apply(&ControllerOpt {
         resources: &linux_res,
         disable_oom_killer: false,
         oom_score_adj: None,
         freezer_state: None,
+        skip_devices: true,
     })?;
     Ok(())
 }

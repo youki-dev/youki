@@ -60,13 +60,19 @@ fn create_cgroup_manager<P: AsRef<Path>>(
     container_id: &str,
 ) -> Result<AnyCgroupManager> {
     let container = load_container(root_path, container_id)?;
-    Ok(libcgroups::common::create_cgroup_manager(
-        libcgroups::common::CgroupConfig {
+    // Mark the manager rootless the way the create path does, so the systemd
+    // manager treats the device eBPF steps of an update as best effort there.
+    // ps also uses this helper but never calls apply.
+    let syscall = libcontainer::syscall::linux::LinuxSyscall;
+    let rootless = libcontainer::utils::rootless_required(&syscall).unwrap_or(false);
+    Ok(
+        libcgroups::common::create_cgroup_manager(libcgroups::common::CgroupConfig {
             cgroup_path: container.spec()?.cgroup_path,
             systemd_cgroup: container.systemd(),
             container_name: container.id().to_string(),
-        },
-    )?)
+        })?
+        .with_rootless(rootless),
+    )
 }
 
 #[cfg(test)]

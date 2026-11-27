@@ -67,6 +67,27 @@ pub mod prog {
 
     /// Given a fd for a cgroup, collect the programs associated with it
     pub fn query(cgroup_fd: RawFd) -> Result<Vec<ProgramInfo>, super::BpfError> {
+        let prog_ids = query_ids(cgroup_fd)?;
+
+        let mut prog_fds = Vec::with_capacity(prog_ids.len());
+        for prog_id in &prog_ids {
+            // collect fds for programs by getting their ids
+            #[allow(unused_unsafe)]
+            let prog_fd = unsafe { bpf_prog_get_fd_by_id(*prog_id) };
+            if prog_fd < 0 {
+                tracing::debug!("bpf_prog_get_fd_by_id failed: {}", errno::errno());
+                continue;
+            }
+            prog_fds.push(ProgramInfo {
+                id: *prog_id,
+                fd: prog_fd,
+            });
+        }
+        Ok(prog_fds)
+    }
+
+    /// Ids of the programs attached to a cgroup, without opening them
+    pub fn query_ids(cgroup_fd: RawFd) -> Result<Vec<u32>, super::BpfError> {
         let mut prog_ids: Vec<u32> = vec![0_u32; 64];
         let mut attach_flags = 0_u32;
         for _ in 0..10 {
@@ -100,21 +121,17 @@ pub mod prog {
             break;
         }
 
-        let mut prog_fds = Vec::with_capacity(prog_ids.len());
-        for prog_id in &prog_ids {
-            // collect fds for programs by getting their ids
-            #[allow(unused_unsafe)]
-            let prog_fd = unsafe { bpf_prog_get_fd_by_id(*prog_id) };
-            if prog_fd < 0 {
-                tracing::debug!("bpf_prog_get_fd_by_id failed: {}", errno::errno());
-                continue;
-            }
-            prog_fds.push(ProgramInfo {
-                id: *prog_id,
-                fd: prog_fd,
-            });
+        Ok(prog_ids)
+    }
+
+    /// Opens a program by id
+    pub fn get_fd_by_id(prog_id: u32) -> Result<RawFd, super::BpfError> {
+        #[allow(unused_unsafe)]
+        let prog_fd = unsafe { bpf_prog_get_fd_by_id(prog_id) };
+        if prog_fd < 0 {
+            return Err(errno::errno().into());
         }
-        Ok(prog_fds)
+        Ok(prog_fd)
     }
 
     pub fn detach2(prog_fd: RawFd, cgroup_fd: RawFd) -> Result<(), super::BpfError> {

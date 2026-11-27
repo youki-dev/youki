@@ -57,6 +57,7 @@ mod tests {
             disable_oom_killer: false,
             oom_score_adj: None,
             freezer_state: None,
+            skip_devices: false,
         };
 
         (options, properties)

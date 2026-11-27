@@ -349,6 +349,7 @@ fn cgroup_permission_fallback(
         freezer_state: None,
         oom_score_adj: None,
         disable_oom_killer: false,
+        skip_devices: false,
     };
     !libcgroups::v2::manager::Manager::needs_to_handle(&controller_opt)
 }
@@ -373,6 +374,7 @@ fn apply_cgroups<
             freezer_state: None,
             oom_score_adj: None,
             disable_oom_killer: false,
+            skip_devices: false,
         };
 
         cmanager.apply(&controller_opt).map_err(|err| {

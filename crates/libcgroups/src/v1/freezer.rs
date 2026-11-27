@@ -195,6 +195,7 @@ mod tests {
                 freezer_state: Some(state),
                 oom_score_adj: None,
                 disable_oom_killer: false,
+                skip_devices: false,
             };
 
             let pid = Pid::from_raw(1000);
@@ -222,6 +223,7 @@ mod tests {
                 freezer_state: Some(state),
                 oom_score_adj: None,
                 disable_oom_killer: false,
+                skip_devices: false,
             };
 
             let pid = Pid::from_raw(1001);
@@ -250,6 +252,7 @@ mod tests {
                 freezer_state: Some(state),
                 oom_score_adj: None,
                 disable_oom_killer: false,
+                skip_devices: false,
             };
 
             let pid = Pid::from_raw(1002);

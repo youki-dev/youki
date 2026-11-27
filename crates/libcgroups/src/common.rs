@@ -211,6 +211,9 @@ pub struct ControllerOpt<'a> {
     pub oom_score_adj: Option<i32>,
     /// FreezerState is given to freezer controller for suspending process.
     pub freezer_state: Option<FreezerState>,
+    /// Skips the devices controller, so the container keeps the device rules it has.
+    /// Set by the update path, following runc's SkipDevices.
+    pub skip_devices: bool,
 }
 
 #[derive(thiserror::Error, Debug)]

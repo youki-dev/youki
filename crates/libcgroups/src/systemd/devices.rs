@@ -88,6 +88,10 @@ impl Devices {
         systemd_version: u32,
         properties: &mut HashMap<&str, Variant>,
     ) -> Result<(), SystemdDevicesError> {
+        if options.skip_devices {
+            return Ok(());
+        }
+
         // An absent rule list is not a request for unrestricted access, and the cgroupfs
         // path (v2::devices::controller) does not read it as one either.
         let devices = options.resources.devices().as_deref().unwrap_or_default();
@@ -325,6 +329,7 @@ Block devices:
             freezer_state: None,
             oom_score_adj: None,
             disable_oom_killer: false,
+            skip_devices: false,
         };
         let mut props: HashMap<&str, Variant> = HashMap::new();
         Devices::apply_devices_from(proc_devices, &opt, systemd_version, &mut props)?;
@@ -372,6 +377,33 @@ Block devices:
         assert!(
             allow.contains(&entry("/dev/char/1:3", "rwm")),
             "expected the default rules to be applied, got {allow:?}"
+        );
+    }
+
+    #[test]
+    fn test_skip_devices_writes_no_device_properties() {
+        // An update must leave the unit's device properties alone, so systemd keeps
+        // deriving its filter from the rules the container was created with.
+        let rule = LinuxDeviceCgroupBuilder::default()
+            .typ(LinuxDeviceType::A)
+            .allow(true)
+            .build()
+            .unwrap();
+        let resources = resources(vec![rule]);
+        let mut props: HashMap<&str, Variant> = HashMap::new();
+        let opt = ControllerOpt {
+            resources: &resources,
+            freezer_state: None,
+            oom_score_adj: None,
+            disable_oom_killer: false,
+            skip_devices: true,
+        };
+
+        Devices::apply_devices_from(PROC_DEVICES, &opt, 245, &mut props).unwrap();
+
+        assert!(
+            !props.contains_key("DevicePolicy") && !props.contains_key("DeviceAllow"),
+            "a skipped update must not send device properties, got {props:?}"
         );
     }
 

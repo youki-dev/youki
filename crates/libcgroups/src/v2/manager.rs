@@ -287,6 +287,7 @@ impl CgroupManager for Manager {
             freezer_state: Some(state),
             oom_score_adj: None,
             disable_oom_killer: false,
+            skip_devices: false,
         };
         Ok(Freezer::apply(&controller_opt, &self.full_path)?)
     }
@@ -348,6 +349,7 @@ mod tests {
             freezer_state: None,
             oom_score_adj: None,
             disable_oom_killer: false,
+            skip_devices: false,
         }
     }
 
