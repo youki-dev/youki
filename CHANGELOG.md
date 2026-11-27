@@ -1,5 +1,20 @@
 # Changelog
 
+## [v0.8.1](https://github.com/youki-dev/youki/compare/v0.8.0...v0.8.1) - 2026-11-25
+
+### 🐛 Bug Fixes
+- fix(libcontainer): reject seccomp errnoRet for actions without an errno by @mateuscmtropical in https://github.com/youki-dev/youki/pull/3922
+- feat(youki): support --cpuset-cpus and --cpuset-mems in youki update by @ARMeeru in https://github.com/youki-dev/youki/pull/3921
+### 📖 Documentation improvements
+- update the README demo and show how to use libcontainer by @utam0k in https://github.com/youki-dev/youki/pull/3937
+### 🧪 Test improvements and Misc Fixes
+- test(contest):register test groups with inventory instead of listing by @saku3 in https://github.com/youki-dev/youki/pull/3918
+- refactor(libcgroups): Extract systemd CgroupsPath into its own module by @logica0419 in https://github.com/youki-dev/youki/pull/3935
+- ask a release captain four weeks after each release by @utam0k in https://github.com/youki-dev/youki/pull/3936
+### Other Changes
+- (auto merged) chore(deps): bump the patch group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3932
+- chore(deps): bump the wasmtime group with 2 updates by @dependabot[bot] in https://github.com/youki-dev/youki/pull/3931
+
 ## [v0.8.0](https://github.com/youki-dev/youki/compare/v0.7.0...v0.8.0) - 2026-11-23
 
 ### 💥 Breaking Changes

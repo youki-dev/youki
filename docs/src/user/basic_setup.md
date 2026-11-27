@@ -28,7 +28,7 @@ Install from the GitHub release as root:
 
 <!--youki release begin-->
 ```console
-# curl -sSfL https://github.com/youki-dev/youki/releases/download/v0.8.0/youki-0.8.0-$(uname -m)-musl.tar.gz | tar -xzvC /usr/bin/ youki
+# curl -sSfL https://github.com/youki-dev/youki/releases/download/v0.8.1/youki-0.8.1-$(uname -m)-musl.tar.gz | tar -xzvC /usr/bin/ youki
 ```
 <!--youki release end-->
 
