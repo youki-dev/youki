@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use libcgroups::common::CgroupManager;
 use nix::unistd::Pid;
-use oci_spec::runtime::Spec;
+use oci_spec::runtime::{Linux, Spec};
 
 use super::{Container, ContainerStatus};
 use crate::error::{CreateContainerError, LibcontainerError, MissingSpecError};
@@ -162,7 +162,7 @@ impl ContainerBuilderImpl {
         // going to be switching to a different security context. Thus setting
         // ourselves to be non-dumpable only breaks things (like rootless
         // containers), which is the recommendation from the kernel folks.
-        if linux.namespaces().is_some() {
+        if joins_existing_namespaces(linux) {
             prctl::set_dumpable(false).map_err(|e| {
                 LibcontainerError::Other(format!(
                     "error in setting dumpable to false : {}",
@@ -270,5 +270,66 @@ impl ContainerBuilderImpl {
         }
 
         Ok(())
+    }
+}
+
+
+
+/// Returns true if we join an existing namespace, like runc's check.
+fn joins_existing_namespaces(linux: &Linux) -> bool {
+    let namespaces = match linux.namespaces() {
+        Some(namespaces) => namespaces,
+        None => return false,
+    };
+    for ns in namespaces {
+        if ns.path().is_some() {
+            return true;
+        }
+    }
+
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use oci_spec::runtime::{Linux, LinuxNamespace, LinuxNamespaceBuilder, LinuxNamespaceType};
+
+    use super::joins_existing_namespaces;
+
+    fn new_namespace(typ: LinuxNamespaceType) -> LinuxNamespace {
+        LinuxNamespaceBuilder::default().typ(typ).build().unwrap()
+    }
+
+    #[test]
+    fn test_no_namespaces_does_not_join() {
+        let mut linux = Linux::default();
+        linux.set_namespaces(None);
+        assert!(!joins_existing_namespaces(&linux));
+    }
+
+    #[test]
+    fn test_only_new_namespaces_does_not_join() {
+        let mut linux = Linux::default();
+        linux.set_namespaces(Some(vec![
+            new_namespace(LinuxNamespaceType::Pid),
+            new_namespace(LinuxNamespaceType::Mount),
+        ]));
+        assert!(!joins_existing_namespaces(&linux));
+    }
+
+    #[test]
+    fn test_namespace_with_path_joins() {
+        let mut linux = Linux::default();
+        linux.set_namespaces(Some(vec![
+            new_namespace(LinuxNamespaceType::Pid),
+            LinuxNamespaceBuilder::default()
+                .typ(LinuxNamespaceType::Network)
+                .path(PathBuf::from("/proc/1234/ns/net"))
+                .build()
+                .unwrap(),
+        ]));
+        assert!(joins_existing_namespaces(&linux));
     }
 }
