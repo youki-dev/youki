@@ -4,6 +4,8 @@ To report security issues, use GitHub Security Advisories (GHSA) forms such as h
 
 If you do not have a GitHub account, you may use email to reach out to the [Committers](https://youki-dev.github.io/youki/community/governance.html) directly at `cncf-youki-security@lists.cncf.io`.
 
+Before you report, read the [threat model](THREAT_MODEL.md). It describes what youki considers a vulnerability.
+
 ## Handling security issues
 
 The [Committers](https://youki-dev.github.io/youki/community/governance.html) will try to triage the report and make the first response within 7 days.
