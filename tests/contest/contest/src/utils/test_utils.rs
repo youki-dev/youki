@@ -156,6 +156,16 @@ pub fn delete_container<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
     Ok(res)
 }
 
+pub fn delete_container_with_force<P: AsRef<Path>>(id: &str, dir: P) -> Result<Child> {
+    let res = runtime_command(dir)
+        .arg("delete")
+        .arg("--force")
+        .arg(id)
+        .spawn()
+        .context("could not delete container")?;
+    Ok(res)
+}
+
 pub fn get_state<P: AsRef<Path>>(id: &str, dir: P) -> Result<(String, String)> {
     sleep(SLEEP_TIME);
     let output = runtime_command(dir)

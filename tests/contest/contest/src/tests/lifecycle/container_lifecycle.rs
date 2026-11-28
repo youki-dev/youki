@@ -153,6 +153,10 @@ impl ContainerLifecycle {
         delete::delete(self.project_path.path(), &self.container_id).into()
     }
 
+    pub fn delete_force(&self) -> TestResult {
+        delete::delete_force(self.project_path.path(), &self.container_id).into()
+    }
+
     pub fn checkpoint_leave_running(&self) -> TestResult {
         if !criu_installed() {
             return TestResult::Skipped("CRIU is not installed".to_string());
