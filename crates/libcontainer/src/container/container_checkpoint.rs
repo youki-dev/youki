@@ -3,9 +3,6 @@ use std::io::{ErrorKind, Write};
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::io::AsRawFd;
 
-use libcgroups::common::CgroupSetup::{Hybrid, Legacy};
-#[cfg(feature = "v1")]
-use libcgroups::common::DEFAULT_CGROUP_ROOT;
 use oci_spec::runtime::{LinuxNamespaceType, Spec};
 
 use super::container_criu::{
@@ -71,33 +68,6 @@ impl Container {
                     .into_string()
                     .expect("failed to convert mount destination");
                 criu.set_external_mount(dest.clone(), dest);
-            } else if m.typ().as_deref() == Some("cgroup") {
-                match libcgroups::common::get_cgroup_setup()? {
-                    // For v1 it is necessary to list all cgroup mounts as external mounts
-                    Legacy | Hybrid => {
-                        #[cfg(not(feature = "v1"))]
-                        panic!(
-                            "libcontainer can't run in a Legacy or Hybrid cgroup setup without the v1 feature"
-                        );
-                        #[cfg(feature = "v1")]
-                        for mp in
-                            libcgroups::v1::util::list_subsystem_mount_points().map_err(|err| {
-                                tracing::error!(?err, "failed to get subsystem mount points");
-                                LibcontainerError::OtherCgroup(err.to_string())
-                            })?
-                        {
-                            let cgroup_mount = mp
-                                .clone()
-                                .into_os_string()
-                                .into_string()
-                                .expect("failed to convert mount point");
-                            if cgroup_mount.starts_with(DEFAULT_CGROUP_ROOT) {
-                                criu.set_external_mount(cgroup_mount.clone(), cgroup_mount);
-                            }
-                        }
-                    }
-                    _ => (),
-                }
             }
         }
 

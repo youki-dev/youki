@@ -151,18 +151,6 @@ pub fn print_cgroups_setup() {
 
 pub fn print_cgroup_mounts() {
     println!("Cgroup mounts");
-    #[cfg(feature = "v1")]
-    if let Ok(v1_mounts) = libcgroups::v1::util::list_supported_mount_points() {
-        let mut v1_mounts: Vec<String> = v1_mounts
-            .iter()
-            .map(|kv| format!("  {:<16}{}", kv.0.to_string(), kv.1.display()))
-            .collect();
-
-        v1_mounts.sort();
-        for cgroup_mount in v1_mounts {
-            println!("{cgroup_mount}");
-        }
-    }
 
     #[cfg(feature = "v2")]
     if let Ok(mount_point) = libcgroups::v2::util::get_unified_mount_point() {

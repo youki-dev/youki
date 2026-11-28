@@ -20,11 +20,6 @@ pub mod systemd;
 #[path = "stub/systemd/mod.rs"]
 pub mod systemd;
 pub mod test_manager;
-#[cfg(feature = "v1")]
-pub mod v1;
-#[cfg(not(feature = "v1"))]
-#[path = "stub/v1/mod.rs"]
-pub mod v1;
 #[cfg(feature = "v2")]
 pub mod v2;
 #[cfg(not(feature = "v2"))]
