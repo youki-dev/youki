@@ -56,22 +56,8 @@ fn get_spec(host_output_file: &str) -> Spec {
         .unwrap()
 }
 
-/// Tests the current behavior when a poststop hook fails.
-///
-/// TODO: This test currently validates youki's existing behavior, which differs from the OCI spec.
-/// According to the spec: "If any poststop hook fails, the runtime MUST log a warning, but the
-/// remaining hooks and lifecycle continue as if the hook had succeeded."
-///
-/// Current youki behavior (non-spec compliant):
-/// - When a poststop hook fails, subsequent hooks are NOT executed
-/// - The delete operation fails
-///
-/// Expected spec-compliant behavior:
-/// - All hooks should execute even if one fails
-/// - The delete operation should succeed (only log a warning)
-///
-/// This test should be updated once either youki is fixed to follow the spec or the spec itself is
-/// updated: https://github.com/opencontainers/runtime-spec/issues/1309
+/// Tests that failed poststop hooks do not prevent later hooks or container deletion.
+
 fn get_test(test_name: &'static str) -> Test {
     Test::new(
         test_name,
@@ -102,28 +88,20 @@ fn get_test(test_name: &'static str) -> Test {
             }
 
             let delete_result = delete_container(&id, &bundle).map(|mut cmd| cmd.wait());
+            let delete_succeeded = matches!(delete_result, Ok(Ok(status)) if status.success());
 
-            let delete_failed = match delete_result {
-                Err(_) => true,
-                Ok(Ok(status)) if !status.success() => true,
-                _ => false,
-            };
-
-            if !delete_failed {
-                delete_hook_output_file(&host_output_file).unwrap();
-                return TestResult::Failed(anyhow!(
-                    "delete operation should fail when poststop hook fails (current non-spec behavior)"
-                ));
-            }
-
-            let result = if !host_output_file.exists() {
+            let result = if !delete_succeeded {
+                TestResult::Failed(anyhow!(
+                    "delete operation should succeed when a poststop hook fails"
+                ))
+            } else if !host_output_file.exists() {
                 TestResult::Failed(anyhow!("no poststop hooks ran (output file doesn't exist)"))
             } else {
                 let content =
                     fs::read_to_string(&host_output_file).expect("failed to read output file");
 
                 let lines: Vec<&str> = content.lines().collect();
-                let expected = vec!["hook_1 called", "hook_2 called"];
+                let expected = vec!["hook_1 called", "hook_2 called", "hook_3 called"];
                 if lines != expected {
                     TestResult::Failed(anyhow!("expected hooks output {expected:?}, got {lines:?}"))
                 } else {

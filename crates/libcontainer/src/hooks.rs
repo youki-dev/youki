@@ -36,10 +36,31 @@ type Result<T> = std::result::Result<T, HookError>;
 pub fn run_hooks(
     hooks: Option<&Vec<Hook>>,
     state: Option<&State>,
-    // TODO: Remove the following parameters. To comply with the OCI State, hooks should only depend on structures defined in oci-spec-rs. Cleaning these up ensures proper functional isolation.
     cwd: Option<&Path>,
     pid: Option<Pid>,
     default_env: Option<&HashMap<String, String>>,
+) -> Result<()> {
+    run_hooks_with_policy(hooks, state, cwd, pid, default_env, false)
+}
+
+/// Runs all poststop hooks, logging failures and continuing as required by the OCI runtime spec.
+pub fn run_poststop_hooks(
+    hooks: Option<&Vec<Hook>>,
+    state: Option<&State>,
+    cwd: Option<&Path>,
+    pid: Option<Pid>,
+    default_env: Option<&HashMap<String, String>>,
+) -> Result<()> {
+    run_hooks_with_policy(hooks, state, cwd, pid, default_env, true)
+}
+
+fn run_hooks_with_policy(
+    hooks: Option<&Vec<Hook>>,
+    state: Option<&State>,
+    cwd: Option<&Path>,
+    pid: Option<Pid>,
+    default_env: Option<&HashMap<String, String>>,
+    continue_after_failure: bool,
 ) -> Result<()> {
     let base_state = state.ok_or(HookError::MissingContainerState)?;
 
@@ -48,7 +69,7 @@ pub fn run_hooks(
     // Ref: https://github.com/containerd/containerd/blob/v2.2.1/cmd/containerd/command/oci-hook.go#L82
     let mut oci_state = OciState::try_from(base_state)?;
 
-    // The `pid` parameter allows overriding the PID in the state. This is needed because
+    // The pid parameter allows overriding the PID in the state. This is needed because
     // high-level container runtimes like containerd set the PID separately for certain hooks.
     // Ref: https://github.com/containerd/containerd/blob/main/cmd/containerd/command/oci-hook.go#L90
     if let Some(override_pid) = pid {
@@ -57,106 +78,91 @@ pub fn run_hooks(
 
     if let Some(hooks) = hooks {
         for hook in hooks {
-            let mut hook_command = process::Command::new(hook.path());
+            let hook_result = (|| -> Result<()> {
+                let mut hook_command = process::Command::new(hook.path());
 
-            if let Some(cwd) = cwd {
-                hook_command.current_dir(cwd);
-            }
+                if let Some(cwd) = cwd {
+                    hook_command.current_dir(cwd);
+                }
 
-            // Based on OCI spec, the first argument of the args vector is the
-            // arg0, which can be different from the path.  For example, path
-            // may be "/usr/bin/true" and arg0 is set to "true". However, rust
-            // command differentiates arg0 from args, where rust command arg
-            // doesn't include arg0. So we have to make the split arg0 from the
-            // rest of args.
-            if let Some((arg0, args)) = hook.args().as_ref().and_then(|a| a.split_first()) {
-                tracing::debug!("run_hooks arg0: {:?}, args: {:?}", arg0, args);
-                hook_command.arg0(arg0).args(args)
-            } else {
-                hook_command.arg0(hook.path().display().to_string())
-            };
+                // The first OCI args entry is arg0, which can differ from the executable path.
+                if let Some((arg0, args)) = hook.args().as_ref().and_then(|a| a.split_first()) {
+                    tracing::debug!("run_hooks arg0: {:?}, args: {:?}", arg0, args);
+                    hook_command.arg0(arg0).args(args)
+                } else {
+                    hook_command.arg0(hook.path().display().to_string())
+                };
 
-            let envs: HashMap<String, String> = if let Some(env) = hook.env() {
-                utils::parse_env(env)
-            } else if let Some(default) = default_env {
-                default.clone()
-            } else {
-                HashMap::new()
-            };
-            tracing::debug!("run_hooks envs: {:?}", envs);
+                let envs: HashMap<String, String> = if let Some(env) = hook.env() {
+                    utils::parse_env(env)
+                } else if let Some(default) = default_env {
+                    default.clone()
+                } else {
+                    HashMap::new()
+                };
+                tracing::debug!("run_hooks envs: {:?}", envs);
 
-            let mut hook_process = hook_command
-                .env_clear()
-                .envs(envs)
-                .stdin(process::Stdio::piped())
-                .stdout(std::process::Stdio::null())
-                .stderr(process::Stdio::inherit())
-                .spawn()
-                .map_err(HookError::CommandExecute)?;
-            let hook_process_pid = Pid::from_raw(hook_process.id() as i32);
-            // Based on the OCI spec, we need to pipe the container state into
-            // the hook command through stdin.
-            if let Some(stdin) = &mut hook_process.stdin {
-                // We want to ignore BrokenPipe here. A BrokenPipe indicates
-                // either the hook is crashed/errored or it ran successfully.
-                // Either way, this is an indication that the hook command
-                // finished execution.  If the hook command was successful,
-                // which we will check later in this function, we should not
-                // fail this step here. We still want to check for all the other
-                // error, in the case that the hook command is waiting for us to
-                // write to stdin.
-                let encoded_state =
-                    serde_json::to_string(&oci_state).map_err(HookError::EncodeContainerState)?;
-                if let Err(e) = stdin.write_all(encoded_state.as_bytes()) {
-                    if e.kind() != ErrorKind::BrokenPipe {
-                        // Not a broken pipe. The hook command may be waiting
-                        // for us.
-                        let _ = signal::kill(hook_process_pid, signal::Signal::SIGKILL);
-                        return Err(HookError::WriteContainerState(e));
+                let mut hook_process = hook_command
+                    .env_clear()
+                    .envs(envs)
+                    .stdin(process::Stdio::piped())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::inherit())
+                    .spawn()
+                    .map_err(HookError::CommandExecute)?;
+                let hook_process_pid = Pid::from_raw(hook_process.id() as i32);
+                // Pipe the OCI state into the hook command through stdin.
+                if let Some(stdin) = &mut hook_process.stdin {
+                    let encoded_state = serde_json::to_string(&oci_state)
+                        .map_err(HookError::EncodeContainerState)?;
+                    if let Err(e) = stdin.write_all(encoded_state.as_bytes()) {
+                        if e.kind() != ErrorKind::BrokenPipe {
+                            let _ = signal::kill(hook_process_pid, signal::Signal::SIGKILL);
+                            return Err(HookError::WriteContainerState(e));
+                        }
                     }
                 }
-            }
 
-            let res = if let Some(timeout_sec) = hook.timeout() {
-                // Rust does not make it easy to handle executing a command and
-                // timeout. Here we decided to wait for the command in a
-                // different thread, so the main thread is not blocked. We use a
-                // channel shared between main thread and the wait thread, since
-                // the channel has timeout functions out of the box. Rust won't
-                // let us copy the Command structure, so we can't share it
-                // between the wait thread and main thread. Therefore, we will
-                // use pid to identify the process and send a kill signal. This
-                // is what the Command.kill() does under the hood anyway. When
-                // timeout, we have to kill the process and clean up properly.
-                let (s, r) = std::sync::mpsc::channel();
-                thread::spawn(move || {
-                    let res = hook_process.wait();
-                    let _ = s.send(res);
-                });
-                match r.recv_timeout(time::Duration::from_secs(timeout_sec as u64)) {
-                    Ok(res) => res,
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                        // Kill the process. There is no need to further clean
-                        // up because we will be error out.
-                        let _ = signal::kill(hook_process_pid, signal::Signal::SIGKILL);
-                        return Err(HookError::Timeout);
+                let res = if let Some(timeout_sec) = hook.timeout() {
+                    let (s, r) = std::sync::mpsc::channel();
+                    thread::spawn(move || {
+                        let res = hook_process.wait();
+                        let _ = s.send(res);
+                    });
+                    match r.recv_timeout(time::Duration::from_secs(timeout_sec as u64)) {
+                        Ok(res) => res,
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            let _ = signal::kill(hook_process_pid, signal::Signal::SIGKILL);
+                            return Err(HookError::Timeout);
+                        }
+                        Err(_) => unreachable!(),
                     }
-                    Err(_) => {
-                        unreachable!();
-                    }
+                } else {
+                    hook_process.wait()
+                };
+
+                match res {
+                    Ok(exit_status) => match exit_status.code() {
+                        Some(0) => Ok(()),
+                        Some(exit_code) => Err(HookError::NonZeroExitCode(exit_code)),
+                        None => Err(HookError::Killed),
+                    },
+                    Err(e) => Err(HookError::CommandExecute(e)),
+                }?;
+                Ok(())
+            })();
+
+            if let Err(err) = hook_result {
+                if continue_after_failure {
+                    tracing::warn!(
+                        hook = ?hook.path(),
+                        error = %err,
+                        "poststop hook failed; continuing with remaining hooks"
+                    );
+                } else {
+                    return Err(err);
                 }
-            } else {
-                hook_process.wait()
-            };
-
-            match res {
-                Ok(exit_status) => match exit_status.code() {
-                    Some(0) => Ok(()),
-                    Some(exit_code) => Err(HookError::NonZeroExitCode(exit_code)),
-                    None => Err(HookError::Killed),
-                },
-                Err(e) => Err(HookError::CommandExecute(e)),
-            }?;
+            }
         }
     }
 
@@ -334,6 +340,103 @@ mod test {
             }
         };
 
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_run_poststop_hooks_continue_after_failures() -> Result<()> {
+        let default_container: Container = Default::default();
+        let temp_dir = tempfile::tempdir()?;
+        let output = temp_dir.path().join("hooks.log");
+        let output_arg = output.to_string_lossy().to_string();
+
+        let first_hook = HookBuilder::default()
+            .path("/bin/sh")
+            .args(vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "echo first >> \"$1\"; exit 7".to_string(),
+                "sh".to_string(),
+                output_arg.clone(),
+            ])
+            .build()?;
+        let timed_out_hook = HookBuilder::default()
+            .path("/bin/sh")
+            .args(vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "echo second >> \"$1\"; exec sleep 10".to_string(),
+                "sh".to_string(),
+                output_arg.clone(),
+            ])
+            .timeout(1)
+            .build()?;
+        let last_hook = HookBuilder::default()
+            .path("/bin/sh")
+            .args(vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "echo third >> \"$1\"".to_string(),
+                "sh".to_string(),
+                output_arg,
+            ])
+            .build()?;
+        let hooks = vec![first_hook, timed_out_hook, last_hook];
+
+        run_poststop_hooks(
+            Some(&hooks),
+            Some(&default_container.state),
+            None,
+            None,
+            None,
+        )?;
+
+        assert_eq!(fs::read_to_string(output)?, "first\nsecond\nthird\n");
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn test_run_hooks_still_stops_on_failure() -> Result<()> {
+        let default_container: Container = Default::default();
+        let temp_dir = tempfile::tempdir()?;
+        let output = temp_dir.path().join("hooks.log");
+        let output_arg = output.to_string_lossy().to_string();
+        let hooks = vec![
+            HookBuilder::default()
+                .path("/bin/sh")
+                .args(vec![
+                    "sh".to_string(),
+                    "-c".to_string(),
+                    "echo first >> \"$1\"; exit 7".to_string(),
+                    "sh".to_string(),
+                    output_arg.clone(),
+                ])
+                .build()?,
+            HookBuilder::default()
+                .path("/bin/sh")
+                .args(vec![
+                    "sh".to_string(),
+                    "-c".to_string(),
+                    "echo second >> \"$1\"".to_string(),
+                    "sh".to_string(),
+                    output_arg,
+                ])
+                .build()?,
+        ];
+
+        assert!(
+            run_hooks(
+                Some(&hooks),
+                Some(&default_container.state),
+                None,
+                None,
+                None,
+            )
+            .is_err()
+        );
+        assert_eq!(fs::read_to_string(output)?, "first\n");
         Ok(())
     }
 
